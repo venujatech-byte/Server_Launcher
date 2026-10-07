@@ -1,3 +1,8 @@
+### Prerequisites
+- Python 3.10+
+- Linux users must install Tkinter system binaries:
+  `sudo apt install python3-tk`
+
 # Server Launcher
 
 A small Tkinter-based control panel for your dev servers. Add your own

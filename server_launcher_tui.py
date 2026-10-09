@@ -962,11 +962,9 @@ class ServerCard(Widget):
         try:
             lbl = self.query_one("#stats-lbl", Static)
             if svc.alive:
-                uptime = _fmt_uptime(svc.uptime_secs) if svc.uptime_secs else "…"
+                uptime = _fmt_uptime(svc.uptime_secs) if svc.uptime_secs else "0s"
                 lbl.update(
-                    f"CPU {svc.cpu_pct:5.1f}%  "
-                    f"RAM {svc.ram_mb:5.0f} MB  "
-                    f"↑ {uptime}"
+                    f"CPU {svc.cpu_pct:4.1f}%   RAM {svc.ram_mb:4.0f} MB   Running for {uptime}"
                 )
             else:
                 lbl.update("")
@@ -1487,9 +1485,16 @@ ServerCard:hover { border: solid #6c5ce7; }
 }
 .dot { width: 2; }
 .svc-name { color: #e4e7ee; text-style: bold; width: 1fr; padding-left: 1; }
-.port-badge { color: #6c5ce7; text-style: bold; width: auto; padding-right: 1; }
+.port-badge {
+    background: #252838;
+    color: #6c5ce7;
+    text-style: bold;
+    width: auto;
+    padding: 0 1;
+    margin-right: 1;
+}
 .state-lbl { width: auto; text-align: right; }
-.stats-lbl { color: #7b8394; height: 1; margin: 0 0 0 3; }
+.stats-lbl { color: #a0abbd; height: 1; margin: 0 0 0 3; }
 
 .card-controls { height: 1; margin-top: 1; }
 .action-row { height: 1; margin-top: 1; }
@@ -1749,7 +1754,7 @@ CommandPaletteModal { align: center top; }
     def on_mount(self) -> None:
         self.set_interval(0.10, self._drain_events)
         self.set_interval(1.50, self._poll_ports)
-        self.set_interval(2.00, self._poll_stats)
+        self.set_interval(1.00, self._poll_stats)
 
     # ── Event Queue (bridge between threads and Textual) ──────────────────────
 

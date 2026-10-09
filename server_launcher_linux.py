@@ -1934,9 +1934,13 @@ class LauncherApp:
                  font=font_ui(11, bold=True),
                  anchor="w").pack(side="left")
         if svc.port:
-            tk.Label(name_holder, text=" :%s" % svc.port, bg=CARD_BG, fg=ACCENT,
-                     font=font_mono(9, bold=True),
-                     anchor="w").pack(side="left", padx=(4, 0))
+            port_badge = tk.Label(
+                name_holder, text=" :%s " % svc.port,
+                bg="#252838", fg=ACCENT,
+                font=font_mono(8, bold=True),
+                relief="flat", padx=4, pady=1
+            )
+            port_badge.pack(side="left", padx=(6, 0))
 
         state_lbl = tk.Label(name_row, text=LABEL["stopped"], bg=CARD_BG,
                              fg=MUTED, font=font_ui(9), anchor="e")
@@ -1947,7 +1951,7 @@ class LauncherApp:
                  ).grid(row=1, column=0, columnspan=2, sticky="w",
                         pady=(4, 2))
 
-        stats_lbl = tk.Label(card_inner, text="", bg=CARD_BG, fg=MUTED,
+        stats_lbl = tk.Label(card_inner, text="", bg=CARD_BG, fg="#a0abbd",
                              font=font_mono(8), anchor="w")
         stats_lbl.grid(row=2, column=0, columnspan=2, sticky="w",
                        pady=(0, 6))
@@ -2258,7 +2262,7 @@ class LauncherApp:
             except Exception:
                 pass
         threading.Thread(target=_worker, daemon=True).start()
-        self.root.after(2000, self._poll_stats)
+        self.root.after(1000, self._poll_stats)
 
     def _apply_stats(self) -> None:
         for key, svc in self.services.items():
@@ -2266,10 +2270,10 @@ class LauncherApp:
             if not card or "stats" not in card:
                 continue
             if svc.alive:
-                uptime = _fmt_uptime(svc.uptime_secs) if svc.uptime_secs else ""
+                uptime = _fmt_uptime(svc.uptime_secs) if svc.uptime_secs else "0s"
                 card["stats"].configure(
-                    text="CPU %4.1f%%   RAM %4.0f MB%s" % (
-                        svc.cpu_pct, svc.ram_mb, ("   up " + uptime) if uptime else ""
+                    text="CPU %4.1f%%   RAM %4.0f MB   Running for %s" % (
+                        svc.cpu_pct, svc.ram_mb, uptime
                     )
                 )
             else:

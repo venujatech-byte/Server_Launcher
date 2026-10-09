@@ -1478,6 +1478,174 @@ class ServerDialog(tk.Toplevel):
 
 
 # --------------------------------------------------------------------------
+# Quick Launch / Command Palette Dialog (Ctrl+P)
+# --------------------------------------------------------------------------
+
+class CommandPaletteDialog(tk.Toplevel):
+    """Fuzzy/substring search popup for starting, stopping, and running actions."""
+
+    def __init__(self, parent, services: dict):
+        super().__init__(parent)
+        self.parent = parent
+        self.services = services
+        self.result = None
+        self._items = []
+
+        self.title("Quick Launch (Ctrl+P)")
+        self.geometry("540x420")
+        self.minsize(440, 320)
+        self.configure(bg=CARD_BG)
+        self.transient(parent)
+        self.grab_set()
+
+        # Center on parent
+        self.update_idletasks()
+        px = parent.winfo_x() + (parent.winfo_width() - 540) // 2
+        py = parent.winfo_y() + 80
+        self.geometry("+%d+%d" % (max(20, px), max(30, py)))
+
+        self._build_ui()
+        self._filter("")
+
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        self.bind("<Escape>", lambda e: self._cancel())
+
+    def _build_ui(self):
+        container = tk.Frame(self, bg=CARD_BG, padx=16, pady=14)
+        container.pack(fill="both", expand=True)
+
+        hdr = tk.Frame(container, bg=CARD_BG)
+        hdr.pack(fill="x", pady=(0, 8))
+        tk.Label(hdr, text="⚡ Quick Launch", bg=CARD_BG, fg=TEXT,
+                 font=font_ui(12, bold=True)).pack(side="left")
+        tk.Label(hdr, text="Esc to close", bg=CARD_BG, fg=MUTED,
+                 font=font_ui(8)).pack(side="right")
+
+        self.search_var = tk.StringVar()
+        self.search_var.trace_add("write", lambda *args: self._on_search_change())
+
+        input_frame = tk.Frame(container, bg=CARD_BORDER, padx=1, pady=1)
+        input_frame.pack(fill="x", pady=(0, 10))
+
+        self.entry = tk.Entry(
+            input_frame, textvariable=self.search_var, bg=EH, fg=TEXT,
+            insertbackground=TEXT, font=font_mono(10), relief="flat",
+            highlightthickness=0
+        )
+        self.entry.pack(fill="x", ipady=6, padx=8)
+        self.entry.focus_set()
+
+        list_frame = tk.Frame(container, bg=CARD_BG)
+        list_frame.pack(fill="both", expand=True)
+
+        self.listbox = tk.Listbox(
+            list_frame, bg=LOG_BG, fg=TEXT, selectbackground=ACCENT,
+            selectforeground="#ffffff", font=font_mono(9),
+            activestyle="none", relief="flat", highlightthickness=1,
+            highlightbackground=CARD_BORDER, highlightcolor=ACCENT
+        )
+        vbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.listbox.yview)
+        self.listbox.configure(yscrollcommand=vbar.set)
+
+        self.listbox.pack(side="left", fill="both", expand=True)
+        vbar.pack(side="right", fill="y")
+
+        self.entry.bind("<Down>", self._on_down)
+        self.entry.bind("<Up>", self._on_up)
+        self.entry.bind("<Return>", self._on_enter)
+        self.listbox.bind("<Return>", self._on_enter)
+        self.listbox.bind("<Double-Button-1>", self._on_enter)
+
+        footer = tk.Frame(container, bg=CARD_BG)
+        footer.pack(fill="x", pady=(8, 0))
+        tk.Label(footer, text="Type to filter • ↑/↓ navigate • Enter select",
+                 bg=CARD_BG, fg=MUTED, font=font_ui(8)).pack(side="left")
+
+    def _on_search_change(self):
+        self._filter(self.search_var.get().strip().lower())
+
+    def _filter(self, q: str):
+        self.listbox.delete(0, tk.END)
+        self._items = []
+
+        tokens = q.split() if q else []
+
+        for svc in self.services.values():
+            s_name = svc.name.lower()
+            s_cmd = " ".join(svc.args).lower()
+
+            # Start/stop entry
+            match = True
+            for t in tokens:
+                if t not in s_name and t not in s_cmd and t not in ("start", "stop"):
+                    match = False
+                    break
+
+            if match:
+                if svc.alive:
+                    label = "⏹  Stop %s" % svc.name
+                    item = (label, "stop", svc.key, None, None)
+                else:
+                    label = "▶  Start %s" % svc.name
+                    item = (label, "start", svc.key, None, None)
+                self._items.append(item)
+                self.listbox.insert(tk.END, "  " + label)
+
+            # Sub-commands
+            for act_label, act_cmd in svc.custom_actions:
+                act_match = True
+                for t in tokens:
+                    if t not in act_label.lower() and t not in act_cmd.lower() and t not in s_name:
+                        act_match = False
+                        break
+                if act_match:
+                    label = "⚡  %s [%s]" % (act_label, svc.name)
+                    item = (label, "action", svc.key, act_cmd, act_label)
+                    self._items.append(item)
+                    self.listbox.insert(tk.END, "  " + label)
+
+        if self._items:
+            self.listbox.selection_set(0)
+            self.listbox.activate(0)
+
+    def _on_down(self, event):
+        size = self.listbox.size()
+        if not size:
+            return "break"
+        cur = self.listbox.curselection()
+        idx = (cur[0] + 1) % size if cur else 0
+        self.listbox.selection_clear(0, tk.END)
+        self.listbox.selection_set(idx)
+        self.listbox.see(idx)
+        return "break"
+
+    def _on_up(self, event):
+        size = self.listbox.size()
+        if not size:
+            return "break"
+        cur = self.listbox.curselection()
+        idx = (cur[0] - 1) % size if cur else 0
+        self.listbox.selection_clear(0, tk.END)
+        self.listbox.selection_set(idx)
+        self.listbox.see(idx)
+        return "break"
+
+    def _on_enter(self, event=None):
+        cur = self.listbox.curselection()
+        if not cur or cur[0] >= len(self._items):
+            return "break"
+        self.result = self._items[cur[0]]
+        self.grab_release()
+        self.destroy()
+        return "break"
+
+    def _cancel(self):
+        self.result = None
+        self.grab_release()
+        self.destroy()
+
+
+# --------------------------------------------------------------------------
 # Application
 # --------------------------------------------------------------------------
 
@@ -1494,9 +1662,12 @@ class LauncherApp:
         self._build_custom_services()
         self._build_ui()
 
+        self.root.bind_all("<Control-p>", lambda e: self.open_command_palette())
+        self.root.bind_all("<Control-P>", lambda e: self.open_command_palette())
+
         self.root.after(120, self._drain)
         self.root.after(1500, self._poll_ports)
-        self.root.after(2000, self._poll_stats)
+        self.root.after(1000, self._poll_stats)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # -- config -----------------------------------------------------------
@@ -1606,6 +1777,10 @@ class LauncherApp:
                   activebackground=ACCENT_HOVER, activeforeground="#ffffff",
                   font=font_ui(10, bold=True), relief="flat", padx=14,
                   pady=4, command=self._add_server).pack(side="right", padx=(0, 8))
+        tk.Button(right_hdr, text="⚡ Quick Launch (Ctrl+P)", bg=EH, fg=ACCENT,
+                  activebackground=EH_HOVER, activeforeground=ACCENT,
+                  font=font_ui(10), relief="flat", padx=12, pady=4,
+                  command=self.open_command_palette).pack(side="right", padx=(0, 6))
         tk.Button(right_hdr, text="Stop all", bg=EH, fg=TEXT,
                   activebackground=EH_HOVER, activeforeground=TEXT,
                   font=font_ui(10), relief="flat", padx=12, pady=4,
@@ -2280,6 +2455,38 @@ class LauncherApp:
                 card["stats"].configure(text="")
         if hasattr(self, "_managed_box"):
             self._rebuild_managed_overview()
+
+    def select_server_tab(self, key: str) -> None:
+        """Switch the notebook tab to the specified server by key."""
+        svc = self.services.get(key)
+        if not svc:
+            return
+        for i, tab_id in enumerate(self.notebook.tabs()):
+            if self.notebook.tab(tab_id, "text").strip() == svc.name:
+                self.notebook.select(i)
+                break
+
+    def open_command_palette(self) -> None:
+        """Open the Ctrl+P quick launch dialog."""
+        dlg = CommandPaletteDialog(self.root, self.services)
+        self.root.wait_window(dlg)
+
+        if not dlg.result:
+            return
+
+        label, action, key, cmd, act_label = dlg.result
+        svc = self.services.get(key)
+        if not svc:
+            return
+
+        if action == "start":
+            svc.start()
+            self.select_server_tab(key)
+        elif action == "stop":
+            svc.stop()
+        elif action == "action" and cmd:
+            svc.run_sub_command(act_label, cmd)
+            self.select_server_tab(key)
 
     # -- add / edit / delete servers --------------------------------------
 

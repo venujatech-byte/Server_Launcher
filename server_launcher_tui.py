@@ -1404,6 +1404,24 @@ class CommandPaletteModal(ModalScreen[tuple | None]):
                 event.stop()
                 self.dismiss(self._items[idx])
 
+    @on(Input.Submitted, "#pal-input")
+    def _submitted(self) -> None:
+        if self._items:
+            self.dismiss(self._items[0])
+
+    def on_key(self, event: events.Key) -> None:
+        inp = self.query_one("#pal-input", Input)
+        if not inp.has_focus:
+            return
+        if event.key == "down":
+            buttons = list(self.query(".pal-item"))
+            if buttons:
+                buttons[0].focus()
+                event.stop()
+        elif event.key == "escape":
+            self.dismiss(None)
+            event.stop()
+
     def action_cancel(self) -> None:
         self.dismiss(None)
 

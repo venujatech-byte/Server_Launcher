@@ -340,6 +340,56 @@ def _get_child_pids_linux(pid: int) -> list[int]:
     return children
 
 
+HZ = 100
+try:
+    HZ = os.sysconf("SC_CLK_TCK")
+except (AttributeError, ValueError, OSError):
+    pass
+
+
+def _proc_ticks(pid: int) -> int:
+    """Return utime+stime jiffies for one process."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="ascii", errors="replace")
+        idx = stat.rfind(")")
+        if idx == -1:
+            return 0
+        fields = stat[idx + 2:].split()
+        return int(fields[11]) + int(fields[12])
+    except (OSError, IndexError, ValueError):
+        return 0
+
+
+def _proc_rss_kb(pid: int) -> int:
+    """Return RSS in kB for one process."""
+    try:
+        for line in Path(f"/proc/{pid}/status").read_text("utf-8", errors="replace").splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1])
+    except (OSError, ValueError):
+        pass
+    return 0
+
+
+def _tree_stats(root_pid: int) -> tuple[int, int]:
+    """Return (total_ticks, total_rss_kb) for root_pid + all children."""
+    all_pids = [root_pid] + _get_child_pids_linux(root_pid)
+    return (
+        sum(_proc_ticks(p) for p in all_pids),
+        sum(_proc_rss_kb(p) for p in all_pids),
+    )
+
+
+def _fmt_uptime(secs: int) -> str:
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m {secs % 60}s"
+    h = secs // 3600
+    m = (secs % 3600) // 60
+    return f"{h}h {m}m"
+
+
 def kill_process_tree(pid: int) -> None:
     """Terminate a process and all its spawned child processes."""
     if pid <= 0:
@@ -763,6 +813,14 @@ class Service:
         self.state = "stopped"
         self.stopping = False
         self.external_var = None
+        self._started_at = None
+
+        # Resource monitoring stats
+        self._prev_ticks = 0
+        self._prev_tick_time = 0.0
+        self.cpu_pct = 0.0
+        self.ram_mb = 0.0
+        self.uptime_secs = 0
 
     @property
     def alive(self) -> bool:
@@ -1056,8 +1114,35 @@ class Service:
     def _finish(self, code: int) -> None:
         self.log("[launcher] process exited with code %d" % code)
         self.proc = None
+        self.cpu_pct = 0.0
+        self.ram_mb = 0.0
+        self._prev_ticks = 0
+        self._prev_tick_time = 0.0
+        self.uptime_secs = 0
         self.set_state("stopped" if self.stopping or code == 0 else "error")
         self.stopping = False
+
+    def sample_stats(self) -> None:
+        """Sample CPU % and RAM MB from /proc for this server process tree."""
+        if not self.alive or self.proc is None:
+            self.cpu_pct = 0.0
+            self.ram_mb = 0.0
+            return
+        try:
+            pid = self.proc.pid
+            now = time.monotonic()
+            ticks, rss_kb = _tree_stats(pid)
+            if self._prev_tick_time > 0:
+                elapsed = now - self._prev_tick_time
+                if elapsed > 0:
+                    self.cpu_pct = max(0.0, ((ticks - self._prev_ticks) / (elapsed * HZ)) * 100.0)
+            self._prev_ticks = ticks
+            self._prev_tick_time = now
+            self.ram_mb = rss_kb / 1024.0
+            if self._started_at is not None:
+                self.uptime_secs = int(time.time() - self._started_at)
+        except Exception:
+            pass
 
 
 # --------------------------------------------------------------------------
@@ -1411,6 +1496,7 @@ class LauncherApp:
 
         self.root.after(120, self._drain)
         self.root.after(1500, self._poll_ports)
+        self.root.after(2000, self._poll_stats)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # -- config -----------------------------------------------------------
@@ -1696,7 +1782,13 @@ class LauncherApp:
         tk.Label(text_col, text=detail, bg=CARD_BG, fg=MUTED, anchor="w",
                  font=font_ui(9)).pack(anchor="w")
 
-        if pid and port:
+        if svc is not None and svc.alive and svc.proc:
+            stats_str = "pid %d  CPU %4.1f%%  RAM %4.0f MB" % (
+                svc.proc.pid, svc.cpu_pct, svc.ram_mb
+            )
+            tk.Label(inner, text=stats_str, bg=CARD_BG,
+                     fg=MUTED, font=font_mono(8)).pack(side="left", padx=(12, 0))
+        elif pid and port:
             tk.Label(inner, text="pid %d  :%s" % (pid, port), bg=CARD_BG,
                      fg=MUTED, font=font_mono(9)).pack(side="left",
                                                        padx=(12, 0))
@@ -1841,6 +1933,10 @@ class LauncherApp:
         tk.Label(name_holder, text=svc.name, bg=CARD_BG, fg=TEXT,
                  font=font_ui(11, bold=True),
                  anchor="w").pack(side="left")
+        if svc.port:
+            tk.Label(name_holder, text=" :%s" % svc.port, bg=CARD_BG, fg=ACCENT,
+                     font=font_mono(9, bold=True),
+                     anchor="w").pack(side="left", padx=(4, 0))
 
         state_lbl = tk.Label(name_row, text=LABEL["stopped"], bg=CARD_BG,
                              fg=MUTED, font=font_ui(9), anchor="e")
@@ -1849,10 +1945,15 @@ class LauncherApp:
         tk.Label(card_inner, text=svc.subtitle, bg=CARD_BG, fg=MUTED,
                  font=font_ui(9), wraplength=340, justify="left", anchor="w",
                  ).grid(row=1, column=0, columnspan=2, sticky="w",
-                        pady=(4, 10))
+                        pady=(4, 2))
+
+        stats_lbl = tk.Label(card_inner, text="", bg=CARD_BG, fg=MUTED,
+                             font=font_mono(8), anchor="w")
+        stats_lbl.grid(row=2, column=0, columnspan=2, sticky="w",
+                       pady=(0, 6))
 
         controls = tk.Frame(card_inner, bg=CARD_BG)
-        controls.grid(row=2, column=0, columnspan=2, sticky="ew")
+        controls.grid(row=3, column=0, columnspan=2, sticky="ew")
 
         toggle = tk.Button(controls, text="Start", bg=SUCCESS, fg="#ffffff",
                            activebackground="#00d2a0", activeforeground="#ffffff",
@@ -1872,7 +1973,7 @@ class LauncherApp:
             self._admin_button(controls, "Edit", ACCENT,
                                lambda s=svc: self._edit_server(s))
 
-        row = 3
+        row = 4
 
         action_buttons = []
         if svc.actions:
@@ -1923,6 +2024,7 @@ class LauncherApp:
 
         self.cards[svc.key] = {
             "dot": dot, "oval": oval, "state": state_lbl,
+            "stats": stats_lbl,
             "toggle": toggle, "actions": action_buttons, "outer": outer,
         }
 
@@ -2096,6 +2198,16 @@ class LauncherApp:
         card = self.cards[key]
         card["dot"].itemconfigure(card["oval"], fill=DOT[svc.state])
         card["state"].configure(text=LABEL[svc.state])
+        if "stats" in card:
+            if svc.alive:
+                uptime = _fmt_uptime(svc.uptime_secs) if svc.uptime_secs else ""
+                card["stats"].configure(
+                    text="CPU %4.1f%%   RAM %4.0f MB%s" % (
+                        svc.cpu_pct, svc.ram_mb, ("   up " + uptime) if uptime else ""
+                    )
+                )
+            else:
+                card["stats"].configure(text="")
         if not svc.missing:
             card["toggle"].configure(
                 text="Stop" if svc.state in ("running", "starting") else "Start",
@@ -2136,6 +2248,34 @@ class LauncherApp:
             except Exception:
                 pass
         self.root.after(1500, self._poll_ports)
+
+    def _poll_stats(self) -> None:
+        def _worker():
+            for svc in list(self.services.values()):
+                svc.sample_stats()
+            try:
+                self.root.after(0, self._apply_stats)
+            except Exception:
+                pass
+        threading.Thread(target=_worker, daemon=True).start()
+        self.root.after(2000, self._poll_stats)
+
+    def _apply_stats(self) -> None:
+        for key, svc in self.services.items():
+            card = self.cards.get(key)
+            if not card or "stats" not in card:
+                continue
+            if svc.alive:
+                uptime = _fmt_uptime(svc.uptime_secs) if svc.uptime_secs else ""
+                card["stats"].configure(
+                    text="CPU %4.1f%%   RAM %4.0f MB%s" % (
+                        svc.cpu_pct, svc.ram_mb, ("   up " + uptime) if uptime else ""
+                    )
+                )
+            else:
+                card["stats"].configure(text="")
+        if hasattr(self, "_managed_box"):
+            self._rebuild_managed_overview()
 
     # -- add / edit / delete servers --------------------------------------
 

@@ -51,6 +51,7 @@ try:
         Input,
         Label,
         RichLog,
+        Select,
         Static,
         Tab,
         TabbedContent,
@@ -1182,6 +1183,70 @@ class ConfirmModal(ModalScreen[bool]):
 
 # ─────────────────────────────────────────────────────────────────────────────
 
+SERVER_TEMPLATES = [
+    {
+        "name": "React (Vite)",
+        "command": "npm run dev",
+        "port": 5173,
+        "actions": [{"label": "Build", "command": "npm run build"}, {"label": "Install", "command": "npm install"}],
+        "links": [{"label": "Localhost", "url": "http://localhost:5173"}],
+    },
+    {
+        "name": "Next.js",
+        "command": "npm run dev",
+        "port": 3000,
+        "actions": [{"label": "Build", "command": "npm run build"}, {"label": "Install", "command": "npm install"}],
+        "links": [{"label": "Localhost", "url": "http://localhost:3000"}],
+    },
+    {
+        "name": "FastAPI (Uvicorn)",
+        "command": "uvicorn main:app --reload --port 8000",
+        "port": 8000,
+        "actions": [{"label": "Install reqs", "command": "pip install -r requirements.txt"}],
+        "links": [{"label": "Swagger Docs", "url": "http://localhost:8000/docs"}],
+    },
+    {
+        "name": "Flask",
+        "command": "flask run --port 5000 --debug",
+        "port": 5000,
+        "env": {"FLASK_ENV": "development", "FLASK_DEBUG": "1"},
+        "actions": [{"label": "Install reqs", "command": "pip install -r requirements.txt"}],
+        "links": [{"label": "Localhost", "url": "http://localhost:5000"}],
+    },
+    {
+        "name": "Django",
+        "command": "python manage.py runserver 0.0.0.0:8000",
+        "port": 8000,
+        "actions": [{"label": "Migrate", "command": "python manage.py migrate"}],
+        "links": [{"label": "Admin Panel", "url": "http://localhost:8000/admin"}],
+    },
+    {
+        "name": "Node / Express",
+        "command": "node server.js",
+        "port": 3000,
+        "actions": [{"label": "Install", "command": "npm install"}],
+        "links": [{"label": "Localhost", "url": "http://localhost:3000"}],
+    },
+    {
+        "name": "PostgreSQL",
+        "command": "postgres -D ./data",
+        "stop_command": "pg_ctl stop -D ./data",
+        "port": 5432,
+    },
+    {
+        "name": "Redis",
+        "command": "redis-server",
+        "stop_command": "redis-cli shutdown",
+        "port": 6379,
+    },
+    {
+        "name": "MongoDB",
+        "command": "mongod --dbpath ./data/db",
+        "port": 27017,
+    },
+]
+
+
 class AddServerModal(ModalScreen[dict | None]):
     """Add or edit a server configuration."""
 
@@ -1206,6 +1271,15 @@ class AddServerModal(ModalScreen[dict | None]):
                     "Saved to servers.json – no code changes needed.",
                     classes="modal-subtitle",
                 )
+
+                if not e:
+                    yield Static("⚡ Pick a Template (Optional)", classes="field-label")
+                    tpl_options = [(t["name"], f"tpl_{idx}") for idx, t in enumerate(SERVER_TEMPLATES)]
+                    yield Select(
+                        tpl_options,
+                        prompt="-- Select a template (React, Next.js, Flask, etc.) --",
+                        id="sel-template"
+                    )
 
                 yield Static("Server name *", classes="field-label")
                 yield Input(value=e.get("name", ""),
@@ -1275,6 +1349,38 @@ class AddServerModal(ModalScreen[dict | None]):
                 with Horizontal(classes="modal-btns"):
                     yield Button("Cancel", id="btn-cancel", classes="btn-cancel")
                     yield Button("Save",   id="btn-save",   classes="btn-save")
+
+    @on(Select.Changed, "#sel-template")
+    def _template_changed(self, event: Select.Changed) -> None:
+        if event.value is None or event.value is Select.BLANK:
+            return
+        val_str = str(event.value)
+        if not val_str.startswith("tpl_"):
+            return
+        try:
+            tpl_idx = int(val_str[4:])
+            if 0 <= tpl_idx < len(SERVER_TEMPLATES):
+                t = SERVER_TEMPLATES[tpl_idx]
+                name_inp = self.query_one("#inp-name", Input)
+                if not name_inp.value.strip():
+                    name_inp.value = t.get("name", "")
+                self.query_one("#inp-cmd", Input).value = t.get("command", "")
+                self.query_one("#inp-stopcmd", Input).value = t.get("stop_command", "")
+                self.query_one("#inp-port", Input).value = str(t.get("port", 0))
+
+                if "env" in t:
+                    env_lines = "\n".join(f"{k}={v}" for k, v in t["env"].items())
+                    self.query_one("#inp-env", TextArea).text = env_lines
+
+                if "actions" in t:
+                    act_lines = "\n".join(f"{a['label']}: {a['command']}" for a in t["actions"])
+                    self.query_one("#inp-actions", TextArea).text = act_lines
+
+                if "links" in t:
+                    link_lines = "\n".join(f"{l['label']}: {l['url']}" for l in t["links"])
+                    self.query_one("#inp-links", TextArea).text = link_lines
+        except Exception:
+            pass
 
     @on(Button.Pressed, "#btn-cancel")
     def _cancel_btn(self, event: Button.Pressed) -> None:

@@ -1146,6 +1146,74 @@ class Service:
 
 
 # --------------------------------------------------------------------------
+# Server Templates
+# --------------------------------------------------------------------------
+
+SERVER_TEMPLATES = [
+    {
+        "name": "React (Vite)",
+        "command": "npm run dev",
+        "port": 5173,
+        "actions": [{"label": "Build", "command": "npm run build"}, {"label": "Install", "command": "npm install"}],
+        "links": [{"label": "Localhost", "url": "http://localhost:5173"}],
+    },
+    {
+        "name": "Next.js",
+        "command": "npm run dev",
+        "port": 3000,
+        "actions": [{"label": "Build", "command": "npm run build"}, {"label": "Install", "command": "npm install"}],
+        "links": [{"label": "Localhost", "url": "http://localhost:3000"}],
+    },
+    {
+        "name": "FastAPI (Uvicorn)",
+        "command": "uvicorn main:app --reload --port 8000",
+        "port": 8000,
+        "actions": [{"label": "Install reqs", "command": "pip install -r requirements.txt"}],
+        "links": [{"label": "Swagger Docs", "url": "http://localhost:8000/docs"}],
+    },
+    {
+        "name": "Flask",
+        "command": "flask run --port 5000 --debug",
+        "port": 5000,
+        "env": {"FLASK_ENV": "development", "FLASK_DEBUG": "1"},
+        "actions": [{"label": "Install reqs", "command": "pip install -r requirements.txt"}],
+        "links": [{"label": "Localhost", "url": "http://localhost:5000"}],
+    },
+    {
+        "name": "Django",
+        "command": "python manage.py runserver 0.0.0.0:8000",
+        "port": 8000,
+        "actions": [{"label": "Migrate", "command": "python manage.py migrate"}],
+        "links": [{"label": "Admin Panel", "url": "http://localhost:8000/admin"}],
+    },
+    {
+        "name": "Node / Express",
+        "command": "node server.js",
+        "port": 3000,
+        "actions": [{"label": "Install", "command": "npm install"}],
+        "links": [{"label": "Localhost", "url": "http://localhost:3000"}],
+    },
+    {
+        "name": "PostgreSQL",
+        "command": "postgres -D ./data",
+        "stop_command": "pg_ctl stop -D ./data",
+        "port": 5432,
+    },
+    {
+        "name": "Redis",
+        "command": "redis-server",
+        "stop_command": "redis-cli shutdown",
+        "port": 6379,
+    },
+    {
+        "name": "MongoDB",
+        "command": "mongod --dbpath ./data/db",
+        "port": 27017,
+    },
+]
+
+
+# --------------------------------------------------------------------------
 # Add / Edit Server Dialog
 # --------------------------------------------------------------------------
 
@@ -1245,9 +1313,40 @@ class ServerDialog(tk.Toplevel):
                  font=font_ui(15, bold=True)).pack(anchor="w")
         tk.Label(inner, text="Saved to servers.json - no code changes needed.",
                  bg=CARD_BG, fg=MUTED, font=font_ui(9)).pack(anchor="w",
-                                                             pady=(2, 12))
+                                                             pady=(2, 8))
 
         f = inner
+
+        # Template Picker
+        if not self.edit:
+            tpl_box = tk.Frame(f, bg="#202433", padx=10, pady=8, highlightthickness=1,
+                               highlightbackground=CARD_BORDER)
+            tpl_box.pack(fill="x", pady=(0, 10))
+            tk.Label(tpl_box, text="⚡ Pick a Template (Fast Setup)", bg="#202433", fg=ACCENT,
+                     font=font_ui(10, bold=True)).pack(anchor="w")
+            tk.Label(tpl_box, text="Auto-populates command, port, actions, and links for popular stacks.",
+                     bg="#202433", fg=MUTED, font=font_ui(8)).pack(anchor="w", pady=(1, 6))
+
+            tpl_row = tk.Frame(tpl_box, bg="#202433")
+            tpl_row.pack(fill="x")
+            tpl_names = ["-- Select a template --"] + [t["name"] for t in SERVER_TEMPLATES]
+            self.selected_tpl_var = tk.StringVar(value=tpl_names[0])
+            tpl_dropdown = ttk.Combobox(tpl_row, textvariable=self.selected_tpl_var,
+                                        values=tpl_names, state="readonly", width=28)
+            tpl_dropdown.pack(side="left", padx=(0, 8))
+
+            def _on_tpl_selected(event=None):
+                val = self.selected_tpl_var.get()
+                for t in SERVER_TEMPLATES:
+                    if t["name"] == val:
+                        self._apply_template(t)
+                        break
+
+            tpl_dropdown.bind("<<ComboboxSelected>>", _on_tpl_selected)
+            tk.Button(tpl_row, text="Apply Template", bg=ACCENT, fg="#ffffff",
+                      activebackground=ACCENT_HOVER, activeforeground="#ffffff",
+                      font=font_ui(9, bold=True), relief="flat", padx=10, pady=2,
+                      command=_on_tpl_selected).pack(side="left")
 
         # Name
         self._lbl(f, "Server name *")
@@ -1390,6 +1489,34 @@ class ServerDialog(tk.Toplevel):
                   font=font_ui(9), relief="flat", width=2,
                   command=row.destroy).pack(side="left", padx=(6, 0))
         self.link_rows.append((lv, uv))
+
+    def _apply_template(self, tpl: dict):
+        """Populate dialog fields from a selected template."""
+        if not self.name_var.get().strip():
+            self.name_var.set(tpl.get("name", ""))
+        self.cmd_var.set(tpl.get("command", ""))
+        self.stopcmd_var.set(tpl.get("stop_command", ""))
+        self.port_var.set(str(tpl.get("port", 0)))
+
+        # Populate env text
+        if "env" in tpl:
+            self.env_text.delete("1.0", "end")
+            env_lines = "\n".join("%s=%s" % (k, v) for k, v in tpl["env"].items())
+            self.env_text.insert("1.0", env_lines)
+
+        # Clear existing actions and add template actions
+        for w in self.actions_box.winfo_children():
+            w.destroy()
+        self.action_rows.clear()
+        for act in tpl.get("actions", []):
+            self._add_action_row(act.get("label", ""), act.get("command", ""))
+
+        # Clear existing links and add template links
+        for w in self.links_box.winfo_children():
+            w.destroy()
+        self.link_rows.clear()
+        for lnk in tpl.get("links", []):
+            self._add_link_row(lnk.get("label", ""), lnk.get("url", ""))
 
     def _browse_dir(self):
         d = filedialog.askdirectory(parent=self, title="Select working directory")

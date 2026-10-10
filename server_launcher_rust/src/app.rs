@@ -41,6 +41,9 @@ pub struct LauncherApp {
     input_histories: HashMap<String, Vec<String>>,
     #[allow(dead_code)]
     history_indices: HashMap<String, usize>,
+
+    // Saved stopped external listeners (port -> (name, command, cwd))
+    stopped_external: HashMap<u16, (String, String, String)>,
 }
 
 impl LauncherApp {
@@ -74,6 +77,7 @@ impl LauncherApp {
             input_texts: HashMap::new(),
             input_histories: HashMap::new(),
             history_indices: HashMap::new(),
+            stopped_external: HashMap::new(),
         }
     }
 
@@ -291,23 +295,70 @@ impl LauncherApp {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn draw_status_dot(ui: &mut Ui, color: Color32) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
-    ui.painter().circle_filled(rect.center(), 4.5, color);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+    ui.painter().circle_filled(rect.center(), 5.5, color.gamma_multiply(0.25));
+    ui.painter().circle_filled(rect.center(), 4.0, color);
 }
 
 fn render_group_badge(ui: &mut Ui, text: &str) {
     Frame::none()
-        .fill(Color32::from_rgb(45, 35, 75))
-        .rounding(Rounding::same(10.0))
-        .inner_margin(egui::Margin::symmetric(7.0, 2.0))
+        .fill(Color32::from_rgb(40, 32, 68))
+        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(65, 52, 105)))
+        .rounding(Rounding::same(12.0))
+        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
         .show(ui, |ui| {
             ui.label(
                 RichText::new(text)
-                    .size(10.5)
-                    .color(Color32::from_rgb(162, 155, 254))
+                    .size(11.0)
+                    .color(Color32::from_rgb(175, 165, 255))
                     .strong(),
             );
         });
+}
+
+fn render_metric_pill(ui: &mut Ui, icon: &str, label: &str, text_color: Color32) {
+    let bg_color = Color32::from_rgb(26, 30, 42);
+    render_metric_pill_custom(ui, icon, label, text_color, bg_color);
+}
+
+fn render_metric_pill_custom(ui: &mut Ui, icon: &str, label: &str, text_color: Color32, bg_color: Color32) {
+    Frame::none()
+        .fill(bg_color)
+        .stroke(Stroke::new(1.0_f32, text_color.gamma_multiply(0.35)))
+        .rounding(Rounding::same(5.0))
+        .inner_margin(egui::Margin::symmetric(7.0, 3.0))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(icon).size(11.0));
+                ui.label(RichText::new(label).size(11.0).color(text_color).strong());
+            });
+        });
+}
+
+fn read_proc_cmd_and_cwd(pid: u32) -> (Option<String>, Option<String>) {
+    #[cfg(target_os = "linux")]
+    {
+        let cmd = std::fs::read(format!("/proc/{}/cmdline", pid)).ok().and_then(|bytes| {
+            let args: Vec<String> = bytes
+                .split(|&b| b == 0)
+                .filter(|s| !s.is_empty())
+                .map(|s| String::from_utf8_lossy(s).to_string())
+                .collect();
+            if args.is_empty() {
+                None
+            } else {
+                Some(args.join(" "))
+            }
+        });
+        let cwd = std::fs::read_link(format!("/proc/{}/cwd", pid))
+            .ok()
+            .map(|p| p.to_string_lossy().to_string());
+        (cmd, cwd)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        (None, None)
+    }
 }
 
 impl eframe::App for LauncherApp {
@@ -600,40 +651,41 @@ impl LauncherApp {
                     let mut to_switch_tab = None;
                     let mut start_grp = None;
                     let mut stop_grp = None;
+                    let mut to_save_config = false;
 
                     for (group_name, indices) in groups {
                         ui.add_space(4.0);
                         // Group Section Header
                         Frame::none()
-                            .fill(Color32::from_rgb(20, 23, 32))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 42, 56)))
-                            .rounding(Rounding::same(4.0))
+                            .fill(Color32::from_rgb(20, 24, 34))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 44, 62)))
+                            .rounding(Rounding::same(6.0))
                             .inner_margin(egui::Margin::symmetric(10.0, 7.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     let header_text = format!("🏷  {} ({})", group_name.to_uppercase(), indices.len());
                                     ui.label(
                                         RichText::new(header_text)
-                                            .size(11.5)
+                                            .size(12.0)
                                             .strong()
-                                            .color(Color32::from_rgb(116, 185, 255)),
+                                            .color(Color32::from_rgb(129, 140, 248)),
                                     );
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         let btn_stop_grp = egui::Button::new(
-                                            RichText::new("⏹ Stop Group").size(10.0).color(Color32::WHITE),
+                                            RichText::new("⏹ Stop Group").size(10.5).color(Color32::WHITE),
                                         )
-                                        .fill(Color32::from_rgb(208, 64, 48))
-                                        .rounding(Rounding::same(3.0));
+                                        .fill(Color32::from_rgb(239, 68, 68))
+                                        .rounding(Rounding::same(4.0));
                                         if ui.add(btn_stop_grp).clicked() {
                                             stop_grp = Some(group_name.clone());
                                         }
 
                                         let btn_start_grp = egui::Button::new(
-                                            RichText::new("▶ Start Group").size(10.0).color(Color32::WHITE),
+                                            RichText::new("▶ Start Group").size(10.5).color(Color32::WHITE),
                                         )
-                                        .fill(Color32::from_rgb(0, 210, 160))
-                                        .rounding(Rounding::same(3.0));
+                                        .fill(Color32::from_rgb(16, 185, 129))
+                                        .rounding(Rounding::same(4.0));
                                         if ui.add(btn_start_grp).clicked() {
                                             start_grp = Some(group_name.clone());
                                         }
@@ -650,17 +702,17 @@ impl LauncherApp {
                             let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
 
                             Frame::none()
-                                .fill(Color32::from_rgb(22, 25, 34))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 42, 56)))
-                                .rounding(Rounding::same(6.0))
-                                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                                .fill(Color32::from_rgb(21, 25, 36))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 46, 66)))
+                                .rounding(Rounding::same(8.0))
+                                .inner_margin(egui::Margin::symmetric(14.0, 11.0))
                                 .show(ui, |ui| {
                                     // Row 1: Status Dot + Name + Group Badge + Status Text
                                     ui.horizontal(|ui| {
                                         let dot_color = if is_running {
-                                            Color32::from_rgb(0, 210, 160)
+                                            Color32::from_rgb(16, 185, 129)
                                         } else {
-                                            Color32::from_rgb(123, 131, 148)
+                                            Color32::from_rgb(100, 116, 139)
                                         };
                                         draw_status_dot(ui, dot_color);
 
@@ -669,8 +721,8 @@ impl LauncherApp {
                                             false,
                                             RichText::new(&s.config.name)
                                                 .strong()
-                                                .size(13.5)
-                                                .color(Color32::from_rgb(230, 234, 242)),
+                                                .size(14.5)
+                                                .color(Color32::from_rgb(241, 245, 249)),
                                         );
                                         if name_resp.clicked() {
                                             to_switch_tab = Some(key.clone());
@@ -681,115 +733,129 @@ impl LauncherApp {
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             let st_text = if is_running { "Running" } else { "Stopped" };
                                             let st_col = if is_running {
-                                                Color32::from_rgb(0, 210, 160)
+                                                Color32::from_rgb(16, 185, 129)
                                             } else {
-                                                Color32::from_rgb(123, 131, 148)
+                                                Color32::from_rgb(100, 116, 139)
                                             };
-                                            ui.label(RichText::new(st_text).size(11.0).color(st_col));
+                                            ui.label(RichText::new(st_text).size(11.5).strong().color(st_col));
                                         });
                                     });
 
-                                    ui.add_space(3.0);
+                                    ui.add_space(4.0);
 
                                     // Row 2: Subtitle / command
-                                    ui.label(
-                                        RichText::new(&s.config.command)
-                                            .size(10.5)
-                                            .monospace()
-                                            .color(Color32::from_rgb(123, 131, 148)),
-                                    );
+                                    Frame::none()
+                                        .fill(Color32::from_rgb(14, 16, 24))
+                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 36, 52)))
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(7.0, 3.0))
+                                        .show(ui, |ui| {
+                                            ui.label(
+                                                RichText::new(&s.config.command)
+                                                    .size(11.0)
+                                                    .monospace()
+                                                    .color(Color32::from_rgb(160, 174, 200)),
+                                            );
+                                        });
 
                                     // Row 2.5: If running, display PID, CPU%, RAM MB, Uptime!
                                     if is_running {
-                                        ui.add_space(4.0);
-                                        ui.horizontal(|ui| {
+                                        ui.add_space(5.0);
+                                        ui.horizontal_wrapped(|ui| {
                                             if let Some(pid) = s.pid {
-                                                ui.label(
-                                                    RichText::new(format!("PID: {}", pid))
-                                                        .size(10.0)
-                                                        .color(Color32::from_rgb(160, 168, 185)),
+                                                render_metric_pill_custom(
+                                                    ui,
+                                                    "🆔",
+                                                    &format!("{}", pid),
+                                                    Color32::from_rgb(160, 170, 190),
+                                                    Color32::from_rgb(26, 30, 42),
                                                 );
-                                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(60, 68, 85)));
                                             }
-                                            ui.label(
-                                                RichText::new(format!("CPU: {:.1}%", s.cpu_usage))
-                                                    .size(10.0)
-                                                    .color(Color32::from_rgb(116, 185, 255)),
+                                            render_metric_pill_custom(
+                                                ui,
+                                                "⚡",
+                                                &format!("{:.1}%", s.cpu_usage),
+                                                Color32::from_rgb(56, 189, 248),
+                                                Color32::from_rgb(18, 38, 56),
                                             );
-                                            ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(60, 68, 85)));
-                                            ui.label(
-                                                RichText::new(format!("RAM: {:.1} MB", s.memory_mb))
-                                                    .size(10.0)
-                                                    .color(Color32::from_rgb(85, 239, 196)),
+                                            render_metric_pill_custom(
+                                                ui,
+                                                "💾",
+                                                &format!("{:.1} MB", s.memory_mb),
+                                                Color32::from_rgb(52, 211, 153),
+                                                Color32::from_rgb(18, 48, 40),
                                             );
                                             let uptime = s.uptime_formatted();
                                             if !uptime.is_empty() {
-                                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(60, 68, 85)));
-                                                ui.label(
-                                                    RichText::new(format!("⏱ {}", uptime))
-                                                        .size(10.0)
-                                                        .color(Color32::from_rgb(253, 203, 110)),
+                                                render_metric_pill_custom(
+                                                    ui,
+                                                    "⏱",
+                                                    &uptime,
+                                                    Color32::from_rgb(251, 191, 36),
+                                                    Color32::from_rgb(45, 38, 20),
                                                 );
                                             }
                                         });
                                     }
 
-                                    ui.add_space(6.0);
+                                    ui.add_space(8.0);
 
                                     // Row 3: Action Buttons (Start, Stop, Restart, [ ] own console, Edit, Delete)
                                     ui.horizontal(|ui| {
                                         if is_running {
                                             let btn_stop = egui::Button::new(
-                                                RichText::new("Stop").size(11.0).strong().color(Color32::WHITE),
+                                                RichText::new("Stop").size(11.5).strong().color(Color32::WHITE),
                                             )
-                                            .fill(Color32::from_rgb(208, 64, 48))
-                                            .rounding(Rounding::same(4.0))
-                                            .min_size(egui::vec2(48.0, 22.0));
+                                            .fill(Color32::from_rgb(239, 68, 68))
+                                            .rounding(Rounding::same(5.0))
+                                            .min_size(egui::vec2(50.0, 24.0));
                                             if ui.add(btn_stop).clicked() {
                                                 to_stop = Some(idx);
                                             }
 
                                             let btn_restart = egui::Button::new(
-                                                RichText::new("Restart").size(11.0).strong().color(Color32::WHITE),
+                                                RichText::new("Restart").size(11.5).strong().color(Color32::WHITE),
                                             )
-                                            .fill(Color32::from_rgb(230, 126, 34))
-                                            .rounding(Rounding::same(4.0))
-                                            .min_size(egui::vec2(52.0, 22.0));
+                                            .fill(Color32::from_rgb(245, 158, 11))
+                                            .rounding(Rounding::same(5.0))
+                                            .min_size(egui::vec2(56.0, 24.0));
                                             if ui.add(btn_restart).clicked() {
                                                 to_restart = Some(idx);
                                             }
                                         } else {
                                             let btn_start = egui::Button::new(
-                                                RichText::new("Start").size(11.0).strong().color(Color32::WHITE),
+                                                RichText::new("Start").size(11.5).strong().color(Color32::WHITE),
                                             )
-                                            .fill(Color32::from_rgb(0, 210, 160))
-                                            .rounding(Rounding::same(4.0))
-                                            .min_size(egui::vec2(52.0, 22.0));
+                                            .fill(Color32::from_rgb(16, 185, 129))
+                                            .rounding(Rounding::same(5.0))
+                                            .min_size(egui::vec2(54.0, 24.0));
                                             if ui.add(btn_start).clicked() {
                                                 to_start = Some(idx);
                                             }
                                         }
 
-                                        ui.checkbox(
+                                        if ui.checkbox(
                                             &mut s.config.own_console,
-                                            RichText::new("console").size(10.0).color(Color32::from_rgb(123, 131, 148)),
-                                        );
+                                            RichText::new("console").size(11.0).color(Color32::from_rgb(148, 163, 184)),
+                                        ).changed() {
+                                            to_save_config = true;
+                                        }
 
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             let btn_del = egui::Button::new(
-                                                RichText::new("Delete").size(10.5).color(Color32::from_rgb(200, 205, 216)),
+                                                RichText::new("Delete").size(11.0).color(Color32::from_rgb(203, 213, 225)),
                                             )
-                                            .fill(Color32::from_rgb(37, 40, 51))
-                                            .rounding(Rounding::same(4.0));
+                                            .fill(Color32::from_rgb(33, 38, 52))
+                                            .rounding(Rounding::same(5.0));
                                             if ui.add(btn_del).clicked() {
                                                 to_delete = Some(key.clone());
                                             }
 
                                             let btn_edit = egui::Button::new(
-                                                RichText::new("Edit").size(10.5).color(Color32::from_rgb(200, 205, 216)),
+                                                RichText::new("Edit").size(11.0).color(Color32::from_rgb(203, 213, 225)),
                                             )
-                                            .fill(Color32::from_rgb(37, 40, 51))
-                                            .rounding(Rounding::same(4.0));
+                                            .fill(Color32::from_rgb(33, 38, 52))
+                                            .rounding(Rounding::same(5.0));
                                             if ui.add(btn_edit).clicked() {
                                                 to_edit = Some(s.config.clone());
                                             }
@@ -799,6 +865,10 @@ impl LauncherApp {
 
                             ui.add_space(6.0);
                         }
+                    }
+
+                    if to_save_config {
+                        self.persist_config();
                     }
 
                     if let Some(g) = start_grp { self.start_group(&g); }
@@ -991,34 +1061,35 @@ impl LauncherApp {
                                     );
 
                                     if is_running {
-                                        ui.add_space(2.0);
+                                        ui.add_space(4.0);
                                         ui.horizontal(|ui| {
                                             if let Some(pid) = s.pid {
-                                                ui.label(
-                                                    RichText::new(format!("PID: {}", pid))
-                                                        .size(10.0)
-                                                        .color(Color32::from_rgb(160, 168, 185)),
+                                                render_metric_pill(
+                                                    ui,
+                                                    "🆔",
+                                                    &format!("PID {}", pid),
+                                                    Color32::from_rgb(148, 163, 184),
                                                 );
-                                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(60, 68, 85)));
                                             }
-                                            ui.label(
-                                                RichText::new(format!("CPU: {:.1}%", s.cpu_usage))
-                                                    .size(10.0)
-                                                    .color(Color32::from_rgb(116, 185, 255)),
+                                            render_metric_pill(
+                                                ui,
+                                                "⚡",
+                                                &format!("{:.1}%", s.cpu_usage),
+                                                Color32::from_rgb(96, 165, 250),
                                             );
-                                            ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(60, 68, 85)));
-                                            ui.label(
-                                                RichText::new(format!("RAM: {:.1} MB", s.memory_mb))
-                                                    .size(10.0)
-                                                    .color(Color32::from_rgb(85, 239, 196)),
+                                            render_metric_pill(
+                                                ui,
+                                                "💾",
+                                                &format!("{:.1} MB", s.memory_mb),
+                                                Color32::from_rgb(52, 211, 153),
                                             );
                                             let uptime = s.uptime_formatted();
                                             if !uptime.is_empty() {
-                                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(60, 68, 85)));
-                                                ui.label(
-                                                    RichText::new(format!("⏱ {}", uptime))
-                                                        .size(10.0)
-                                                        .color(Color32::from_rgb(253, 203, 110)),
+                                                render_metric_pill(
+                                                    ui,
+                                                    "⏱️",
+                                                    &uptime,
+                                                    Color32::from_rgb(251, 191, 36),
                                                 );
                                             }
                                         });
@@ -1028,31 +1099,31 @@ impl LauncherApp {
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     if is_running {
                                         let btn_stop = egui::Button::new(
-                                            RichText::new("Stop").size(11.0).strong().color(Color32::WHITE),
+                                            RichText::new("Stop").size(11.5).strong().color(Color32::WHITE),
                                         )
-                                        .fill(Color32::from_rgb(208, 64, 48))
-                                        .rounding(Rounding::same(4.0))
-                                        .min_size(egui::vec2(50.0, 22.0));
+                                        .fill(Color32::from_rgb(239, 68, 68))
+                                        .rounding(Rounding::same(5.0))
+                                        .min_size(egui::vec2(50.0, 24.0));
                                         if ui.add(btn_stop).clicked() {
                                             to_toggle = Some((idx, 0));
                                         }
 
                                         let btn_restart = egui::Button::new(
-                                            RichText::new("Restart").size(11.0).strong().color(Color32::WHITE),
+                                            RichText::new("Restart").size(11.5).strong().color(Color32::WHITE),
                                         )
-                                        .fill(Color32::from_rgb(230, 126, 34))
-                                        .rounding(Rounding::same(4.0))
-                                        .min_size(egui::vec2(54.0, 22.0));
+                                        .fill(Color32::from_rgb(245, 158, 11))
+                                        .rounding(Rounding::same(5.0))
+                                        .min_size(egui::vec2(58.0, 24.0));
                                         if ui.add(btn_restart).clicked() {
                                             to_toggle = Some((idx, 2));
                                         }
                                     } else {
                                         let btn_start = egui::Button::new(
-                                            RichText::new("Start").size(11.0).strong().color(Color32::WHITE),
+                                            RichText::new("Start").size(11.5).strong().color(Color32::WHITE),
                                         )
-                                        .fill(Color32::from_rgb(0, 210, 160))
-                                        .rounding(Rounding::same(4.0))
-                                        .min_size(egui::vec2(54.0, 22.0));
+                                        .fill(Color32::from_rgb(16, 185, 129))
+                                        .rounding(Rounding::same(5.0))
+                                        .min_size(egui::vec2(54.0, 24.0));
                                         if ui.add(btn_start).clicked() {
                                             to_toggle = Some((idx, 1));
                                         }
@@ -1060,11 +1131,11 @@ impl LauncherApp {
 
                                     let st_text = if is_running { "Running" } else { "Stopped" };
                                     let st_color = if is_running {
-                                        Color32::from_rgb(0, 210, 160)
+                                        Color32::from_rgb(16, 185, 129)
                                     } else {
-                                        Color32::from_rgb(123, 131, 148)
+                                        Color32::from_rgb(148, 163, 184)
                                     };
-                                    ui.label(RichText::new(st_text).size(11.5).color(st_color));
+                                    ui.label(RichText::new(st_text).size(12.0).strong().color(st_color));
                                 });
                             });
                         });
@@ -1086,7 +1157,7 @@ impl LauncherApp {
                 // Section 2: Other processes listening on this PC
                 ui.label(
                     RichText::new("Other processes listening on this PC")
-                        .size(13.0)
+                        .size(14.0)
                         .strong()
                         .color(Color32::from_rgb(228, 231, 238)),
                 );
@@ -1100,57 +1171,318 @@ impl LauncherApp {
                     .filter(|&p| p > 0)
                     .collect();
 
-                if listeners.is_empty() {
-                    ui.label(RichText::new("No other listening processes detected.").size(11.5).weak());
+                let mut to_kill_pid: Option<(Option<u32>, u16, String, String, String)> = None;
+                let mut to_restart_pid: Option<(Option<u32>, u16, String, String)> = None;
+                let mut to_import: Option<(String, u16, String, String)> = None;
+                let mut to_start_stopped: Option<(u16, String, String)> = None;
+                let mut to_remove_stopped: Option<u16> = None;
+
+                let unmanaged_listeners: Vec<_> = listeners
+                    .into_iter()
+                    .filter(|l| !managed_ports.contains(&l.port))
+                    .collect();
+
+                if unmanaged_listeners.is_empty() && self.stopped_external.is_empty() {
+                    Frame::none()
+                        .fill(Color32::from_rgb(20, 23, 32))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 42, 56)))
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new("No unmanaged listening processes detected.")
+                                    .size(12.5)
+                                    .color(Color32::from_rgb(148, 163, 184)),
+                            );
+                        });
                 } else {
-                    for listener in listeners {
-                        if managed_ports.contains(&listener.port) {
-                            continue;
-                        }
+                    for listener in &unmanaged_listeners {
+                        let (cmd_opt, cwd_opt) = listener.pid.map(read_proc_cmd_and_cwd).unwrap_or((None, None));
+                        let cmd_str = cmd_opt.unwrap_or_default();
+                        let cwd_str = cwd_opt.unwrap_or_default();
 
                         Frame::none()
                             .fill(Color32::from_rgb(22, 25, 34))
                             .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 42, 56)))
-                            .rounding(Rounding::same(4.0))
+                            .rounding(Rounding::same(6.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 11.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    draw_status_dot(ui, Color32::from_rgb(0, 210, 160));
+                                    draw_status_dot(ui, Color32::from_rgb(16, 185, 129));
 
                                     ui.vertical(|ui| {
-                                        ui.label(
-                                            RichText::new(&listener.name)
-                                                .size(13.0)
-                                                .strong()
-                                                .color(Color32::from_rgb(228, 231, 238)),
-                                        );
-                                        ui.label(
-                                            RichText::new(format!(
-                                                "{} :{} ({})",
-                                                listener.name, listener.port, listener.proto
-                                            ))
-                                            .size(11.0)
-                                            .color(Color32::from_rgb(123, 131, 148)),
-                                        );
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                RichText::new(&listener.name)
+                                                    .size(13.5)
+                                                    .strong()
+                                                    .color(Color32::from_rgb(230, 234, 242)),
+                                            );
+                                            ui.label(
+                                                RichText::new(format!("({})", listener.proto))
+                                                    .size(11.0)
+                                                    .color(Color32::from_rgb(123, 131, 148)),
+                                            );
+                                        });
+
+                                        if !cmd_str.is_empty() {
+                                            ui.label(
+                                                RichText::new(&cmd_str)
+                                                    .size(10.5)
+                                                    .monospace()
+                                                    .color(Color32::from_rgb(148, 163, 184)),
+                                            );
+                                        }
+
+                                        ui.add_space(3.0);
+                                        ui.horizontal(|ui| {
+                                            if let Some(pid) = listener.pid {
+                                                render_metric_pill(
+                                                    ui,
+                                                    "🆔",
+                                                    &format!("PID {}", pid),
+                                                    Color32::from_rgb(148, 163, 184),
+                                                );
+                                            }
+                                            render_metric_pill(
+                                                ui,
+                                                "🔌",
+                                                &format!(":{}", listener.port),
+                                                Color32::from_rgb(96, 165, 250),
+                                            );
+                                            render_metric_pill(
+                                                ui,
+                                                "●",
+                                                "Running",
+                                                Color32::from_rgb(52, 211, 153),
+                                            );
+                                        });
                                     });
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(
-                                            RichText::new("Running")
+                                        // + Add Server button
+                                        let btn_add = egui::Button::new(
+                                            RichText::new("+ Add Server")
                                                 .size(11.5)
-                                                .color(Color32::from_rgb(0, 210, 160)),
-                                        );
-                                        ui.label(
-                                            RichText::new(format!(":{}", listener.port))
-                                                .size(12.0)
-                                                .color(Color32::from_rgb(123, 131, 148)),
-                                        );
+                                                .strong()
+                                                .color(Color32::WHITE),
+                                        )
+                                        .fill(Color32::from_rgb(108, 92, 231))
+                                        .rounding(Rounding::same(5.0))
+                                        .min_size(egui::vec2(86.0, 24.0));
+                                        if ui.add(btn_add).clicked() {
+                                            to_import = Some((
+                                                listener.name.clone(),
+                                                listener.port,
+                                                cmd_str.clone(),
+                                                cwd_str.clone(),
+                                            ));
+                                        }
+
+                                        // Stop button
+                                        let btn_stop = egui::Button::new(
+                                            RichText::new("Stop").size(11.5).strong().color(Color32::WHITE),
+                                        )
+                                        .fill(Color32::from_rgb(239, 68, 68))
+                                        .rounding(Rounding::same(5.0))
+                                        .min_size(egui::vec2(50.0, 24.0));
+                                        if ui.add(btn_stop).clicked() {
+                                            to_kill_pid = Some((
+                                                listener.pid,
+                                                listener.port,
+                                                listener.name.clone(),
+                                                cmd_str.clone(),
+                                                cwd_str.clone(),
+                                            ));
+                                        }
+
+                                        // Restart button
+                                        let btn_restart = egui::Button::new(
+                                            RichText::new("Restart").size(11.5).strong().color(Color32::WHITE),
+                                        )
+                                        .fill(Color32::from_rgb(245, 158, 11))
+                                        .rounding(Rounding::same(5.0))
+                                        .min_size(egui::vec2(58.0, 24.0));
+                                        if ui.add(btn_restart).clicked() {
+                                            to_restart_pid = Some((
+                                                listener.pid,
+                                                listener.port,
+                                                cmd_str.clone(),
+                                                cwd_str.clone(),
+                                            ));
+                                        }
                                     });
                                 });
                             });
 
                         ui.add_space(6.0);
                     }
+
+                    // Render any stopped external processes
+                    let running_ports: BTreeSet<u16> = unmanaged_listeners.iter().map(|l| l.port).collect();
+                    for (&port, (name, cmd, cwd)) in &self.stopped_external {
+                        if running_ports.contains(&port) || managed_ports.contains(&port) {
+                            continue;
+                        }
+
+                        Frame::none()
+                            .fill(Color32::from_rgb(18, 20, 27))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(32, 36, 48)))
+                            .rounding(Rounding::same(6.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 11.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    draw_status_dot(ui, Color32::from_rgb(100, 116, 139));
+
+                                    ui.vertical(|ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                RichText::new(name)
+                                                    .size(13.5)
+                                                    .strong()
+                                                    .color(Color32::from_rgb(203, 213, 225)),
+                                            );
+                                            ui.label(
+                                                RichText::new(format!(":{}", port))
+                                                    .size(11.5)
+                                                    .color(Color32::from_rgb(148, 163, 184)),
+                                            );
+                                        });
+
+                                        if !cmd.is_empty() {
+                                            ui.label(
+                                                RichText::new(cmd)
+                                                    .size(10.5)
+                                                    .monospace()
+                                                    .color(Color32::from_rgb(100, 116, 139)),
+                                            );
+                                        }
+
+                                        ui.add_space(3.0);
+                                        ui.horizontal(|ui| {
+                                            render_metric_pill(
+                                                ui,
+                                                "🔌",
+                                                &format!(":{}", port),
+                                                Color32::from_rgb(148, 163, 184),
+                                            );
+                                            render_metric_pill(
+                                                ui,
+                                                "○",
+                                                "Stopped",
+                                                Color32::from_rgb(148, 163, 184),
+                                            );
+                                        });
+                                    });
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let btn_del = egui::Button::new(
+                                            RichText::new("✕").size(11.0).color(Color32::from_rgb(148, 163, 184)),
+                                        )
+                                        .fill(Color32::from_rgb(28, 32, 44))
+                                        .rounding(Rounding::same(4.0));
+                                        if ui.add(btn_del).clicked() {
+                                            to_remove_stopped = Some(port);
+                                        }
+
+                                        let btn_add = egui::Button::new(
+                                            RichText::new("+ Add Server")
+                                                .size(11.5)
+                                                .strong()
+                                                .color(Color32::WHITE),
+                                        )
+                                        .fill(Color32::from_rgb(108, 92, 231))
+                                        .rounding(Rounding::same(5.0))
+                                        .min_size(egui::vec2(86.0, 24.0));
+                                        if ui.add(btn_add).clicked() {
+                                            to_import = Some((
+                                                name.clone(),
+                                                port,
+                                                cmd.clone(),
+                                                cwd.clone(),
+                                            ));
+                                        }
+
+                                        let btn_start = egui::Button::new(
+                                            RichText::new("Start").size(11.5).strong().color(Color32::WHITE),
+                                        )
+                                        .fill(Color32::from_rgb(16, 185, 129))
+                                        .rounding(Rounding::same(5.0))
+                                        .min_size(egui::vec2(54.0, 24.0));
+                                        if ui.add(btn_start).clicked() {
+                                            to_start_stopped = Some((port, cmd.clone(), cwd.clone()));
+                                        }
+                                    });
+                                });
+                            });
+
+                        ui.add_space(6.0);
+                    }
+                }
+
+                if let Some((pid_opt, port, name, cmd, cwd)) = to_kill_pid {
+                    if let Some(pid) = pid_opt {
+                        crate::scanner::kill_process_pid(pid);
+                    }
+                    crate::scanner::kill_port_listener(port);
+                    if !cmd.is_empty() {
+                        self.stopped_external.insert(port, (name, cmd, cwd));
+                    }
+                    self.scanner.trigger_scan();
+                }
+
+                if let Some((pid_opt, port, cmd, cwd)) = to_restart_pid {
+                    if let Some(pid) = pid_opt {
+                        crate::scanner::kill_process_pid(pid);
+                    }
+                    crate::scanner::kill_port_listener(port);
+                    if !cmd.is_empty() {
+                        let cmd_to_run = cmd.clone();
+                        let cwd_to_run = cwd.clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(std::time::Duration::from_millis(250));
+                            #[cfg(target_os = "windows")]
+                            let _ = std::process::Command::new("cmd.exe")
+                                .args(&["/C", &cmd_to_run])
+                                .current_dir(&cwd_to_run)
+                                .spawn();
+                            #[cfg(not(target_os = "windows"))]
+                            let _ = std::process::Command::new("sh")
+                                .args(&["-c", &cmd_to_run])
+                                .current_dir(&cwd_to_run)
+                                .spawn();
+                        });
+                    }
+                    self.scanner.trigger_scan();
+                }
+
+                if let Some((port, cmd, cwd)) = to_start_stopped {
+                    self.stopped_external.remove(&port);
+                    if !cmd.is_empty() {
+                        let cmd_to_run = cmd.clone();
+                        let cwd_to_run = cwd.clone();
+                        std::thread::spawn(move || {
+                            #[cfg(target_os = "windows")]
+                            let _ = std::process::Command::new("cmd.exe")
+                                .args(&["/C", &cmd_to_run])
+                                .current_dir(&cwd_to_run)
+                                .spawn();
+                            #[cfg(not(target_os = "windows"))]
+                            let _ = std::process::Command::new("sh")
+                                .args(&["-c", &cmd_to_run])
+                                .current_dir(&cwd_to_run)
+                                .spawn();
+                        });
+                    }
+                    self.scanner.trigger_scan();
+                }
+
+                if let Some(port) = to_remove_stopped {
+                    self.stopped_external.remove(&port);
+                }
+
+                if let Some((name, port, cmd, cwd)) = to_import {
+                    self.add_edit_modal.open_import(&name, port, &cmd, &cwd);
                 }
             });
     }
@@ -1189,30 +1521,31 @@ impl LauncherApp {
             if is_running {
                 ui.add_space(8.0);
                 if let Some(p) = pid {
-                    ui.label(
-                        RichText::new(format!("PID: {}", p))
-                            .size(10.5)
-                            .color(Color32::from_rgb(160, 168, 185)),
+                    render_metric_pill(
+                        ui,
+                        "🆔",
+                        &format!("PID {}", p),
+                        Color32::from_rgb(148, 163, 184),
                     );
-                    ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(60, 68, 85)));
                 }
-                ui.label(
-                    RichText::new(format!("CPU: {:.1}%", cpu))
-                        .size(10.5)
-                        .color(Color32::from_rgb(116, 185, 255)),
+                render_metric_pill(
+                    ui,
+                    "⚡",
+                    &format!("{:.1}%", cpu),
+                    Color32::from_rgb(96, 165, 250),
                 );
-                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(60, 68, 85)));
-                ui.label(
-                    RichText::new(format!("RAM: {:.1} MB", mem))
-                        .size(10.5)
-                        .color(Color32::from_rgb(85, 239, 196)),
+                render_metric_pill(
+                    ui,
+                    "💾",
+                    &format!("{:.1} MB", mem),
+                    Color32::from_rgb(52, 211, 153),
                 );
                 if !uptime.is_empty() {
-                    ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(60, 68, 85)));
-                    ui.label(
-                        RichText::new(format!("⏱ {}", uptime))
-                            .size(10.5)
-                            .color(Color32::from_rgb(253, 203, 110)),
+                    render_metric_pill(
+                        ui,
+                        "⏱️",
+                        &uptime,
+                        Color32::from_rgb(251, 191, 36),
                     );
                 }
             }

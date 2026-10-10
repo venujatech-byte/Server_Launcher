@@ -120,6 +120,7 @@ pub struct AddEditModalState {
     pub command: String,
     pub stop_command: String,
     pub port_str: String,
+    pub own_console: bool,
     pub env_text: String,
     pub actions: Vec<(String, String)>,
     pub links: Vec<(String, String)>,
@@ -139,10 +140,33 @@ impl AddEditModalState {
         self.command.clear();
         self.stop_command.clear();
         self.port_str = "0".to_string();
+        self.own_console = false;
         self.env_text.clear();
         self.actions.clear();
         self.links.clear();
         self.error_msg = None;
+    }
+
+    pub fn open_import(&mut self, name: &str, port: u16, command: &str, cwd: &str) {
+        self.open_new();
+        self.name = name.to_string();
+        self.key = name
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect::<String>()
+            .trim_matches('_')
+            .to_string();
+        if self.key.is_empty() {
+            self.key = format!("port_{}", port);
+        }
+        self.port_str = port.to_string();
+        self.command = command.to_string();
+        self.cwd = if cwd.is_empty() { ".".to_string() } else { cwd.to_string() };
+        self.group = "Imported".to_string();
+        if port > 0 {
+            self.links.push(("Localhost".to_string(), format!("http://localhost:{}", port)));
+        }
     }
 
     pub fn open_edit(&mut self, cfg: &ServerConfig) {
@@ -157,6 +181,7 @@ impl AddEditModalState {
         self.command = cfg.command.clone();
         self.stop_command = cfg.stop_command.clone();
         self.port_str = cfg.port.to_string();
+        self.own_console = cfg.own_console;
 
         let mut env_lines = Vec::new();
         for (k, v) in &cfg.env {
@@ -299,7 +324,7 @@ impl AddEditModalState {
             stop_command: self.stop_command.trim().to_string(),
             port,
             group,
-            own_console: false,
+            own_console: self.own_console,
             env,
             actions,
             links,
@@ -574,6 +599,20 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState) -> Mo
                     ui.add(
                         egui::TextEdit::singleline(&mut state.port_str)
                             .desired_width(f32::INFINITY),
+                    );
+                    ui.add_space(8.0);
+
+                    // Own console checkbox
+                    ui.checkbox(
+                        &mut state.own_console,
+                        RichText::new("Run in own console window (external terminal)")
+                            .size(12.0)
+                            .color(Color32::from_rgb(220, 225, 235)),
+                    );
+                    ui.label(
+                        RichText::new("Opens in a native terminal emulator (gnome-terminal, konsole, cmd.exe, etc.)")
+                            .size(10.5)
+                            .color(Color32::from_rgb(123, 131, 148)),
                     );
                     ui.add_space(8.0);
 

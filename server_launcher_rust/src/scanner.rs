@@ -120,7 +120,51 @@ fn scan_system_listening_ports() -> Vec<ListenerInfo> {
             }
         }
 
-        // 2. Fallback to /proc/net/tcp and tcp6 if ss returned nothing
+        // 2. Try lsof -iTCP -sTCP:LISTEN -n -P to supplement user-owned listeners
+        if let Ok(output) = Command::new("lsof")
+            .args(["-iTCP", "-sTCP:LISTEN", "-n", "-P"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines().skip(1) {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 9 {
+                    let proc_name = parts[0].to_string();
+                    if let Ok(p) = parts[1].parse::<u32>() {
+                        let addr_col = parts[8];
+                        if let Some(port_str) = addr_col.rsplit(':').next() {
+                            if let Ok(port) = port_str.parse::<u16>() {
+                                map.insert(
+                                    port,
+                                    ListenerInfo {
+                                        proto: "TCP".to_string(),
+                                        port,
+                                        pid: Some(p),
+                                        name: proc_name,
+                                    },
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Resolve better names from /proc/{pid}/comm for any system/other entries
+        for info in map.values_mut() {
+            if (info.name == "system/other" || info.name.is_empty()) && info.pid.is_some() {
+                if let Some(p) = info.pid {
+                    if let Ok(comm) = std::fs::read_to_string(format!("/proc/{}/comm", p)) {
+                        let trimmed = comm.trim();
+                        if !trimmed.is_empty() {
+                            info.name = trimmed.to_string();
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Fallback to /proc/net/tcp and tcp6 if map is still empty
         if map.is_empty() {
             for proc_file in &["/proc/net/tcp", "/proc/net/tcp6"] {
                 if let Ok(content) = std::fs::read_to_string(proc_file) {
@@ -174,5 +218,33 @@ fn scan_system_listening_ports() -> Vec<ListenerInfo> {
     }
 
     map.into_values().collect()
+}
+
+pub fn kill_process_pid(pid: u32) {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = Command::new("taskkill")
+            .args(&["/F", "/T", "/PID", &pid.to_string()])
+            .output();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(pid as i32, libc::SIGTERM);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            libc::kill(pid as i32, libc::SIGKILL);
+        }
+    }
+}
+
+pub fn kill_port_listener(port: u16) {
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = Command::new("fuser")
+            .args(["-k", &format!("{}/tcp", port)])
+            .output();
+    }
 }
 

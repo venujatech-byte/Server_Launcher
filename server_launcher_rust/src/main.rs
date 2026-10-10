@@ -31,14 +31,24 @@ fn main() -> eframe::Result<()> {
             visuals.widgets.active.bg_fill = Color32::from_rgb(108, 92, 231);
             visuals.widgets.noninteractive.rounding = Rounding::same(4.0);
             visuals.widgets.inactive.rounding = Rounding::same(4.0);
-            visuals.widgets.hovered.rounding = Rounding::same(4.0);
-            visuals.widgets.active.rounding = Rounding::same(4.0);
+            visuals.widgets.hovered.rounding = Rounding::same(6.0);
+            visuals.widgets.active.rounding = Rounding::same(6.0);
             cc.egui_ctx.set_visuals(visuals);
 
+            // Scale UI for comfortable modern HiDPI reading
+            cc.egui_ctx.set_pixels_per_point(1.15);
+
             let mut style = (*cc.egui_ctx.style()).clone();
-            for (_style, font_id) in style.text_styles.iter_mut() {
-                font_id.size = (font_id.size * 1.10).round();
-            }
+            style.text_styles = [
+                (egui::TextStyle::Heading, egui::FontId::new(20.0, egui::FontFamily::Proportional)),
+                (egui::TextStyle::Name("Subheading".into()), egui::FontId::new(16.0, egui::FontFamily::Proportional)),
+                (egui::TextStyle::Body, egui::FontId::new(14.0, egui::FontFamily::Proportional)),
+                (egui::TextStyle::Button, egui::FontId::new(13.5, egui::FontFamily::Proportional)),
+                (egui::TextStyle::Monospace, egui::FontId::new(13.0, egui::FontFamily::Monospace)),
+                (egui::TextStyle::Small, egui::FontId::new(11.5, egui::FontFamily::Proportional)),
+            ].into();
+            style.spacing.item_spacing = egui::vec2(8.0, 7.0);
+            style.spacing.button_padding = egui::vec2(9.0, 5.0);
             cc.egui_ctx.set_style(style);
 
             Ok(Box::new(LauncherApp::new(cc)))

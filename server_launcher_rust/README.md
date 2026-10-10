@@ -6,7 +6,8 @@ Runs natively on both **Linux** and **Windows** with near-zero idle CPU and ~15 
 
 ---
 
-## Features
+#
+# Features
 
 - **Cross-Platform Process Management**: Clean subprocess spawning, streaming, and tree termination on both Linux and Windows.
 - **Server Groups**: Tag and group servers (Frontend, Backend, DB, etc.) with group-level start/stop.

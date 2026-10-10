@@ -14,6 +14,27 @@ use std::path::PathBuf;
 use std::time::Instant;
 use sysinfo::System;
 
+#[derive(Clone, Debug)]
+pub enum SlashAction {
+    Start,
+    Stop,
+    Restart,
+    Clear,
+    Status,
+    Edit,
+    Help,
+    RunAction(String),
+    OpenLink(String),
+}
+
+#[derive(Clone, Debug)]
+pub struct SlashCommand {
+    pub name: String,
+    pub description: String,
+    pub category: &'static str,
+    pub action: SlashAction,
+}
+
 pub struct LauncherApp {
     config_path: PathBuf,
     services: Vec<Service>,
@@ -48,6 +69,9 @@ pub struct LauncherApp {
     // Search query specifically for the Server Overview tab
     overview_search_query: String,
     focus_overview_search: bool,
+
+    // Autocomplete navigation state
+    autocomplete_selected: usize,
 }
 
 impl LauncherApp {
@@ -84,6 +108,7 @@ impl LauncherApp {
             stopped_external: HashMap::new(),
             overview_search_query: String::new(),
             focus_overview_search: false,
+            autocomplete_selected: 0,
         }
     }
 
@@ -137,34 +162,79 @@ impl LauncherApp {
             let cmd_str = command.to_string();
             let logs_clone = s.logs.clone();
             std::thread::spawn(move || {
+                let current_dir = if cwd.is_empty() { ".".to_string() } else { cwd };
                 #[cfg(target_os = "windows")]
                 let output = std::process::Command::new("cmd.exe")
                     .args(&["/C", &cmd_str])
-                    .current_dir(if cwd.is_empty() { ".".to_string() } else { cwd })
+                    .current_dir(&current_dir)
                     .output();
 
                 #[cfg(not(target_os = "windows"))]
                 let output = std::process::Command::new("sh")
                     .args(&["-c", &cmd_str])
-                    .current_dir(if cwd.is_empty() { ".".to_string() } else { cwd })
+                    .current_dir(&current_dir)
                     .output();
 
-                if let Ok(out) = output {
-                    let stdout = String::from_utf8_lossy(&out.stdout);
-                    for line in stdout.lines() {
-                        let entry = crate::service::LogEntry::new(
-                            line.to_string(),
-                            crate::service::LogKind::Stdout,
-                        );
-                        if let Ok(mut l) = logs_clone.lock() {
-                            l.push_back(entry);
+                match output {
+                    Ok(out) => {
+                        let mut has_output = false;
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        for line in stdout.lines() {
+                            has_output = true;
+                            let entry = crate::service::LogEntry::new(
+                                line.to_string(),
+                                crate::service::LogKind::Stdout,
+                            );
+                            if let Ok(mut l) = logs_clone.lock() {
+                                if l.len() >= 3000 {
+                                    l.pop_front();
+                                }
+                                l.push_back(entry);
+                            }
+                        }
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        for line in stderr.lines() {
+                            has_output = true;
+                            let entry = crate::service::LogEntry::new(
+                                line.to_string(),
+                                crate::service::LogKind::Stderr,
+                            );
+                            if let Ok(mut l) = logs_clone.lock() {
+                                if l.len() >= 3000 {
+                                    l.pop_front();
+                                }
+                                l.push_back(entry);
+                            }
+                        }
+                        if out.status.success() {
+                            if !has_output {
+                                let entry = crate::service::LogEntry::new(
+                                    "[action completed successfully]".to_string(),
+                                    crate::service::LogKind::Launcher,
+                                );
+                                if let Ok(mut l) = logs_clone.lock() {
+                                    l.push_back(entry);
+                                }
+                            }
+                        } else {
+                            let code = out
+                                .status
+                                .code()
+                                .map(|c| c.to_string())
+                                .unwrap_or_else(|| "signal".to_string());
+                            let entry = crate::service::LogEntry::new(
+                                format!("[action exited with error code {}]", code),
+                                crate::service::LogKind::Warning,
+                            );
+                            if let Ok(mut l) = logs_clone.lock() {
+                                l.push_back(entry);
+                            }
                         }
                     }
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    for line in stderr.lines() {
+                    Err(e) => {
                         let entry = crate::service::LogEntry::new(
-                            line.to_string(),
-                            crate::service::LogKind::Stderr,
+                            format!("[action error] Failed to execute: {}", e),
+                            crate::service::LogKind::Error,
                         );
                         if let Ok(mut l) = logs_clone.lock() {
                             l.push_back(entry);
@@ -1871,19 +1941,134 @@ impl LauncherApp {
 
         ui.separator();
 
-        // Bottom Interactive Command Row (pinned at bottom of window)
-        ui.horizontal(|ui| {
+        // Build available slash commands
+        let mut all_commands: Vec<SlashCommand> = vec![
+            SlashCommand {
+                name: "/start".to_string(),
+                description: "Start this server".to_string(),
+                category: "Control",
+                action: SlashAction::Start,
+            },
+            SlashCommand {
+                name: "/stop".to_string(),
+                description: "Stop this server".to_string(),
+                category: "Control",
+                action: SlashAction::Stop,
+            },
+            SlashCommand {
+                name: "/restart".to_string(),
+                description: "Restart this server".to_string(),
+                category: "Control",
+                action: SlashAction::Restart,
+            },
+            SlashCommand {
+                name: "/clear".to_string(),
+                description: "Clear terminal logs".to_string(),
+                category: "Utility",
+                action: SlashAction::Clear,
+            },
+            SlashCommand {
+                name: "/status".to_string(),
+                description: "Show PID, port, uptime and resource usage".to_string(),
+                category: "Utility",
+                action: SlashAction::Status,
+            },
+            SlashCommand {
+                name: "/edit".to_string(),
+                description: "Open server configuration modal".to_string(),
+                category: "Utility",
+                action: SlashAction::Edit,
+            },
+            SlashCommand {
+                name: "/help".to_string(),
+                description: "Show command reference and tips".to_string(),
+                category: "Utility",
+                action: SlashAction::Help,
+            },
+        ];
+
+        for act in &actions {
+            let slug = format!("/{}", act.label.to_lowercase().replace(' ', "-"));
+            all_commands.push(SlashCommand {
+                name: slug,
+                description: format!("Execute: {}", act.command),
+                category: "Action",
+                action: SlashAction::RunAction(act.command.clone()),
+            });
+        }
+
+        for lnk in &links {
+            let slug = format!("/{}", lnk.label.to_lowercase().replace(' ', "-"));
+            all_commands.push(SlashCommand {
+                name: slug,
+                description: format!("Open: {}", lnk.url),
+                category: "Link",
+                action: SlashAction::OpenLink(lnk.url.clone()),
+            });
+        }
+
+        let mut input_val = self.input_texts.get(key).cloned().unwrap_or_default();
+        let is_slash = input_val.starts_with('/');
+        let filter_query = input_val.trim().to_lowercase();
+        let filtered: Vec<SlashCommand> = if is_slash {
+            let q_no_slash = filter_query.trim_start_matches('/');
+            all_commands
+                .iter()
+                .filter(|c| {
+                    if filter_query == "/" {
+                        true
+                    } else {
+                        c.name.to_lowercase().starts_with(&filter_query)
+                            || c.name.to_lowercase().contains(q_no_slash)
+                            || c.description.to_lowercase().contains(q_no_slash)
+                    }
+                })
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let show_autocomplete = is_slash && !filtered.is_empty();
+
+        if show_autocomplete && self.autocomplete_selected >= filtered.len() {
+            self.autocomplete_selected = 0;
+        }
+
+        if show_autocomplete {
+            if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown)) {
+                self.autocomplete_selected = (self.autocomplete_selected + 1) % filtered.len();
+            }
+            if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowUp)) {
+                self.autocomplete_selected = if self.autocomplete_selected == 0 {
+                    filtered.len().saturating_sub(1)
+                } else {
+                    self.autocomplete_selected - 1
+                };
+            }
+            if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab)) {
+                if let Some(cmd) = filtered.get(self.autocomplete_selected) {
+                    input_val = format!("{} ", cmd.name);
+                }
+            }
+            if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+                input_val.clear();
+            }
+        }
+
+        let mut do_send = false;
+        let mut clicked_cmd: Option<SlashCommand> = None;
+        let mut execute_action: Option<SlashAction> = None;
+
+        let resp = ui.horizontal(|ui| {
             ui.label(RichText::new("❯").color(Color32::from_rgb(108, 92, 231)).strong().size(13.0));
-            let mut input_val = self.input_texts.get(key).cloned().unwrap_or_default();
-            let mut do_send = false;
 
-            let resp = ui.add(
-                egui::TextEdit::singleline(&mut input_val)
-                    .hint_text("Run command in directory (e.g. npm i, pip install) or send input...")
-                    .desired_width(ui.available_width() - 250.0),
-            );
+            let text_edit = egui::TextEdit::singleline(&mut input_val)
+                .hint_text("Type '/' for commands, or run command in directory (e.g. npm i, cargo test)...")
+                .desired_width(ui.available_width() - 250.0);
 
-            if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+            let edit_resp = ui.add(text_edit);
+
+            if edit_resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                 do_send = true;
             }
 
@@ -1912,17 +2097,229 @@ impl LauncherApp {
                 }
             }
 
-            if do_send {
-                let to_send = input_val.trim().to_string();
-                if !to_send.is_empty() {
-                    if let Some(s) = self.find_service(key) {
-                        s.send_input(&to_send);
+            edit_resp
+        }).inner;
+
+        if show_autocomplete {
+            let popup_id = egui::Id::new(format!("slash_autocomplete_area_{}", key));
+            let item_h = 28.0;
+            let visible_count = filtered.len().min(6);
+            let total_h = (visible_count as f32 * item_h) + 42.0;
+            let popup_w = (resp.rect.width() + 60.0).max(480.0);
+            let popup_pos = egui::pos2(resp.rect.min.x, (resp.rect.min.y - total_h - 6.0).max(40.0));
+
+            egui::Area::new(popup_id)
+                .fixed_pos(popup_pos)
+                .order(egui::Order::Foreground)
+                .show(ui.ctx(), |ui| {
+                    Frame::none()
+                        .fill(Color32::from_rgb(22, 26, 38))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(60, 68, 95)))
+                        .rounding(Rounding::same(6.0))
+                        .shadow(egui::epaint::Shadow {
+                            offset: egui::vec2(0.0, 4.0),
+                            blur: 12.0,
+                            spread: 0.0,
+                            color: Color32::from_black_alpha(160),
+                        })
+                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                        .show(ui, |ui| {
+                            ui.set_width(popup_w);
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("⚡ Commands").size(11.0).strong().color(Color32::from_rgb(162, 155, 254)));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new("↑↓ Navigate  •  Enter Select  •  Tab Complete  •  Esc Close").size(9.5).color(Color32::from_rgb(120, 126, 142)));
+                                });
+                            });
+                            ui.add_space(2.0);
+                            ui.separator();
+                            ui.add_space(2.0);
+
+                            ScrollArea::vertical()
+                                .max_height(visible_count as f32 * item_h)
+                                .show(ui, |ui| {
+                                    for (idx, cmd) in filtered.iter().enumerate() {
+                                        let is_selected = idx == self.autocomplete_selected;
+                                        let bg = if is_selected {
+                                            Color32::from_rgb(45, 52, 75)
+                                        } else {
+                                            Color32::TRANSPARENT
+                                        };
+
+                                        let row_frame = Frame::none()
+                                            .fill(bg)
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(6.0, 4.0));
+
+                                        let row_inner = row_frame.show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                let name_color = if is_selected {
+                                                    Color32::from_rgb(162, 155, 254)
+                                                } else {
+                                                    Color32::from_rgb(235, 238, 245)
+                                                };
+                                                ui.label(RichText::new(&cmd.name).strong().size(12.0).color(name_color));
+                                                ui.add_space(6.0);
+                                                ui.label(RichText::new(&cmd.description).size(11.0).color(Color32::from_rgb(150, 155, 172)));
+
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    let (badge_bg, badge_fg) = match cmd.category {
+                                                        "Control" => (Color32::from_rgb(48, 40, 80), Color32::from_rgb(180, 160, 255)),
+                                                        "Action" => (Color32::from_rgb(70, 50, 20), Color32::from_rgb(255, 185, 90)),
+                                                        "Link" => (Color32::from_rgb(20, 50, 60), Color32::from_rgb(100, 210, 240)),
+                                                        _ => (Color32::from_rgb(37, 40, 51), Color32::from_rgb(160, 165, 180)),
+                                                    };
+                                                    Frame::none()
+                                                        .fill(badge_bg)
+                                                        .rounding(Rounding::same(3.0))
+                                                        .inner_margin(egui::Margin::symmetric(5.0, 2.0))
+                                                        .show(ui, |ui| {
+                                                            ui.label(RichText::new(cmd.category).size(9.5).color(badge_fg));
+                                                        });
+                                                });
+                                            });
+                                        });
+
+                                        let row_interact = ui.interact(row_inner.response.rect, row_inner.response.id, egui::Sense::click());
+                                        if row_interact.hovered() && !is_selected {
+                                            self.autocomplete_selected = idx;
+                                        }
+                                        if row_interact.clicked() {
+                                            clicked_cmd = Some(cmd.clone());
+                                        }
+                                    }
+                                });
+                        });
+                });
+        }
+
+        if let Some(cmd) = clicked_cmd {
+            execute_action = Some(cmd.action);
+            input_val.clear();
+            self.autocomplete_selected = 0;
+            resp.request_focus();
+        } else if do_send {
+            let trimmed = input_val.trim().to_string();
+            if !trimmed.is_empty() {
+                if show_autocomplete {
+                    if let Some(cmd) = filtered.get(self.autocomplete_selected) {
+                        execute_action = Some(cmd.action.clone());
                     }
-                    input_val.clear();
+                } else if trimmed.starts_with('/') {
+                    if trimmed.starts_with("/run ") || trimmed.starts_with("/sh ") {
+                        let sub = trimmed.trim_start_matches("/run ").trim_start_matches("/sh ").trim();
+                        execute_action = Some(SlashAction::RunAction(sub.to_string()));
+                    } else {
+                        let first_token = trimmed.split_whitespace().next().unwrap_or(&trimmed);
+                        if let Some(cmd) = all_commands.iter().find(|c| c.name.eq_ignore_ascii_case(first_token)) {
+                            execute_action = Some(cmd.action.clone());
+                        } else {
+                            if let Some(s) = self.find_service(key) {
+                                s.append_log(
+                                    format!("[command error] Unknown slash command: '{}'. Type /help for available commands.", first_token),
+                                    LogKind::Warning,
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    // Regular command or stdin
+                    if is_running {
+                        if let Some(s) = self.find_service(key) {
+                            s.send_input(&trimmed);
+                        }
+                    } else {
+                        // Server is NOT running: execute directly in cwd!
+                        self.run_service_action(key, &trimmed);
+                    }
+                }
+                input_val.clear();
+                self.autocomplete_selected = 0;
+                resp.request_focus();
+            }
+        }
+
+        if let Some(act) = execute_action {
+            match act {
+                SlashAction::Start => {
+                    if let Some(s) = self.find_service_mut(key) {
+                        s.start();
+                    }
+                }
+                SlashAction::Stop => {
+                    if let Some(s) = self.find_service_mut(key) {
+                        s.stop();
+                    }
+                }
+                SlashAction::Restart => {
+                    if let Some(s) = self.find_service_mut(key) {
+                        s.restart();
+                    }
+                }
+                SlashAction::Clear => {
+                    if let Some(s) = self.find_service(key) {
+                        s.clear_logs();
+                    }
+                }
+                SlashAction::Status => {
+                    if let Some(s) = self.find_service(key) {
+                        let status_msg = format!(
+                            "━━━ Status for {} ━━━\n• State: {:?}\n• PID: {}\n• Port: {}\n• Uptime: {}\n• Memory: {:.1} MB\n• CPU: {:.1}%",
+                            s.config.name,
+                            s.state,
+                            s.pid.map(|p| p.to_string()).unwrap_or_else(|| "N/A".to_string()),
+                            s.config.port,
+                            if s.uptime_formatted().is_empty() { "0s".to_string() } else { s.uptime_formatted() },
+                            s.memory_mb,
+                            s.cpu_usage,
+                        );
+                        s.append_log(status_msg, LogKind::Launcher);
+                    }
+                }
+                SlashAction::Edit => {
+                    if let Some(s) = self.find_service(key) {
+                        let cfg = s.config.clone();
+                        self.add_edit_modal.open_edit(&cfg);
+                    }
+                }
+                SlashAction::Help => {
+                    if let Some(s) = self.find_service(key) {
+                        let mut help = String::from("━━━ Terminal & Slash Commands ━━━\n");
+                        help.push_str("• /start    - Start this server\n");
+                        help.push_str("• /stop     - Stop this server\n");
+                        help.push_str("• /restart  - Restart this server\n");
+                        help.push_str("• /clear    - Clear terminal logs\n");
+                        help.push_str("• /status   - Show status, PID, port, uptime and resource usage\n");
+                        help.push_str("• /edit     - Open configuration modal for this server\n");
+                        help.push_str("• /help     - Show this command reference\n");
+                        if !s.config.actions.is_empty() {
+                            help.push_str("\nCustom Actions:\n");
+                            for a in &s.config.actions {
+                                let slug = format!("/{}", a.label.to_lowercase().replace(' ', "-"));
+                                help.push_str(&format!("• {:<12} - Exec: {}\n", slug, a.command));
+                            }
+                        }
+                        if !s.config.links.is_empty() {
+                            help.push_str("\nQuick Links:\n");
+                            for l in &s.config.links {
+                                let slug = format!("/{}", l.label.to_lowercase().replace(' ', "-"));
+                                help.push_str(&format!("• {:<12} - Open: {}\n", slug, l.url));
+                            }
+                        }
+                        help.push_str("\nWhen server is stopped: Type any command (e.g. npm i, cargo test) to run it directly in this server directory.\n");
+                        help.push_str("When server is running: Type any text to send directly to process standard input.\n");
+                        s.append_log(help, LogKind::Launcher);
+                    }
+                }
+                SlashAction::RunAction(cmd) => {
+                    self.run_service_action(key, &cmd);
+                }
+                SlashAction::OpenLink(url) => {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(&url));
                 }
             }
+        }
 
-            self.input_texts.insert(key.to_string(), input_val);
-        });
+        self.input_texts.insert(key.to_string(), input_val);
     }
 }

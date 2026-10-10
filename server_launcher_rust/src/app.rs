@@ -129,9 +129,52 @@ impl LauncherApp {
             .map(Service::new)
             .collect();
 
-        // 🚀 Automatically start servers configured to run at startup
+        // 🚀 Detect previously running servers and reconnect
+        let active_listeners = crate::scanner::scan_system_listening_ports();
+        let mut port_to_listener: HashMap<u16, &crate::scanner::ListenerInfo> = HashMap::new();
+        for l in &active_listeners {
+            port_to_listener.insert(l.port, l);
+        }
+
         for s in &mut services {
-            if s.config.autostart {
+            let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", s.config.key));
+            let mut detected_pid: Option<u32> = None;
+            let mut matched_by_port = false;
+
+            if let Ok(content) = std::fs::read_to_string(&pid_file) {
+                if let Ok(p) = content.trim().parse::<u32>() {
+                    #[cfg(unix)]
+                    let alive = unsafe { libc::kill(p as i32, 0) == 0 };
+                    #[cfg(not(unix))]
+                    let alive = true;
+
+                    if alive {
+                        detected_pid = Some(p);
+                    } else {
+                        let _ = std::fs::remove_file(&pid_file);
+                    }
+                }
+            }
+
+            if detected_pid.is_none() && s.config.port > 0 {
+                if let Some(l) = port_to_listener.get(&s.config.port) {
+                    if let Some(p) = l.pid {
+                        #[cfg(unix)]
+                        let alive = unsafe { libc::kill(p as i32, 0) == 0 };
+                        #[cfg(not(unix))]
+                        let alive = true;
+
+                        if alive {
+                            detected_pid = Some(p);
+                            matched_by_port = true;
+                        }
+                    }
+                }
+            }
+
+            if let Some(pid) = detected_pid {
+                s.attach_existing(pid, matched_by_port);
+            } else if s.config.autostart {
                 s.start();
             }
         }
@@ -867,17 +910,24 @@ impl LauncherApp {
 
     fn render_machines_nav_bar(&mut self, ui: &mut Ui) {
         let p = self.theme.palette();
-        ui.vertical(|ui| {
-            ui.add_space(2.0);
-            ui.label(
-                RichText::new("MACHINES")
-                    .size(9.5)
-                    .strong()
-                    .color(p.text_muted),
-            );
-            ui.add_space(6.0);
 
-            // 1. This PC (Local) item
+        let mut host_to_edit: Option<SshRemoteHost> = None;
+        let mut host_to_delete: Option<String> = None;
+        let mut host_to_test: Option<SshRemoteHost> = None;
+        let mut host_to_term: Option<SshRemoteHost> = None;
+
+        ui.vertical_centered(|ui| {
+            ui.add_space(4.0);
+
+            // Top: App Icon / Logo
+            if let Some(tex) = &self.icon_texture {
+                ui.image((tex.id(), egui::vec2(26.0, 26.0)));
+            } else {
+                ui.label(RichText::new("🚀").size(20.0));
+            }
+            ui.add_space(10.0);
+
+            // 1. This PC (Local) Tile
             let is_local_selected = self.selected_machine == "local";
             let running_count = self
                 .services
@@ -885,108 +935,59 @@ impl LauncherApp {
                 .filter(|s| s.state == ServiceState::Running)
                 .count();
 
+            let local_tooltip = if running_count > 0 {
+                format!("🖥 This PC (Local)\n● {} active server{} running", running_count, if running_count > 1 { "s" } else { "" })
+            } else {
+                "🖥 This PC (Local)\nNo servers running".to_string()
+            };
+
+            let (local_rect, local_resp) = ui.allocate_exact_size(egui::vec2(38.0, 38.0), egui::Sense::click());
             let local_bg = if is_local_selected {
+                p.accent
+            } else if local_resp.hovered() {
                 p.bg_card_active
             } else {
                 p.bg_card
             };
             let local_stroke = if is_local_selected {
-                Stroke::new(1.0_f32, p.accent)
+                Stroke::NONE
             } else {
                 Stroke::new(1.0_f32, p.border)
             };
 
-            let local_card = Frame::none()
-                .fill(local_bg)
-                .stroke(local_stroke)
-                .rounding(Rounding::same(6.0))
-                .inner_margin(egui::Margin::symmetric(6.0, 6.0));
+            ui.painter().rect(local_rect, Rounding::same(8.0), local_bg, local_stroke);
+            let local_icon_col = if is_local_selected { Color32::WHITE } else { p.text_primary };
+            ui.painter().text(
+                local_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "🖥",
+                egui::FontId::proportional(16.0),
+                local_icon_col,
+            );
 
-            let local_resp = local_card
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("🖥").size(15.0));
-                        ui.add_space(2.0);
-                        ui.vertical(|ui| {
-                            ui.label(
-                                RichText::new("This PC")
-                                    .size(11.5)
-                                    .strong()
-                                    .color(if is_local_selected {
-                                        p.text_primary
-                                    } else {
-                                        p.text_secondary
-                                    }),
-                            );
-                            ui.label(
-                                RichText::new(if running_count > 0 {
-                                    format!("{} active", running_count)
-                                } else {
-                                    "Local".to_string()
-                                })
-                                .size(9.0)
-                                .color(if running_count > 0 {
-                                    p.success
-                                } else {
-                                    p.text_muted
-                                }),
-                            );
-                        });
-                    });
-                })
-                .response;
+            // Badge dot if running servers exist
+            if running_count > 0 {
+                let dot_center = egui::pos2(local_rect.right() - 6.0, local_rect.bottom() - 6.0);
+                ui.painter().circle_filled(dot_center, 4.0, p.bg_machines_nav);
+                ui.painter().circle_filled(dot_center, 2.5, p.success);
+            }
 
-            let local_interact = ui.interact(local_resp.rect, local_resp.id, egui::Sense::click());
-            if local_interact.clicked() {
+            if local_resp.on_hover_text(local_tooltip).clicked() {
                 self.selected_machine = "local".to_string();
             }
 
             ui.add_space(10.0);
+            // Subtle horizontal separator line
+            let (sep_rect, _) = ui.allocate_exact_size(egui::vec2(24.0, 1.0), egui::Sense::hover());
+            ui.painter().rect_filled(sep_rect, Rounding::ZERO, p.border.gamma_multiply(0.6));
+            ui.add_space(8.0);
 
-            // 2. SSH Remote PCs Section Header
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new("REMOTES")
-                        .size(9.5)
-                        .strong()
-                        .color(p.text_muted),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let btn_add = egui::Button::new(
-                        RichText::new("+ Add")
-                            .size(9.0)
-                            .strong()
-                            .color(p.accent_light),
-                    )
-                    .fill(p.bg_button)
-                    .stroke(Stroke::new(1.0_f32, p.border))
-                    .rounding(Rounding::same(3.0));
-
-                    if ui.add(btn_add).on_hover_text("Add new SSH Remote PC").clicked() {
-                        self.ssh_host_modal.open_add();
-                    }
-                });
-            });
-            ui.add_space(4.0);
-
-            // 3. List of SSH Hosts
-            let mut host_to_edit: Option<SshRemoteHost> = None;
-            let mut host_to_delete: Option<String> = None;
-            let mut host_to_test: Option<SshRemoteHost> = None;
-            let mut host_to_term: Option<SshRemoteHost> = None;
-
+            // 2. SSH Remote Hosts List (Scrollable)
             ScrollArea::vertical()
-                .id_salt("ssh_hosts_scroll")
+                .id_salt("ssh_hosts_dock_scroll")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    if self.ssh_hosts.is_empty() {
-                        ui.add_space(6.0);
-                        ui.label(
-                            RichText::new("No remote PCs yet.\nClick '+ Add' below.")
-                                .size(9.5)
-                                .color(p.text_muted),
-                        );
-                    } else {
+                    ui.vertical_centered(|ui| {
                         for host in &self.ssh_hosts {
                             let is_selected = self.selected_machine == host.id;
                             let status = {
@@ -999,74 +1000,55 @@ impl LauncherApp {
                             };
 
                             let (status_color, status_text) = if is_connecting {
-                                (p.warning, "○ connecting")
+                                (p.warning, "connecting…")
                             } else if let Some(Ok(_)) = &status {
-                                (p.success, "● online")
+                                (p.success, "online")
                             } else if let Some(Err(_)) = &status {
-                                (p.danger, "● error")
+                                (p.danger, "error")
                             } else {
-                                (p.text_muted, "○ idle")
+                                (p.text_muted, "idle")
                             };
 
+                            let host_tooltip = format!(
+                                "🌐 {}\n{}@{}:{}\nStatus: {}\nRight-click for options",
+                                host.name, host.user, host.host, host.port, status_text
+                            );
+
+                            let (host_rect, host_resp) = ui.allocate_exact_size(egui::vec2(38.0, 38.0), egui::Sense::click());
                             let host_bg = if is_selected {
+                                p.accent
+                            } else if host_resp.hovered() {
                                 p.bg_card_active
                             } else {
                                 p.bg_card
                             };
                             let host_stroke = if is_selected {
-                                Stroke::new(1.0_f32, p.accent)
+                                Stroke::NONE
                             } else {
                                 Stroke::new(1.0_f32, p.border)
                             };
 
-                            let card = Frame::none()
-                                .fill(host_bg)
-                                .stroke(host_stroke)
-                                .rounding(Rounding::same(6.0))
-                                .inner_margin(egui::Margin::symmetric(6.0, 6.0));
+                            ui.painter().rect(host_rect, Rounding::same(8.0), host_bg, host_stroke);
+                            let host_icon_col = if is_selected { Color32::WHITE } else { p.text_secondary };
+                            ui.painter().text(
+                                host_rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                "🌐",
+                                egui::FontId::proportional(15.0),
+                                host_icon_col,
+                            );
 
-                            let card_resp = card
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new("🌐").size(14.0));
-                                        ui.add_space(2.0);
-                                        ui.vertical(|ui| {
-                                            ui.label(
-                                                RichText::new(&host.name)
-                                                    .size(11.0)
-                                                    .strong()
-                                                    .color(if is_selected {
-                                                        p.text_primary
-                                                    } else {
-                                                        p.text_secondary
-                                                    }),
-                                            );
-                                            ui.label(
-                                                RichText::new(status_text)
-                                                    .size(9.0)
-                                                    .color(status_color),
-                                            );
-                                        });
+                            // Status indicator dot at bottom-right
+                            let dot_center = egui::pos2(host_rect.right() - 6.0, host_rect.bottom() - 6.0);
+                            ui.painter().circle_filled(dot_center, 4.0, p.bg_machines_nav);
+                            ui.painter().circle_filled(dot_center, 2.5, status_color);
 
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            let btn_gear = egui::Button::new(
-                                                RichText::new("⚙").size(10.0).color(p.text_muted),
-                                            )
-                                            .fill(Color32::TRANSPARENT);
-                                            if ui.add(btn_gear).on_hover_text("Edit remote host settings").clicked() {
-                                                host_to_edit = Some(host.clone());
-                                            }
-                                        });
-                                    });
-                                })
-                                .response;
-
-                            let card_interact = ui.interact(card_resp.rect, card_resp.id, egui::Sense::click());
-                            if card_interact.clicked() {
+                            let host_resp = host_resp.on_hover_text(host_tooltip);
+                            if host_resp.clicked() {
                                 self.selected_machine = host.id.clone();
                             }
 
-                            card_resp.context_menu(|ui| {
+                            host_resp.context_menu(|ui| {
                                 if ui.button("⚙ Edit Host").clicked() {
                                     host_to_edit = Some(host.clone());
                                     ui.close_menu();
@@ -1086,56 +1068,74 @@ impl LauncherApp {
                                 }
                             });
 
-                            ui.add_space(4.0);
+                            ui.add_space(6.0);
                         }
-                    }
 
-                    ui.add_space(10.0);
-                    // Import ~/.ssh/config button
-                    let btn_import = egui::Button::new(
-                        RichText::new("📥 Import SSH")
-                            .size(9.5)
-                            .color(Color32::from_rgb(148, 163, 184)),
-                    )
-                    .fill(Color32::from_rgb(26, 30, 42))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 50, 68)))
-                    .rounding(Rounding::same(4.0))
-                    .min_size(egui::vec2(ui.available_width(), 22.0));
+                        // Add SSH Host button tile
+                        let (add_rect, add_resp) = ui.allocate_exact_size(egui::vec2(34.0, 34.0), egui::Sense::click());
+                        let add_bg = if add_resp.hovered() { p.bg_card_active } else { Color32::TRANSPARENT };
+                        let add_stroke = Stroke::new(1.0_f32, if add_resp.hovered() { p.accent } else { p.border.gamma_multiply(0.6) });
+                        ui.painter().rect(add_rect, Rounding::same(8.0), add_bg, add_stroke);
+                        ui.painter().text(
+                            add_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "+",
+                            egui::FontId::proportional(17.0),
+                            if add_resp.hovered() { p.accent } else { p.text_muted },
+                        );
+                        if add_resp.on_hover_text("Add new SSH Remote PC").clicked() {
+                            self.ssh_host_modal.open_add();
+                        }
 
-                    if ui.add(btn_import).on_hover_text("Read ~/.ssh/config and add configured remote hosts").clicked() {
-                        let imported = import_from_ssh_config();
-                        let mut added = 0;
-                        for inh in imported {
-                            if !self.ssh_hosts.iter().any(|h| h.host == inh.host && h.port == inh.port && h.user == inh.user) {
-                                self.ssh_hosts.push(inh);
-                                added += 1;
+                        ui.add_space(6.0);
+
+                        // Import SSH button tile
+                        let (imp_rect, imp_resp) = ui.allocate_exact_size(egui::vec2(34.0, 34.0), egui::Sense::click());
+                        let imp_bg = if imp_resp.hovered() { p.bg_card_active } else { Color32::TRANSPARENT };
+                        let imp_stroke = Stroke::new(1.0_f32, if imp_resp.hovered() { p.accent } else { p.border.gamma_multiply(0.6) });
+                        ui.painter().rect(imp_rect, Rounding::same(8.0), imp_bg, imp_stroke);
+                        ui.painter().text(
+                            imp_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "📥",
+                            egui::FontId::proportional(14.0),
+                            if imp_resp.hovered() { p.accent } else { p.text_muted },
+                        );
+                        if imp_resp.on_hover_text("Import hosts from ~/.ssh/config").clicked() {
+                            let imported = import_from_ssh_config();
+                            let mut added = 0;
+                            for inh in imported {
+                                if !self.ssh_hosts.iter().any(|h| h.host == inh.host && h.port == inh.port && h.user == inh.user) {
+                                    self.ssh_hosts.push(inh);
+                                    added += 1;
+                                }
+                            }
+                            if added > 0 {
+                                self.persist_config();
                             }
                         }
-                        if added > 0 {
-                            self.persist_config();
-                        }
-                    }
+                    });
                 });
-
-            if let Some(h) = host_to_test {
-                self.test_remote_host(&h);
-            }
-            if let Some(h) = host_to_term {
-                let _ = launch_external_ssh_terminal(&h);
-            }
-            if let Some(h) = host_to_edit {
-                self.ssh_host_modal.open_edit(&h);
-            }
-            if let Some(id) = host_to_delete {
-                if let Some(pos) = self.ssh_hosts.iter().position(|h| h.id == id) {
-                    self.ssh_hosts.remove(pos);
-                    if self.selected_machine == id {
-                        self.selected_machine = "local".to_string();
-                    }
-                    self.persist_config();
-                }
-            }
         });
+
+        if let Some(h) = host_to_test {
+            self.test_remote_host(&h);
+        }
+        if let Some(h) = host_to_term {
+            let _ = launch_external_ssh_terminal(&h);
+        }
+        if let Some(h) = host_to_edit {
+            self.ssh_host_modal.open_edit(&h);
+        }
+        if let Some(id) = host_to_delete {
+            if let Some(pos) = self.ssh_hosts.iter().position(|h| h.id == id) {
+                self.ssh_hosts.remove(pos);
+                if self.selected_machine == id {
+                    self.selected_machine = "local".to_string();
+                }
+                self.persist_config();
+            }
+        }
     }
 
     fn render_remote_pc_dashboard(&mut self, ui: &mut Ui, host_id: &str) {
@@ -1868,17 +1868,15 @@ impl eframe::App for LauncherApp {
         // LEFT MACHINES NAV BAR (Switch between This PC and SSH Remotes)
         // ═════════════════════════════════════════════════════════════════════
         egui::SidePanel::left("machines_nav_bar")
-            .resizable(true)
-            .default_width(115.0)
-            .min_width(80.0)
-            .max_width(200.0)
+            .resizable(false)
+            .exact_width(52.0)
             .frame(
                 Frame::none()
                     .fill(p.bg_machines_nav)
                     .inner_margin(egui::Margin {
                         left: 6.0,
                         right: 6.0,
-                        top: 8.0,
+                        top: 10.0,
                         bottom: 10.0,
                     }),
             )
@@ -2079,7 +2077,54 @@ impl eframe::App for LauncherApp {
 impl LauncherApp {
     pub fn refresh_server_list(&mut self) {
         self.scanner.trigger_scan();
+        let listeners = self.scanner.get_listeners();
+        let mut port_to_listener: HashMap<u16, &crate::scanner::ListenerInfo> = HashMap::new();
+        for l in &listeners {
+            port_to_listener.insert(l.port, l);
+        }
+
         for s in &mut self.services {
+            if s.state == ServiceState::Stopped {
+                let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", s.config.key));
+                let mut detected_pid: Option<u32> = None;
+                let mut matched_by_port = false;
+
+                if let Ok(content) = std::fs::read_to_string(&pid_file) {
+                    if let Ok(p) = content.trim().parse::<u32>() {
+                        #[cfg(unix)]
+                        let alive = unsafe { libc::kill(p as i32, 0) == 0 };
+                        #[cfg(not(unix))]
+                        let alive = true;
+
+                        if alive {
+                            detected_pid = Some(p);
+                        } else {
+                            let _ = std::fs::remove_file(&pid_file);
+                        }
+                    }
+                }
+
+                if detected_pid.is_none() && s.config.port > 0 {
+                    if let Some(l) = port_to_listener.get(&s.config.port) {
+                        if let Some(p) = l.pid {
+                            #[cfg(unix)]
+                            let alive = unsafe { libc::kill(p as i32, 0) == 0 };
+                            #[cfg(not(unix))]
+                            let alive = true;
+
+                            if alive {
+                                detected_pid = Some(p);
+                                matched_by_port = true;
+                            }
+                        }
+                    }
+                }
+
+                if let Some(pid) = detected_pid {
+                    s.attach_existing(pid, matched_by_port);
+                }
+            }
+
             s.poll_status(&mut self.sys);
         }
         self.last_poll = Instant::now();
@@ -2163,7 +2208,6 @@ impl LauncherApp {
                     let mut start_grp = None;
                     let mut stop_grp = None;
                     let mut to_save_config = false;
-                    let mut to_reorder = None;
 
                     for (group_name, indices) in groups {
                         ui.add_space(4.0);
@@ -2213,7 +2257,6 @@ impl LauncherApp {
                         ui.add_space(6.0);
 
                         // Server Cards for this group
-                        let total_services = self.services.len();
                         for idx in indices {
                             let s = &mut self.services[idx];
                             let key = s.config.key.clone();
@@ -2428,31 +2471,6 @@ impl LauncherApp {
                                         if ui.add(btn_del).on_hover_text("Delete server").clicked() {
                                             to_delete = Some(key.clone());
                                         }
-
-                                        if idx > 0 {
-                                            let btn_up = egui::Button::new(
-                                                RichText::new("▲").size(9.5).color(Color32::from_rgb(160, 175, 200)),
-                                            )
-                                            .fill(Color32::from_rgb(30, 35, 48))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(50, 56, 75)))
-                                            .rounding(Rounding::same(4.0))
-                                            .min_size(egui::vec2(20.0, 22.0));
-                                            if ui.add(btn_up).on_hover_text("Move server up").clicked() {
-                                                to_reorder = Some((idx, idx - 1));
-                                            }
-                                        }
-                                        if idx + 1 < total_services {
-                                            let btn_down = egui::Button::new(
-                                                RichText::new("▼").size(9.5).color(Color32::from_rgb(160, 175, 200)),
-                                            )
-                                            .fill(Color32::from_rgb(30, 35, 48))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(50, 56, 75)))
-                                            .rounding(Rounding::same(4.0))
-                                            .min_size(egui::vec2(20.0, 22.0));
-                                            if ui.add(btn_down).on_hover_text("Move server down").clicked() {
-                                                to_reorder = Some((idx, idx + 1));
-                                            }
-                                        }
                                     });
 
                                     ui.add_space(4.0);
@@ -2479,14 +2497,6 @@ impl LauncherApp {
                                 });
 
                             ui.add_space(6.0);
-                        }
-                    }
-
-                    if let Some((from, to)) = to_reorder {
-                        if from < self.services.len() && to < self.services.len() {
-                            let s = self.services.remove(from);
-                            self.services.insert(to, s);
-                            self.persist_config();
                         }
                     }
 
@@ -2763,13 +2773,12 @@ impl LauncherApp {
                 }
 
                 let mut to_toggle: Option<(usize, u8)> = None; // 0=stop, 1=start, 2=restart
-                let mut to_reorder: Option<(usize, usize)> = None;
 
                 for &idx in &managed_indices {
                     let s = &self.services[idx];
                     let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
 
-                    let card_height = if is_running { 76.0 } else { 58.0 };
+                    let card_height = if is_running { 90.0 } else { 62.0 };
                     let current_pos = ui.cursor().min;
                     let approx_rect = egui::Rect::from_min_size(current_pos, egui::vec2(ui.available_width(), card_height));
                     if !ui.clip_rect().expand(120.0).intersects(approx_rect) {
@@ -2778,197 +2787,163 @@ impl LauncherApp {
                         continue;
                     }
 
-                    let card_resp = Frame::none()
+                    Frame::none()
                         .fill(p.bg_card)
                         .stroke(Stroke::new(1.0_f32, p.border))
-                        .rounding(Rounding::same(4.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 11.0))
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                         .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                let dot_color = if is_running {
-                                    p.success
-                                } else {
-                                    p.text_muted
-                                };
-                                draw_status_dot(ui, dot_color);
+                            ui.vertical(|ui| {
+                                // Row 1: Status dot, Server Name, Group badge, and Action Buttons (right-aligned)
+                                ui.horizontal(|ui| {
+                                    let dot_color = if is_running {
+                                        p.success
+                                    } else {
+                                        p.text_muted
+                                    };
+                                    draw_status_dot(ui, dot_color);
 
-                                ui.vertical(|ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            RichText::new(&s.config.name)
-                                                .size(13.5)
-                                                .strong()
-                                                .color(p.text_primary),
-                                        );
-                                        render_group_badge(ui, &s.config.group);
+                                    ui.label(
+                                        RichText::new(&s.config.name)
+                                            .size(13.5)
+                                            .strong()
+                                            .color(p.text_primary),
+                                    );
+                                    render_group_badge(ui, &s.config.group);
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if is_running {
+                                            let btn_stop = egui::Button::new(
+                                                RichText::new("Stop").size(11.5).strong().color(Color32::WHITE),
+                                            )
+                                            .fill(p.danger)
+                                            .rounding(Rounding::same(5.0))
+                                            .min_size(egui::vec2(50.0, 24.0));
+                                            if ui.add(btn_stop).clicked() {
+                                                to_toggle = Some((idx, 0));
+                                            }
+
+                                            let btn_restart = egui::Button::new(
+                                                RichText::new("Restart").size(11.5).strong().color(Color32::WHITE),
+                                            )
+                                            .fill(p.warning)
+                                            .rounding(Rounding::same(5.0))
+                                            .min_size(egui::vec2(58.0, 24.0));
+                                            if ui.add(btn_restart).clicked() {
+                                                to_toggle = Some((idx, 2));
+                                            }
+                                        } else {
+                                            let btn_start = egui::Button::new(
+                                                RichText::new("Start").size(11.5).strong().color(Color32::WHITE),
+                                            )
+                                            .fill(p.success)
+                                            .rounding(Rounding::same(5.0))
+                                            .min_size(egui::vec2(54.0, 24.0));
+                                            if ui.add(btn_start).clicked() {
+                                                to_toggle = Some((idx, 1));
+                                            }
+                                        }
+
+                                        let btn_folder = egui::Button::new(
+                                            RichText::new("📁").size(11.0).color(p.text_secondary),
+                                        )
+                                        .fill(p.bg_button)
+                                        .stroke(Stroke::new(1.0_f32, p.border))
+                                        .rounding(Rounding::same(5.0));
+                                        if ui.add(btn_folder).on_hover_text("Open working directory in file manager (xdg-open)").clicked() {
+                                            crate::service::open_folder(&s.config.cwd);
+                                        }
+
+                                        let btn_vscode = egui::Button::new(
+                                            RichText::new("💻").size(11.0).color(p.info),
+                                        )
+                                        .fill(p.bg_button)
+                                        .stroke(Stroke::new(1.0_f32, p.border))
+                                        .rounding(Rounding::same(5.0));
+                                        if ui.add(btn_vscode).on_hover_text("Open in VS Code (code .)").clicked() {
+                                            crate::service::open_in_vscode(&s.config.cwd);
+                                        }
+
+                                        let btn_console = egui::Button::new(
+                                            RichText::new("🖥️").size(11.0).color(Color32::from_rgb(168, 85, 247)),
+                                        )
+                                        .fill(p.bg_button)
+                                        .stroke(Stroke::new(1.0_f32, p.border))
+                                        .rounding(Rounding::same(5.0));
+                                        if ui.add(btn_console).on_hover_text("Open in console / terminal window").clicked() {
+                                            s.open_console();
+                                        }
+
+                                        let st_text = if is_running { "Running" } else { "Stopped" };
+                                        let st_color = if is_running {
+                                            p.success
+                                        } else {
+                                            p.text_muted
+                                        };
+                                        ui.label(RichText::new(st_text).size(12.0).strong().color(st_color));
                                     });
+                                });
 
+                                // Row 2: Command
+                                ui.add_space(3.0);
+                                ui.horizontal(|ui| {
+                                    ui.add_space(20.0);
                                     ui.label(
                                         RichText::new(&s.config.command)
                                             .size(10.5)
                                             .monospace()
                                             .color(p.text_muted),
                                     );
-
-                                    if is_running {
-                                        ui.add_space(4.0);
-                                        ui.horizontal(|ui| {
-                                            if let Some(pid) = s.pid {
-                                                render_metric_pill(
-                                                    ui,
-                                                    "🆔",
-                                                    &format!("PID {}", pid),
-                                                    p.text_muted,
-                                                );
-                                            }
-                                            render_metric_pill(
-                                                ui,
-                                                "⚡",
-                                                &format!("{:.1}%", s.cpu_usage),
-                                                p.info,
-                                            );
-                                            render_metric_pill(
-                                                ui,
-                                                "💾",
-                                                &format!("{:.1} MB", s.memory_mb),
-                                                p.success,
-                                            );
-                                            let uptime = s.uptime_formatted();
-                                            if !uptime.is_empty() {
-                                                render_metric_pill(
-                                                    ui,
-                                                    "⏱️",
-                                                    &uptime,
-                                                    p.warning,
-                                                );
-                                            }
-                                            if s.config.autostart {
-                                                render_metric_pill(
-                                                    ui,
-                                                    "🚀",
-                                                    "Autostart",
-                                                    p.accent_light,
-                                                );
-                                            }
-                                        });
-                                    }
                                 });
 
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if is_running {
-                                        let btn_stop = egui::Button::new(
-                                            RichText::new("Stop").size(11.5).strong().color(Color32::WHITE),
-                                        )
-                                        .fill(p.danger)
-                                        .rounding(Rounding::same(5.0))
-                                        .min_size(egui::vec2(50.0, 24.0));
-                                        if ui.add(btn_stop).clicked() {
-                                            to_toggle = Some((idx, 0));
+                                // Row 3: Live Resource & Runtime Metrics (when running)
+                                if is_running {
+                                    ui.add_space(4.0);
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.add_space(20.0);
+                                        if let Some(pid) = s.pid {
+                                            render_metric_pill(
+                                                ui,
+                                                "🆔",
+                                                &format!("PID {}", pid),
+                                                p.text_muted,
+                                            );
                                         }
-
-                                        let btn_restart = egui::Button::new(
-                                            RichText::new("Restart").size(11.5).strong().color(Color32::WHITE),
-                                        )
-                                        .fill(p.warning)
-                                        .rounding(Rounding::same(5.0))
-                                        .min_size(egui::vec2(58.0, 24.0));
-                                        if ui.add(btn_restart).clicked() {
-                                            to_toggle = Some((idx, 2));
+                                        render_metric_pill(
+                                            ui,
+                                            "⚡",
+                                            &format!("{:.1}%", s.cpu_usage),
+                                            p.info,
+                                        );
+                                        render_metric_pill(
+                                            ui,
+                                            "💾",
+                                            &format!("{:.1} MB", s.memory_mb),
+                                            p.success,
+                                        );
+                                        let uptime = s.uptime_formatted();
+                                        if !uptime.is_empty() {
+                                            render_metric_pill(
+                                                ui,
+                                                "⏱️",
+                                                &uptime,
+                                                p.warning,
+                                            );
                                         }
-                                    } else {
-                                        let btn_start = egui::Button::new(
-                                            RichText::new("Start").size(11.5).strong().color(Color32::WHITE),
-                                        )
-                                        .fill(p.success)
-                                        .rounding(Rounding::same(5.0))
-                                        .min_size(egui::vec2(54.0, 24.0));
-                                        if ui.add(btn_start).clicked() {
-                                            to_toggle = Some((idx, 1));
+                                        if s.config.autostart {
+                                            render_metric_pill(
+                                                ui,
+                                                "🚀",
+                                                "Autostart",
+                                                p.accent_light,
+                                            );
                                         }
-                                    }
-
-                                    let btn_folder = egui::Button::new(
-                                        RichText::new("📁").size(11.0).color(p.text_secondary),
-                                    )
-                                    .fill(p.bg_button)
-                                    .stroke(Stroke::new(1.0_f32, p.border))
-                                    .rounding(Rounding::same(5.0));
-                                    if ui.add(btn_folder).on_hover_text("Open working directory in file manager (xdg-open)").clicked() {
-                                        crate::service::open_folder(&s.config.cwd);
-                                    }
-
-                                    let btn_vscode = egui::Button::new(
-                                        RichText::new("💻").size(11.0).color(p.info),
-                                    )
-                                    .fill(p.bg_button)
-                                    .stroke(Stroke::new(1.0_f32, p.border))
-                                    .rounding(Rounding::same(5.0));
-                                    if ui.add(btn_vscode).on_hover_text("Open in VS Code (code .)").clicked() {
-                                        crate::service::open_in_vscode(&s.config.cwd);
-                                    }
-
-                                    let btn_console = egui::Button::new(
-                                        RichText::new("🖥️").size(11.0).color(Color32::from_rgb(168, 85, 247)),
-                                    )
-                                    .fill(p.bg_button)
-                                    .stroke(Stroke::new(1.0_f32, p.border))
-                                    .rounding(Rounding::same(5.0));
-                                    if ui.add(btn_console).on_hover_text("Open in console / terminal window").clicked() {
-                                        s.open_console();
-                                    }
-
-                                    let st_text = if is_running { "Running" } else { "Stopped" };
-                                    let st_color = if is_running {
-                                        p.success
-                                    } else {
-                                        p.text_muted
-                                    };
-                                    ui.label(RichText::new(st_text).size(12.0).strong().color(st_color));
-                                });
+                                    });
+                                }
                             });
                         });
 
-                    card_resp.response.context_menu(|ui| {
-                        if ui.button("🖥️ Open in Console").clicked() {
-                            if let Some(s) = self.services.get(idx) {
-                                s.open_console();
-                            }
-                            ui.close_menu();
-                        }
-                        ui.separator();
-                        let cur_autostart = self.services.get(idx).map(|s| s.config.autostart).unwrap_or(false);
-                        let auto_label = if cur_autostart { "🚀 Disable Launch Autostart" } else { "🚀 Enable Launch Autostart" };
-                        if ui.button(auto_label).clicked() {
-                            if let Some(s) = self.services.get_mut(idx) {
-                                s.config.autostart = !cur_autostart;
-                                self.persist_config();
-                            }
-                            ui.close_menu();
-                        }
-                        ui.separator();
-                        if idx > 0 {
-                            if ui.button("▲ Move Up").clicked() {
-                                to_reorder = Some((idx, idx - 1));
-                                ui.close_menu();
-                            }
-                        }
-                        if idx + 1 < self.services.len() {
-                            if ui.button("▼ Move Down").clicked() {
-                                to_reorder = Some((idx, idx + 1));
-                                ui.close_menu();
-                            }
-                        }
-                    });
-
                     ui.add_space(6.0);
-                }
-
-                if let Some((from, to)) = to_reorder {
-                    if from < self.services.len() && to < self.services.len() {
-                        let s = self.services.remove(from);
-                        self.services.insert(to, s);
-                        self.persist_config();
-                    }
                 }
 
                 if let Some((idx, op)) = to_toggle {
@@ -3101,7 +3076,13 @@ impl LauncherApp {
                 } else {
                     for listener in &unmanaged_listeners {
                         let is_expanded = self.expanded_listeners.contains(&listener.port);
-                        let card_height = if is_expanded { 150.0 } else { 50.0 };
+                        let card_height = if is_expanded {
+                            170.0
+                        } else if self.show_other_process_metrics {
+                            76.0
+                        } else {
+                            50.0
+                        };
                         let current_pos = ui.cursor().min;
                         let approx_rect = egui::Rect::from_min_size(current_pos, egui::vec2(ui.available_width(), card_height));
                         if !ui.clip_rect().expand(120.0).intersects(approx_rect) {
@@ -3179,24 +3160,6 @@ impl LauncherApp {
                                             p.success,
                                         );
 
-                                        if self.show_other_process_metrics {
-                                            if let Some(pid) = listener.pid {
-                                                let (cpu, mem) = self.other_metrics.get(&pid).copied().unwrap_or((0.0, 0.0));
-                                                render_metric_pill(
-                                                    ui,
-                                                    "⚡",
-                                                    &format!("{:.1}%", cpu),
-                                                    p.info,
-                                                );
-                                                render_metric_pill(
-                                                    ui,
-                                                    "💾",
-                                                    &format!("{:.1} MB", mem),
-                                                    p.success,
-                                                );
-                                            }
-                                        }
-
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             // + Add Server button
                                             let btn_add = egui::Button::new(
@@ -3251,6 +3214,29 @@ impl LauncherApp {
                                             }
                                         });
                                     });
+
+                                    // Row 2: CPU & RAM metrics when enabled, rendered on the line below
+                                    if self.show_other_process_metrics {
+                                        if let Some(pid) = listener.pid {
+                                            let (cpu, mem) = self.other_metrics.get(&pid).copied().unwrap_or((0.0, 0.0));
+                                            ui.add_space(4.0);
+                                            ui.horizontal(|ui| {
+                                                ui.add_space(36.0);
+                                                render_metric_pill(
+                                                    ui,
+                                                    "⚡",
+                                                    &format!("{:.1}%", cpu),
+                                                    p.info,
+                                                );
+                                                render_metric_pill(
+                                                    ui,
+                                                    "💾",
+                                                    &format!("{:.1} MB", mem),
+                                                    p.success,
+                                                );
+                                            });
+                                        }
+                                    }
 
                                     // Expandable location & command details
                                     if is_expanded {
@@ -3723,7 +3709,8 @@ impl LauncherApp {
             }
         };
 
-        // Sub-header above logs: Service name + Metrics + Find toggle + Start/Stop/Restart
+        // Sub-header above logs:
+        // Row 1: Service name + Live Metrics ... Find toggle + Start/Stop/Restart
         let p = self.theme.palette();
         ui.horizontal(|ui| {
             ui.label(
@@ -3805,83 +3792,94 @@ impl LauncherApp {
                 let find_btn = egui::Button::new(
                     RichText::new("🔍 Find (Ctrl+F)")
                         .size(11.0)
-                        .color(p.text_secondary),
+                        .color(if search_is_open { p.accent } else { p.text_secondary }),
                 )
-                .fill(p.bg_button)
+                .fill(if search_is_open { p.accent.gamma_multiply(0.25) } else { p.bg_button })
+                .stroke(Stroke::new(1.0_f32, if search_is_open { p.accent } else { p.border }))
                 .rounding(Rounding::same(4.0));
                 if ui.add(find_btn).clicked() {
                     self.search_open.insert(key.to_string(), !search_is_open);
                 }
-
-                let folder_btn = egui::Button::new(
-                    RichText::new("📁 Folder")
-                        .size(11.0)
-                        .color(p.text_secondary),
-                )
-                .fill(p.bg_button)
-                .rounding(Rounding::same(4.0));
-                if ui.add(folder_btn).on_hover_text("Open working directory in file manager (xdg-open)").clicked() {
-                    let cwd = self.find_service(key).map(|s| s.config.cwd.clone()).unwrap_or_default();
-                    crate::service::open_folder(&cwd);
-                }
-
-                let vscode_btn = egui::Button::new(
-                    RichText::new("💻 VS Code")
-                        .size(11.0)
-                        .color(p.info),
-                )
-                .fill(p.bg_button)
-                .stroke(Stroke::new(1.0_f32, p.border))
-                .rounding(Rounding::same(4.0));
-                if ui.add(vscode_btn).on_hover_text("Open working directory in VS Code (code .)").clicked() {
-                    let cwd = self.find_service(key).map(|s| s.config.cwd.clone()).unwrap_or_default();
-                    crate::service::open_in_vscode(&cwd);
-                }
-
-                let console_btn = egui::Button::new(
-                    RichText::new("🖥️ Console")
-                        .size(11.0)
-                        .color(p.accent_light),
-                )
-                .fill(p.bg_button)
-                .stroke(Stroke::new(1.0_f32, p.border))
-                .rounding(Rounding::same(4.0));
-                if ui.add(console_btn).on_hover_text("Open interactive console / terminal window in working directory").clicked() {
-                    if let Some(s) = self.find_service(key) {
-                        s.open_console();
-                    }
-                }
-
-                let mut auto_restart = self.find_service(key).map(|s| s.config.auto_restart).unwrap_or(false);
-                if ui.checkbox(
-                    &mut auto_restart,
-                    RichText::new("Auto-restart").size(11.0).color(p.accent_light),
-                ).on_hover_text("Auto-restart this server if it exits unexpectedly or crashes").changed() {
-                    if let Some(s) = self.find_service_mut(key) {
-                        s.config.auto_restart = auto_restart;
-                        self.persist_config();
-                    }
-                }
-
-                let mut autostart = self.find_service(key).map(|s| s.config.autostart).unwrap_or(false);
-                if ui.checkbox(
-                    &mut autostart,
-                    RichText::new("🚀 Autostart").size(11.0).color(p.accent_light),
-                ).on_hover_text("Automatically start this server when Server Launcher opens").changed() {
-                    if let Some(s) = self.find_service_mut(key) {
-                        s.config.autostart = autostart;
-                        self.persist_config();
-                    }
-                }
-
-                let mut auto_scroll = self.auto_scroll.get(key).copied().unwrap_or(true);
-                if ui.checkbox(
-                    &mut auto_scroll,
-                    RichText::new("📜 Auto-scroll").size(11.0).color(p.accent_light),
-                ).on_hover_text("Keep pinned to bottom when new logs arrive (uncheck to scroll up smoothly without jitter)").changed() {
-                    self.auto_scroll.insert(key.to_string(), auto_scroll);
-                }
             });
+        });
+
+        ui.add_space(5.0);
+
+        // Row 2: Secondary Tool Buttons & Service / Log Options
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+
+            let vscode_btn = egui::Button::new(
+                RichText::new("💻 VS Code")
+                    .size(11.0)
+                    .color(p.info),
+            )
+            .fill(p.bg_button)
+            .stroke(Stroke::new(1.0_f32, p.border))
+            .rounding(Rounding::same(4.0));
+            if ui.add(vscode_btn).on_hover_text("Open working directory in VS Code (code .)").clicked() {
+                let cwd = self.find_service(key).map(|s| s.config.cwd.clone()).unwrap_or_default();
+                crate::service::open_in_vscode(&cwd);
+            }
+
+            let folder_btn = egui::Button::new(
+                RichText::new("📁 Folder")
+                    .size(11.0)
+                    .color(p.text_secondary),
+            )
+            .fill(p.bg_button)
+            .stroke(Stroke::new(1.0_f32, p.border))
+            .rounding(Rounding::same(4.0));
+            if ui.add(folder_btn).on_hover_text("Open working directory in file manager (xdg-open)").clicked() {
+                let cwd = self.find_service(key).map(|s| s.config.cwd.clone()).unwrap_or_default();
+                crate::service::open_folder(&cwd);
+            }
+
+            let console_btn = egui::Button::new(
+                RichText::new("🖥️ Console")
+                    .size(11.0)
+                    .color(p.accent_light),
+            )
+            .fill(p.bg_button)
+            .stroke(Stroke::new(1.0_f32, p.border))
+            .rounding(Rounding::same(4.0));
+            if ui.add(console_btn).on_hover_text("Open interactive console / terminal window in working directory").clicked() {
+                if let Some(s) = self.find_service(key) {
+                    s.open_console();
+                }
+            }
+
+            ui.add_space(4.0);
+
+            let mut auto_scroll = self.auto_scroll.get(key).copied().unwrap_or(true);
+            if ui.checkbox(
+                &mut auto_scroll,
+                RichText::new("📜 Auto-scroll").size(11.0).color(p.accent_light),
+            ).on_hover_text("Keep pinned to bottom when new logs arrive (uncheck to scroll up smoothly without jitter)").changed() {
+                self.auto_scroll.insert(key.to_string(), auto_scroll);
+            }
+
+            let mut autostart = self.find_service(key).map(|s| s.config.autostart).unwrap_or(false);
+            if ui.checkbox(
+                &mut autostart,
+                RichText::new("🚀 Autostart").size(11.0).color(p.accent_light),
+            ).on_hover_text("Automatically start this server when Server Launcher opens").changed() {
+                if let Some(s) = self.find_service_mut(key) {
+                    s.config.autostart = autostart;
+                    self.persist_config();
+                }
+            }
+
+            let mut auto_restart = self.find_service(key).map(|s| s.config.auto_restart).unwrap_or(false);
+            if ui.checkbox(
+                &mut auto_restart,
+                RichText::new("⏱️ Auto-restart").size(11.0).color(p.accent_light),
+            ).on_hover_text("Auto-restart this server if it exits unexpectedly or crashes").changed() {
+                if let Some(s) = self.find_service_mut(key) {
+                    s.config.auto_restart = auto_restart;
+                    self.persist_config();
+                }
+            }
         });
 
         // Quick Sub-command & Link Buttons Bar (if defined)

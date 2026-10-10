@@ -73,7 +73,7 @@ pub fn get_lan_ip() -> String {
     "127.0.0.1".to_string()
 }
 
-fn scan_system_listening_ports() -> Vec<ListenerInfo> {
+pub fn scan_system_listening_ports() -> Vec<ListenerInfo> {
     let mut map: BTreeMap<u16, ListenerInfo> = BTreeMap::new();
 
     #[cfg(not(target_os = "windows"))]

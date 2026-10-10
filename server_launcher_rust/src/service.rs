@@ -203,6 +203,10 @@ impl Service {
                 self.pid = Some(pid);
                 self.started_at = Some(std::time::Instant::now());
                 self.state = ServiceState::Running;
+
+                let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
+                let _ = std::fs::write(&pid_file, pid.to_string());
+
                 self.append_log(
                     format!("[launcher] Process spawned (PID: {})", pid),
                     LogKind::Launcher,
@@ -242,6 +246,59 @@ impl Service {
         }
     }
 
+    pub fn attach_existing(&mut self, pid: u32, is_port_listener: bool) {
+        if self.state == ServiceState::Running {
+            return;
+        }
+
+        self.pid = Some(pid);
+        self.state = ServiceState::Running;
+        self.started_at = Some(std::time::Instant::now());
+        self.port_open = self.config.port > 0;
+        self.restart_at = None;
+
+        let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
+        let _ = std::fs::write(&pid_file, pid.to_string());
+
+        let reason = if is_port_listener {
+            format!("active listener on port :{}", self.config.port)
+        } else {
+            "recorded in PID file from previous session".to_string()
+        };
+
+        self.append_log(
+            format!(
+                "[launcher] Reconnected to previously running process (PID: {}, {}).",
+                pid, reason
+            ),
+            LogKind::Launcher,
+        );
+        self.append_log(
+            "[launcher] Terminal session re-attached. Controls and inputs are ready.".to_string(),
+            LogKind::Launcher,
+        );
+
+        #[cfg(target_os = "linux")]
+        {
+            let logs_clone = Arc::clone(&self.logs);
+            let max_logs = self.max_logs;
+            thread::spawn(move || {
+                if let Ok(output) = Command::new("journalctl")
+                    .args(["-q", &format!("_PID={}", pid), "-n", "25", "--no-pager"])
+                    .output()
+                {
+                    let out = String::from_utf8_lossy(&output.stdout);
+                    for line in out.lines() {
+                        let trimmed = line.trim();
+                        if !trimmed.is_empty() {
+                            push_log_line(trimmed, &logs_clone, max_logs, LogKind::Stdout);
+                        }
+                    }
+                }
+            });
+        }
+    }
+
     pub fn stop(&mut self) {
         self.restart_at = None;
         if self.state == ServiceState::Stopped {
@@ -272,19 +329,17 @@ impl Service {
             });
         }
 
-        if self.config.own_console {
-            let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
-            if let Ok(content) = std::fs::read_to_string(&pid_file) {
-                if let Ok(p) = content.trim().parse::<u32>() {
-                    #[cfg(unix)]
-                    unsafe {
-                        libc::kill(-(p as i32), libc::SIGKILL);
-                        libc::kill(p as i32, libc::SIGKILL);
-                    }
+        let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
+        if let Ok(content) = std::fs::read_to_string(&pid_file) {
+            if let Ok(p) = content.trim().parse::<u32>() {
+                #[cfg(unix)]
+                unsafe {
+                    libc::kill(-(p as i32), libc::SIGKILL);
+                    libc::kill(p as i32, libc::SIGKILL);
                 }
             }
-            let _ = std::fs::remove_file(&pid_file);
         }
+        let _ = std::fs::remove_file(&pid_file);
 
         if let Some(pid) = self.pid {
             #[cfg(target_os = "windows")]
@@ -299,8 +354,9 @@ impl Service {
             {
                 #[cfg(unix)]
                 unsafe {
-                    // Try graceful SIGTERM to process group, then SIGKILL
+                    // Try graceful SIGTERM to process group, then direct process
                     libc::kill(-(pid as i32), libc::SIGTERM);
+                    libc::kill(pid as i32, libc::SIGTERM);
                 }
             }
         }
@@ -359,6 +415,18 @@ impl Service {
                 return;
             }
         }
+
+        #[cfg(target_os = "linux")]
+        if let Some(pid) = self.pid {
+            let stdin_path = format!("/proc/{}/fd/0", pid);
+            if let Ok(mut file) = std::fs::OpenOptions::new().write(true).open(&stdin_path) {
+                let _ = writeln!(file, "{}", input_text);
+                let _ = file.flush();
+                self.append_log(format!("> {}", input_text), LogKind::Stdin);
+                return;
+            }
+        }
+
         self.append_log(
             format!("[warning] Cannot send '{}': server is not running or stdin is closed.", input_text),
             LogKind::Warning,
@@ -521,6 +589,52 @@ impl Service {
                     self.state = ServiceState::Running;
                 }
                 Err(_) => {}
+            }
+        } else if let Some(pid) = self.pid {
+            #[cfg(unix)]
+            let alive = unsafe { libc::kill(pid as i32, 0) == 0 };
+            #[cfg(not(unix))]
+            let alive = sys.process(Pid::from_u32(pid)).is_some();
+
+            if !alive {
+                self.state = ServiceState::Stopped;
+                self.pid = None;
+                self.child_handle = None;
+                self.started_at = None;
+                self.cpu_usage = 0.0;
+                self.memory_mb = 0.0;
+                self.port_open = false;
+                let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
+                let _ = std::fs::remove_file(&pid_file);
+
+                self.append_log(
+                    "[launcher] Attached process terminated.".to_string(),
+                    LogKind::Launcher,
+                );
+
+                if self.config.auto_restart {
+                    let now = std::time::Instant::now();
+                    self.crash_timestamps.retain(|&t| now.duration_since(t) < Duration::from_secs(10));
+                    self.crash_timestamps.push(now);
+
+                    if self.crash_timestamps.len() > 5 {
+                        self.append_log(
+                            "[launcher] Crash loop detected (>5 crashes in 10s). Auto-restart paused. Click 'Start' to retry.".to_string(),
+                            LogKind::Error,
+                        );
+                        self.restart_at = None;
+                    } else {
+                        self.state = ServiceState::Errored;
+                        self.append_log(
+                            "[launcher] Auto-restart on crash enabled. Restarting in 2 seconds...".to_string(),
+                            LogKind::Warning,
+                        );
+                        self.restart_at = Some(now + Duration::from_millis(2000));
+                    }
+                }
+                return;
+            } else {
+                self.state = ServiceState::Running;
             }
         }
 
@@ -1228,6 +1342,47 @@ mod tests {
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].kind, LogKind::Warning);
         assert!(logs[0].text.contains("Cannot send 'h': server is not running or stdin is closed."));
+    }
+
+    #[test]
+    fn test_service_attach_existing_and_stop() {
+        let cfg = ServerConfig {
+            key: "test_attach".to_string(),
+            name: "Attach Test".to_string(),
+            command: "sleep 10".to_string(),
+            cwd: ".".to_string(),
+            port: 8080,
+            auto_restart: false,
+            autostart: false,
+            group: "default".to_string(),
+            env: std::collections::HashMap::new(),
+            actions: Vec::new(),
+            links: Vec::new(),
+            stop_command: String::new(),
+            own_console: false,
+        };
+        let mut s = Service::new(cfg);
+        assert_eq!(s.state, ServiceState::Stopped);
+        assert!(!s.is_active());
+
+        // Attach to current test process PID
+        let current_pid = std::process::id();
+        s.attach_existing(current_pid, true);
+
+        assert_eq!(s.state, ServiceState::Running);
+        assert_eq!(s.pid, Some(current_pid));
+        assert!(s.port_open);
+        assert!(s.is_active());
+
+        let logs = s.logs.lock().unwrap();
+        assert!(logs.iter().any(|entry| entry.text.contains("Reconnected to previously running process")));
+        assert!(logs.iter().any(|entry| entry.text.contains("Terminal session re-attached")));
+        drop(logs);
+
+        // Check that PID file was written
+        let pid_file = std::env::temp_dir().join("launcher_test_attach.pid");
+        assert!(pid_file.exists());
+        let _ = std::fs::remove_file(&pid_file);
     }
 }
 

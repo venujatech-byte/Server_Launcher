@@ -1296,3 +1296,144 @@ fn uuid_short() -> String {
     format!("{:x}", d.as_millis() % 0xffffff)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseConfirmChoice {
+    None,
+    Cancel,
+    StopAndExit,
+    KeepRunningAndExit,
+}
+
+pub fn render_close_confirmation_modal(
+    ctx: &Context,
+    open: &mut bool,
+    running_servers: &[(String, Option<u16>, Option<u32>)],
+    palette: &ThemePalette,
+) -> CloseConfirmChoice {
+    if !*open {
+        return CloseConfirmChoice::None;
+    }
+
+    let mut choice = CloseConfirmChoice::None;
+    let mut is_open = *open;
+
+    Window::new("Exit Confirmation")
+        .open(&mut is_open)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .default_width(460.0)
+        .default_height(280.0)
+        .show(ctx, |ui| {
+            ui.vertical(|ui| {
+                // Header with warning icon
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("⚠️").size(24.0));
+                    ui.add_space(4.0);
+                    ui.vertical(|ui| {
+                        ui.label(
+                            RichText::new("Active Servers Still Running")
+                                .size(16.0)
+                                .strong()
+                                .color(palette.text_primary),
+                        );
+                        ui.label(
+                            RichText::new(format!(
+                                "You have {} active server{} running.",
+                                running_servers.len(),
+                                if running_servers.len() == 1 { "" } else { "s" }
+                            ))
+                            .size(12.0)
+                            .color(palette.text_muted),
+                        );
+                    });
+                });
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                ui.label(
+                    RichText::new("Would you like to stop all running servers before exiting, or leave them running in the background?")
+                        .size(12.5)
+                        .color(palette.text_secondary),
+                );
+
+                ui.add_space(8.0);
+
+                // Running servers list
+                egui::Frame::none()
+                    .fill(palette.bg_subtle)
+                    .stroke(Stroke::new(1.0_f32, palette.border))
+                    .rounding(Rounding::same(6.0))
+                    .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(100.0)
+                            .show(ui, |ui| {
+                                for (name, port, pid) in running_servers {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("●").size(10.0).color(palette.success));
+                                        ui.label(RichText::new(name).size(12.0).strong().color(palette.text_primary));
+                                        if let Some(p) = port {
+                                            if *p > 0 {
+                                                ui.label(RichText::new(format!(":{}", p)).size(11.0).color(palette.accent));
+                                            }
+                                        }
+                                        if let Some(id) = pid {
+                                            ui.label(RichText::new(format!("(PID {})", id)).size(10.5).color(palette.text_muted));
+                                        }
+                                    });
+                                }
+                            });
+                    });
+
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(10.0);
+
+                // Action buttons: Cancel, Keep Running & Exit, Stop & Exit
+                ui.horizontal(|ui| {
+                    if ui.button(RichText::new("Cancel").size(12.0).color(palette.text_secondary)).clicked() {
+                        choice = CloseConfirmChoice::Cancel;
+                    }
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let btn_stop = egui::Button::new(
+                            RichText::new("🛑 Stop & Exit").size(12.0).strong().color(Color32::WHITE),
+                        )
+                        .fill(palette.danger)
+                        .rounding(Rounding::same(5.0))
+                        .min_size(egui::vec2(100.0, 28.0));
+
+                        if ui.add(btn_stop).clicked() {
+                            choice = CloseConfirmChoice::StopAndExit;
+                        }
+
+                        let btn_keep = egui::Button::new(
+                            RichText::new("Keep Running & Exit").size(12.0).color(palette.text_primary),
+                        )
+                        .fill(palette.bg_button)
+                        .stroke(Stroke::new(1.0_f32, palette.border))
+                        .rounding(Rounding::same(5.0))
+                        .min_size(egui::vec2(130.0, 28.0));
+
+                        if ui.add(btn_keep).on_hover_text("Leave processes active in the background. Server Launcher will reconnect to them when reopened.").clicked() {
+                            choice = CloseConfirmChoice::KeepRunningAndExit;
+                        }
+                    });
+                });
+            });
+        });
+
+    if !is_open && choice == CloseConfirmChoice::None {
+        choice = CloseConfirmChoice::Cancel;
+    }
+
+    if choice != CloseConfirmChoice::None {
+        *open = false;
+    }
+
+    choice
+}
+

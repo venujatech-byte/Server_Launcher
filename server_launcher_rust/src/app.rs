@@ -1,7 +1,8 @@
 use crate::config::{ConfigFile, SshRemoteHost};
 use crate::modals::{
-    render_add_edit_modal, render_command_palette, render_ssh_host_modal, AddEditModalState,
-    CommandPaletteState, ModalAction, PaletteAction, SshHostModalState,
+    render_add_edit_modal, render_command_palette, render_ssh_host_modal,
+    render_close_confirmation_modal, CloseConfirmChoice,
+    AddEditModalState, CommandPaletteState, ModalAction, PaletteAction, SshHostModalState,
 };
 use crate::remote::{
     build_ssh_command, fetch_remote_listeners, import_from_ssh_config,
@@ -112,6 +113,8 @@ pub struct LauncherApp {
     pub auto_scroll: HashMap<String, bool>,
     proc_info_cache: HashMap<u32, (Option<String>, Option<String>, Instant)>,
     remote_search_query: HashMap<String, String>,
+    // Close confirmation dialog state
+    close_confirm_open: bool,
 }
 
 pub struct ExternalTerminalSession {
@@ -263,6 +266,7 @@ impl LauncherApp {
             auto_scroll: HashMap::new(),
             proc_info_cache: HashMap::new(),
             remote_search_query: HashMap::new(),
+            close_confirm_open: false,
         }
     }
 
@@ -1657,22 +1661,54 @@ fn read_proc_cmd_and_cwd(pid: u32) -> (Option<String>, Option<String>) {
 
 impl eframe::App for LauncherApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        // ── Close Confirmation ──────────────────────────────────────────────
         let any_running = self.services.iter().any(|s| {
             s.state == ServiceState::Running || s.state == ServiceState::Starting || s.restart_at.is_some()
         });
 
-        // Periodic poll only if any services are active (every 1000ms)
-        if any_running && self.last_poll.elapsed() >= std::time::Duration::from_millis(1000) {
+        if ctx.input(|i| i.viewport().close_requested()) {
+            if any_running && !self.close_confirm_open {
+                // Block close and show dialog
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.close_confirm_open = true;
+            }
+            // If no running servers, egui will close normally
+        }
+
+        if self.close_confirm_open {
+            let running_info: Vec<(String, Option<u16>, Option<u32>)> = self.services.iter()
+                .filter(|s| s.state == ServiceState::Running || s.state == ServiceState::Starting)
+                .map(|s| (s.config.name.clone(), if s.config.port > 0 { Some(s.config.port) } else { None }, s.pid))
+                .collect();
+            let p = self.theme.palette();
+            let choice = render_close_confirmation_modal(ctx, &mut self.close_confirm_open, &running_info, &p);
+            match choice {
+                CloseConfirmChoice::StopAndExit => {
+                    self.stop_all();
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                CloseConfirmChoice::KeepRunningAndExit => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                CloseConfirmChoice::Cancel => {
+                    self.close_confirm_open = false;
+                }
+                CloseConfirmChoice::None => {}
+            }
+        }
+
+        // Periodic poll only if any services are active (every 2s)
+        if any_running && self.last_poll.elapsed() >= std::time::Duration::from_millis(2000) {
             for s in &mut self.services {
                 s.poll_status(&mut self.sys);
             }
             self.last_poll = Instant::now();
         }
 
-        // Periodic poll for other listening processes if user ticked the checkbox
+        // Periodic poll for other listening processes if user ticked the checkbox (every 3s)
         if self.show_other_process_metrics && self.active_tab == "overview" {
-            ctx.request_repaint_after(std::time::Duration::from_millis(1000));
-            if self.other_metrics.is_empty() || self.last_other_poll.elapsed() >= std::time::Duration::from_millis(1000) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(3000));
+            if self.other_metrics.is_empty() || self.last_other_poll.elapsed() >= std::time::Duration::from_millis(3000) {
                 let listeners = self.scanner.get_listeners();
                 let pids: Vec<u32> = listeners.iter().filter_map(|l| l.pid).collect();
                 if !pids.is_empty() {
@@ -2062,14 +2098,17 @@ impl eframe::App for LauncherApp {
         }
 
         let is_scanning = self.scanner.is_scanning.lock().map(|s| *s).unwrap_or(false);
-        if is_scanning {
-            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        if self.close_confirm_open {
+            // Keep repainting while confirmation dialog is open
+            ctx.request_repaint();
+        } else if is_scanning {
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
         } else if any_running {
-            // When servers are running, repaint every 500ms for smooth stats & uptime display
-            ctx.request_repaint_after(std::time::Duration::from_millis(500));
+            // When servers are running, repaint every 1.5s — stats update rate doesn't need to be faster
+            ctx.request_repaint_after(std::time::Duration::from_millis(1500));
         } else {
-            // When idle, sleep and repaint reactively on user interaction or 2s heartbeat
-            ctx.request_repaint_after(std::time::Duration::from_secs(2));
+            // When fully idle, repaint reactively on user interaction only (4s heartbeat)
+            ctx.request_repaint_after(std::time::Duration::from_secs(4));
         }
     }
 }

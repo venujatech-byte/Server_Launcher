@@ -63,6 +63,8 @@ pub struct Service {
 
     pub restart_at: Option<std::time::Instant>,
     pub crash_timestamps: Vec<std::time::Instant>,
+    // Rate-limit TCP port probes to every 5 seconds
+    last_port_check: std::time::Instant,
 }
 
 impl Service {
@@ -75,12 +77,14 @@ impl Service {
             cpu_usage: 0.0,
             memory_mb: 0.0,
             started_at: None,
-            logs: Arc::new(Mutex::new(VecDeque::with_capacity(3000))),
+            logs: Arc::new(Mutex::new(VecDeque::with_capacity(2000))),
             stdin_writer: None,
             child_handle: None,
-            max_logs: 3000,
+            max_logs: 2000,
             restart_at: None,
             crash_timestamps: Vec::new(),
+            // Initialize far in the past so first poll immediately checks the port
+            last_port_check: std::time::Instant::now() - std::time::Duration::from_secs(10),
         }
     }
 
@@ -256,6 +260,8 @@ impl Service {
         self.started_at = Some(std::time::Instant::now());
         self.port_open = self.config.port > 0;
         self.restart_at = None;
+        // Allow port check to run soon after reconnect
+        self.last_port_check = std::time::Instant::now() - std::time::Duration::from_secs(10);
 
         let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
         let _ = std::fs::write(&pid_file, pid.to_string());
@@ -680,10 +686,13 @@ impl Service {
                 self.memory_mb = (total_mem_bytes as f32) / (1024.0 * 1024.0);
             }
 
-            // Poll port if configured with tiny timeout
+            // Poll port if configured — rate-limited to every 5s to avoid I/O overhead
             if self.config.port > 0 {
-                let addr = SocketAddr::from(([127, 0, 0, 1], self.config.port));
-                self.port_open = TcpStream::connect_timeout(&addr, Duration::from_millis(20)).is_ok();
+                if self.last_port_check.elapsed() >= Duration::from_secs(5) {
+                    let addr = SocketAddr::from(([127, 0, 0, 1], self.config.port));
+                    self.port_open = TcpStream::connect_timeout(&addr, Duration::from_millis(20)).is_ok();
+                    self.last_port_check = std::time::Instant::now();
+                }
             }
         } else {
             self.port_open = false;

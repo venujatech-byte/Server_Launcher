@@ -156,6 +156,7 @@ pub struct AddEditModalState {
     pub port_str: String,
     pub own_console: bool,
     pub auto_restart: bool,
+    pub autostart: bool,
     pub env_text: String,
     pub actions: Vec<(String, String)>,
     pub links: Vec<(String, String)>,
@@ -177,6 +178,7 @@ impl AddEditModalState {
         self.port_str = "0".to_string();
         self.own_console = false;
         self.auto_restart = false;
+        self.autostart = false;
         self.env_text.clear();
         self.actions.clear();
         self.links.clear();
@@ -219,6 +221,7 @@ impl AddEditModalState {
         self.port_str = cfg.port.to_string();
         self.own_console = cfg.own_console;
         self.auto_restart = cfg.auto_restart;
+        self.autostart = cfg.autostart;
 
         let mut env_lines = Vec::new();
         for (k, v) in &cfg.env {
@@ -363,6 +366,7 @@ impl AddEditModalState {
             group,
             own_console: self.own_console,
             auto_restart: self.auto_restart,
+            autostart: self.autostart,
             env,
             actions,
             links,
@@ -393,6 +397,8 @@ pub enum PaletteAction {
     StartAll,
     StopAll,
     SetTheme(String),
+    ToggleAppAutostart,
+    ToggleServerAutostart(String),
 }
 
 #[derive(Default)]
@@ -662,12 +668,26 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                         &mut state.auto_restart,
                         RichText::new("Auto-restart on crash")
                             .size(12.0)
-                            .color(Color32::from_rgb(220, 225, 235)),
+                            .color(palette.text_primary),
                     );
                     ui.label(
                         RichText::new("Automatically restarts this server if the process exits unexpectedly or crashes")
                             .size(10.5)
-                            .color(Color32::from_rgb(123, 131, 148)),
+                            .color(palette.text_muted),
+                    );
+                    ui.add_space(8.0);
+
+                    // Run at startup checkbox
+                    ui.checkbox(
+                        &mut state.autostart,
+                        RichText::new("🚀 Run server at startup")
+                            .size(12.0)
+                            .color(palette.text_primary),
+                    );
+                    ui.label(
+                        RichText::new("Automatically launches this server whenever Server Launcher opens")
+                            .size(10.5)
+                            .color(palette.text_muted),
                     );
                     ui.add_space(8.0);
 

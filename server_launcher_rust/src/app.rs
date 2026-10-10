@@ -106,6 +106,7 @@ pub struct LauncherApp {
     remote_connection_status: Arc<Mutex<HashMap<String, Result<String, String>>>>,
     remote_connecting: Arc<Mutex<BTreeSet<String>>>,
     pub theme: ThemeMode,
+    pub app_autostart: bool,
 }
 
 pub struct ExternalTerminalSession {
@@ -117,11 +118,25 @@ impl LauncherApp {
         let config_path = ConfigFile::default_path();
         let config_file = ConfigFile::load_from_file(&config_path);
 
-        let services = config_file
+        let mut services: Vec<Service> = config_file
             .servers
             .into_iter()
             .map(Service::new)
             .collect();
+
+        // 🚀 Automatically start servers configured to run at startup
+        for s in &mut services {
+            if s.config.autostart {
+                s.start();
+            }
+        }
+
+        // 🚀 App autostart check and synchronization with system
+        let sys_autostart = crate::autostart::is_app_autostart_enabled();
+        let app_autostart = config_file.app_autostart || sys_autostart;
+        if config_file.app_autostart && !sys_autostart {
+            let _ = crate::autostart::set_app_autostart(true);
+        }
 
         let scanner = SystemPortScanner::new();
         scanner.trigger_scan();
@@ -196,6 +211,7 @@ impl LauncherApp {
             remote_connection_status,
             remote_connecting,
             theme,
+            app_autostart,
         }
     }
 
@@ -204,6 +220,7 @@ impl LauncherApp {
             servers: self.services.iter().map(|s| s.config.clone()).collect(),
             ssh_hosts: self.ssh_hosts.clone(),
             theme: Some(self.theme.id_str().to_string()),
+            app_autostart: self.app_autostart,
         };
         let _ = cfg.save_to_file(&self.config_path);
     }
@@ -652,6 +669,24 @@ impl LauncherApp {
             items.push((
                 format!("🎨  Switch Theme: {} {}", thm.emoji(), thm.name()),
                 PaletteAction::SetTheme(thm.id_str().to_string()),
+            ));
+        }
+
+        // 5. Autostart Actions
+        let app_auto = crate::autostart::is_app_autostart_enabled();
+        items.push((
+            format!("🚀  App Autostart on System Login: {}", if app_auto { "Disable" } else { "Enable" }),
+            PaletteAction::ToggleAppAutostart,
+        ));
+
+        for s in &self.services {
+            items.push((
+                format!(
+                    "🚀  Server Autostart on Launch: {} ({})",
+                    s.config.name,
+                    if s.config.autostart { "Disable" } else { "Enable" }
+                ),
+                PaletteAction::ToggleServerAutostart(s.config.key.clone()),
             ));
         }
 
@@ -1650,6 +1685,37 @@ impl eframe::App for LauncherApp {
                             self.add_edit_modal.open_new();
                         }
 
+                        // App Boot/Startup toggle button
+                        let is_boot = crate::autostart::is_app_autostart_enabled();
+                        let (boot_label, boot_color) = if is_boot {
+                            ("🚀 Boot: ON", p.success)
+                        } else {
+                            ("🚀 Boot: OFF", p.text_muted)
+                        };
+                        let btn_boot = egui::Button::new(
+                            RichText::new(boot_label)
+                                .size(11.5)
+                                .strong()
+                                .color(boot_color),
+                        )
+                        .fill(p.bg_button)
+                        .stroke(Stroke::new(1.0_f32, if is_boot { p.success } else { p.border }))
+                        .rounding(Rounding::same(4.0))
+                        .min_size(egui::vec2(86.0, 26.0));
+                        if ui.add(btn_boot)
+                            .on_hover_text(if is_boot {
+                                "App autostart is ON: Server Launcher runs on system login/boot. Click to turn OFF."
+                            } else {
+                                "App autostart is OFF. Click to make Server Launcher run on system login/boot."
+                            })
+                            .clicked()
+                        {
+                            let new_state = !is_boot;
+                            let _ = crate::autostart::set_app_autostart(new_state);
+                            self.app_autostart = new_state;
+                            self.persist_config();
+                        }
+
                         // Theme Selector
                         let prev_theme = self.theme;
                         egui::ComboBox::from_id_salt("top_theme_picker")
@@ -1870,6 +1936,18 @@ impl eframe::App for LauncherApp {
                 self.theme = thm;
                 ctx.set_visuals(thm.palette().egui_visuals());
                 self.persist_config();
+            }
+            ModalAction::ExecutePaletteAction(PaletteAction::ToggleAppAutostart) => {
+                let current = crate::autostart::is_app_autostart_enabled();
+                let _ = crate::autostart::set_app_autostart(!current);
+                self.app_autostart = !current;
+                self.persist_config();
+            }
+            ModalAction::ExecutePaletteAction(PaletteAction::ToggleServerAutostart(k)) => {
+                if let Some(s) = self.find_service_mut(&k) {
+                    s.config.autostart = !s.config.autostart;
+                    self.persist_config();
+                }
             }
             _ => {}
         }
@@ -2183,16 +2261,17 @@ impl LauncherApp {
                                             }
                                         }
 
+                                        let autostart_color = if s.config.autostart { p.accent } else { p.text_muted };
                                         if ui.checkbox(
-                                            &mut s.config.own_console,
-                                            RichText::new("console").size(11.0).color(Color32::from_rgb(148, 163, 184)),
-                                        ).changed() {
+                                            &mut s.config.autostart,
+                                            RichText::new("🚀 autostart").size(11.0).color(autostart_color),
+                                        ).on_hover_text("Automatically start this server when Server Launcher opens").changed() {
                                             to_save_config = true;
                                         }
 
                                         if ui.checkbox(
                                             &mut s.config.auto_restart,
-                                            RichText::new("auto-restart").size(11.0).color(Color32::from_rgb(148, 163, 184)),
+                                            RichText::new("auto-restart").size(11.0).color(p.text_muted),
                                         ).on_hover_text("Auto-restart this server if it exits unexpectedly or crashes").changed() {
                                             to_save_config = true;
                                         }
@@ -2625,6 +2704,14 @@ impl LauncherApp {
                                                     p.warning,
                                                 );
                                             }
+                                            if s.config.autostart {
+                                                render_metric_pill(
+                                                    ui,
+                                                    "🚀",
+                                                    "Autostart",
+                                                    p.accent_light,
+                                                );
+                                            }
                                         });
                                     }
                                 });
@@ -2712,6 +2799,16 @@ impl LauncherApp {
                     }
 
                     card_resp.response.context_menu(|ui| {
+                        let cur_autostart = self.services.get(idx).map(|s| s.config.autostart).unwrap_or(false);
+                        let auto_label = if cur_autostart { "🚀 Disable Launch Autostart" } else { "🚀 Enable Launch Autostart" };
+                        if ui.button(auto_label).clicked() {
+                            if let Some(s) = self.services.get_mut(idx) {
+                                s.config.autostart = !cur_autostart;
+                                self.persist_config();
+                            }
+                            ui.close_menu();
+                        }
+                        ui.separator();
                         if idx > 0 {
                             if ui.button("▲ Move Up").clicked() {
                                 to_reorder = Some((idx, idx - 1));
@@ -3579,6 +3676,17 @@ impl LauncherApp {
                 ).on_hover_text("Auto-restart this server if it exits unexpectedly or crashes").changed() {
                     if let Some(s) = self.find_service_mut(key) {
                         s.config.auto_restart = auto_restart;
+                        self.persist_config();
+                    }
+                }
+
+                let mut autostart = self.find_service(key).map(|s| s.config.autostart).unwrap_or(false);
+                if ui.checkbox(
+                    &mut autostart,
+                    RichText::new("🚀 Autostart").size(11.0).color(p.accent_light),
+                ).on_hover_text("Automatically start this server when Server Launcher opens").changed() {
+                    if let Some(s) = self.find_service_mut(key) {
+                        s.config.autostart = autostart;
                         self.persist_config();
                     }
                 }

@@ -29,6 +29,8 @@ Server Launcher comes out-of-the-box with 7 handcrafted color palettes:
 
 ### 🖥️ Native Process Management
 - **One-Click Lifecycle**: Start, stop, and restart individual servers or batch-control everything with **Start All** and **Stop All**.
+- **🚀 System Startup Autostart**: Seamless toggle in the top bar (`🚀 Boot: ON / OFF`) to automatically launch Server Launcher when your system boots/logs in (Linux XDG Autostart `~/.config/autostart` and Windows Startup).
+- **🚀 Per-Server Launch Autostart**: Configure individual servers with the `🚀 autostart` checkbox to start running immediately whenever Server Launcher is opened.
 - **Auto-Restart on Crash**: Per-server crash guard option that monitors exit codes and automatically restarts failed services after a short delay.
 - **Port-Aware Status Detection**: Monitors process sockets and marks services as `Running` once their configured TCP port is bound and listening.
 - **Pre-Stop Command Hooks**: Run graceful shutdown or data backup scripts before process termination (e.g., `firebase emulators:export ./data`).
@@ -74,6 +76,7 @@ Server_Launcher/
 │       ├── scanner.rs             # Local port scanner & sysinfo monitor
 │       ├── remote.rs              # Remote SSH connector & port inspector
 │       ├── modals.rs              # Add/edit dialogs, SSH modal, Command Palette
+│       ├── autostart.rs           # System boot/login autostart (XDG & Windows)
 │       └── config.rs              # Configuration schema & JSON persistence
 │
 ├── server_launcher_linux.py       # Python Tkinter Desktop GUI (Linux optimized)

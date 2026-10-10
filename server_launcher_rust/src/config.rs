@@ -33,6 +33,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub auto_restart: bool,
     #[serde(default)]
+    pub autostart: bool,
+    #[serde(default)]
     pub env: HashMap<String, String>,
     #[serde(default)]
     pub actions: Vec<CustomAction>,
@@ -80,6 +82,8 @@ pub struct ConfigFile {
     pub ssh_hosts: Vec<SshRemoteHost>,
     #[serde(default)]
     pub theme: Option<String>,
+    #[serde(default)]
+    pub app_autostart: bool,
 }
 
 impl ConfigFile {

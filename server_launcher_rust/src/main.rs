@@ -4,6 +4,7 @@ mod modals;
 mod remote;
 mod scanner;
 mod service;
+pub mod autostart;
 pub mod theme;
 
 use app::LauncherApp;

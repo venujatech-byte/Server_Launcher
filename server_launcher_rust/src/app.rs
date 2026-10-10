@@ -75,10 +75,13 @@ pub struct LauncherApp {
 
     // Expanded view state for external listening processes
     expanded_listeners: BTreeSet<u16>,
+
+    // App header icon texture
+    icon_texture: Option<egui::TextureHandle>,
 }
 
 impl LauncherApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let config_path = ConfigFile::default_path();
         let config_file = ConfigFile::load_from_file(&config_path);
 
@@ -90,6 +93,22 @@ impl LauncherApp {
 
         let scanner = SystemPortScanner::new();
         scanner.trigger_scan();
+
+        let icon_texture = {
+            let png_bytes = include_bytes!("../assets/icon.png");
+            if let Ok(img) = image::load_from_memory(png_bytes) {
+                let rgba = img.to_rgba8();
+                let (w, h) = (rgba.width() as usize, rgba.height() as usize);
+                let color_image = egui::ColorImage::from_rgba_unmultiplied([w, h], &rgba.into_raw());
+                Some(cc.egui_ctx.load_texture(
+                    "app_header_icon",
+                    color_image,
+                    egui::TextureOptions::LINEAR,
+                ))
+            } else {
+                None
+            }
+        };
 
         Self {
             config_path,
@@ -113,6 +132,7 @@ impl LauncherApp {
             focus_overview_search: false,
             autocomplete_selected: 0,
             expanded_listeners: BTreeSet::new(),
+            icon_texture,
         }
     }
 
@@ -470,7 +490,15 @@ impl eframe::App for LauncherApp {
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    // Left: Server Launcher title & status line
+                    // Left: App Icon + Server Launcher title & status line
+                    if let Some(texture) = &self.icon_texture {
+                        ui.add(
+                            egui::Image::from_texture(texture)
+                                .fit_to_exact_size(egui::vec2(36.0, 36.0))
+                                .rounding(Rounding::same(6.0)),
+                        );
+                        ui.add_space(4.0);
+                    }
                     ui.vertical(|ui| {
                         ui.label(
                             RichText::new("Server Launcher")

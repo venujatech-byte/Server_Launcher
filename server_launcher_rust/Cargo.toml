@@ -13,6 +13,7 @@ serde_json = "1.0"
 sysinfo = "0.31"
 chrono = "0.4"
 rfd = "0.15"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

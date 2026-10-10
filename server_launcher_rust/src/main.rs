@@ -7,12 +7,33 @@ mod service;
 use app::LauncherApp;
 use eframe::egui::{self, Color32, Rounding, Visuals};
 
+pub fn load_app_icon() -> Option<egui::IconData> {
+    let png_bytes = include_bytes!("../assets/icon.png");
+    if let Ok(img) = image::load_from_memory(png_bytes) {
+        let rgba = img.to_rgba8();
+        let (width, height) = (rgba.width(), rgba.height());
+        Some(egui::IconData {
+            rgba: rgba.into_raw(),
+            width,
+            height,
+        })
+    } else {
+        None
+    }
+}
+
 fn main() -> eframe::Result<()> {
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("Server Launcher (Rust)")
+        .with_inner_size([1200.0, 780.0])
+        .with_min_inner_size([800.0, 500.0]);
+
+    if let Some(icon) = load_app_icon() {
+        viewport = viewport.with_icon(icon);
+    }
+
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Server Launcher (Rust)")
-            .with_inner_size([1200.0, 780.0])
-            .with_min_inner_size([800.0, 500.0]),
+        viewport,
         ..Default::default()
     };
 

@@ -145,7 +145,7 @@ impl LauncherApp {
         scanner.trigger_scan();
 
         let icon_texture = {
-            let png_bytes = include_bytes!("../assets/icon.png");
+            let png_bytes = include_bytes!("../assets/icon_96.png");
             if let Ok(img) = image::load_from_memory(png_bytes) {
                 let rgba = img.to_rgba8();
                 let (w, h) = (rgba.width() as usize, rgba.height() as usize);
@@ -1715,10 +1715,9 @@ impl eframe::App for LauncherApp {
                     if let Some(texture) = &self.icon_texture {
                         ui.add(
                             egui::Image::from_texture(texture)
-                                .fit_to_exact_size(egui::vec2(36.0, 36.0))
-                                .rounding(Rounding::same(6.0)),
+                                .fit_to_exact_size(egui::vec2(36.0, 36.0)),
                         );
-                        ui.add_space(4.0);
+                        ui.add_space(6.0);
                     }
                     ui.vertical(|ui| {
                         ui.label(

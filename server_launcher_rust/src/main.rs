@@ -1,6 +1,7 @@
 mod app;
 mod config;
 mod modals;
+mod scanner;
 mod service;
 
 use app::LauncherApp;

@@ -3,10 +3,13 @@ use crate::modals::{
     render_add_edit_modal, render_command_palette, AddEditModalState, CommandPaletteState,
     ModalAction, PaletteAction,
 };
+use crate::scanner::{get_lan_ip, SystemPortScanner};
 use crate::service::{LogKind, Service, ServiceState};
 use eframe::egui;
-use egui::{Color32, Context, Key, Modifiers, RichText, Rounding, ScrollArea, Stroke, Ui};
-use std::collections::{BTreeMap, HashMap};
+use egui::{
+    Color32, Context, Frame, Key, Modifiers, RichText, Rounding, ScrollArea, Stroke, Ui,
+};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::time::Instant;
 use sysinfo::System;
@@ -15,9 +18,12 @@ pub struct LauncherApp {
     config_path: PathBuf,
     services: Vec<Service>,
     active_tab: String, // "overview" or service.key
+    active_group_filter: String, // "All" or group name
+    lan_ip: String,
 
-    // System monitor
+    // System monitor and network listener scanner
     sys: System,
+    scanner: SystemPortScanner,
     last_poll: Instant,
 
     // Modals
@@ -48,11 +54,17 @@ impl LauncherApp {
             .map(Service::new)
             .collect();
 
+        let scanner = SystemPortScanner::new();
+        scanner.trigger_scan();
+
         Self {
             config_path,
             services,
             active_tab: "overview".to_string(),
+            active_group_filter: "All".to_string(),
+            lan_ip: get_lan_ip(),
             sys: System::new_all(),
+            scanner,
             last_poll: Instant::now(),
             add_edit_modal: AddEditModalState::default(),
             palette_modal: CommandPaletteState::default(),
@@ -111,7 +123,6 @@ impl LauncherApp {
     fn collect_palette_actions(&self) -> Vec<(String, PaletteAction)> {
         let mut items = Vec::new();
 
-        // Server Start / Stop / View
         for s in &self.services {
             if s.state == ServiceState::Running {
                 items.push((
@@ -130,8 +141,7 @@ impl LauncherApp {
             ));
         }
 
-        // Groups
-        let mut groups = std::collections::BTreeSet::new();
+        let mut groups = BTreeSet::new();
         for s in &self.services {
             groups.insert(s.config.group.clone());
         }
@@ -192,7 +202,7 @@ impl LauncherApp {
 
 impl eframe::App for LauncherApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        // Poll services and sysinfo periodically (every 800ms)
+        // Periodic poll (every 800ms)
         if self.last_poll.elapsed() >= std::time::Duration::from_millis(800) {
             self.sys.refresh_all();
             for s in &mut self.services {
@@ -201,94 +211,117 @@ impl eframe::App for LauncherApp {
             self.last_poll = Instant::now();
         }
 
-        // Keyboard shortcuts
         self.handle_global_shortcuts(ctx);
 
-        // Top Navigation Bar
-        egui::TopBottomPanel::top("top_header").show(ctx, |ui| {
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("⚡ Server Launcher").strong().size(15.0));
+        // ═════════════════════════════════════════════════════════════════════
+        // TOP HEADER BAR (Exactly as in screenshot)
+        // ═════════════════════════════════════════════════════════════════════
+        egui::TopBottomPanel::top("top_header")
+            .frame(
+                Frame::none()
+                    .fill(Color32::from_rgb(15, 17, 23))
+                    .inner_margin(egui::Margin {
+                        left: 16.0,
+                        right: 16.0,
+                        top: 12.0,
+                        bottom: 12.0,
+                    }),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    // Left: Server Launcher title & details
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new("Server Launcher").size(20.0).strong().color(Color32::from_rgb(228, 231, 238)));
+                        ui.add_space(2.0);
+                        ui.label(
+                            RichText::new(format!(
+                                "this pc: {}    servers: {}",
+                                self.lan_ip,
+                                self.services.len()
+                            ))
+                            .size(11.0)
+                            .color(Color32::from_rgb(123, 131, 148)),
+                        );
+                    });
 
-                let running_count = self
-                    .services
-                    .iter()
-                    .filter(|s| s.state == ServiceState::Running)
-                    .count();
-                ui.label(
-                    RichText::new(format!(
-                        "│  {}/{} running",
-                        running_count,
-                        self.services.len()
-                    ))
-                    .weak(),
-                );
+                    // Right: Actions buttons
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // + Add Server
+                        let btn_add = egui::Button::new(
+                            RichText::new("+ Add Server")
+                                .size(12.0)
+                                .strong()
+                                .color(Color32::WHITE),
+                        )
+                        .fill(Color32::from_rgb(108, 92, 231))
+                        .rounding(Rounding::same(4.0));
+                        if ui.add(btn_add).clicked() {
+                            self.add_edit_modal.open_new();
+                        }
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("+ Add Server").clicked() {
-                        self.add_edit_modal.open_new();
-                    }
-                    if ui.button("⏹ Stop All (Ctrl+X)").clicked() {
-                        self.stop_all();
-                    }
-                    if ui
-                        .button(RichText::new("▶ Start All (Ctrl+A)").color(Color32::from_rgb(0, 210, 160)))
-                        .clicked()
-                    {
-                        self.start_all();
-                    }
-                    if ui.button("⚡ Quick Launch (Ctrl+P)").clicked() {
-                        self.palette_modal.open = true;
-                        self.palette_modal.query.clear();
-                    }
+                        // Quick Launch (Ctrl+P)
+                        let btn_pal = egui::Button::new(
+                            RichText::new("⚡ Quick Launch (Ctrl+P)")
+                                .size(12.0)
+                                .color(Color32::from_rgb(162, 155, 254)),
+                        )
+                        .fill(Color32::from_rgb(37, 40, 51))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(55, 60, 75)))
+                        .rounding(Rounding::same(4.0));
+                        if ui.add(btn_pal).clicked() {
+                            self.palette_modal.open = true;
+                            self.palette_modal.query.clear();
+                        }
+
+                        // Stop all
+                        let btn_stop_all = egui::Button::new(
+                            RichText::new("Stop all")
+                                .size(12.0)
+                                .color(Color32::from_rgb(228, 231, 238)),
+                        )
+                        .fill(Color32::from_rgb(37, 40, 51))
+                        .rounding(Rounding::same(4.0));
+                        if ui.add(btn_stop_all).clicked() {
+                            self.stop_all();
+                        }
+
+                        // Start all
+                        let btn_start_all = egui::Button::new(
+                            RichText::new("Start all")
+                                .size(12.0)
+                                .strong()
+                                .color(Color32::WHITE),
+                        )
+                        .fill(Color32::from_rgb(0, 210, 160))
+                        .rounding(Rounding::same(4.0));
+                        if ui.add(btn_start_all).clicked() {
+                            self.start_all();
+                        }
+                    });
                 });
             });
-            ui.add_space(6.0);
-        });
 
-        // Tab Strip Panel
-        egui::TopBottomPanel::top("tab_strip").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                let ov_selected = self.active_tab == "overview";
-                if ui
-                    .selectable_label(
-                        ov_selected,
-                        RichText::new("  Overview  ").strong(),
-                    )
-                    .clicked()
-                {
-                    self.active_tab = "overview".to_string();
-                }
+        // ═════════════════════════════════════════════════════════════════════
+        // MAIN TWO-COLUMN BODY
+        // ═════════════════════════════════════════════════════════════════════
+        egui::CentralPanel::default()
+            .frame(Frame::none().fill(Color32::from_rgb(15, 17, 23)))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    // LEFT COLUMN: Groups, Filter Pills, Server Cards (~340px)
+                    self.render_left_panel(ui);
 
-                for s in &self.services {
-                    let is_active = self.active_tab == s.config.key;
-                    let dot_color = match s.state {
-                        ServiceState::Running => Color32::from_rgb(0, 210, 160),
-                        ServiceState::Starting => Color32::from_rgb(243, 156, 18),
-                        ServiceState::Stopping => Color32::from_rgb(230, 126, 34),
-                        ServiceState::Stopped => Color32::from_rgb(120, 130, 150),
-                        ServiceState::Errored => Color32::from_rgb(235, 87, 87),
-                    };
+                    // Vertical Separator
+                    ui.add_space(2.0);
 
-                    let label = RichText::new(format!("● {}", s.config.name)).color(dot_color);
-                    if ui.selectable_label(is_active, label).clicked() {
-                        self.active_tab = s.config.key.clone();
-                    }
-                }
+                    // RIGHT COLUMN: Tabs (Overview & Server Logs)
+                    self.render_right_panel(ui);
+                });
             });
-        });
 
-        // Main Central Panel
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if self.active_tab == "overview" {
-                self.render_overview_tab(ui);
-            } else {
-                let key = self.active_tab.clone();
-                self.render_service_tab(ui, &key);
-            }
-        });
-
-        // Render Modals
+        // ═════════════════════════════════════════════════════════════════════
+        // MODALS
+        // ═════════════════════════════════════════════════════════════════════
         let modal_action = render_add_edit_modal(ctx, &mut self.add_edit_modal);
         match modal_action {
             ModalAction::SaveServer(new_cfg, old_key) => {
@@ -339,242 +372,513 @@ impl eframe::App for LauncherApp {
             _ => {}
         }
 
-        // Request repaint so live logs, CPU stats, and terminal outputs update smoothly
         ctx.request_repaint_after(std::time::Duration::from_millis(150));
     }
 }
 
 impl LauncherApp {
-    fn render_overview_tab(&mut self, ui: &mut Ui) {
-        ScrollArea::vertical().show(ui, |ui| {
-            // Group services
-            let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-            for (idx, s) in self.services.iter().enumerate() {
-                groups
-                    .entry(s.config.group.clone())
-                    .or_default()
-                    .push(idx);
-            }
+    // ═════════════════════════════════════════════════════════════════════════
+    // LEFT SIDEBAR: Group Filter + Server Cards
+    // ═════════════════════════════════════════════════════════════════════════
+    fn render_left_panel(&mut self, ui: &mut Ui) {
+        ui.allocate_ui_with_layout(
+            egui::vec2(330.0, ui.available_height()),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.add_space(4.0);
 
-            let mut to_start = None;
-            let mut to_stop = None;
-            let mut to_edit = None;
-            let mut to_delete = None;
-            let mut to_view = None;
-            let mut start_grp = None;
-            let mut stop_grp = None;
+                // 1. Group Filter Pills Bar
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Group:").size(11.0).color(Color32::from_rgb(123, 131, 148)));
 
-            for (group_name, indices) in groups {
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    ui.heading(RichText::new(&group_name).size(15.0).strong());
-                    ui.label(RichText::new(format!("({} servers)", indices.len())).weak());
+                    // Collect unique groups
+                    let mut all_groups = vec!["All".to_string()];
+                    let mut unique_groups = BTreeSet::new();
+                    for s in &self.services {
+                        unique_groups.insert(s.config.group.clone());
+                    }
+                    all_groups.extend(unique_groups);
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("⏹ Stop Group").clicked() {
-                            stop_grp = Some(group_name.clone());
+                    for grp in all_groups {
+                        let is_active = self.active_group_filter == grp;
+                        let bg_color = if is_active {
+                            Color32::from_rgb(108, 92, 231)
+                        } else {
+                            Color32::from_rgb(37, 40, 51)
+                        };
+                        let text_color = if is_active {
+                            Color32::WHITE
+                        } else {
+                            Color32::from_rgb(200, 205, 216)
+                        };
+
+                        let btn = egui::Button::new(RichText::new(&grp).size(11.0).color(text_color))
+                            .fill(bg_color)
+                            .rounding(Rounding::same(4.0))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 50, 65)));
+
+                        if ui.add(btn).clicked() {
+                            self.active_group_filter = grp.clone();
                         }
-                        if ui.button("▶ Start Group").clicked() {
-                            start_grp = Some(group_name.clone());
-                        }
-                    });
+                    }
                 });
-                ui.separator();
 
-                // Render grid of cards
-                egui::Grid::new(format!("grid_{}", group_name))
-                    .num_columns(3)
-                    .spacing([12.0, 12.0])
-                    .show(ui, |ui| {
-                        let mut col = 0;
+                ui.add_space(8.0);
+
+                // 2. Scrollable list of Groups & Server Cards
+                ScrollArea::vertical().id_salt("left_cards_scroll").show(ui, |ui| {
+                    let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+                    for (idx, s) in self.services.iter().enumerate() {
+                        if self.active_group_filter == "All" || self.active_group_filter == s.config.group {
+                            groups
+                                .entry(s.config.group.clone())
+                                .or_default()
+                                .push(idx);
+                        }
+                    }
+
+                    let mut to_start = None;
+                    let mut to_stop = None;
+                    let mut to_edit = None;
+                    let mut to_delete = None;
+                    let mut to_switch_tab = None;
+                    let mut start_grp = None;
+                    let mut stop_grp = None;
+
+                    for (group_name, indices) in groups {
+                        ui.add_space(8.0);
+                        // Group Section Header
+                        Frame::none()
+                            .fill(Color32::from_rgb(19, 22, 30))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 42, 56)))
+                            .rounding(Rounding::same(4.0))
+                            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    let header_text = format!("🏷  {} ({})", group_name.to_uppercase(), indices.len());
+                                    ui.label(RichText::new(header_text).size(11.0).strong().color(Color32::from_rgb(116, 185, 255)));
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let btn_stop_grp = egui::Button::new(RichText::new("⏹ Stop Group").size(10.0).color(Color32::WHITE))
+                                            .fill(Color32::from_rgb(208, 64, 48))
+                                            .rounding(Rounding::same(3.0));
+                                        if ui.add(btn_stop_grp).clicked() {
+                                            stop_grp = Some(group_name.clone());
+                                        }
+
+                                        let btn_start_grp = egui::Button::new(RichText::new("▶ Start Group").size(10.0).color(Color32::WHITE))
+                                            .fill(Color32::from_rgb(0, 210, 160))
+                                            .rounding(Rounding::same(3.0));
+                                        if ui.add(btn_start_grp).clicked() {
+                                            start_grp = Some(group_name.clone());
+                                        }
+                                    });
+                                });
+                            });
+
+                        ui.add_space(4.0);
+
+                        // Server Cards for this group
                         for idx in indices {
-                            let s = &self.services[idx];
-                            egui::Frame::none()
-                                .fill(Color32::from_rgb(26, 30, 43))
+                            let s = &mut self.services[idx];
+                            let key = s.config.key.clone();
+                            let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
+
+                            Frame::none()
+                                .fill(Color32::from_rgb(22, 25, 34))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 42, 56)))
                                 .rounding(Rounding::same(6.0))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 52, 70)))
                                 .inner_margin(10.0)
                                 .show(ui, |ui| {
-                                    ui.set_width(280.0);
-                                    ui.vertical(|ui| {
-                                        ui.horizontal(|ui| {
-                                            let (dot_color, state_txt) = match s.state {
-                                                ServiceState::Running => (Color32::from_rgb(0, 210, 160), "RUNNING"),
-                                                ServiceState::Starting => (Color32::from_rgb(243, 156, 18), "STARTING"),
-                                                ServiceState::Stopping => (Color32::from_rgb(230, 126, 34), "STOPPING"),
-                                                ServiceState::Stopped => (Color32::from_rgb(120, 130, 150), "STOPPED"),
-                                                ServiceState::Errored => (Color32::from_rgb(235, 87, 87), "ERROR"),
-                                            };
-                                            ui.label(RichText::new("●").color(dot_color).size(14.0));
-                                            ui.label(RichText::new(&s.config.name).strong().size(14.0));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.label(RichText::new(state_txt).size(10.0).color(dot_color));
+                                    // Row 1: Status Dot + Name + Group Badge + Status Text
+                                    ui.horizontal(|ui| {
+                                        let dot_color = if is_running {
+                                            Color32::from_rgb(0, 210, 160)
+                                        } else {
+                                            Color32::from_rgb(123, 131, 148)
+                                        };
+                                        ui.label(RichText::new("●").color(dot_color).size(13.0));
+
+                                        // Clickable name to view logs
+                                        let name_resp = ui.selectable_label(
+                                            false,
+                                            RichText::new(&s.config.name).strong().size(13.0).color(Color32::from_rgb(228, 231, 238)),
+                                        );
+                                        if name_resp.clicked() {
+                                            to_switch_tab = Some(key.clone());
+                                        }
+
+                                        // Group Badge Pill
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(45, 35, 75))
+                                            .rounding(Rounding::same(10.0))
+                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new(&s.config.group).size(10.0).color(Color32::from_rgb(162, 155, 254)));
                                             });
+
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            let st_text = if is_running { "Running" } else { "Stopped" };
+                                            let st_col = if is_running { Color32::from_rgb(0, 210, 160) } else { Color32::from_rgb(123, 131, 148) };
+                                            ui.label(RichText::new(st_text).size(11.0).color(st_col));
                                         });
+                                    });
 
-                                        ui.add_space(4.0);
-                                        ui.horizontal(|ui| {
-                                            if s.config.port > 0 {
-                                                let p_col = if s.port_open {
-                                                    Color32::from_rgb(0, 210, 160)
-                                                } else {
-                                                    Color32::from_rgb(120, 130, 150)
-                                                };
-                                                ui.label(RichText::new(format!("Port: {}", s.config.port)).color(p_col).size(11.0));
-                                            }
-                                            if s.state == ServiceState::Running {
-                                                ui.label(RichText::new(format!("CPU: {:.1}%  RAM: {:.1} MB", s.cpu_usage, s.memory_mb)).weak().size(11.0));
-                                            }
-                                        });
+                                    ui.add_space(2.0);
 
-                                        ui.label(RichText::new(format!("Dir: {}", s.config.cwd)).weak().size(10.0));
+                                    // Row 2: Subtitle / command
+                                    ui.label(RichText::new(&s.config.command).size(11.0).monospace().color(Color32::from_rgb(123, 131, 148)));
 
-                                        ui.add_space(6.0);
-                                        ui.horizontal(|ui| {
-                                            if s.state == ServiceState::Running {
-                                                if ui.button(RichText::new("Stop").color(Color32::from_rgb(235, 87, 87))).clicked() {
-                                                    to_stop = Some(idx);
-                                                }
-                                            } else {
-                                                if ui.button(RichText::new("Start").color(Color32::from_rgb(0, 210, 160))).clicked() {
-                                                    to_start = Some(idx);
-                                                }
+                                    ui.add_space(6.0);
+
+                                    // Row 3: Action Buttons (Start, [ ] own console, Edit, Delete)
+                                    ui.horizontal(|ui| {
+                                        if is_running {
+                                            let btn_stop = egui::Button::new(RichText::new("Stop").size(11.0).strong().color(Color32::WHITE))
+                                                .fill(Color32::from_rgb(208, 64, 48))
+                                                .rounding(Rounding::same(4.0));
+                                            if ui.add(btn_stop).clicked() {
+                                                to_stop = Some(idx);
+                                            }
+                                        } else {
+                                            let btn_start = egui::Button::new(RichText::new("Start").size(11.0).strong().color(Color32::WHITE))
+                                                .fill(Color32::from_rgb(0, 210, 160))
+                                                .rounding(Rounding::same(4.0));
+                                            if ui.add(btn_start).clicked() {
+                                                to_start = Some(idx);
+                                            }
+                                        }
+
+                                        ui.checkbox(&mut s.config.own_console, RichText::new("own console").size(10.0).color(Color32::from_rgb(123, 131, 148)));
+
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            let btn_del = egui::Button::new(RichText::new("Delete").size(11.0).color(Color32::from_rgb(200, 205, 216)))
+                                                .fill(Color32::from_rgb(37, 40, 51))
+                                                .rounding(Rounding::same(4.0));
+                                            if ui.add(btn_del).clicked() {
+                                                to_delete = Some(key.clone());
                                             }
 
-                                            if ui.button("Logs").clicked() {
-                                                to_view = Some(s.config.key.clone());
-                                            }
-                                            if ui.button("Edit").clicked() {
+                                            let btn_edit = egui::Button::new(RichText::new("Edit").size(11.0).color(Color32::from_rgb(200, 205, 216)))
+                                                .fill(Color32::from_rgb(37, 40, 51))
+                                                .rounding(Rounding::same(4.0));
+                                            if ui.add(btn_edit).clicked() {
                                                 to_edit = Some(s.config.clone());
-                                            }
-                                            if ui.button("🗑").clicked() {
-                                                to_delete = Some(s.config.key.clone());
                                             }
                                         });
                                     });
                                 });
 
-                            col += 1;
-                            if col >= 3 {
-                                ui.end_row();
-                                col = 0;
-                            }
+                            ui.add_space(6.0);
                         }
+                    }
+
+                    if let Some(g) = start_grp { self.start_group(&g); }
+                    if let Some(g) = stop_grp { self.stop_group(&g); }
+                    if let Some(idx) = to_start { self.services[idx].start(); }
+                    if let Some(idx) = to_stop { self.services[idx].stop(); }
+                    if let Some(k) = to_switch_tab { self.active_tab = k; }
+                    if let Some(cfg) = to_edit { self.add_edit_modal.open_edit(&cfg); }
+                    if let Some(k) = to_delete {
+                        if let Some(idx) = self.services.iter().position(|s| s.config.key == k) {
+                            let mut s = self.services.remove(idx);
+                            s.stop();
+                            self.persist_config();
+                            if self.active_tab == k { self.active_tab = "overview".to_string(); }
+                        }
+                    }
+                });
+            },
+        );
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // RIGHT PANEL: Notebook Tabs Bar + Overview / Server Log View
+    // ═════════════════════════════════════════════════════════════════════════
+    fn render_right_panel(&mut self, ui: &mut Ui) {
+        ui.vertical(|ui| {
+            ui.add_space(4.0);
+
+            // Notebook Tabs Strip (matching screenshot)
+            ui.horizontal(|ui| {
+                // Tab 0: Server Overview
+                let is_ov_active = self.active_tab == "overview";
+                let ov_border = if is_ov_active {
+                    Stroke::new(1.0_f32, Color32::from_rgb(228, 231, 238))
+                } else {
+                    Stroke::new(1.0_f32, Color32::from_rgb(45, 52, 70))
+                };
+                let ov_bg = if is_ov_active {
+                    Color32::from_rgb(22, 25, 34)
+                } else {
+                    Color32::from_rgb(15, 17, 23)
+                };
+
+                let ov_btn = egui::Button::new(
+                    RichText::new("  Server Overview  ")
+                        .size(12.0)
+                        .strong()
+                        .color(if is_ov_active { Color32::WHITE } else { Color32::from_rgb(180, 185, 200) }),
+                )
+                .fill(ov_bg)
+                .stroke(ov_border)
+                .rounding(Rounding { nw: 4.0, ne: 4.0, sw: 0.0, se: 0.0 });
+
+                if ui.add(ov_btn).clicked() {
+                    self.active_tab = "overview".to_string();
+                }
+
+                // Server tabs
+                for s in &self.services {
+                    let is_active = self.active_tab == s.config.key;
+                    let border = if is_active {
+                        Stroke::new(1.0_f32, Color32::from_rgb(228, 231, 238))
+                    } else {
+                        Stroke::new(1.0_f32, Color32::from_rgb(45, 52, 70))
+                    };
+                    let bg = if is_active {
+                        Color32::from_rgb(22, 25, 34)
+                    } else {
+                        Color32::from_rgb(15, 17, 23)
+                    };
+
+                    let tab_btn = egui::Button::new(
+                        RichText::new(format!("  {}  ", s.config.name))
+                            .size(12.0)
+                            .color(if is_active { Color32::WHITE } else { Color32::from_rgb(180, 185, 200) }),
+                    )
+                    .fill(bg)
+                    .stroke(border)
+                    .rounding(Rounding { nw: 4.0, ne: 4.0, sw: 0.0, se: 0.0 });
+
+                    if ui.add(tab_btn).clicked() {
+                        self.active_tab = s.config.key.clone();
+                    }
+                }
+            });
+
+            // Outer Frame for the tab content (matches screenshot's framed border)
+            Frame::none()
+                .fill(Color32::from_rgb(15, 17, 23))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 52, 70)))
+                .rounding(Rounding { nw: 0.0, ne: 4.0, sw: 4.0, se: 4.0 })
+                .inner_margin(12.0)
+                .show(ui, |ui| {
+                    if self.active_tab == "overview" {
+                        self.render_overview_content(ui);
+                    } else {
+                        let key = self.active_tab.clone();
+                        self.render_server_log_content(ui, &key);
+                    }
+                });
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Right Panel Tab 0: "Server Overview"
+    // ─────────────────────────────────────────────────────────────────────────
+    fn render_overview_content(&mut self, ui: &mut Ui) {
+        // Heading Row: Servers running on this PC | last scan: HH:MM:SS | Refresh button
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Servers running on this PC").size(16.0).strong().color(Color32::from_rgb(228, 231, 238)));
+            ui.add_space(8.0);
+            let scan_time = self.scanner.get_last_scan_time();
+            ui.label(RichText::new(format!("last scan: {}", scan_time)).size(11.0).color(Color32::from_rgb(123, 131, 148)));
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let btn_refresh = egui::Button::new(RichText::new("Refresh").size(11.0).strong().color(Color32::from_rgb(108, 92, 231)))
+                    .fill(Color32::from_rgb(37, 40, 51))
+                    .rounding(Rounding::same(4.0));
+                if ui.add(btn_refresh).clicked() {
+                    self.scanner.trigger_scan();
+                }
+            });
+        });
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(8.0);
+
+        ScrollArea::vertical().id_salt("overview_scroll_body").show(ui, |ui| {
+            // Section 1: Launcher-managed servers
+            ui.label(RichText::new("Launcher-managed servers").size(13.0).strong().color(Color32::from_rgb(228, 231, 238)));
+            ui.add_space(6.0);
+
+            let mut to_toggle = None;
+
+            for (idx, s) in self.services.iter().enumerate() {
+                let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
+                Frame::none()
+                    .fill(Color32::from_rgb(22, 25, 34))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 42, 56)))
+                    .rounding(Rounding::same(4.0))
+                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let dot_color = if is_running { Color32::from_rgb(0, 210, 160) } else { Color32::from_rgb(123, 131, 148) };
+                            ui.label(RichText::new("●").color(dot_color).size(13.0));
+
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new(&s.config.name).size(13.0).strong().color(Color32::from_rgb(228, 231, 238)));
+                                ui.label(RichText::new(&s.config.command).size(11.0).monospace().color(Color32::from_rgb(123, 131, 148)));
+                            });
+
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if is_running {
+                                    let btn = egui::Button::new(RichText::new("Stop").size(11.0).strong().color(Color32::WHITE))
+                                        .fill(Color32::from_rgb(208, 64, 48))
+                                        .rounding(Rounding::same(4.0));
+                                    if ui.add(btn).clicked() { to_toggle = Some((idx, false)); }
+                                } else {
+                                    let btn = egui::Button::new(RichText::new("Start").size(11.0).strong().color(Color32::WHITE))
+                                        .fill(Color32::from_rgb(0, 210, 160))
+                                        .rounding(Rounding::same(4.0));
+                                    if ui.add(btn).clicked() { to_toggle = Some((idx, true)); }
+                                }
+
+                                let st_text = if is_running { "Running" } else { "Stopped" };
+                                let st_color = if is_running { Color32::from_rgb(0, 210, 160) } else { Color32::from_rgb(123, 131, 148) };
+                                ui.label(RichText::new(st_text).size(11.0).color(st_color));
+                            });
+                        });
                     });
+
+                ui.add_space(4.0);
             }
 
-            if let Some(g) = start_grp {
-                self.start_group(&g);
+            if let Some((idx, start)) = to_toggle {
+                if start { self.services[idx].start(); } else { self.services[idx].stop(); }
             }
-            if let Some(g) = stop_grp {
-                self.stop_group(&g);
-            }
-            if let Some(idx) = to_start {
-                self.services[idx].start();
-            }
-            if let Some(idx) = to_stop {
-                self.services[idx].stop();
-            }
-            if let Some(k) = to_view {
-                self.active_tab = k;
-            }
-            if let Some(cfg) = to_edit {
-                self.add_edit_modal.open_edit(&cfg);
-            }
-            if let Some(k) = to_delete {
-                if let Some(idx) = self.services.iter().position(|s| s.config.key == k) {
-                    let mut s = self.services.remove(idx);
-                    s.stop();
-                    self.persist_config();
+
+            ui.add_space(14.0);
+
+            // Section 2: Other processes listening on this PC
+            ui.label(RichText::new("Other processes listening on this PC").size(13.0).strong().color(Color32::from_rgb(228, 231, 238)));
+            ui.add_space(6.0);
+
+            let listeners = self.scanner.get_listeners();
+            let managed_ports: BTreeSet<u16> = self.services.iter().map(|s| s.config.port).filter(|&p| p > 0).collect();
+
+            if listeners.is_empty() {
+                ui.label(RichText::new("No other listening processes detected.").size(11.0).weak());
+            } else {
+                for listener in listeners {
+                    if managed_ports.contains(&listener.port) {
+                        continue;
+                    }
+
+                    Frame::none()
+                        .fill(Color32::from_rgb(22, 25, 34))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 42, 56)))
+                        .rounding(Rounding::same(4.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("●").color(Color32::from_rgb(0, 210, 160)).size(13.0));
+
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new(&listener.name).size(13.0).strong().color(Color32::from_rgb(228, 231, 238)));
+                                    ui.label(
+                                        RichText::new(format!("{} :{} ({})", listener.name, listener.port, listener.proto))
+                                            .size(11.0)
+                                            .color(Color32::from_rgb(123, 131, 148)),
+                                    );
+                                });
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new("Running").size(11.0).color(Color32::from_rgb(0, 210, 160)));
+                                    ui.label(RichText::new(format!(":{}", listener.port)).size(12.0).color(Color32::from_rgb(123, 131, 148)));
+                                });
+                            });
+                        });
+
+                    ui.add_space(4.0);
                 }
             }
         });
     }
 
-    fn render_service_tab(&mut self, ui: &mut Ui, key: &str) {
-        let (name, is_running, port, port_open, cpu, ram) = {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Right Panel Tab 1+: Server Log View + Ctrl+F Search + Command Bar
+    // ─────────────────────────────────────────────────────────────────────────
+    fn render_server_log_content(&mut self, ui: &mut Ui, key: &str) {
+        let (name, is_running) = {
             if let Some(s) = self.find_service(key) {
-                (
-                    s.config.name.clone(),
-                    s.state == ServiceState::Running,
-                    s.config.port,
-                    s.port_open,
-                    s.cpu_usage,
-                    s.memory_mb,
-                )
+                (s.config.name.clone(), s.state == ServiceState::Running)
             } else {
                 ui.label("Service not found.");
                 return;
             }
         };
 
-        // Header controls for this service
+        // Sub-header above logs: Service name + Find toggle + Start/Stop
         ui.horizontal(|ui| {
-            ui.heading(RichText::new(&name).size(16.0));
-            if port > 0 {
-                let col = if port_open {
-                    Color32::from_rgb(0, 210, 160)
-                } else {
-                    Color32::from_rgb(120, 130, 150)
-                };
-                ui.label(RichText::new(format!("Port: {}", port)).color(col));
-            }
-            if is_running {
-                ui.label(RichText::new(format!("CPU: {:.1}%  RAM: {:.1} MB", cpu, ram)).weak());
-            }
+            ui.label(RichText::new(&name).size(15.0).strong().color(Color32::from_rgb(228, 231, 238)));
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let search_is_open = self.search_open.get(key).copied().unwrap_or(false);
-                let find_btn_text = if search_is_open {
-                    "🔍 Find [Active]"
+                if is_running {
+                    let btn_stop = egui::Button::new(RichText::new("Stop").size(11.0).strong().color(Color32::WHITE))
+                        .fill(Color32::from_rgb(208, 64, 48))
+                        .rounding(Rounding::same(4.0));
+                    if ui.add(btn_stop).clicked() {
+                        if let Some(s) = self.find_service_mut(key) { s.stop(); }
+                    }
                 } else {
-                    "🔍 Find (Ctrl+F)"
-                };
-                if ui.button(find_btn_text).clicked() {
-                    self.search_open.insert(key.to_string(), !search_is_open);
+                    let btn_start = egui::Button::new(RichText::new("Start").size(11.0).strong().color(Color32::WHITE))
+                        .fill(Color32::from_rgb(0, 210, 160))
+                        .rounding(Rounding::same(4.0));
+                    if ui.add(btn_start).clicked() {
+                        if let Some(s) = self.find_service_mut(key) { s.start(); }
+                    }
                 }
 
-                if is_running {
-                    if ui.button(RichText::new("⏹ Stop").color(Color32::from_rgb(235, 87, 87))).clicked() {
-                        if let Some(s) = self.find_service_mut(key) {
-                            s.stop();
-                        }
-                    }
-                } else {
-                    if ui.button(RichText::new("▶ Start").color(Color32::from_rgb(0, 210, 160))).clicked() {
-                        if let Some(s) = self.find_service_mut(key) {
-                            s.start();
-                        }
-                    }
+                let search_is_open = self.search_open.get(key).copied().unwrap_or(false);
+                let find_btn = egui::Button::new(RichText::new("🔍 Find (Ctrl+F)").size(11.0).color(Color32::from_rgb(200, 205, 216)))
+                    .fill(Color32::from_rgb(37, 40, 51))
+                    .rounding(Rounding::same(4.0));
+                if ui.add(find_btn).clicked() {
+                    self.search_open.insert(key.to_string(), !search_is_open);
                 }
             });
         });
+
+        ui.add_space(4.0);
         ui.separator();
 
         // Collapsible Search Bar (Ctrl+F)
         let search_is_open = self.search_open.get(key).copied().unwrap_or(false);
         if search_is_open {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("🔍").color(Color32::from_rgb(108, 92, 231)));
-                let q_entry = self.search_queries.entry(key.to_string()).or_default();
-                let search_input = ui.add(
-                    egui::TextEdit::singleline(q_entry)
-                        .hint_text("Search logs…")
-                        .desired_width(220.0),
-                );
-                search_input.request_focus();
+            Frame::none()
+                .fill(Color32::from_rgb(26, 30, 43))
+                .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                .rounding(Rounding::same(4.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("🔍").color(Color32::from_rgb(108, 92, 231)));
+                        let q_entry = self.search_queries.entry(key.to_string()).or_default();
+                        let search_input = ui.add(
+                            egui::TextEdit::singleline(q_entry)
+                                .hint_text("Search logs…")
+                                .desired_width(220.0),
+                        );
+                        if search_is_open {
+                            search_input.request_focus();
+                        }
 
-                let filter_entry = self.filter_lines.entry(key.to_string()).or_default();
-                ui.checkbox(filter_entry, "Filter lines");
+                        let filter_entry = self.filter_lines.entry(key.to_string()).or_default();
+                        ui.checkbox(filter_entry, RichText::new("Filter lines").size(11.0).color(Color32::from_rgb(200, 205, 216)));
 
-                if ui.button("✕ Close").clicked() {
-                    self.search_open.insert(key.to_string(), false);
-                }
-            });
-            ui.separator();
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("✕").clicked() {
+                                self.search_open.insert(key.to_string(), false);
+                            }
+                        });
+                    });
+                });
+            ui.add_space(4.0);
         }
 
-        // Log content view
+        // Log Terminal Output Area
         let logs_vec: Vec<_> = {
             if let Some(s) = self.find_service(key) {
                 if let Ok(l) = s.logs.lock() {
@@ -590,7 +894,7 @@ impl LauncherApp {
         let q = self.search_queries.get(key).cloned().unwrap_or_default().to_lowercase();
         let filter_active = self.filter_lines.get(key).copied().unwrap_or(false) && !q.is_empty();
 
-        let available_height = ui.available_height() - 40.0;
+        let available_height = ui.available_height() - 44.0;
         ScrollArea::vertical()
             .stick_to_bottom(true)
             .max_height(available_height)
@@ -612,7 +916,8 @@ impl LauncherApp {
                     let contains_query = !q.is_empty() && entry.text.to_lowercase().contains(&q);
                     let mut rt = RichText::new(format!("[{}] {}", entry.timestamp, entry.text))
                         .color(base_color)
-                        .monospace();
+                        .monospace()
+                        .size(11.0);
 
                     if contains_query {
                         rt = rt.background_color(Color32::from_rgb(180, 80, 0)).color(Color32::WHITE);
@@ -624,43 +929,42 @@ impl LauncherApp {
 
         ui.separator();
 
-        // Bottom Interactive Command Row
+        // Bottom Interactive Command Row (matching screenshot's interactive prompt)
         ui.horizontal(|ui| {
-            ui.label(RichText::new("❯").color(Color32::from_rgb(108, 92, 231)).strong());
+            ui.label(RichText::new("❯").color(Color32::from_rgb(108, 92, 231)).strong().size(13.0));
             let mut input_val = self.input_texts.get(key).cloned().unwrap_or_default();
             let mut do_send = false;
 
             let resp = ui.add(
                 egui::TextEdit::singleline(&mut input_val)
-                    .hint_text("Send input to running server or terminal…")
-                    .desired_width(ui.available_width() - 200.0),
+                    .hint_text("Run command in directory (e.g. npm i, pip install) or send input...")
+                    .desired_width(ui.available_width() - 250.0),
             );
 
             if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                 do_send = true;
             }
 
-            if ui.button(RichText::new("Send").strong()).clicked() {
+            let btn_send = egui::Button::new(RichText::new("Send").size(11.0).strong().color(Color32::WHITE))
+                .fill(Color32::from_rgb(108, 92, 231))
+                .rounding(Rounding::same(4.0));
+            if ui.add(btn_send).clicked() {
                 do_send = true;
             }
 
-            let mut send_interrupt_req = false;
-            if ui.button("Ctrl+C").clicked() {
-                send_interrupt_req = true;
-            }
-
-            let mut clear_logs_req = false;
-            if ui.button("Clear Logs").clicked() {
-                clear_logs_req = true;
-            }
-
-            if send_interrupt_req {
+            let btn_ctrlc = egui::Button::new(RichText::new("Ctrl+C").size(11.0).color(Color32::from_rgb(253, 203, 110)))
+                .fill(Color32::from_rgb(37, 40, 51))
+                .rounding(Rounding::same(4.0));
+            if ui.add(btn_ctrlc).clicked() {
                 if let Some(s) = self.find_service(key) {
                     s.send_interrupt();
                 }
             }
 
-            if clear_logs_req {
+            let btn_clear = egui::Button::new(RichText::new("Clear").size(11.0).color(Color32::from_rgb(123, 131, 148)))
+                .fill(Color32::from_rgb(37, 40, 51))
+                .rounding(Rounding::same(4.0));
+            if ui.add(btn_clear).clicked() {
                 if let Some(s) = self.find_service(key) {
                     s.clear_logs();
                 }

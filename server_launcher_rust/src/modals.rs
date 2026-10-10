@@ -80,6 +80,7 @@ impl AddEditModalState {
             stop_command: self.stop_command.trim().to_string(),
             port,
             group,
+            own_console: false,
             env: Default::default(),
             actions: Default::default(),
             links: Default::default(),

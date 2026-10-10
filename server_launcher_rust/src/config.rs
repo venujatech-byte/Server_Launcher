@@ -29,6 +29,8 @@ pub struct ServerConfig {
     #[serde(default = "default_group")]
     pub group: String,
     #[serde(default)]
+    pub own_console: bool,
+    #[serde(default)]
     pub env: HashMap<String, String>,
     #[serde(default)]
     pub actions: Vec<CustomAction>,

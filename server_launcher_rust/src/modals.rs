@@ -425,6 +425,10 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
         "Add Server"
     };
 
+    let screen = ctx.screen_rect();
+    let max_w = (screen.width() - 40.0).max(400.0);
+    let max_h = (screen.height() - 40.0).max(400.0);
+
     let mut is_open = state.open;
     Window::new(window_title)
         .open(&mut is_open)
@@ -433,6 +437,10 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .default_width(560.0)
         .default_height(640.0)
+        .min_width(380.0)
+        .max_width(max_w)
+        .min_height(320.0)
+        .max_height(max_h)
         .show(ctx, |ui| {
             // Header
             ui.horizontal(|ui| {
@@ -470,8 +478,11 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
 
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
+                .max_width(ui.available_width())
                 .max_height(ui.available_height() - 55.0)
                 .show(ui, |ui| {
+                    ui.set_max_width(ui.available_width());
+
                     // Template Picker (only for new servers)
                     if !state.is_edit {
                         egui::Frame::none()
@@ -538,7 +549,8 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     ui.add(
                         egui::TextEdit::singleline(&mut state.name)
                             .hint_text("e.g. Frontend App")
-                            .desired_width(f32::INFINITY),
+                            .clip_text(true)
+                            .desired_width(ui.available_width()),
                     );
                     ui.add_space(8.0);
 
@@ -552,7 +564,8 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                         !state.is_edit,
                         egui::TextEdit::singleline(&mut state.key)
                             .hint_text("auto-generated if empty")
-                            .desired_width(f32::INFINITY),
+                            .clip_text(true)
+                            .desired_width(ui.available_width()),
                     );
                     ui.add_space(8.0);
 
@@ -569,7 +582,8 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     );
                     ui.add(
                         egui::TextEdit::singleline(&mut state.group)
-                            .desired_width(f32::INFINITY),
+                            .clip_text(true)
+                            .desired_width(ui.available_width()),
                     );
                     ui.add_space(3.0);
                     ui.horizontal(|ui| {
@@ -589,10 +603,13 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     // Working Directory *
                     ui.label(RichText::new("Working directory (path) *").size(12.0).strong());
                     ui.horizontal(|ui| {
-                        ui.add(
+                        let browse_w = 75.0;
+                        let input_w = (ui.available_width() - browse_w - ui.spacing().item_spacing.x).max(80.0);
+                        ui.add_sized(
+                            [input_w, 20.0],
                             egui::TextEdit::singleline(&mut state.cwd)
                                 .hint_text("e.g. /path/to/project or .")
-                                .desired_width(ui.available_width() - 85.0),
+                                .clip_text(true),
                         );
                         let browse_btn = egui::Button::new(
                             RichText::new("Browse").size(11.5).color(palette.text_secondary),
@@ -616,7 +633,8 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     );
                     ui.add(
                         egui::TextEdit::singleline(&mut state.command)
-                            .desired_width(f32::INFINITY),
+                            .clip_text(true)
+                            .desired_width(ui.available_width()),
                     );
                     ui.add_space(8.0);
 
@@ -633,7 +651,8 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     );
                     ui.add(
                         egui::TextEdit::singleline(&mut state.stop_command)
-                            .desired_width(f32::INFINITY),
+                            .clip_text(true)
+                            .desired_width(ui.available_width()),
                     );
                     ui.add_space(8.0);
 
@@ -645,7 +664,8 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     );
                     ui.add(
                         egui::TextEdit::singleline(&mut state.port_str)
-                            .desired_width(f32::INFINITY),
+                            .clip_text(true)
+                            .desired_width(ui.available_width()),
                     );
                     ui.add_space(8.0);
 
@@ -699,8 +719,9 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     );
                     ui.add(
                         egui::TextEdit::multiline(&mut state.env_text)
+                            .clip_text(true)
                             .desired_rows(3)
-                            .desired_width(f32::INFINITY),
+                            .desired_width(ui.available_width()),
                     );
                     ui.add_space(10.0);
 
@@ -721,9 +742,13 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     for (i, (lbl, cmd)) in state.actions.iter_mut().enumerate() {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("label:").size(10.5).color(Color32::from_rgb(123, 131, 148)));
-                            ui.add(egui::TextEdit::singleline(lbl).desired_width(90.0));
+                            ui.add(egui::TextEdit::singleline(lbl).clip_text(true).desired_width(85.0));
                             ui.label(RichText::new("cmd:").size(10.5).color(Color32::from_rgb(123, 131, 148)));
-                            ui.add(egui::TextEdit::singleline(cmd).desired_width(ui.available_width() - 40.0));
+                            let cmd_w = (ui.available_width() - 36.0).max(60.0);
+                            ui.add_sized(
+                                [cmd_w, 20.0],
+                                egui::TextEdit::singleline(cmd).clip_text(true),
+                            );
                             if ui
                                 .button(RichText::new("✕").size(11.0).color(Color32::from_rgb(230, 80, 80)))
                                 .clicked()
@@ -763,9 +788,13 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     for (i, (lbl, url)) in state.links.iter_mut().enumerate() {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("label:").size(10.5).color(Color32::from_rgb(123, 131, 148)));
-                            ui.add(egui::TextEdit::singleline(lbl).desired_width(90.0));
+                            ui.add(egui::TextEdit::singleline(lbl).clip_text(true).desired_width(85.0));
                             ui.label(RichText::new("url:").size(10.5).color(Color32::from_rgb(123, 131, 148)));
-                            ui.add(egui::TextEdit::singleline(url).desired_width(ui.available_width() - 40.0));
+                            let url_w = (ui.available_width() - 36.0).max(60.0);
+                            ui.add_sized(
+                                [url_w, 20.0],
+                                egui::TextEdit::singleline(url).clip_text(true),
+                            );
                             if ui
                                 .button(RichText::new("✕").size(11.0).color(Color32::from_rgb(230, 80, 80)))
                                 .clicked()
@@ -1055,14 +1084,22 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
     let mut action = ModalAction::None;
     let title = if state.is_edit { "Edit SSH Remote PC" } else { "Add SSH Remote PC" };
 
+    let screen = ctx.screen_rect();
+    let max_w = (screen.width() - 40.0).max(380.0);
+    let max_h = (screen.height() - 40.0).max(380.0);
+
     let mut is_open = state.open;
     Window::new(title)
         .open(&mut is_open)
         .collapsible(false)
-        .resizable(false)
+        .resizable(true)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .default_width(480.0)
+        .min_width(360.0)
+        .max_width(max_w)
+        .max_height(max_h)
         .show(ctx, |ui| {
+            ui.set_max_width(ui.available_width());
             ui.add_space(6.0);
 
             // Display Name
@@ -1070,6 +1107,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             ui.add(
                 egui::TextEdit::singleline(&mut state.name)
                     .hint_text("e.g. Dev Cloud Server, Staging VPS")
+                    .clip_text(true)
                     .desired_width(ui.available_width()),
             );
             ui.add_space(8.0);
@@ -1078,10 +1116,12 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.label(RichText::new("Host / IP Address:").size(12.0).strong().color(palette.text_primary));
-                    ui.add(
+                    let host_w = (ui.available_width() - 95.0).max(80.0);
+                    ui.add_sized(
+                        [host_w, 20.0],
                         egui::TextEdit::singleline(&mut state.host)
                             .hint_text("e.g. 192.168.1.100 or vps.example.com")
-                            .desired_width(ui.available_width() - 90.0),
+                            .clip_text(true),
                     );
                 });
                 ui.vertical(|ui| {
@@ -1089,6 +1129,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                     ui.add(
                         egui::TextEdit::singleline(&mut state.port_str)
                             .hint_text("22")
+                            .clip_text(true)
                             .desired_width(75.0),
                     );
                 });
@@ -1100,6 +1141,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             ui.add(
                 egui::TextEdit::singleline(&mut state.user)
                     .hint_text("e.g. ubuntu, root, ec2-user")
+                    .clip_text(true)
                     .desired_width(ui.available_width()),
             );
             ui.add_space(8.0);
@@ -1107,10 +1149,13 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             // Private Key File
             ui.label(RichText::new("SSH Private Key Path (optional if using agent/default):").size(12.0).strong().color(palette.text_primary));
             ui.horizontal(|ui| {
-                ui.add(
+                let browse_w = 75.0;
+                let input_w = (ui.available_width() - browse_w - ui.spacing().item_spacing.x).max(80.0);
+                ui.add_sized(
+                    [input_w, 20.0],
                     egui::TextEdit::singleline(&mut state.key_path)
                         .hint_text("e.g. ~/.ssh/id_ed25519 or /home/user/.ssh/id_rsa")
-                        .desired_width(ui.available_width() - 85.0),
+                        .clip_text(true),
                 );
                 if ui.button("Browse...").clicked() {
                     if let Some(path) = rfd::FileDialog::new().pick_file() {
@@ -1134,6 +1179,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                 egui::TextEdit::singleline(&mut state.password)
                     .password(!state.show_password)
                     .hint_text("Enter SSH password (for password-based authentication)")
+                    .clip_text(true)
                     .desired_width(ui.available_width()),
             );
             ui.add_space(8.0);
@@ -1143,6 +1189,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             ui.add(
                 egui::TextEdit::singleline(&mut state.remote_cwd)
                     .hint_text("e.g. /var/www or /home/ubuntu/app")
+                    .clip_text(true)
                     .desired_width(ui.available_width()),
             );
             ui.add_space(10.0);

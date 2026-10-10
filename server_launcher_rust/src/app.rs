@@ -44,6 +44,10 @@ pub struct LauncherApp {
 
     // Saved stopped external listeners (port -> (name, command, cwd))
     stopped_external: HashMap<u16, (String, String, String)>,
+
+    // Search query specifically for the Server Overview tab
+    overview_search_query: String,
+    focus_overview_search: bool,
 }
 
 impl LauncherApp {
@@ -78,6 +82,8 @@ impl LauncherApp {
             input_histories: HashMap::new(),
             history_indices: HashMap::new(),
             stopped_external: HashMap::new(),
+            overview_search_query: String::new(),
+            focus_overview_search: false,
         }
     }
 
@@ -259,16 +265,13 @@ impl LauncherApp {
             self.palette_modal.selected_idx = 0;
         }
 
-        // Ctrl+F: Find in logs
+        // Ctrl+F: Search in Overview or Find in server logs
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::F))
             || ctx.input_mut(|i| i.consume_key(Modifiers::CTRL, Key::F))
         {
             if self.active_tab == "overview" {
-                if let Some(first) = self.services.first() {
-                    self.active_tab = first.config.key.clone();
-                }
-            }
-            if self.active_tab != "overview" {
+                self.focus_overview_search = true;
+            } else {
                 let current = self.search_open.get(&self.active_tab).copied().unwrap_or(false);
                 self.search_open.insert(self.active_tab.clone(), !current);
             }
@@ -975,7 +978,7 @@ impl LauncherApp {
     // Right Panel Tab 0: "Server Overview" (Fills available height)
     // ─────────────────────────────────────────────────────────────────────────
     fn render_overview_content(&mut self, ui: &mut Ui) {
-        // Heading Row: Servers running on this PC | last scan: HH:MM:SS | Refresh button
+        // Heading Row: Servers running on this PC | last scan: HH:MM:SS | Search Box | Refresh button
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new("Servers running on this PC")
@@ -993,7 +996,7 @@ impl LauncherApp {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let btn_refresh = egui::Button::new(
-                    RichText::new("Refresh")
+                    RichText::new("🔄 Refresh")
                         .size(11.5)
                         .strong()
                         .color(Color32::from_rgb(108, 92, 231)),
@@ -1004,6 +1007,58 @@ impl LauncherApp {
                 if ui.add(btn_refresh).clicked() {
                     self.scanner.trigger_scan();
                 }
+
+                // Search Box with 🔍 icon, hint, clear button, and Ctrl+F focus support
+                Frame::none()
+                    .fill(Color32::from_rgb(22, 25, 34))
+                    .stroke(Stroke::new(
+                        1.0_f32,
+                        if !self.overview_search_query.is_empty() {
+                            Color32::from_rgb(108, 92, 231)
+                        } else {
+                            Color32::from_rgb(50, 56, 72)
+                        },
+                    ))
+                    .rounding(Rounding::same(4.0))
+                    .inner_margin(egui::Margin::symmetric(8.0, 3.5))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new("🔍")
+                                    .size(11.5)
+                                    .color(Color32::from_rgb(123, 131, 148)),
+                            );
+                            let resp = ui.add(
+                                egui::TextEdit::singleline(&mut self.overview_search_query)
+                                    .hint_text(
+                                        RichText::new("Search servers, ports, commands... (Ctrl+F)")
+                                            .size(11.5)
+                                            .color(Color32::from_rgb(100, 116, 139)),
+                                    )
+                                    .desired_width(240.0)
+                                    .frame(false),
+                            );
+                            if self.focus_overview_search {
+                                resp.request_focus();
+                                self.focus_overview_search = false;
+                            }
+                            if !self.overview_search_query.is_empty() {
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            RichText::new("✕")
+                                                .size(10.5)
+                                                .color(Color32::from_rgb(148, 163, 184)),
+                                        )
+                                        .frame(false),
+                                    )
+                                    .clicked()
+                                {
+                                    self.overview_search_query.clear();
+                                }
+                            }
+                        });
+                    });
             });
         });
 
@@ -1011,22 +1066,64 @@ impl LauncherApp {
         ui.separator();
         ui.add_space(10.0);
 
+        let q = self.overview_search_query.trim().to_lowercase();
+
         ScrollArea::vertical()
             .id_salt("overview_scroll_body")
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 // Section 1: Launcher-managed servers
+                let managed_indices: Vec<usize> = self
+                    .services
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| {
+                        if q.is_empty() {
+                            return true;
+                        }
+                        s.config.name.to_lowercase().contains(&q)
+                            || s.config.command.to_lowercase().contains(&q)
+                            || s.config.group.to_lowercase().contains(&q)
+                            || (s.config.port > 0 && s.config.port.to_string().contains(&q))
+                            || s.pid.map(|p| p.to_string().contains(&q)).unwrap_or(false)
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+
+                let managed_title = if q.is_empty() {
+                    "Launcher-managed servers".to_string()
+                } else {
+                    format!("Launcher-managed servers ({})", managed_indices.len())
+                };
+
                 ui.label(
-                    RichText::new("Launcher-managed servers")
-                        .size(13.0)
+                    RichText::new(managed_title)
+                        .size(13.5)
                         .strong()
                         .color(Color32::from_rgb(228, 231, 238)),
                 );
                 ui.add_space(8.0);
 
+                if managed_indices.is_empty() && !q.is_empty() {
+                    Frame::none()
+                        .fill(Color32::from_rgb(20, 23, 32))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 42, 56)))
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new(format!("No launcher-managed servers matching \"{}\"", q))
+                                    .size(12.0)
+                                    .color(Color32::from_rgb(148, 163, 184)),
+                            );
+                        });
+                    ui.add_space(6.0);
+                }
+
                 let mut to_toggle: Option<(usize, u8)> = None; // 0=stop, 1=start, 2=restart
 
-                for (idx, s) in self.services.iter().enumerate() {
+                for &idx in &managed_indices {
+                    let s = &self.services[idx];
                     let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
                     Frame::none()
                         .fill(Color32::from_rgb(22, 25, 34))
@@ -1155,14 +1252,6 @@ impl LauncherApp {
                 ui.add_space(16.0);
 
                 // Section 2: Other processes listening on this PC
-                ui.label(
-                    RichText::new("Other processes listening on this PC")
-                        .size(14.0)
-                        .strong()
-                        .color(Color32::from_rgb(228, 231, 238)),
-                );
-                ui.add_space(8.0);
-
                 let listeners = self.scanner.get_listeners();
                 let managed_ports: BTreeSet<u16> = self
                     .services
@@ -1180,17 +1269,75 @@ impl LauncherApp {
                 let unmanaged_listeners: Vec<_> = listeners
                     .into_iter()
                     .filter(|l| !managed_ports.contains(&l.port))
+                    .filter(|l| {
+                        if q.is_empty() {
+                            return true;
+                        }
+                        let (cmd_opt, _) = l.pid.map(read_proc_cmd_and_cwd).unwrap_or((None, None));
+                        let cmd_str = cmd_opt.unwrap_or_default();
+                        l.name.to_lowercase().contains(&q)
+                            || l.port.to_string().contains(&q)
+                            || l.proto.to_lowercase().contains(&q)
+                            || cmd_str.to_lowercase().contains(&q)
+                            || l.pid.map(|p| p.to_string().contains(&q)).unwrap_or(false)
+                    })
                     .collect();
 
-                if unmanaged_listeners.is_empty() && self.stopped_external.is_empty() {
+                let running_ports: BTreeSet<u16> = self
+                    .scanner
+                    .get_listeners()
+                    .iter()
+                    .map(|l| l.port)
+                    .collect();
+
+                let visible_stopped: Vec<_> = self
+                    .stopped_external
+                    .iter()
+                    .filter(|(&port, (name, cmd, _))| {
+                        if running_ports.contains(&port) || managed_ports.contains(&port) {
+                            return false;
+                        }
+                        if q.is_empty() {
+                            return true;
+                        }
+                        name.to_lowercase().contains(&q)
+                            || port.to_string().contains(&q)
+                            || cmd.to_lowercase().contains(&q)
+                    })
+                    .map(|(&port, (name, cmd, cwd))| (port, name.clone(), cmd.clone(), cwd.clone()))
+                    .collect();
+
+                let other_title = if q.is_empty() {
+                    "Other processes listening on this PC".to_string()
+                } else {
+                    format!(
+                        "Other processes listening on this PC ({})",
+                        unmanaged_listeners.len() + visible_stopped.len()
+                    )
+                };
+
+                ui.label(
+                    RichText::new(other_title)
+                        .size(13.5)
+                        .strong()
+                        .color(Color32::from_rgb(228, 231, 238)),
+                );
+                ui.add_space(8.0);
+
+                if unmanaged_listeners.is_empty() && visible_stopped.is_empty() {
                     Frame::none()
                         .fill(Color32::from_rgb(20, 23, 32))
                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 42, 56)))
                         .rounding(Rounding::same(6.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                         .show(ui, |ui| {
+                            let msg = if q.is_empty() {
+                                "No unmanaged listening processes detected.".to_string()
+                            } else {
+                                format!("No other listening processes matching \"{}\"", q)
+                            };
                             ui.label(
-                                RichText::new("No unmanaged listening processes detected.")
+                                RichText::new(msg)
                                     .size(12.5)
                                     .color(Color32::from_rgb(148, 163, 184)),
                             );
@@ -1319,12 +1466,7 @@ impl LauncherApp {
                     }
 
                     // Render any stopped external processes
-                    let running_ports: BTreeSet<u16> = unmanaged_listeners.iter().map(|l| l.port).collect();
-                    for (&port, (name, cmd, cwd)) in &self.stopped_external {
-                        if running_ports.contains(&port) || managed_ports.contains(&port) {
-                            continue;
-                        }
-
+                    for (port, name, cmd, cwd) in &visible_stopped {
                         Frame::none()
                             .fill(Color32::from_rgb(18, 20, 27))
                             .stroke(Stroke::new(1.0_f32, Color32::from_rgb(32, 36, 48)))
@@ -1382,7 +1524,7 @@ impl LauncherApp {
                                         .fill(Color32::from_rgb(28, 32, 44))
                                         .rounding(Rounding::same(4.0));
                                         if ui.add(btn_del).clicked() {
-                                            to_remove_stopped = Some(port);
+                                            to_remove_stopped = Some(*port);
                                         }
 
                                         let btn_add = egui::Button::new(
@@ -1397,7 +1539,7 @@ impl LauncherApp {
                                         if ui.add(btn_add).clicked() {
                                             to_import = Some((
                                                 name.clone(),
-                                                port,
+                                                *port,
                                                 cmd.clone(),
                                                 cwd.clone(),
                                             ));
@@ -1410,7 +1552,7 @@ impl LauncherApp {
                                         .rounding(Rounding::same(5.0))
                                         .min_size(egui::vec2(54.0, 24.0));
                                         if ui.add(btn_start).clicked() {
-                                            to_start_stopped = Some((port, cmd.clone(), cwd.clone()));
+                                            to_start_stopped = Some((*port, cmd.clone(), cwd.clone()));
                                         }
                                     });
                                 });

@@ -1026,8 +1026,21 @@ class ServerLogPane(Widget):
         self.svc      = svc
         self._history: list[str] = []
         self._hist_idx = 0
+        self._raw_lines: list[tuple[str, str | None]] = []  # (text, explicit_style)
+        self._search_open = False
+        self._search_query = ""
+        self._filter_active = False
 
     def compose(self) -> ComposeResult:
+        with Horizontal(id="search-bar", classes="search-bar-hidden"):
+            yield Static("🔍", classes="search-icon")
+            yield Input(placeholder="Search logs…", id="search-input")
+            yield Static("", id="search-count", classes="search-count")
+            yield Button("Filter lines", id="btn-search-filter", classes="btn-search-filter")
+            yield Button("▲", id="btn-search-prev", classes="btn-search-nav")
+            yield Button("▼", id="btn-search-next", classes="btn-search-nav")
+            yield Button("✕", id="btn-search-close", classes="btn-search-close")
+
         yield RichLog(
             id="log", markup=False, highlight=False,
             wrap=False, auto_scroll=True,
@@ -1039,22 +1052,180 @@ class ServerLogPane(Widget):
                 id="cmd-input",
             )
             yield Button("Send",   id="btn-send",   classes="btn-send")
+            yield Button("Find",   id="btn-search-toggle", classes="btn-search-toggle")
             yield Button("^C",     id="btn-ctrlc",  classes="btn-ctrlc")
             yield Button("Clear",  id="btn-clear",  classes="btn-clear")
 
+    def _determine_style(self, line: str) -> str | None:
+        if line.startswith("[launcher]"):
+            return "bold #7c8aff"
+        elif line.startswith("> "):
+            return "bold #00d2a0"
+        elif any(kw in line.lower() for kw in ("error:", "traceback", "exception")):
+            return "#e17055"
+        elif any(kw in line.lower() for kw in ("warning:", "warn:")):
+            return "#fdcb6e"
+        return None
+
+    def _format_render_line(self, line: str, base_style: str | None, query: str) -> Text:
+        t = Text(line, style=base_style)
+        if query:
+            t.highlight_words([query], style="bold black on #f39c12", case_sensitive=False)
+        return t
+
     def append_log(self, line: str) -> None:
+        base_style = self._determine_style(line)
+        self._raw_lines.append((line, base_style))
+        if len(self._raw_lines) > 5000:
+            self._raw_lines = self._raw_lines[-4000:]
+
+        # If search/filter is active, check if this line passes
+        if self._search_open and self._search_query:
+            query_lower = self._search_query.lower()
+            matches = query_lower in line.lower()
+            if self._filter_active and not matches:
+                return  # Filtered out
+            self._update_match_count()
+        elif self._filter_active and self._search_open:
+            pass
+
         try:
             rlog = self.query_one("#log", RichLog)
-            if line.startswith("[launcher]"):
-                rlog.write(Text(line, style="bold #7c8aff"))
-            elif line.startswith("> "):
-                rlog.write(Text(line, style="bold #00d2a0"))
-            elif any(kw in line.lower() for kw in ("error:", "traceback", "exception")):
-                rlog.write(Text(line, style="#e17055"))
-            elif any(kw in line.lower() for kw in ("warning:", "warn:")):
-                rlog.write(Text(line, style="#fdcb6e"))
+            rendered = self._format_render_line(
+                line, base_style, self._search_query if self._search_open else ""
+            )
+            rlog.write(rendered)
+        except Exception:
+            pass
+
+    def _refresh_log_display(self) -> None:
+        try:
+            rlog = self.query_one("#log", RichLog)
+            rlog.clear()
+            query = self._search_query.lower() if self._search_open else ""
+            filter_on = self._filter_active and self._search_open and bool(query)
+
+            for line, base_style in self._raw_lines:
+                if filter_on and query not in line.lower():
+                    continue
+                rendered = self._format_render_line(
+                    line, base_style, self._search_query if self._search_open else ""
+                )
+                rlog.write(rendered)
+            self._update_match_count()
+        except Exception:
+            pass
+
+    def _update_match_count(self) -> None:
+        try:
+            count_lbl = self.query_one("#search-count", Static)
+            if not self._search_open or not self._search_query:
+                count_lbl.update("")
+                return
+            q = self._search_query.lower()
+            total = sum(1 for line, _ in self._raw_lines if q in line.lower())
+            if total == 0:
+                count_lbl.update("[#e17055]0 matches[/]")
             else:
-                rlog.write(line)
+                count_lbl.update(f"[#7b8394]{total} match{'es' if total != 1 else ''}[/]")
+        except Exception:
+            pass
+
+    def _focus_search_input(self) -> None:
+        try:
+            inp = self.query_one("#search-input", Input)
+            inp.focus()
+            self.call_after_refresh(inp.focus)
+            self.set_timer(0.08, inp.focus)
+        except Exception:
+            pass
+
+    def toggle_search(self, open_only: bool = False) -> None:
+        bar = self.query_one("#search-bar", Horizontal)
+        inp = self.query_one("#search-input", Input)
+        if open_only and self._search_open:
+            self._focus_search_input()
+            return
+
+        if self._search_open and not open_only:
+            self.close_search()
+        else:
+            self._search_open = True
+            bar.remove_class("search-bar-hidden")
+            bar.display = True
+            self._focus_search_input()
+            if self._search_query:
+                self._refresh_log_display()
+
+    def close_search(self) -> None:
+        self._search_open = False
+        try:
+            bar = self.query_one("#search-bar", Horizontal)
+            bar.add_class("search-bar-hidden")
+            bar.display = False
+            inp = self.query_one("#search-input", Input)
+            inp.value = ""
+            self._search_query = ""
+            self._filter_active = False
+            btn_filter = self.query_one("#btn-search-filter", Button)
+            btn_filter.remove_class("active")
+            btn_filter.label = "Filter lines"
+            self.query_one("#search-count", Static).update("")
+            self._refresh_log_display()
+            self.query_one("#cmd-input", Input).focus()
+        except Exception:
+            pass
+
+    @on(Input.Changed, "#search-input")
+    def _search_input_changed(self, event: Input.Changed) -> None:
+        self._search_query = event.value.strip()
+        self._refresh_log_display()
+
+    @on(Input.Submitted, "#search-input")
+    def _search_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._search_next(None)
+
+    @on(Button.Pressed, "#btn-search-toggle")
+    def _toggle_search_btn(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.toggle_search()
+
+    @on(Button.Pressed, "#btn-search-close")
+    def _close_search_btn(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.close_search()
+
+    @on(Button.Pressed, "#btn-search-filter")
+    def _toggle_filter_btn(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._filter_active = not self._filter_active
+        btn = self.query_one("#btn-search-filter", Button)
+        if self._filter_active:
+            btn.add_class("active")
+            btn.label = "✓ Filtering"
+        else:
+            btn.remove_class("active")
+            btn.label = "Filter lines"
+        self._refresh_log_display()
+
+    @on(Button.Pressed, "#btn-search-prev")
+    def _search_prev(self, event: Button.Pressed | None = None) -> None:
+        if event is not None:
+            event.stop()
+        try:
+            rlog = self.query_one("#log", RichLog)
+            rlog.scroll_up()
+        except Exception:
+            pass
+
+    @on(Button.Pressed, "#btn-search-next")
+    def _search_next(self, event: Button.Pressed | None = None) -> None:
+        if event is not None:
+            event.stop()
+        try:
+            rlog = self.query_one("#log", RichLog)
+            rlog.scroll_down()
         except Exception:
             pass
 
@@ -1082,8 +1253,10 @@ class ServerLogPane(Widget):
     @on(Button.Pressed, "#btn-clear")
     def _clear(self, event: Button.Pressed) -> None:
         event.stop()
+        self._raw_lines.clear()
         try:
             self.query_one("#log", RichLog).clear()
+            self._update_match_count()
         except Exception:
             pass
 
@@ -1092,6 +1265,26 @@ class ServerLogPane(Widget):
         self._do_send()
 
     def on_key(self, event: events.Key) -> None:
+        # If search input has focus, handle navigation or closing and don't interfere with typing
+        try:
+            s_inp = self.query_one("#search-input", Input)
+            if s_inp.has_focus:
+                if event.key == "escape":
+                    self.close_search()
+                    event.stop()
+                    return
+                elif event.key == "up":
+                    self._search_prev(None)
+                    event.stop()
+                    return
+                elif event.key == "down":
+                    self._search_next(None)
+                    event.stop()
+                    return
+                return
+        except Exception:
+            pass
+
         try:
             inp = self.query_one("#cmd-input", Input)
         except Exception:
@@ -1619,6 +1812,7 @@ class ServerLauncherApp(App):
 
     BINDINGS = [
         Binding("ctrl+p", "command_palette",  "Quick Launch"),
+        Binding("ctrl+f", "find_in_logs",      "Find in Logs"),
         Binding("ctrl+a", "start_all",         "Start All"),
         Binding("ctrl+x", "stop_all",          "Stop All"),
         Binding("ctrl+r", "refresh_overview",  "Refresh Overview"),
@@ -1780,6 +1974,8 @@ ServerCard:hover { border: solid #6c5ce7; }
 .btn-action:hover { background: #2f3340; }
 .btn-send   { background: #6c5ce7; color: white; border: none; min-width: 6; height: 1; margin-left: 1; }
 .btn-send:hover { background: #7f70f0; }
+.btn-search-toggle { background: #252830; color: #fdcb6e; border: none; min-width: 6; height: 1; margin-left: 1; }
+.btn-search-toggle:hover { background: #2f3340; }
 .btn-ctrlc  { background: #252830; color: #fdcb6e; border: none; min-width: 4; height: 1; margin-left: 1; }
 .btn-ctrlc:hover { background: #2f3340; }
 .btn-clear  { background: #252830; color: #7b8394; border: none; min-width: 6; height: 1; margin-left: 1; }
@@ -1788,6 +1984,73 @@ ServerCard:hover { border: solid #6c5ce7; }
 .btn-cancel:hover { background: #2f3340; }
 .btn-save   { background: #6c5ce7; color: white; border: none; min-width: 10; text-style: bold; }
 .btn-save:hover { background: #7f70f0; }
+
+/* ── Log Search Bar ──────────────────────────────────────────────────────── */
+#search-bar {
+    height: 3;
+    background: #1a1e2b;
+    border-bottom: solid #2a2e3a;
+    padding: 0 1;
+    align: left middle;
+}
+.search-bar-hidden {
+    display: none;
+}
+.search-icon {
+    color: #6c5ce7;
+    width: auto;
+    margin-right: 1;
+}
+#search-input {
+    background: #252830;
+    color: #e4e7ee;
+    border: none;
+    height: 1;
+    width: 32;
+    min-width: 20;
+    padding: 0 1;
+}
+#search-input:focus {
+    background: #2f3442;
+    border-left: solid #6c5ce7;
+}
+.search-count {
+    color: #7b8394;
+    width: auto;
+    margin-left: 1;
+    margin-right: 1;
+}
+.btn-search-filter {
+    background: #252830;
+    color: #7b8394;
+    border: none;
+    min-width: 14;
+    height: 1;
+    margin-left: 1;
+}
+.btn-search-filter.active {
+    background: #6c5ce7;
+    color: white;
+}
+.btn-search-nav {
+    background: #252830;
+    color: #c8cdd8;
+    border: none;
+    min-width: 3;
+    height: 1;
+    margin-left: 1;
+}
+.btn-search-nav:hover { background: #2f3340; }
+.btn-search-close {
+    background: #1a1e2b;
+    color: #7b8394;
+    border: none;
+    min-width: 3;
+    height: 1;
+    margin-left: 1;
+    dock: right;
+}
+.btn-search-close:hover { color: #e17055; }
 
 /* ── Log Pane ────────────────────────────────────────────────────────────── */
 ServerLogPane { height: 1fr; }
@@ -1815,11 +2078,15 @@ ServerLogPane { height: 1fr; }
 #cmd-input {
     background: #252830;
     color: #e4e7ee;
-    border: solid #2a2e3a;
+    border: none;
     height: 1;
     width: 1fr;
+    padding: 0 1;
 }
-#cmd-input:focus { border: solid #6c5ce7; }
+#cmd-input:focus {
+    background: #2f3442;
+    border-left: solid #6c5ce7;
+}
 
 /* ── Overview Pane ───────────────────────────────────────────────────────── */
 OverviewPane { height: 1fr; }
@@ -2097,7 +2364,7 @@ CommandPaletteModal { align: center top; }
         return (
             f"⚡ Server Launcher  │  {ip}  │  "
             f"{running}/{total} running  │  "
-            "Ctrl+P: Quick Launch  │  Ctrl+A: Start All  │  Ctrl+X: Stop All  │  Ctrl+Q: Quit"
+            "Ctrl+P: Quick Launch  │  Ctrl+F: Find  │  Ctrl+A: Start All  │  Ctrl+X: Stop All  │  Ctrl+Q: Quit"
         )
 
     # ── Tab switching ─────────────────────────────────────────────────────────
@@ -2331,6 +2598,24 @@ CommandPaletteModal { align: center top; }
             if svc.alive:
                 svc.stop()
         self.notify("Stopping all servers…")
+
+    def action_find_in_logs(self) -> None:
+        try:
+            cs = self.query_one("#content-switcher", ContentSwitcher)
+            current_id = cs.current
+            if current_id and current_id != "pane-overview":
+                pane = self.query_one(f"#{current_id}", ServerLogPane)
+                pane.toggle_search(open_only=True)
+            else:
+                # If on overview, switch to first service pane if available
+                first_svc = next(iter(self.services.values()), None)
+                if first_svc:
+                    self._switch_to(first_svc.key)
+                    pane = self.query_one(f"#pane-{first_svc.key}", ServerLogPane)
+                    pane.toggle_search(open_only=True)
+                    self.set_timer(0.1, pane._focus_search_input)
+        except Exception:
+            pass
 
     def action_refresh_overview(self) -> None:
         try:

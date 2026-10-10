@@ -1849,17 +1849,61 @@ class LauncherApp:
         self.services: dict[str, Service] = {}
         self.cards: dict[str, dict] = {}
         self.logs: dict[str, tk.Text] = {}
+        self._log_search_handlers: dict[str, callable] = {}
+        self._log_tab_frames: dict[str, tk.Frame] = {}
+        self._log_tab_by_frame: dict[str, str] = {}
 
         self._build_custom_services()
         self._build_ui()
 
-        self.root.bind_all("<Control-p>", lambda e: self.open_command_palette())
-        self.root.bind_all("<Control-P>", lambda e: self.open_command_palette())
+        def _on_global_key(event):
+            # Check for Ctrl+F or Ctrl+P across all modifier masks (handles NumLock Mod2, CapsLock, etc.)
+            if (event.state & 4) and event.keysym in ("f", "F"):
+                self.open_log_search()
+                return "break"
+            elif (event.state & 4) and event.keysym in ("p", "P"):
+                self.open_command_palette()
+                return "break"
+
+        self.root.bind_all("<Key>", _on_global_key, add="+")
+        self.root.bind_all("<Control-p>", lambda e: (self.open_command_palette(), "break")[1])
+        self.root.bind_all("<Control-P>", lambda e: (self.open_command_palette(), "break")[1])
+        self.root.bind_all("<Control-f>", lambda e: (self.open_log_search(), "break")[1])
+        self.root.bind_all("<Control-F>", lambda e: (self.open_log_search(), "break")[1])
 
         self.root.after(120, self._drain)
         self.root.after(1500, self._poll_ports)
         self.root.after(1000, self._poll_stats)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def open_log_search(self) -> None:
+        """Handle Ctrl+F: Open search bar for current active server log tab."""
+        try:
+            cur_tab = self.notebook.select()
+            svc_key = self._log_tab_by_frame.get(cur_tab)
+            if not svc_key:
+                # If on Overview tab, switch to the first server log tab
+                tabs = self.notebook.tabs()
+                if len(tabs) > 1:
+                    self.notebook.select(tabs[1])
+                    cur_tab = tabs[1]
+                    svc_key = self._log_tab_by_frame.get(cur_tab)
+
+            if not svc_key:
+                # Fallback: check tab text
+                tab_idx = self.notebook.index("current")
+                tab_text = self.notebook.tab(tab_idx, "text").strip()
+                for svc in self.services.values():
+                    if svc.name == tab_text:
+                        svc_key = svc.key
+                        break
+
+            if svc_key:
+                handler = self._log_search_handlers.get(svc_key)
+                if handler:
+                    handler()
+        except Exception:
+            pass
 
     # -- config -----------------------------------------------------------
 
@@ -2498,25 +2542,177 @@ class LauncherApp:
     def _build_log_tab(self, svc: Service) -> None:
         frame = tk.Frame(self.notebook, bg=BG)
         self.notebook.add(frame, text="  %s  " % svc.name)
-        frame.rowconfigure(0, weight=1)
+        self._log_tab_frames[svc.key] = frame
+        self._log_tab_by_frame[str(frame)] = svc.key
+        frame.rowconfigure(1, weight=1)
         frame.columnconfigure(0, weight=1)
+
+        # Search / Highlight Bar (Ctrl+F)
+        search_bar = tk.Frame(frame, bg="#1a1e2b", padx=8, pady=4,
+                              highlightthickness=1, highlightbackground=CARD_BORDER)
+        search_bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
+        search_bar.grid_remove()
+
+        tk.Label(search_bar, text="🔍", bg="#1a1e2b", fg=ACCENT,
+                 font=font_ui(10, bold=True)).pack(side="left", padx=(2, 6))
+
+        search_var = tk.StringVar()
+        search_ent = tk.Entry(search_bar, textvariable=search_var, bg=EH, fg=TEXT,
+                              insertbackground=TEXT, font=font_mono(9),
+                              relief="flat", highlightthickness=1,
+                              highlightbackground=CARD_BORDER, highlightcolor=ACCENT,
+                              width=22)
+        search_ent.pack(side="left", ipady=3, padx=(0, 6))
+
+        count_lbl = tk.Label(search_bar, text="", bg="#1a1e2b", fg=MUTED, font=font_ui(8))
+        count_lbl.pack(side="left", padx=(2, 6))
+
+        filter_var = tk.BooleanVar(value=False)
+        filter_chk = tk.Checkbutton(search_bar, text="Filter lines", variable=filter_var,
+                                    bg="#1a1e2b", fg=TEXT, selectcolor=EH,
+                                    activebackground="#1a1e2b", activeforeground=TEXT,
+                                    font=font_ui(8), command=lambda: _update_search())
+        filter_chk.pack(side="left", padx=(0, 6))
+
+        tk.Button(search_bar, text="▲ Prev", bg=EH, fg=TEXT,
+                  activebackground=EH_HOVER, activeforeground=TEXT,
+                  font=font_ui(8), relief="flat", padx=6, pady=2,
+                  command=lambda: _prev_match()).pack(side="left", padx=(0, 4))
+
+        tk.Button(search_bar, text="▼ Next", bg=EH, fg=TEXT,
+                  activebackground=EH_HOVER, activeforeground=TEXT,
+                  font=font_ui(8), relief="flat", padx=6, pady=2,
+                  command=lambda: _next_match()).pack(side="left", padx=(0, 6))
+
+        tk.Button(search_bar, text="✕", bg="#1a1e2b", fg=MUTED,
+                  activebackground="#1a1e2b", activeforeground=DANGER,
+                  font=font_ui(9, bold=True), relief="flat", padx=6,
+                  command=lambda: _hide_search()).pack(side="right")
 
         text = tk.Text(frame, bg=LOG_BG, fg=LOG_FG, insertbackground=LOG_FG,
                        font=font_mono(9), wrap="none", relief="flat",
                        padx=10, pady=8, state="disabled",
                        highlightthickness=0, bd=0)
-        text.grid(row=0, column=0, sticky="nsew")
+        text.grid(row=1, column=0, sticky="nsew")
         yscroll = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
-        yscroll.grid(row=0, column=1, sticky="ns")
+        yscroll.grid(row=1, column=1, sticky="ns")
         xscroll = ttk.Scrollbar(frame, orient="horizontal", command=text.xview)
-        xscroll.grid(row=1, column=0, sticky="ew")
+        xscroll.grid(row=2, column=0, sticky="ew")
         text.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
         text.tag_configure("launcher", foreground="#7c8aff")
         text.tag_configure("stdin", foreground="#00d2a0")
+        text.tag_configure("search_highlight", background="#d35400", foreground="#ffffff")
+        text.tag_configure("search_current", background="#f1c40f", foreground="#000000")
+        text.tag_configure("search_elide", elide=True)
+
+        matches = []
+        current_match_idx = [-1]
+
+        def _clear_highlights():
+            text.tag_remove("search_highlight", "1.0", "end")
+            text.tag_remove("search_current", "1.0", "end")
+            text.tag_remove("search_elide", "1.0", "end")
+            matches.clear()
+            current_match_idx[0] = -1
+
+        def _update_search(*args):
+            _clear_highlights()
+            query = search_var.get().strip()
+            if not query:
+                count_lbl.configure(text="", fg=MUTED)
+                return
+
+            start_idx = "1.0"
+            while True:
+                pos = text.search(query, start_idx, stopindex="end", nocase=True)
+                if not pos:
+                    break
+                line, col = pos.split(".")
+                end_pos = f"{line}.{int(col) + len(query)}"
+                matches.append((pos, end_pos))
+                text.tag_add("search_highlight", pos, end_pos)
+                start_idx = end_pos
+
+            total = len(matches)
+            if total == 0:
+                count_lbl.configure(text="0 matches", fg=DANGER)
+                if filter_var.get():
+                    text.tag_add("search_elide", "1.0", "end")
+                return
+
+            if filter_var.get():
+                matching_lines = {int(p.split(".")[0]) for p, _ in matches}
+                total_lines = int(text.index("end-1c").split(".")[0])
+                cur_start = None
+                for l in range(1, total_lines + 1):
+                    if l not in matching_lines:
+                        if cur_start is None:
+                            cur_start = l
+                    else:
+                        if cur_start is not None:
+                            text.tag_add("search_elide", f"{cur_start}.0", f"{l}.0")
+                            cur_start = None
+                if cur_start is not None:
+                    text.tag_add("search_elide", f"{cur_start}.0", "end")
+
+            _jump_to_match(0)
+
+        def _jump_to_match(idx: int):
+            if not matches:
+                return
+            idx = idx % len(matches)
+            current_match_idx[0] = idx
+            text.tag_remove("search_current", "1.0", "end")
+            pos, end_pos = matches[idx]
+            text.tag_add("search_current", pos, end_pos)
+            text.see(pos)
+            count_lbl.configure(
+                text=f"{idx + 1} of {len(matches)}",
+                fg=TEXT
+            )
+
+        def _next_match(event=None):
+            if matches:
+                _jump_to_match(current_match_idx[0] + 1)
+            return "break"
+
+        def _prev_match(event=None):
+            if matches:
+                _jump_to_match(current_match_idx[0] - 1)
+            return "break"
+
+        def _show_search():
+            search_bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
+            search_bar.lift()
+            search_bar.update_idletasks()
+            search_ent.focus_force()
+            search_ent.select_range(0, "end")
+            search_ent.icursor("end")
+            search_ent.after(30, lambda: (search_ent.focus_force(), search_ent.select_range(0, "end")))
+            if search_var.get().strip():
+                _update_search()
+
+        def _hide_search(event=None):
+            search_bar.grid_remove()
+            _clear_highlights()
+            search_var.set("")
+            count_lbl.configure(text="", fg=MUTED)
+            text.focus_set()
+            return "break"
+
+        search_ent.bind("<Return>", _next_match)
+        search_ent.bind("<KP_Enter>", _next_match)
+        search_ent.bind("<Shift-Return>", _prev_match)
+        search_ent.bind("<Escape>", _hide_search)
+        search_ent.bind("<Control-f>", lambda e: (search_ent.select_range(0, "end"), "break")[1])
+        search_ent.bind("<Control-F>", lambda e: (search_ent.select_range(0, "end"), "break")[1])
+        search_var.trace_add("write", lambda *a: _update_search())
+
+        self._log_search_handlers[svc.key] = _show_search
 
         # Interactive command / input row (makes the terminal writable)
         input_bar = tk.Frame(frame, bg=CARD_BG, pady=4, padx=8)
-        input_bar.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        input_bar.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
         tk.Label(input_bar, text="❯", bg=CARD_BG, fg=ACCENT,
                  font=font_mono(10, bold=True)).pack(side="left", padx=(2, 6))
@@ -2582,12 +2778,30 @@ class LauncherApp:
         input_ent.bind("<KP_Enter>", _do_send)
         input_ent.bind("<Up>", _hist_up)
         input_ent.bind("<Down>", _hist_down)
+        input_ent.bind("<Control-f>", lambda e: (_show_search(), "break")[1])
+        input_ent.bind("<Control-F>", lambda e: (_show_search(), "break")[1])
 
-        # Typing while focused on the log output automatically routes to input_ent
+        # Typing while focused on the log output automatically routes to input_ent (or search_ent if search is active)
         def _on_text_key(event):
+            if (event.state & 4) and event.keysym in ("f", "F"):
+                _show_search()
+                return "break"
             # Allow Ctrl shortcuts (copy, etc.)
             if event.state & 4:
                 return None
+            if search_bar.winfo_ismapped():
+                if event.keysym == "Escape":
+                    _hide_search()
+                    return "break"
+                elif event.keysym in ("Return", "KP_Enter"):
+                    _next_match()
+                    return "break"
+                elif event.char and event.char.isprintable():
+                    search_ent.focus_force()
+                    search_ent.insert("end", event.char)
+                    return "break"
+                return None
+
             if event.char and event.char.isprintable():
                 if input_var.get() == placeholder:
                     input_var.set("")
@@ -2601,6 +2815,8 @@ class LauncherApp:
             return None
 
         text.bind("<Key>", _on_text_key)
+        text.bind("<Control-f>", lambda e: (_show_search(), "break")[1])
+        text.bind("<Control-F>", lambda e: (_show_search(), "break")[1])
 
         tk.Button(input_bar, text="Send", bg=ACCENT, fg="#ffffff",
                   activebackground=ACCENT_HOVER, activeforeground="#ffffff",
@@ -2616,6 +2832,11 @@ class LauncherApp:
                   activebackground=EH_HOVER, activeforeground=TEXT,
                   font=font_ui(9), relief="flat", padx=8, pady=2,
                   command=lambda k=svc.key: self.clear_log(k)).pack(side="right")
+
+        tk.Button(input_bar, text="🔍 Find (Ctrl+F)", bg=EH, fg=TEXT,
+                  activebackground=EH_HOVER, activeforeground=TEXT,
+                  font=font_ui(9), relief="flat", padx=8, pady=2,
+                  command=_show_search).pack(side="right", padx=(0, 6))
 
         self.logs[svc.key] = text
 
@@ -2848,6 +3069,10 @@ class LauncherApp:
                 self.notebook.forget(i)
         if old_key in self.logs:
             del self.logs[old_key]
+        self._log_search_handlers.pop(old_key, None)
+        old_frame = self._log_tab_frames.pop(old_key, None)
+        if old_frame:
+            self._log_tab_by_frame.pop(str(old_frame), None)
 
         self._build_log_tab(new_svc)
         self._rebuild_cards()
@@ -2872,6 +3097,10 @@ class LauncherApp:
                 break
         if svc.key in self.logs:
             del self.logs[svc.key]
+        self._log_search_handlers.pop(svc.key, None)
+        del_frame = self._log_tab_frames.pop(svc.key, None)
+        if del_frame:
+            self._log_tab_by_frame.pop(str(del_frame), None)
 
         del self.services[svc.key]
         self._rebuild_cards()

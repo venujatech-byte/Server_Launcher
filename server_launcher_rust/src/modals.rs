@@ -1,4 +1,5 @@
 use crate::config::{CustomAction, CustomLink, ServerConfig};
+use crate::theme::ThemePalette;
 use egui::{Color32, Context, Key, RichText, Rounding, Stroke, Window};
 use std::collections::HashMap;
 
@@ -391,6 +392,7 @@ pub enum PaletteAction {
     StopGroup(String),
     StartAll,
     StopAll,
+    SetTheme(String),
 }
 
 #[derive(Default)]
@@ -400,7 +402,7 @@ pub struct CommandPaletteState {
     pub selected_idx: usize,
 }
 
-pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState) -> ModalAction {
+pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palette: &ThemePalette) -> ModalAction {
     if !state.open {
         return ModalAction::None;
     }
@@ -437,18 +439,18 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState) -> Mo
                         })
                         .size(16.0)
                         .strong()
-                        .color(Color32::from_rgb(235, 238, 245)),
+                        .color(palette.text_primary),
                     );
                     ui.label(
                         RichText::new("Saved to servers.json - no code changes needed.")
                             .size(11.0)
-                            .color(Color32::from_rgb(123, 131, 148)),
+                            .color(palette.text_muted),
                     );
                 });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .button(RichText::new("✕").size(13.0).color(Color32::from_rgb(180, 185, 200)))
+                        .button(RichText::new("✕").size(13.0).color(palette.text_secondary))
                         .clicked()
                     {
                         state.open = false;
@@ -467,8 +469,8 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState) -> Mo
                     // Template Picker (only for new servers)
                     if !state.is_edit {
                         egui::Frame::none()
-                            .fill(Color32::from_rgb(26, 30, 43))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 52, 70)))
+                            .fill(palette.bg_subtle)
+                            .stroke(Stroke::new(1.0_f32, palette.border))
                             .rounding(Rounding::same(6.0))
                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                             .show(ui, |ui| {
@@ -476,14 +478,14 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState) -> Mo
                                     RichText::new("⚡ Pick a Template (Fast Setup)")
                                         .size(12.5)
                                         .strong()
-                                        .color(Color32::from_rgb(108, 92, 231)),
+                                        .color(palette.accent),
                                 );
                                 ui.label(
                                     RichText::new(
                                         "Auto-populates command, port, actions, and links for popular stacks.",
                                     )
                                     .size(10.5)
-                                    .color(Color32::from_rgb(123, 131, 148)),
+                                    .color(palette.text_muted),
                                 );
                                 ui.add_space(6.0);
 
@@ -511,9 +513,9 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState) -> Mo
                                         RichText::new("Apply Template")
                                             .size(11.0)
                                             .strong()
-                                            .color(Color32::WHITE),
+                                            .color(palette.accent_text),
                                     )
-                                    .fill(Color32::from_rgb(108, 92, 231))
+                                    .fill(palette.accent)
                                     .rounding(Rounding::same(4.0));
 
                                     if ui.add(apply_btn).clicked() {
@@ -538,7 +540,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState) -> Mo
                     ui.label(
                         RichText::new("Unique Key (optional override)")
                             .size(11.0)
-                            .color(Color32::from_rgb(123, 131, 148)),
+                            .color(palette.text_muted),
                     );
                     ui.add_enabled(
                         !state.is_edit,
@@ -557,7 +559,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState) -> Mo
                     ui.label(
                         RichText::new("Tag servers for group start/stop. Pick preset or type custom:")
                             .size(10.5)
-                            .color(Color32::from_rgb(123, 131, 148)),
+                            .color(palette.text_muted),
                     );
                     ui.add(
                         egui::TextEdit::singleline(&mut state.group)
@@ -567,9 +569,9 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState) -> Mo
                     ui.horizontal(|ui| {
                         for preset in &["Frontend", "Backend", "DB", "General"] {
                             let btn = egui::Button::new(
-                                RichText::new(*preset).size(10.5).color(Color32::from_rgb(200, 205, 216)),
+                                RichText::new(*preset).size(10.5).color(palette.text_secondary),
                             )
-                            .fill(Color32::from_rgb(37, 40, 51))
+                            .fill(palette.bg_button)
                             .rounding(Rounding::same(4.0));
                             if ui.add(btn).clicked() {
                                 state.group = preset.to_string();
@@ -587,9 +589,9 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState) -> Mo
                                 .desired_width(ui.available_width() - 85.0),
                         );
                         let browse_btn = egui::Button::new(
-                            RichText::new("Browse").size(11.5).color(Color32::from_rgb(200, 205, 216)),
+                            RichText::new("Browse").size(11.5).color(palette.text_secondary),
                         )
-                        .fill(Color32::from_rgb(37, 40, 51))
+                        .fill(palette.bg_button)
                         .rounding(Rounding::same(4.0));
                         if ui.add(browse_btn).clicked() {
                             if let Some(folder) = rfd::FileDialog::new().pick_folder() {
@@ -761,7 +763,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState) -> Mo
                         .button(
                             RichText::new("+ Add link")
                                 .size(11.0)
-                                .color(Color32::from_rgb(108, 92, 231)),
+                                .color(palette.accent),
                         )
                         .clicked()
                     {
@@ -773,7 +775,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState) -> Mo
 
             if let Some(err) = &state.error_msg {
                 ui.add_space(4.0);
-                ui.label(RichText::new(err).color(Color32::from_rgb(230, 80, 80)));
+                ui.label(RichText::new(err).color(palette.danger));
             }
 
             ui.add_space(8.0);
@@ -787,9 +789,9 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState) -> Mo
                         RichText::new("Save")
                             .size(12.0)
                             .strong()
-                            .color(Color32::WHITE),
+                            .color(palette.accent_text),
                     )
-                    .fill(Color32::from_rgb(108, 92, 231))
+                    .fill(palette.accent)
                     .rounding(Rounding::same(4.0))
                     .min_size(egui::vec2(80.0, 28.0));
 
@@ -813,9 +815,9 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState) -> Mo
                     let btn_cancel = egui::Button::new(
                         RichText::new("Cancel")
                             .size(12.0)
-                            .color(Color32::from_rgb(180, 185, 200)),
+                            .color(palette.text_secondary),
                     )
-                    .fill(Color32::from_rgb(37, 40, 51))
+                    .fill(palette.bg_button)
                     .rounding(Rounding::same(4.0))
                     .min_size(egui::vec2(80.0, 28.0));
 
@@ -834,6 +836,7 @@ pub fn render_command_palette(
     ctx: &Context,
     state: &mut CommandPaletteState,
     items: &[(String, PaletteAction)],
+    palette: &ThemePalette,
 ) -> ModalAction {
     if !state.open {
         return ModalAction::None;
@@ -890,11 +893,11 @@ pub fn render_command_palette(
                     RichText::new("⚡ Quick Launch")
                         .size(14.0)
                         .strong()
-                        .color(Color32::from_rgb(235, 238, 245)),
+                        .color(palette.text_primary),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .button(RichText::new("✕").size(12.0).color(Color32::from_rgb(180, 185, 200)))
+                        .button(RichText::new("✕").size(12.0).color(palette.text_secondary))
                         .clicked()
                     {
                         state.open = false;
@@ -902,7 +905,7 @@ pub fn render_command_palette(
                     ui.label(
                         RichText::new("Esc to close")
                             .size(10.5)
-                            .color(Color32::from_rgb(123, 131, 148)),
+                            .color(palette.text_muted),
                     );
                 });
             });
@@ -929,11 +932,11 @@ pub fn render_command_palette(
                             let selected = i == state.selected_idx;
                             let text = if selected {
                                 RichText::new(format!("❯  {}", label))
-                                    .color(Color32::from_rgb(162, 155, 254))
+                                    .color(palette.accent_light)
                                     .strong()
                             } else {
                                 RichText::new(format!("   {}", label))
-                                    .color(Color32::from_rgb(220, 224, 234))
+                                    .color(palette.text_secondary)
                             };
 
                             let resp = ui.selectable_label(selected, text);
@@ -951,11 +954,11 @@ pub fn render_command_palette(
                 ui.label(
                     RichText::new("Type to filter • ↑/↓ navigate • Enter select")
                         .size(10.0)
-                        .color(Color32::from_rgb(123, 131, 148)),
+                        .color(palette.text_muted),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .button(RichText::new("Close").size(11.0).color(Color32::from_rgb(180, 185, 200)))
+                        .button(RichText::new("Close").size(11.0).color(palette.text_secondary))
                         .clicked()
                     {
                         state.open = false;
@@ -1019,7 +1022,7 @@ impl SshHostModalState {
     }
 }
 
-pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState) -> ModalAction {
+pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palette: &ThemePalette) -> ModalAction {
     if !state.open {
         return ModalAction::None;
     }
@@ -1043,7 +1046,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState) -> Mo
             ui.add_space(6.0);
 
             // Display Name
-            ui.label(RichText::new("Display Name:").size(12.0).strong().color(Color32::from_rgb(220, 224, 235)));
+            ui.label(RichText::new("Display Name:").size(12.0).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::singleline(&mut state.name)
                     .hint_text("e.g. Dev Cloud Server, Staging VPS")
@@ -1054,7 +1057,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState) -> Mo
             // Host & Port row
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("Host / IP Address:").size(12.0).strong().color(Color32::from_rgb(220, 224, 235)));
+                    ui.label(RichText::new("Host / IP Address:").size(12.0).strong().color(palette.text_primary));
                     ui.add(
                         egui::TextEdit::singleline(&mut state.host)
                             .hint_text("e.g. 192.168.1.100 or vps.example.com")
@@ -1062,7 +1065,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState) -> Mo
                     );
                 });
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("Port:").size(12.0).strong().color(Color32::from_rgb(220, 224, 235)));
+                    ui.label(RichText::new("Port:").size(12.0).strong().color(palette.text_primary));
                     ui.add(
                         egui::TextEdit::singleline(&mut state.port_str)
                             .hint_text("22")
@@ -1073,7 +1076,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState) -> Mo
             ui.add_space(8.0);
 
             // Username
-            ui.label(RichText::new("SSH Username:").size(12.0).strong().color(Color32::from_rgb(220, 224, 235)));
+            ui.label(RichText::new("SSH Username:").size(12.0).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::singleline(&mut state.user)
                     .hint_text("e.g. ubuntu, root, ec2-user")
@@ -1082,7 +1085,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState) -> Mo
             ui.add_space(8.0);
 
             // Private Key File
-            ui.label(RichText::new("SSH Private Key Path (optional if using agent/default):").size(12.0).strong().color(Color32::from_rgb(220, 224, 235)));
+            ui.label(RichText::new("SSH Private Key Path (optional if using agent/default):").size(12.0).strong().color(palette.text_primary));
             ui.horizontal(|ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut state.key_path)
@@ -1099,7 +1102,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState) -> Mo
 
             // SSH Password
             ui.horizontal(|ui| {
-                ui.label(RichText::new("SSH Password (optional if using key/agent):").size(12.0).strong().color(Color32::from_rgb(220, 224, 235)));
+                ui.label(RichText::new("SSH Password (optional if using key/agent):").size(12.0).strong().color(palette.text_primary));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let eye_label = if state.show_password { "👁 Hide" } else { "👁 Show" };
                     if ui.small_button(eye_label).clicked() {
@@ -1116,7 +1119,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState) -> Mo
             ui.add_space(8.0);
 
             // Default Remote Directory
-            ui.label(RichText::new("Default Remote Directory (optional):").size(12.0).strong().color(Color32::from_rgb(220, 224, 235)));
+            ui.label(RichText::new("Default Remote Directory (optional):").size(12.0).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::singleline(&mut state.remote_cwd)
                     .hint_text("e.g. /var/www or /home/ubuntu/app")
@@ -1129,14 +1132,14 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState) -> Mo
                 match res {
                     Ok(msg) => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("✓").size(13.0).color(Color32::from_rgb(16, 185, 129)));
-                            ui.label(RichText::new(msg).size(11.5).color(Color32::from_rgb(52, 211, 153)));
+                            ui.label(RichText::new("✓").size(13.0).color(palette.success));
+                            ui.label(RichText::new(msg).size(11.5).color(palette.success));
                         });
                     }
                     Err(err) => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("✗").size(13.0).color(Color32::from_rgb(239, 68, 68)));
-                            ui.label(RichText::new(err).size(11.5).color(Color32::from_rgb(248, 113, 113)));
+                            ui.label(RichText::new("✗").size(13.0).color(palette.danger));
+                            ui.label(RichText::new(err).size(11.5).color(palette.danger));
                         });
                     }
                 }
@@ -1148,9 +1151,9 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState) -> Mo
 
             ui.horizontal(|ui| {
                 // Test Connection button
-                let test_btn = egui::Button::new(RichText::new("⚡ Test Connection").size(11.5).color(Color32::from_rgb(162, 155, 254)))
-                    .fill(Color32::from_rgb(32, 34, 52))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(108, 92, 231)));
+                let test_btn = egui::Button::new(RichText::new("⚡ Test Connection").size(11.5).color(palette.accent_light))
+                    .fill(palette.bg_button)
+                    .stroke(Stroke::new(1.0_f32, palette.accent));
                 if ui.add(test_btn).clicked() {
                     let port = state.port_str.trim().parse::<u16>().unwrap_or(22);
                     let host_obj = crate::config::SshRemoteHost {
@@ -1168,8 +1171,8 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState) -> Mo
 
                 if state.is_edit {
                     if let Some(id_to_del) = state.editing_id.clone() {
-                        let del_btn = egui::Button::new(RichText::new("Delete Host").size(11.5).color(Color32::from_rgb(239, 68, 68)))
-                            .fill(Color32::from_rgb(38, 20, 20));
+                        let del_btn = egui::Button::new(RichText::new("Delete Host").size(11.5).color(palette.danger))
+                            .fill(palette.danger_subtle);
                         if ui.add(del_btn).clicked() {
                             action = ModalAction::DeleteSshHost(id_to_del);
                             state.open = false;
@@ -1178,8 +1181,8 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState) -> Mo
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let save_btn = egui::Button::new(RichText::new("Save Host").size(12.0).strong().color(Color32::WHITE))
-                        .fill(Color32::from_rgb(108, 92, 231))
+                    let save_btn = egui::Button::new(RichText::new("Save Host").size(12.0).strong().color(palette.accent_text))
+                        .fill(palette.accent)
                         .rounding(Rounding::same(5.0))
                         .min_size(egui::vec2(85.0, 28.0));
 
@@ -1209,7 +1212,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState) -> Mo
                         state.open = false;
                     }
 
-                    if ui.button(RichText::new("Cancel").size(12.0).color(Color32::from_rgb(180, 185, 200))).clicked() {
+                    if ui.button(RichText::new("Cancel").size(12.0).color(palette.text_secondary)).clicked() {
                         state.open = false;
                     }
                 });

@@ -4,9 +4,12 @@ mod modals;
 mod remote;
 mod scanner;
 mod service;
+pub mod theme;
 
 use app::LauncherApp;
-use eframe::egui::{self, Color32, Rounding, Visuals};
+use config::ConfigFile;
+use eframe::egui;
+use theme::ThemeMode;
 
 pub fn load_app_icon() -> Option<egui::IconData> {
     let png_bytes = include_bytes!("../assets/icon.png");
@@ -82,20 +85,14 @@ fn main() -> eframe::Result<()> {
         "Server Launcher",
         native_options,
         Box::new(|cc| {
-            let mut visuals = Visuals::dark();
-            visuals.panel_fill = Color32::from_rgb(15, 17, 23);
-            visuals.window_fill = Color32::from_rgb(22, 25, 34);
-            visuals.faint_bg_color = Color32::from_rgb(18, 21, 29);
-            visuals.extreme_bg_color = Color32::from_rgb(10, 12, 17);
-            visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(22, 25, 34);
-            visuals.widgets.inactive.bg_fill = Color32::from_rgb(37, 40, 51);
-            visuals.widgets.hovered.bg_fill = Color32::from_rgb(47, 51, 64);
-            visuals.widgets.active.bg_fill = Color32::from_rgb(108, 92, 231);
-            visuals.widgets.noninteractive.rounding = Rounding::same(4.0);
-            visuals.widgets.inactive.rounding = Rounding::same(4.0);
-            visuals.widgets.hovered.rounding = Rounding::same(6.0);
-            visuals.widgets.active.rounding = Rounding::same(6.0);
-            cc.egui_ctx.set_visuals(visuals);
+            let config_path = ConfigFile::default_path();
+            let config_file = ConfigFile::load_from_file(&config_path);
+            let initial_theme = config_file
+                .theme
+                .as_deref()
+                .map(ThemeMode::from_id_str)
+                .unwrap_or_default();
+            cc.egui_ctx.set_visuals(initial_theme.palette().egui_visuals());
 
             // Scale UI for comfortable modern HiDPI reading
             cc.egui_ctx.set_pixels_per_point(1.15);

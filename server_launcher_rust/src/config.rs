@@ -78,6 +78,8 @@ pub struct ConfigFile {
     pub servers: Vec<ServerConfig>,
     #[serde(default)]
     pub ssh_hosts: Vec<SshRemoteHost>,
+    #[serde(default)]
+    pub theme: Option<String>,
 }
 
 impl ConfigFile {

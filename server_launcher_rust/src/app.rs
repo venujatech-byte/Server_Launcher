@@ -806,14 +806,14 @@ impl LauncherApp {
 
     fn render_machines_nav_bar(&mut self, ui: &mut Ui) {
         ui.vertical(|ui| {
-            ui.add_space(4.0);
+            ui.add_space(2.0);
             ui.label(
                 RichText::new("MACHINES")
-                    .size(10.5)
+                    .size(9.5)
                     .strong()
                     .color(Color32::from_rgb(130, 138, 158)),
             );
-            ui.add_space(8.0);
+            ui.add_space(6.0);
 
             // 1. This PC (Local) item
             let is_local_selected = self.selected_machine == "local";
@@ -838,17 +838,17 @@ impl LauncherApp {
                 .fill(local_bg)
                 .stroke(local_stroke)
                 .rounding(Rounding::same(6.0))
-                .inner_margin(egui::Margin::symmetric(10.0, 9.0));
+                .inner_margin(egui::Margin::symmetric(6.0, 6.0));
 
             let local_resp = local_card
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("🖥").size(16.0));
+                        ui.label(RichText::new("🖥").size(15.0));
                         ui.add_space(2.0);
                         ui.vertical(|ui| {
                             ui.label(
                                 RichText::new("This PC")
-                                    .size(12.5)
+                                    .size(11.5)
                                     .strong()
                                     .color(if is_local_selected {
                                         Color32::WHITE
@@ -858,11 +858,11 @@ impl LauncherApp {
                             );
                             ui.label(
                                 RichText::new(if running_count > 0 {
-                                    format!("{} running", running_count)
+                                    format!("{} active", running_count)
                                 } else {
-                                    "Localhost".to_string()
+                                    "Local".to_string()
                                 })
-                                .size(10.0)
+                                .size(9.0)
                                 .color(if running_count > 0 {
                                     Color32::from_rgb(0, 210, 160)
                                 } else {
@@ -879,20 +879,20 @@ impl LauncherApp {
                 self.selected_machine = "local".to_string();
             }
 
-            ui.add_space(14.0);
+            ui.add_space(10.0);
 
             // 2. SSH Remote PCs Section Header
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new("SSH REMOTES")
-                        .size(10.5)
+                    RichText::new("REMOTES")
+                        .size(9.5)
                         .strong()
                         .color(Color32::from_rgb(130, 138, 158)),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_add = egui::Button::new(
                         RichText::new("+ Add")
-                            .size(10.0)
+                            .size(9.0)
                             .strong()
                             .color(Color32::from_rgb(162, 155, 254)),
                     )
@@ -905,7 +905,7 @@ impl LauncherApp {
                     }
                 });
             });
-            ui.add_space(6.0);
+            ui.add_space(4.0);
 
             // 3. List of SSH Hosts
             let mut host_to_edit: Option<SshRemoteHost> = None;
@@ -918,10 +918,10 @@ impl LauncherApp {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     if self.ssh_hosts.is_empty() {
-                        ui.add_space(8.0);
+                        ui.add_space(6.0);
                         ui.label(
-                            RichText::new("No remote PCs added yet.\nClick '+ Add' or Import below.")
-                                .size(10.5)
+                            RichText::new("No remote PCs yet.\nClick '+ Add' below.")
+                                .size(9.5)
                                 .color(Color32::from_rgb(100, 108, 125)),
                         );
                     } else {
@@ -961,17 +961,17 @@ impl LauncherApp {
                                 .fill(host_bg)
                                 .stroke(host_stroke)
                                 .rounding(Rounding::same(6.0))
-                                .inner_margin(egui::Margin::symmetric(9.0, 8.0));
+                                .inner_margin(egui::Margin::symmetric(6.0, 6.0));
 
                             let card_resp = card
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new("🌐").size(15.0));
+                                        ui.label(RichText::new("🌐").size(14.0));
                                         ui.add_space(2.0);
                                         ui.vertical(|ui| {
                                             ui.label(
                                                 RichText::new(&host.name)
-                                                    .size(12.0)
+                                                    .size(11.0)
                                                     .strong()
                                                     .color(if is_selected {
                                                         Color32::WHITE
@@ -981,14 +981,14 @@ impl LauncherApp {
                                             );
                                             ui.label(
                                                 RichText::new(status_text)
-                                                    .size(9.5)
+                                                    .size(9.0)
                                                     .color(status_color),
                                             );
                                         });
 
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             let btn_gear = egui::Button::new(
-                                                RichText::new("⚙").size(11.0).color(Color32::from_rgb(130, 138, 155)),
+                                                RichText::new("⚙").size(10.0).color(Color32::from_rgb(130, 138, 155)),
                                             )
                                             .fill(Color32::TRANSPARENT);
                                             if ui.add(btn_gear).on_hover_text("Edit remote host settings").clicked() {
@@ -1028,17 +1028,17 @@ impl LauncherApp {
                         }
                     }
 
-                    ui.add_space(14.0);
+                    ui.add_space(10.0);
                     // Import ~/.ssh/config button
                     let btn_import = egui::Button::new(
-                        RichText::new("📥 Import ~/.ssh/config")
-                            .size(10.5)
+                        RichText::new("📥 Import SSH")
+                            .size(9.5)
                             .color(Color32::from_rgb(148, 163, 184)),
                     )
                     .fill(Color32::from_rgb(26, 30, 42))
                     .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 50, 68)))
                     .rounding(Rounding::same(4.0))
-                    .min_size(egui::vec2(ui.available_width(), 26.0));
+                    .min_size(egui::vec2(ui.available_width(), 22.0));
 
                     if ui.add(btn_import).on_hover_text("Read ~/.ssh/config and add configured remote hosts").clicked() {
                         let imported = import_from_ssh_config();
@@ -1675,16 +1675,18 @@ impl eframe::App for LauncherApp {
         // LEFT MACHINES NAV BAR (Switch between This PC and SSH Remotes)
         // ═════════════════════════════════════════════════════════════════════
         egui::SidePanel::left("machines_nav_bar")
-            .resizable(false)
-            .exact_width(180.0)
+            .resizable(true)
+            .default_width(115.0)
+            .min_width(80.0)
+            .max_width(200.0)
             .frame(
                 Frame::none()
                     .fill(Color32::from_rgb(12, 14, 19))
                     .inner_margin(egui::Margin {
-                        left: 10.0,
-                        right: 10.0,
+                        left: 6.0,
+                        right: 6.0,
                         top: 8.0,
-                        bottom: 12.0,
+                        bottom: 10.0,
                     }),
             )
             .show(ctx, |ui| {
@@ -1693,12 +1695,12 @@ impl eframe::App for LauncherApp {
 
         if self.selected_machine == "local" {
             // ═════════════════════════════════════════════════════════════════
-            // LEFT SIDEBAR: Full Window Height (~350px width)
+            // LEFT SIDEBAR: Full Window Height (~300px width)
             // ═════════════════════════════════════════════════════════════════
             egui::SidePanel::left("left_sidebar")
                 .resizable(true)
-                .default_width(345.0)
-                .min_width(300.0)
+                .default_width(300.0)
+                .min_width(240.0)
                 .max_width(450.0)
                 .frame(
                     Frame::none()
@@ -2144,6 +2146,15 @@ impl LauncherApp {
                                             if ui.add(btn_edit).clicked() {
                                                 to_edit = Some(s.config.clone());
                                             }
+
+                                            let btn_folder = egui::Button::new(
+                                                RichText::new("📁").size(11.0).color(Color32::from_rgb(203, 213, 225)),
+                                            )
+                                            .fill(Color32::from_rgb(33, 38, 52))
+                                            .rounding(Rounding::same(5.0));
+                                            if ui.add(btn_folder).on_hover_text("Open working directory in file manager (xdg-open)").clicked() {
+                                                crate::service::open_folder(&s.config.cwd);
+                                            }
                                         });
                                     });
                                 });
@@ -2506,6 +2517,15 @@ impl LauncherApp {
                                         if ui.add(btn_start).clicked() {
                                             to_toggle = Some((idx, 1));
                                         }
+                                    }
+
+                                    let btn_folder = egui::Button::new(
+                                        RichText::new("📁").size(11.0).color(Color32::from_rgb(203, 213, 225)),
+                                    )
+                                    .fill(Color32::from_rgb(33, 38, 52))
+                                    .rounding(Rounding::same(5.0));
+                                    if ui.add(btn_folder).on_hover_text("Open working directory in file manager (xdg-open)").clicked() {
+                                        crate::service::open_folder(&s.config.cwd);
                                     }
 
                                     let st_text = if is_running { "Running" } else { "Stopped" };
@@ -2871,6 +2891,22 @@ impl LauncherApp {
                                                                 cwd_str.clone(),
                                                             ));
                                                         }
+
+                                                        if !cwd_str.is_empty() {
+                                                            let btn_folder = egui::Button::new(
+                                                                RichText::new("📁 Open Folder")
+                                                                    .size(11.0)
+                                                                    .strong()
+                                                                    .color(Color32::from_rgb(245, 158, 11)),
+                                                            )
+                                                            .fill(Color32::from_rgb(38, 32, 12))
+                                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(245, 158, 11)))
+                                                            .rounding(Rounding::same(4.0));
+
+                                                            if ui.add(btn_folder).on_hover_text("Open working directory in desktop file manager (xdg-open)").clicked() {
+                                                                crate::service::open_folder(&cwd_str);
+                                                            }
+                                                        }
                                                     });
 
                                                     if self.open_inline_terminals.contains(&listener.port) {
@@ -3073,6 +3109,22 @@ impl LauncherApp {
                                                                 cwd.clone(),
                                                             ));
                                                         }
+
+                                                        if !cwd.is_empty() {
+                                                            let btn_folder = egui::Button::new(
+                                                                RichText::new("📁 Open Folder")
+                                                                    .size(11.0)
+                                                                    .strong()
+                                                                    .color(Color32::from_rgb(245, 158, 11)),
+                                                            )
+                                                            .fill(Color32::from_rgb(38, 32, 12))
+                                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(245, 158, 11)))
+                                                            .rounding(Rounding::same(4.0));
+
+                                                            if ui.add(btn_folder).on_hover_text("Open working directory in desktop file manager (xdg-open)").clicked() {
+                                                                crate::service::open_folder(cwd);
+                                                            }
+                                                        }
                                                     });
 
                                                     if self.open_inline_terminals.contains(port) {
@@ -3269,6 +3321,18 @@ impl LauncherApp {
                 .rounding(Rounding::same(4.0));
                 if ui.add(find_btn).clicked() {
                     self.search_open.insert(key.to_string(), !search_is_open);
+                }
+
+                let folder_btn = egui::Button::new(
+                    RichText::new("📁 Folder")
+                        .size(11.0)
+                        .color(Color32::from_rgb(200, 205, 216)),
+                )
+                .fill(Color32::from_rgb(37, 40, 51))
+                .rounding(Rounding::same(4.0));
+                if ui.add(folder_btn).on_hover_text("Open working directory in file manager (xdg-open)").clicked() {
+                    let cwd = self.find_service(key).map(|s| s.config.cwd.clone()).unwrap_or_default();
+                    crate::service::open_folder(&cwd);
                 }
 
                 let mut auto_restart = self.find_service(key).map(|s| s.config.auto_restart).unwrap_or(false);

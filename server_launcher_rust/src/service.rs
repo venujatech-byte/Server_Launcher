@@ -659,6 +659,34 @@ pub fn find_terminal() -> Option<(&'static str, &'static [&'static str])> {
     None
 }
 
+pub fn open_folder(cwd: &str) {
+    let path = if cwd.trim().is_empty() || cwd.trim() == "." {
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+    } else {
+        let p = std::path::Path::new(cwd.trim());
+        if p.is_relative() {
+            std::env::current_dir().map(|cd| cd.join(p)).unwrap_or_else(|_| p.to_path_buf())
+        } else {
+            p.to_path_buf()
+        }
+    };
+
+    thread::spawn(move || {
+        #[cfg(target_os = "linux")]
+        {
+            let _ = Command::new("xdg-open").arg(&path).spawn();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = Command::new("open").arg(&path).spawn();
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let _ = Command::new("explorer.exe").arg(&path).spawn();
+        }
+    });
+}
+
 pub fn launch_external_terminal(
     name: &str,
     pid: Option<u32>,

@@ -200,6 +200,30 @@ impl LauncherApp {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper rendering functions for crisp UI elements
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn draw_status_dot(ui: &mut Ui, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+    ui.painter().circle_filled(rect.center(), 4.5, color);
+}
+
+fn render_group_badge(ui: &mut Ui, text: &str) {
+    Frame::none()
+        .fill(Color32::from_rgb(45, 35, 75))
+        .rounding(Rounding::same(10.0))
+        .inner_margin(egui::Margin::symmetric(7.0, 2.0))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(text)
+                    .size(10.5)
+                    .color(Color32::from_rgb(162, 155, 254))
+                    .strong(),
+            );
+        });
+}
+
 impl eframe::App for LauncherApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         // Periodic poll (every 800ms)
@@ -214,24 +238,29 @@ impl eframe::App for LauncherApp {
         self.handle_global_shortcuts(ctx);
 
         // ═════════════════════════════════════════════════════════════════════
-        // TOP HEADER BAR (Exactly as in screenshot)
+        // TOP HEADER BAR (Pinned to Top, exact match to screenshot)
         // ═════════════════════════════════════════════════════════════════════
         egui::TopBottomPanel::top("top_header")
             .frame(
                 Frame::none()
                     .fill(Color32::from_rgb(15, 17, 23))
                     .inner_margin(egui::Margin {
-                        left: 16.0,
-                        right: 16.0,
-                        top: 12.0,
+                        left: 18.0,
+                        right: 18.0,
+                        top: 14.0,
                         bottom: 12.0,
                     }),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    // Left: Server Launcher title & details
+                    // Left: Server Launcher title & status line
                     ui.vertical(|ui| {
-                        ui.label(RichText::new("Server Launcher").size(20.0).strong().color(Color32::from_rgb(228, 231, 238)));
+                        ui.label(
+                            RichText::new("Server Launcher")
+                                .size(20.0)
+                                .strong()
+                                .color(Color32::from_rgb(235, 238, 245)),
+                        );
                         ui.add_space(2.0);
                         ui.label(
                             RichText::new(format!(
@@ -239,7 +268,7 @@ impl eframe::App for LauncherApp {
                                 self.lan_ip,
                                 self.services.len()
                             ))
-                            .size(11.0)
+                            .size(11.5)
                             .color(Color32::from_rgb(123, 131, 148)),
                         );
                     });
@@ -254,7 +283,8 @@ impl eframe::App for LauncherApp {
                                 .color(Color32::WHITE),
                         )
                         .fill(Color32::from_rgb(108, 92, 231))
-                        .rounding(Rounding::same(4.0));
+                        .rounding(Rounding::same(4.0))
+                        .min_size(egui::vec2(95.0, 26.0));
                         if ui.add(btn_add).clicked() {
                             self.add_edit_modal.open_new();
                         }
@@ -267,7 +297,8 @@ impl eframe::App for LauncherApp {
                         )
                         .fill(Color32::from_rgb(37, 40, 51))
                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(55, 60, 75)))
-                        .rounding(Rounding::same(4.0));
+                        .rounding(Rounding::same(4.0))
+                        .min_size(egui::vec2(165.0, 26.0));
                         if ui.add(btn_pal).clicked() {
                             self.palette_modal.open = true;
                             self.palette_modal.query.clear();
@@ -280,7 +311,8 @@ impl eframe::App for LauncherApp {
                                 .color(Color32::from_rgb(228, 231, 238)),
                         )
                         .fill(Color32::from_rgb(37, 40, 51))
-                        .rounding(Rounding::same(4.0));
+                        .rounding(Rounding::same(4.0))
+                        .min_size(egui::vec2(75.0, 26.0));
                         if ui.add(btn_stop_all).clicked() {
                             self.stop_all();
                         }
@@ -293,7 +325,8 @@ impl eframe::App for LauncherApp {
                                 .color(Color32::WHITE),
                         )
                         .fill(Color32::from_rgb(0, 210, 160))
-                        .rounding(Rounding::same(4.0));
+                        .rounding(Rounding::same(4.0))
+                        .min_size(egui::vec2(75.0, 26.0));
                         if ui.add(btn_start_all).clicked() {
                             self.start_all();
                         }
@@ -302,21 +335,43 @@ impl eframe::App for LauncherApp {
             });
 
         // ═════════════════════════════════════════════════════════════════════
-        // MAIN TWO-COLUMN BODY
+        // LEFT SIDEBAR: Full Window Height (~350px width)
+        // ═════════════════════════════════════════════════════════════════════
+        egui::SidePanel::left("left_sidebar")
+            .resizable(true)
+            .default_width(345.0)
+            .min_width(300.0)
+            .max_width(450.0)
+            .frame(
+                Frame::none()
+                    .fill(Color32::from_rgb(15, 17, 23))
+                    .inner_margin(egui::Margin {
+                        left: 14.0,
+                        right: 12.0,
+                        top: 8.0,
+                        bottom: 12.0,
+                    }),
+            )
+            .show(ctx, |ui| {
+                self.render_left_panel(ui);
+            });
+
+        // ═════════════════════════════════════════════════════════════════════
+        // RIGHT MAIN AREA: Full Window Height & Remaining Width
         // ═════════════════════════════════════════════════════════════════════
         egui::CentralPanel::default()
-            .frame(Frame::none().fill(Color32::from_rgb(15, 17, 23)))
+            .frame(
+                Frame::none()
+                    .fill(Color32::from_rgb(15, 17, 23))
+                    .inner_margin(egui::Margin {
+                        left: 6.0,
+                        right: 18.0,
+                        top: 8.0,
+                        bottom: 14.0,
+                    }),
+            )
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    // LEFT COLUMN: Groups, Filter Pills, Server Cards (~340px)
-                    self.render_left_panel(ui);
-
-                    // Vertical Separator
-                    ui.add_space(2.0);
-
-                    // RIGHT COLUMN: Tabs (Overview & Server Logs)
-                    self.render_right_panel(ui);
-                });
+                self.render_right_panel(ui);
             });
 
         // ═════════════════════════════════════════════════════════════════════
@@ -378,55 +433,52 @@ impl eframe::App for LauncherApp {
 
 impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
-    // LEFT SIDEBAR: Group Filter + Server Cards
+    // LEFT SIDEBAR: Group Filter + Server Cards (Expands full height)
     // ═════════════════════════════════════════════════════════════════════════
     fn render_left_panel(&mut self, ui: &mut Ui) {
-        ui.allocate_ui_with_layout(
-            egui::vec2(330.0, ui.available_height()),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                ui.add_space(4.0);
+        ui.vertical(|ui| {
+            // 1. Group Filter Pills Bar
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Group:").size(11.5).color(Color32::from_rgb(123, 131, 148)));
 
-                // 1. Group Filter Pills Bar
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("Group:").size(11.0).color(Color32::from_rgb(123, 131, 148)));
+                let mut all_groups = vec!["All".to_string()];
+                let mut unique_groups = BTreeSet::new();
+                for s in &self.services {
+                    unique_groups.insert(s.config.group.clone());
+                }
+                all_groups.extend(unique_groups);
 
-                    // Collect unique groups
-                    let mut all_groups = vec!["All".to_string()];
-                    let mut unique_groups = BTreeSet::new();
-                    for s in &self.services {
-                        unique_groups.insert(s.config.group.clone());
+                for grp in all_groups {
+                    let is_active = self.active_group_filter == grp;
+                    let bg_color = if is_active {
+                        Color32::from_rgb(108, 92, 231)
+                    } else {
+                        Color32::from_rgb(37, 40, 51)
+                    };
+                    let text_color = if is_active {
+                        Color32::WHITE
+                    } else {
+                        Color32::from_rgb(200, 205, 216)
+                    };
+
+                    let btn = egui::Button::new(RichText::new(&grp).size(11.0).color(text_color))
+                        .fill(bg_color)
+                        .rounding(Rounding::same(4.0))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 50, 65)));
+
+                    if ui.add(btn).clicked() {
+                        self.active_group_filter = grp.clone();
                     }
-                    all_groups.extend(unique_groups);
+                }
+            });
 
-                    for grp in all_groups {
-                        let is_active = self.active_group_filter == grp;
-                        let bg_color = if is_active {
-                            Color32::from_rgb(108, 92, 231)
-                        } else {
-                            Color32::from_rgb(37, 40, 51)
-                        };
-                        let text_color = if is_active {
-                            Color32::WHITE
-                        } else {
-                            Color32::from_rgb(200, 205, 216)
-                        };
+            ui.add_space(10.0);
 
-                        let btn = egui::Button::new(RichText::new(&grp).size(11.0).color(text_color))
-                            .fill(bg_color)
-                            .rounding(Rounding::same(4.0))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 50, 65)));
-
-                        if ui.add(btn).clicked() {
-                            self.active_group_filter = grp.clone();
-                        }
-                    }
-                });
-
-                ui.add_space(8.0);
-
-                // 2. Scrollable list of Groups & Server Cards
-                ScrollArea::vertical().id_salt("left_cards_scroll").show(ui, |ui| {
+            // 2. Scrollable list of Groups & Server Cards (NEVER shrinks, fills full height!)
+            ScrollArea::vertical()
+                .id_salt("left_cards_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
                     let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
                     for (idx, s) in self.services.iter().enumerate() {
                         if self.active_group_filter == "All" || self.active_group_filter == s.config.group {
@@ -446,29 +498,38 @@ impl LauncherApp {
                     let mut stop_grp = None;
 
                     for (group_name, indices) in groups {
-                        ui.add_space(8.0);
+                        ui.add_space(4.0);
                         // Group Section Header
                         Frame::none()
-                            .fill(Color32::from_rgb(19, 22, 30))
+                            .fill(Color32::from_rgb(20, 23, 32))
                             .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 42, 56)))
                             .rounding(Rounding::same(4.0))
-                            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 7.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     let header_text = format!("🏷  {} ({})", group_name.to_uppercase(), indices.len());
-                                    ui.label(RichText::new(header_text).size(11.0).strong().color(Color32::from_rgb(116, 185, 255)));
+                                    ui.label(
+                                        RichText::new(header_text)
+                                            .size(11.5)
+                                            .strong()
+                                            .color(Color32::from_rgb(116, 185, 255)),
+                                    );
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let btn_stop_grp = egui::Button::new(RichText::new("⏹ Stop Group").size(10.0).color(Color32::WHITE))
-                                            .fill(Color32::from_rgb(208, 64, 48))
-                                            .rounding(Rounding::same(3.0));
+                                        let btn_stop_grp = egui::Button::new(
+                                            RichText::new("⏹ Stop Group").size(10.0).color(Color32::WHITE),
+                                        )
+                                        .fill(Color32::from_rgb(208, 64, 48))
+                                        .rounding(Rounding::same(3.0));
                                         if ui.add(btn_stop_grp).clicked() {
                                             stop_grp = Some(group_name.clone());
                                         }
 
-                                        let btn_start_grp = egui::Button::new(RichText::new("▶ Start Group").size(10.0).color(Color32::WHITE))
-                                            .fill(Color32::from_rgb(0, 210, 160))
-                                            .rounding(Rounding::same(3.0));
+                                        let btn_start_grp = egui::Button::new(
+                                            RichText::new("▶ Start Group").size(10.0).color(Color32::WHITE),
+                                        )
+                                        .fill(Color32::from_rgb(0, 210, 160))
+                                        .rounding(Rounding::same(3.0));
                                         if ui.add(btn_start_grp).clicked() {
                                             start_grp = Some(group_name.clone());
                                         }
@@ -476,7 +537,7 @@ impl LauncherApp {
                                 });
                             });
 
-                        ui.add_space(4.0);
+                        ui.add_space(6.0);
 
                         // Server Cards for this group
                         for idx in indices {
@@ -488,7 +549,7 @@ impl LauncherApp {
                                 .fill(Color32::from_rgb(22, 25, 34))
                                 .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 42, 56)))
                                 .rounding(Rounding::same(6.0))
-                                .inner_margin(10.0)
+                                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                 .show(ui, |ui| {
                                     // Row 1: Status Dot + Name + Group Badge + Status Text
                                     ui.horizontal(|ui| {
@@ -497,71 +558,89 @@ impl LauncherApp {
                                         } else {
                                             Color32::from_rgb(123, 131, 148)
                                         };
-                                        ui.label(RichText::new("●").color(dot_color).size(13.0));
+                                        draw_status_dot(ui, dot_color);
 
                                         // Clickable name to view logs
                                         let name_resp = ui.selectable_label(
                                             false,
-                                            RichText::new(&s.config.name).strong().size(13.0).color(Color32::from_rgb(228, 231, 238)),
+                                            RichText::new(&s.config.name)
+                                                .strong()
+                                                .size(13.5)
+                                                .color(Color32::from_rgb(230, 234, 242)),
                                         );
                                         if name_resp.clicked() {
                                             to_switch_tab = Some(key.clone());
                                         }
 
-                                        // Group Badge Pill
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(45, 35, 75))
-                                            .rounding(Rounding::same(10.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new(&s.config.group).size(10.0).color(Color32::from_rgb(162, 155, 254)));
-                                            });
+                                        render_group_badge(ui, &s.config.group);
 
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             let st_text = if is_running { "Running" } else { "Stopped" };
-                                            let st_col = if is_running { Color32::from_rgb(0, 210, 160) } else { Color32::from_rgb(123, 131, 148) };
+                                            let st_col = if is_running {
+                                                Color32::from_rgb(0, 210, 160)
+                                            } else {
+                                                Color32::from_rgb(123, 131, 148)
+                                            };
                                             ui.label(RichText::new(st_text).size(11.0).color(st_col));
                                         });
                                     });
 
-                                    ui.add_space(2.0);
+                                    ui.add_space(4.0);
 
                                     // Row 2: Subtitle / command
-                                    ui.label(RichText::new(&s.config.command).size(11.0).monospace().color(Color32::from_rgb(123, 131, 148)));
+                                    ui.label(
+                                        RichText::new(&s.config.command)
+                                            .size(11.0)
+                                            .monospace()
+                                            .color(Color32::from_rgb(123, 131, 148)),
+                                    );
 
-                                    ui.add_space(6.0);
+                                    ui.add_space(8.0);
 
                                     // Row 3: Action Buttons (Start, [ ] own console, Edit, Delete)
                                     ui.horizontal(|ui| {
                                         if is_running {
-                                            let btn_stop = egui::Button::new(RichText::new("Stop").size(11.0).strong().color(Color32::WHITE))
-                                                .fill(Color32::from_rgb(208, 64, 48))
-                                                .rounding(Rounding::same(4.0));
+                                            let btn_stop = egui::Button::new(
+                                                RichText::new("Stop").size(11.0).strong().color(Color32::WHITE),
+                                            )
+                                            .fill(Color32::from_rgb(208, 64, 48))
+                                            .rounding(Rounding::same(4.0))
+                                            .min_size(egui::vec2(55.0, 22.0));
                                             if ui.add(btn_stop).clicked() {
                                                 to_stop = Some(idx);
                                             }
                                         } else {
-                                            let btn_start = egui::Button::new(RichText::new("Start").size(11.0).strong().color(Color32::WHITE))
-                                                .fill(Color32::from_rgb(0, 210, 160))
-                                                .rounding(Rounding::same(4.0));
+                                            let btn_start = egui::Button::new(
+                                                RichText::new("Start").size(11.0).strong().color(Color32::WHITE),
+                                            )
+                                            .fill(Color32::from_rgb(0, 210, 160))
+                                            .rounding(Rounding::same(4.0))
+                                            .min_size(egui::vec2(55.0, 22.0));
                                             if ui.add(btn_start).clicked() {
                                                 to_start = Some(idx);
                                             }
                                         }
 
-                                        ui.checkbox(&mut s.config.own_console, RichText::new("own console").size(10.0).color(Color32::from_rgb(123, 131, 148)));
+                                        ui.checkbox(
+                                            &mut s.config.own_console,
+                                            RichText::new("own console").size(10.5).color(Color32::from_rgb(123, 131, 148)),
+                                        );
 
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            let btn_del = egui::Button::new(RichText::new("Delete").size(11.0).color(Color32::from_rgb(200, 205, 216)))
-                                                .fill(Color32::from_rgb(37, 40, 51))
-                                                .rounding(Rounding::same(4.0));
+                                            let btn_del = egui::Button::new(
+                                                RichText::new("Delete").size(11.0).color(Color32::from_rgb(200, 205, 216)),
+                                            )
+                                            .fill(Color32::from_rgb(37, 40, 51))
+                                            .rounding(Rounding::same(4.0));
                                             if ui.add(btn_del).clicked() {
                                                 to_delete = Some(key.clone());
                                             }
 
-                                            let btn_edit = egui::Button::new(RichText::new("Edit").size(11.0).color(Color32::from_rgb(200, 205, 216)))
-                                                .fill(Color32::from_rgb(37, 40, 51))
-                                                .rounding(Rounding::same(4.0));
+                                            let btn_edit = egui::Button::new(
+                                                RichText::new("Edit").size(11.0).color(Color32::from_rgb(200, 205, 216)),
+                                            )
+                                            .fill(Color32::from_rgb(37, 40, 51))
+                                            .rounding(Rounding::same(4.0));
                                             if ui.add(btn_edit).clicked() {
                                                 to_edit = Some(s.config.clone());
                                             }
@@ -588,8 +667,7 @@ impl LauncherApp {
                         }
                     }
                 });
-            },
-        );
+        });
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -597,8 +675,6 @@ impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     fn render_right_panel(&mut self, ui: &mut Ui) {
         ui.vertical(|ui| {
-            ui.add_space(4.0);
-
             // Notebook Tabs Strip (matching screenshot)
             ui.horizontal(|ui| {
                 // Tab 0: Server Overview
@@ -609,7 +685,7 @@ impl LauncherApp {
                     Stroke::new(1.0_f32, Color32::from_rgb(45, 52, 70))
                 };
                 let ov_bg = if is_ov_active {
-                    Color32::from_rgb(22, 25, 34)
+                    Color32::from_rgb(20, 23, 32)
                 } else {
                     Color32::from_rgb(15, 17, 23)
                 };
@@ -637,7 +713,7 @@ impl LauncherApp {
                         Stroke::new(1.0_f32, Color32::from_rgb(45, 52, 70))
                     };
                     let bg = if is_active {
-                        Color32::from_rgb(22, 25, 34)
+                        Color32::from_rgb(20, 23, 32)
                     } else {
                         Color32::from_rgb(15, 17, 23)
                     };
@@ -657,13 +733,14 @@ impl LauncherApp {
                 }
             });
 
-            // Outer Frame for the tab content (matches screenshot's framed border)
+            // Outer Frame for the tab content (FILLS 100% OF REMAINING SPACE!)
             Frame::none()
-                .fill(Color32::from_rgb(15, 17, 23))
+                .fill(Color32::from_rgb(16, 18, 25))
                 .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 52, 70)))
                 .rounding(Rounding { nw: 0.0, ne: 4.0, sw: 4.0, se: 4.0 })
-                .inner_margin(12.0)
+                .inner_margin(14.0)
                 .show(ui, |ui| {
+                    ui.set_height(ui.available_height());
                     if self.active_tab == "overview" {
                         self.render_overview_content(ui);
                     } else {
@@ -675,20 +752,35 @@ impl LauncherApp {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Right Panel Tab 0: "Server Overview"
+    // Right Panel Tab 0: "Server Overview" (Fills available height)
     // ─────────────────────────────────────────────────────────────────────────
     fn render_overview_content(&mut self, ui: &mut Ui) {
         // Heading Row: Servers running on this PC | last scan: HH:MM:SS | Refresh button
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Servers running on this PC").size(16.0).strong().color(Color32::from_rgb(228, 231, 238)));
+            ui.label(
+                RichText::new("Servers running on this PC")
+                    .size(16.0)
+                    .strong()
+                    .color(Color32::from_rgb(235, 238, 245)),
+            );
             ui.add_space(8.0);
             let scan_time = self.scanner.get_last_scan_time();
-            ui.label(RichText::new(format!("last scan: {}", scan_time)).size(11.0).color(Color32::from_rgb(123, 131, 148)));
+            ui.label(
+                RichText::new(format!("last scan: {}", scan_time))
+                    .size(11.5)
+                    .color(Color32::from_rgb(123, 131, 148)),
+            );
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let btn_refresh = egui::Button::new(RichText::new("Refresh").size(11.0).strong().color(Color32::from_rgb(108, 92, 231)))
-                    .fill(Color32::from_rgb(37, 40, 51))
-                    .rounding(Rounding::same(4.0));
+                let btn_refresh = egui::Button::new(
+                    RichText::new("Refresh")
+                        .size(11.5)
+                        .strong()
+                        .color(Color32::from_rgb(108, 92, 231)),
+                )
+                .fill(Color32::from_rgb(37, 40, 51))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(50, 55, 70)))
+                .rounding(Rounding::same(4.0));
                 if ui.add(btn_refresh).clicked() {
                     self.scanner.trigger_scan();
                 }
@@ -697,105 +789,171 @@ impl LauncherApp {
 
         ui.add_space(8.0);
         ui.separator();
-        ui.add_space(8.0);
+        ui.add_space(10.0);
 
-        ScrollArea::vertical().id_salt("overview_scroll_body").show(ui, |ui| {
-            // Section 1: Launcher-managed servers
-            ui.label(RichText::new("Launcher-managed servers").size(13.0).strong().color(Color32::from_rgb(228, 231, 238)));
-            ui.add_space(6.0);
+        ScrollArea::vertical()
+            .id_salt("overview_scroll_body")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                // Section 1: Launcher-managed servers
+                ui.label(
+                    RichText::new("Launcher-managed servers")
+                        .size(13.0)
+                        .strong()
+                        .color(Color32::from_rgb(228, 231, 238)),
+                );
+                ui.add_space(8.0);
 
-            let mut to_toggle = None;
+                let mut to_toggle = None;
 
-            for (idx, s) in self.services.iter().enumerate() {
-                let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
-                Frame::none()
-                    .fill(Color32::from_rgb(22, 25, 34))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 42, 56)))
-                    .rounding(Rounding::same(4.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            let dot_color = if is_running { Color32::from_rgb(0, 210, 160) } else { Color32::from_rgb(123, 131, 148) };
-                            ui.label(RichText::new("●").color(dot_color).size(13.0));
-
-                            ui.vertical(|ui| {
-                                ui.label(RichText::new(&s.config.name).size(13.0).strong().color(Color32::from_rgb(228, 231, 238)));
-                                ui.label(RichText::new(&s.config.command).size(11.0).monospace().color(Color32::from_rgb(123, 131, 148)));
-                            });
-
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if is_running {
-                                    let btn = egui::Button::new(RichText::new("Stop").size(11.0).strong().color(Color32::WHITE))
-                                        .fill(Color32::from_rgb(208, 64, 48))
-                                        .rounding(Rounding::same(4.0));
-                                    if ui.add(btn).clicked() { to_toggle = Some((idx, false)); }
-                                } else {
-                                    let btn = egui::Button::new(RichText::new("Start").size(11.0).strong().color(Color32::WHITE))
-                                        .fill(Color32::from_rgb(0, 210, 160))
-                                        .rounding(Rounding::same(4.0));
-                                    if ui.add(btn).clicked() { to_toggle = Some((idx, true)); }
-                                }
-
-                                let st_text = if is_running { "Running" } else { "Stopped" };
-                                let st_color = if is_running { Color32::from_rgb(0, 210, 160) } else { Color32::from_rgb(123, 131, 148) };
-                                ui.label(RichText::new(st_text).size(11.0).color(st_color));
-                            });
-                        });
-                    });
-
-                ui.add_space(4.0);
-            }
-
-            if let Some((idx, start)) = to_toggle {
-                if start { self.services[idx].start(); } else { self.services[idx].stop(); }
-            }
-
-            ui.add_space(14.0);
-
-            // Section 2: Other processes listening on this PC
-            ui.label(RichText::new("Other processes listening on this PC").size(13.0).strong().color(Color32::from_rgb(228, 231, 238)));
-            ui.add_space(6.0);
-
-            let listeners = self.scanner.get_listeners();
-            let managed_ports: BTreeSet<u16> = self.services.iter().map(|s| s.config.port).filter(|&p| p > 0).collect();
-
-            if listeners.is_empty() {
-                ui.label(RichText::new("No other listening processes detected.").size(11.0).weak());
-            } else {
-                for listener in listeners {
-                    if managed_ports.contains(&listener.port) {
-                        continue;
-                    }
-
+                for (idx, s) in self.services.iter().enumerate() {
+                    let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
                     Frame::none()
                         .fill(Color32::from_rgb(22, 25, 34))
                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 42, 56)))
                         .rounding(Rounding::same(4.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 11.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("●").color(Color32::from_rgb(0, 210, 160)).size(13.0));
+                                let dot_color = if is_running {
+                                    Color32::from_rgb(0, 210, 160)
+                                } else {
+                                    Color32::from_rgb(123, 131, 148)
+                                };
+                                draw_status_dot(ui, dot_color);
 
                                 ui.vertical(|ui| {
-                                    ui.label(RichText::new(&listener.name).size(13.0).strong().color(Color32::from_rgb(228, 231, 238)));
                                     ui.label(
-                                        RichText::new(format!("{} :{} ({})", listener.name, listener.port, listener.proto))
+                                        RichText::new(&s.config.name)
+                                            .size(13.5)
+                                            .strong()
+                                            .color(Color32::from_rgb(230, 234, 242)),
+                                    );
+                                    ui.label(
+                                        RichText::new(&s.config.command)
                                             .size(11.0)
+                                            .monospace()
                                             .color(Color32::from_rgb(123, 131, 148)),
                                     );
                                 });
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("Running").size(11.0).color(Color32::from_rgb(0, 210, 160)));
-                                    ui.label(RichText::new(format!(":{}", listener.port)).size(12.0).color(Color32::from_rgb(123, 131, 148)));
+                                    if is_running {
+                                        let btn = egui::Button::new(
+                                            RichText::new("Stop").size(11.0).strong().color(Color32::WHITE),
+                                        )
+                                        .fill(Color32::from_rgb(208, 64, 48))
+                                        .rounding(Rounding::same(4.0))
+                                        .min_size(egui::vec2(55.0, 22.0));
+                                        if ui.add(btn).clicked() {
+                                            to_toggle = Some((idx, false));
+                                        }
+                                    } else {
+                                        let btn = egui::Button::new(
+                                            RichText::new("Start").size(11.0).strong().color(Color32::WHITE),
+                                        )
+                                        .fill(Color32::from_rgb(0, 210, 160))
+                                        .rounding(Rounding::same(4.0))
+                                        .min_size(egui::vec2(55.0, 22.0));
+                                        if ui.add(btn).clicked() {
+                                            to_toggle = Some((idx, true));
+                                        }
+                                    }
+
+                                    let st_text = if is_running { "Running" } else { "Stopped" };
+                                    let st_color = if is_running {
+                                        Color32::from_rgb(0, 210, 160)
+                                    } else {
+                                        Color32::from_rgb(123, 131, 148)
+                                    };
+                                    ui.label(RichText::new(st_text).size(11.5).color(st_color));
                                 });
                             });
                         });
 
-                    ui.add_space(4.0);
+                    ui.add_space(6.0);
                 }
-            }
-        });
+
+                if let Some((idx, start)) = to_toggle {
+                    if start {
+                        self.services[idx].start();
+                    } else {
+                        self.services[idx].stop();
+                    }
+                }
+
+                ui.add_space(16.0);
+
+                // Section 2: Other processes listening on this PC
+                ui.label(
+                    RichText::new("Other processes listening on this PC")
+                        .size(13.0)
+                        .strong()
+                        .color(Color32::from_rgb(228, 231, 238)),
+                );
+                ui.add_space(8.0);
+
+                let listeners = self.scanner.get_listeners();
+                let managed_ports: BTreeSet<u16> = self
+                    .services
+                    .iter()
+                    .map(|s| s.config.port)
+                    .filter(|&p| p > 0)
+                    .collect();
+
+                if listeners.is_empty() {
+                    ui.label(RichText::new("No other listening processes detected.").size(11.5).weak());
+                } else {
+                    for listener in listeners {
+                        if managed_ports.contains(&listener.port) {
+                            continue;
+                        }
+
+                        Frame::none()
+                            .fill(Color32::from_rgb(22, 25, 34))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 42, 56)))
+                            .rounding(Rounding::same(4.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 11.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    draw_status_dot(ui, Color32::from_rgb(0, 210, 160));
+
+                                    ui.vertical(|ui| {
+                                        ui.label(
+                                            RichText::new(&listener.name)
+                                                .size(13.0)
+                                                .strong()
+                                                .color(Color32::from_rgb(228, 231, 238)),
+                                        );
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "{} :{} ({})",
+                                                listener.name, listener.port, listener.proto
+                                            ))
+                                            .size(11.0)
+                                            .color(Color32::from_rgb(123, 131, 148)),
+                                        );
+                                    });
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(
+                                            RichText::new("Running")
+                                                .size(11.5)
+                                                .color(Color32::from_rgb(0, 210, 160)),
+                                        );
+                                        ui.label(
+                                            RichText::new(format!(":{}", listener.port))
+                                                .size(12.0)
+                                                .color(Color32::from_rgb(123, 131, 148)),
+                                        );
+                                    });
+                                });
+                            });
+
+                        ui.add_space(6.0);
+                    }
+                }
+            });
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -878,7 +1036,7 @@ impl LauncherApp {
             ui.add_space(4.0);
         }
 
-        // Log Terminal Output Area
+        // Log Terminal Output Area (fills all space down to the bottom command bar)
         let logs_vec: Vec<_> = {
             if let Some(s) = self.find_service(key) {
                 if let Ok(l) = s.logs.lock() {
@@ -897,6 +1055,7 @@ impl LauncherApp {
         let available_height = ui.available_height() - 44.0;
         ScrollArea::vertical()
             .stick_to_bottom(true)
+            .auto_shrink([false, false])
             .max_height(available_height)
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
@@ -929,7 +1088,7 @@ impl LauncherApp {
 
         ui.separator();
 
-        // Bottom Interactive Command Row (matching screenshot's interactive prompt)
+        // Bottom Interactive Command Row (pinned at bottom of window)
         ui.horizontal(|ui| {
             ui.label(RichText::new("❯").color(Color32::from_rgb(108, 92, 231)).strong().size(13.0));
             let mut input_val = self.input_texts.get(key).cloned().unwrap_or_default();

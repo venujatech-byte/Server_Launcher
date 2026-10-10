@@ -687,6 +687,36 @@ pub fn open_folder(cwd: &str) {
     });
 }
 
+pub fn open_in_vscode(cwd: &str) {
+    let path = if cwd.trim().is_empty() || cwd.trim() == "." {
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+    } else {
+        let p = std::path::Path::new(cwd.trim());
+        if p.is_relative() {
+            std::env::current_dir().map(|cd| cd.join(p)).unwrap_or_else(|_| p.to_path_buf())
+        } else {
+            p.to_path_buf()
+        }
+    };
+
+    thread::spawn(move || {
+        #[cfg(target_os = "windows")]
+        {
+            if Command::new("code.cmd").arg(&path).spawn().is_err() {
+                let _ = Command::new("code").arg(&path).spawn();
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            if Command::new("code").arg(&path).spawn().is_err() {
+                if Command::new("codium").arg(&path).spawn().is_err() {
+                    let _ = Command::new("code-insiders").arg(&path).spawn();
+                }
+            }
+        }
+    });
+}
+
 pub fn launch_external_terminal(
     name: &str,
     pid: Option<u32>,

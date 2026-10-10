@@ -2155,6 +2155,15 @@ impl LauncherApp {
                                             if ui.add(btn_folder).on_hover_text("Open working directory in file manager (xdg-open)").clicked() {
                                                 crate::service::open_folder(&s.config.cwd);
                                             }
+
+                                            let btn_vscode = egui::Button::new(
+                                                RichText::new("💻").size(11.0).color(Color32::from_rgb(56, 189, 248)),
+                                            )
+                                            .fill(Color32::from_rgb(24, 38, 54))
+                                            .rounding(Rounding::same(5.0));
+                                            if ui.add(btn_vscode).on_hover_text("Open in VS Code (code .)").clicked() {
+                                                crate::service::open_in_vscode(&s.config.cwd);
+                                            }
                                         });
                                     });
                                 });
@@ -2526,6 +2535,15 @@ impl LauncherApp {
                                     .rounding(Rounding::same(5.0));
                                     if ui.add(btn_folder).on_hover_text("Open working directory in file manager (xdg-open)").clicked() {
                                         crate::service::open_folder(&s.config.cwd);
+                                    }
+
+                                    let btn_vscode = egui::Button::new(
+                                        RichText::new("💻").size(11.0).color(Color32::from_rgb(56, 189, 248)),
+                                    )
+                                    .fill(Color32::from_rgb(24, 38, 54))
+                                    .rounding(Rounding::same(5.0));
+                                    if ui.add(btn_vscode).on_hover_text("Open in VS Code (code .)").clicked() {
+                                        crate::service::open_in_vscode(&s.config.cwd);
                                     }
 
                                     let st_text = if is_running { "Running" } else { "Stopped" };
@@ -2906,6 +2924,20 @@ impl LauncherApp {
                                                             if ui.add(btn_folder).on_hover_text("Open working directory in desktop file manager (xdg-open)").clicked() {
                                                                 crate::service::open_folder(&cwd_str);
                                                             }
+
+                                                            let btn_vscode = egui::Button::new(
+                                                                RichText::new("💻 VS Code")
+                                                                    .size(11.0)
+                                                                    .strong()
+                                                                    .color(Color32::from_rgb(56, 189, 248)),
+                                                            )
+                                                            .fill(Color32::from_rgb(20, 32, 48))
+                                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0, 122, 204)))
+                                                            .rounding(Rounding::same(4.0));
+
+                                                            if ui.add(btn_vscode).on_hover_text("Open working directory in VS Code (code .)").clicked() {
+                                                                crate::service::open_in_vscode(&cwd_str);
+                                                            }
                                                         }
                                                     });
 
@@ -3124,6 +3156,20 @@ impl LauncherApp {
                                                             if ui.add(btn_folder).on_hover_text("Open working directory in desktop file manager (xdg-open)").clicked() {
                                                                 crate::service::open_folder(cwd);
                                                             }
+
+                                                            let btn_vscode = egui::Button::new(
+                                                                RichText::new("💻 VS Code")
+                                                                    .size(11.0)
+                                                                    .strong()
+                                                                    .color(Color32::from_rgb(56, 189, 248)),
+                                                            )
+                                                            .fill(Color32::from_rgb(20, 32, 48))
+                                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0, 122, 204)))
+                                                            .rounding(Rounding::same(4.0));
+
+                                                            if ui.add(btn_vscode).on_hover_text("Open working directory in VS Code (code .)").clicked() {
+                                                                crate::service::open_in_vscode(cwd);
+                                                            }
                                                         }
                                                     });
 
@@ -3333,6 +3379,19 @@ impl LauncherApp {
                 if ui.add(folder_btn).on_hover_text("Open working directory in file manager (xdg-open)").clicked() {
                     let cwd = self.find_service(key).map(|s| s.config.cwd.clone()).unwrap_or_default();
                     crate::service::open_folder(&cwd);
+                }
+
+                let vscode_btn = egui::Button::new(
+                    RichText::new("💻 VS Code")
+                        .size(11.0)
+                        .color(Color32::from_rgb(56, 189, 248)),
+                )
+                .fill(Color32::from_rgb(24, 38, 54))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0, 122, 204)))
+                .rounding(Rounding::same(4.0));
+                if ui.add(vscode_btn).on_hover_text("Open working directory in VS Code (code .)").clicked() {
+                    let cwd = self.find_service(key).map(|s| s.config.cwd.clone()).unwrap_or_default();
+                    crate::service::open_in_vscode(&cwd);
                 }
 
                 let mut auto_restart = self.find_service(key).map(|s| s.config.auto_restart).unwrap_or(false);

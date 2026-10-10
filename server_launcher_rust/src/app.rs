@@ -107,6 +107,9 @@ pub struct LauncherApp {
     remote_connecting: Arc<Mutex<BTreeSet<String>>>,
     pub theme: ThemeMode,
     pub app_autostart: bool,
+    pub auto_scroll: HashMap<String, bool>,
+    proc_info_cache: HashMap<u32, (Option<String>, Option<String>, Instant)>,
+    remote_search_query: HashMap<String, String>,
 }
 
 pub struct ExternalTerminalSession {
@@ -212,6 +215,9 @@ impl LauncherApp {
             remote_connecting,
             theme,
             app_autostart,
+            auto_scroll: HashMap::new(),
+            proc_info_cache: HashMap::new(),
+            remote_search_query: HashMap::new(),
         }
     }
 
@@ -1293,18 +1299,51 @@ impl LauncherApp {
             // Two sections:
             // Top section: Remote Listening Processes & Ports
             // Bottom section: Interactive SSH Terminal
-            ui.label(
-                RichText::new("REMOTE LISTENING SERVICES")
-                    .size(11.5)
-                    .strong()
-                    .color(Color32::from_rgb(148, 163, 184)),
-            );
-            ui.add_space(4.0);
-
             let listeners = {
                 let map = self.remote_listeners.lock().unwrap();
                 map.get(&host.id).cloned().unwrap_or_default()
             };
+
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("REMOTE SERVERS & SERVICES")
+                        .size(11.5)
+                        .strong()
+                        .color(Color32::from_rgb(148, 163, 184)),
+                );
+                ui.label(
+                    RichText::new(format!("({})", listeners.len()))
+                        .size(11.0)
+                        .color(Color32::from_rgb(100, 110, 130)),
+                );
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let search_q = self.remote_search_query.entry(host.id.clone()).or_default();
+                    ui.add(
+                        egui::TextEdit::singleline(search_q)
+                            .hint_text("🔍 Filter remote servers...")
+                            .desired_width(180.0),
+                    );
+                });
+            });
+            ui.add_space(4.0);
+
+            let q = self.remote_search_query.get(&host.id).cloned().unwrap_or_default().trim().to_lowercase();
+            let visible_listeners: Vec<_> = listeners
+                .iter()
+                .filter(|l| {
+                    if q.is_empty() {
+                        true
+                    } else {
+                        l.name.to_lowercase().contains(&q)
+                            || l.port.to_string().contains(&q)
+                            || l.proto.to_lowercase().contains(&q)
+                            || l.cmd.to_lowercase().contains(&q)
+                            || l.pid.map(|p| p.to_string().contains(&q)).unwrap_or(false)
+                    }
+                })
+                .cloned()
+                .collect();
 
             Frame::none()
                 .fill(Color32::from_rgb(15, 17, 23))
@@ -1320,12 +1359,14 @@ impl LauncherApp {
                                 ui.label(RichText::new("No active listening ports detected on remote PC (or ss/netstat permission needed). Click 'Scan Ports' above.").size(11.5).color(Color32::from_rgb(120, 128, 145)));
                             }
                         });
+                    } else if visible_listeners.is_empty() {
+                        ui.label(RichText::new(format!("No remote servers matching \"{}\"", q)).size(11.5).color(Color32::from_rgb(120, 128, 145)));
                     } else {
                         ScrollArea::vertical()
-                            .id_salt("remote_listeners_scroll")
-                            .max_height(160.0)
+                            .id_salt(format!("remote_listeners_scroll_{}", host.id))
+                            .max_height(220.0)
                             .show(ui, |ui| {
-                                for l in &listeners {
+                                for l in &visible_listeners {
                                     ui.horizontal(|ui| {
                                         ui.label(
                                             RichText::new(format!(":{}", l.port))
@@ -1358,6 +1399,47 @@ impl LauncherApp {
                                                     .color(Color32::from_rgb(90, 98, 115)),
                                             );
                                         }
+
+                                        // Server Management Action Buttons
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            let kill_btn = egui::Button::new(
+                                                RichText::new("🛑 Stop/Kill").size(10.0).color(Color32::WHITE),
+                                            )
+                                            .fill(Color32::from_rgb(239, 68, 68))
+                                            .rounding(Rounding::same(3.0));
+                                            if ui.add(kill_btn).on_hover_text("Kill this remote process via SSH").clicked() {
+                                                let kill_cmd = if let Some(pid) = l.pid {
+                                                    format!("kill -9 {}", pid)
+                                                } else {
+                                                    format!("fuser -k -n tcp {} 2>/dev/null || true", l.port)
+                                                };
+                                                self.run_remote_ssh_command(&host, &kill_cmd);
+                                            }
+
+                                            let test_btn = egui::Button::new(
+                                                RichText::new("🌐 Curl").size(10.0).color(Color32::from_rgb(56, 189, 248)),
+                                            )
+                                            .fill(Color32::from_rgb(24, 32, 48))
+                                            .rounding(Rounding::same(3.0));
+                                            if ui.add(test_btn).on_hover_text("Test HTTP response on remote host (curl -I)").clicked() {
+                                                let curl_cmd = format!("curl -I -s --connect-timeout 2 http://localhost:{} | head -n 5", l.port);
+                                                self.run_remote_ssh_command(&host, &curl_cmd);
+                                            }
+
+                                            let ps_btn = egui::Button::new(
+                                                RichText::new("🔍 Info").size(10.0).color(Color32::from_rgb(250, 204, 21)),
+                                            )
+                                            .fill(Color32::from_rgb(34, 30, 20))
+                                            .rounding(Rounding::same(3.0));
+                                            if ui.add(ps_btn).on_hover_text("Inspect process details on remote host").clicked() {
+                                                let ps_cmd = if let Some(pid) = l.pid {
+                                                    format!("ps -u -p {} 2>/dev/null", pid)
+                                                } else {
+                                                    format!("lsof -i :{} 2>/dev/null", l.port)
+                                                };
+                                                self.run_remote_ssh_command(&host, &ps_cmd);
+                                            }
+                                        });
                                     });
                                     ui.separator();
                                 }
@@ -1991,6 +2073,17 @@ impl eframe::App for LauncherApp {
 }
 
 impl LauncherApp {
+    fn get_proc_cmd_and_cwd(&mut self, pid: u32) -> (Option<String>, Option<String>) {
+        if let Some((cmd, cwd, last_read)) = self.proc_info_cache.get(&pid) {
+            if last_read.elapsed() < std::time::Duration::from_secs(5) {
+                return (cmd.clone(), cwd.clone());
+            }
+        }
+        let (cmd, cwd) = read_proc_cmd_and_cwd(pid);
+        self.proc_info_cache.insert(pid, (cmd.clone(), cwd.clone(), Instant::now()));
+        (cmd, cwd)
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // LEFT SIDEBAR: Group Filter + Server Cards (Expands full height)
     // ═════════════════════════════════════════════════════════════════════════
@@ -2118,21 +2211,8 @@ impl LauncherApp {
                                     .rounding(Rounding::same(8.0))
                                     .inner_margin(egui::Margin::symmetric(14.0, 11.0))
                                     .show(ui, |ui| {
-                                    // Row 1: Drag handle + Status Dot + Name + Group Badge + Status Text
+                                    // Row 1: Status Dot + Name + Group Badge + Status Text
                                     ui.horizontal(|ui| {
-                                        let handle_resp = ui.add(
-                                            egui::Label::new(
-                                                RichText::new("⠿")
-                                                    .size(13.5)
-                                                    .color(p.text_muted),
-                                            )
-                                            .sense(egui::Sense::drag()),
-                                        )
-                                        .on_hover_cursor(egui::CursorIcon::Grab)
-                                        .on_hover_text("Drag ⠿ to reorder cards");
-
-                                        handle_resp.dnd_set_drag_payload(idx);
-
                                         let dot_color = if is_running {
                                             p.success
                                         } else {
@@ -2319,24 +2399,6 @@ impl LauncherApp {
                             };
 
                             let total_services = self.services.len();
-                            if let Some(hovered_from) = card_resp.response.dnd_hover_payload::<usize>() {
-                                if *hovered_from != idx {
-                                    ui.painter().rect_stroke(
-                                        card_resp.response.rect,
-                                        8.0,
-                                        Stroke::new(2.0_f32, Color32::from_rgb(99, 102, 241)),
-                                    );
-                                }
-                            }
-
-                            if let Some(dropped_from) = card_resp.response.dnd_release_payload::<usize>() {
-                                let from = *dropped_from;
-                                let to = idx;
-                                if from != to && from < total_services && to < total_services {
-                                    to_reorder = Some((from, to));
-                                }
-                            }
-
                             card_resp.response.context_menu(|ui| {
                                 if idx > 0 {
                                     if ui.button("▲ Move Up").clicked() {
@@ -2634,19 +2696,6 @@ impl LauncherApp {
                         .inner_margin(egui::Margin::symmetric(14.0, 11.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                let handle_resp = ui.add(
-                                    egui::Label::new(
-                                        RichText::new("⠿")
-                                            .size(13.5)
-                                            .color(p.text_muted),
-                                    )
-                                    .sense(egui::Sense::drag()),
-                                )
-                                .on_hover_cursor(egui::CursorIcon::Grab)
-                                .on_hover_text("Drag ⠿ to reorder cards");
-
-                                handle_resp.dnd_set_drag_payload(idx);
-
                                 let dot_color = if is_running {
                                     p.success
                                 } else {
@@ -2780,24 +2829,6 @@ impl LauncherApp {
                             });
                         });
 
-                    if let Some(hovered_from) = card_resp.response.dnd_hover_payload::<usize>() {
-                        if *hovered_from != idx {
-                            ui.painter().rect_stroke(
-                                card_resp.response.rect,
-                                4.0_f32,
-                                Stroke::new(2.0_f32, p.accent),
-                            );
-                        }
-                    }
-
-                    if let Some(dropped_from) = card_resp.response.dnd_release_payload::<usize>() {
-                        let from = *dropped_from;
-                        let to = idx;
-                        if from != to && from < self.services.len() && to < self.services.len() {
-                            to_reorder = Some((from, to));
-                        }
-                    }
-
                     card_resp.response.context_menu(|ui| {
                         let cur_autostart = self.services.get(idx).map(|s| s.config.autostart).unwrap_or(false);
                         let auto_label = if cur_autostart { "🚀 Disable Launch Autostart" } else { "🚀 Enable Launch Autostart" };
@@ -2861,15 +2892,26 @@ impl LauncherApp {
                 let mut to_remove_stopped: Option<u16> = None;
                 let mut to_launch_external_terminal: Option<(String, Option<u32>, u16, String, String)> = None;
 
-                let unmanaged_listeners: Vec<_> = listeners
+                let unmanaged_raw: Vec<_> = listeners
                     .into_iter()
                     .filter(|l| !managed_ports.contains(&l.port))
+                    .collect();
+
+                let mut proc_info_map: HashMap<u32, (Option<String>, Option<String>)> = HashMap::new();
+                for l in &unmanaged_raw {
+                    if let Some(pid) = l.pid {
+                        let info = self.get_proc_cmd_and_cwd(pid);
+                        proc_info_map.insert(pid, info);
+                    }
+                }
+
+                let unmanaged_listeners: Vec<_> = unmanaged_raw
+                    .into_iter()
                     .filter(|l| {
                         if q.is_empty() {
                             return true;
                         }
-                        let (cmd_opt, _) = l.pid.map(read_proc_cmd_and_cwd).unwrap_or((None, None));
-                        let cmd_str = cmd_opt.unwrap_or_default();
+                        let cmd_str = l.pid.and_then(|p| proc_info_map.get(&p)).and_then(|(c, _)| c.as_ref()).map(|s| s.as_str()).unwrap_or("");
                         l.name.to_lowercase().contains(&q)
                             || l.port.to_string().contains(&q)
                             || l.proto.to_lowercase().contains(&q)
@@ -2953,7 +2995,9 @@ impl LauncherApp {
                         });
                 } else {
                     for listener in &unmanaged_listeners {
-                        let (cmd_opt, cwd_opt) = listener.pid.map(read_proc_cmd_and_cwd).unwrap_or((None, None));
+                        let (cmd_opt, cwd_opt) = listener.pid
+                            .and_then(|p| proc_info_map.get(&p).cloned())
+                            .unwrap_or((None, None));
                         let cmd_str = cmd_opt.unwrap_or_default();
                         let cwd_str = cwd_opt.unwrap_or_default();
 
@@ -3690,6 +3734,14 @@ impl LauncherApp {
                         self.persist_config();
                     }
                 }
+
+                let mut auto_scroll = self.auto_scroll.get(key).copied().unwrap_or(true);
+                if ui.checkbox(
+                    &mut auto_scroll,
+                    RichText::new("📜 Auto-scroll").size(11.0).color(p.accent_light),
+                ).on_hover_text("Keep pinned to bottom when new logs arrive (uncheck to scroll up smoothly without jitter)").changed() {
+                    self.auto_scroll.insert(key.to_string(), auto_scroll);
+                }
             });
         });
 
@@ -3777,37 +3829,45 @@ impl LauncherApp {
         let q = self.search_queries.get(key).cloned().unwrap_or_default().to_lowercase();
         let filter_active = self.filter_lines.get(key).copied().unwrap_or(false) && !q.is_empty();
 
+        let filtered_logs: Vec<&crate::service::LogEntry> = logs_vec
+            .iter()
+            .filter(|entry| !filter_active || entry.text.to_lowercase().contains(&q))
+            .collect();
+
         let available_height = ui.available_height() - 44.0;
+        let auto_scroll_enabled = self.auto_scroll.get(key).copied().unwrap_or(true);
+        let row_height = 18.0_f32;
+        let total_rows = filtered_logs.len();
+
         ScrollArea::both()
-            .stick_to_bottom(true)
+            .id_salt(format!("log_scroll_{}", key))
+            .stick_to_bottom(auto_scroll_enabled)
             .auto_shrink([false, false])
             .max_height(available_height)
-            .show(ui, |ui| {
+            .show_rows(ui, row_height, total_rows, |ui, row_range| {
                 ui.set_width(ui.available_width());
-                for entry in &logs_vec {
-                    if filter_active && !entry.text.to_lowercase().contains(&q) {
-                        continue;
+                for idx in row_range {
+                    if let Some(entry) = filtered_logs.get(idx) {
+                        let base_color = match entry.kind {
+                            LogKind::Launcher => p.log_launcher,
+                            LogKind::Stdin => p.log_stdin,
+                            LogKind::Stderr | LogKind::Error => p.log_stderr,
+                            LogKind::Warning => p.log_warning,
+                            LogKind::Stdout => p.log_stdout,
+                        };
+
+                        let contains_query = !q.is_empty() && entry.text.to_lowercase().contains(&q);
+                        let mut rt = RichText::new(format!("[{}] {}", entry.timestamp, entry.text))
+                            .color(base_color)
+                            .monospace()
+                            .size(11.0);
+
+                        if contains_query {
+                            rt = rt.background_color(Color32::from_rgb(180, 80, 0)).color(Color32::WHITE);
+                        }
+
+                        ui.add(egui::Label::new(rt));
                     }
-
-                    let base_color = match entry.kind {
-                        LogKind::Launcher => p.log_launcher,
-                        LogKind::Stdin => p.log_stdin,
-                        LogKind::Stderr | LogKind::Error => p.log_stderr,
-                        LogKind::Warning => p.log_warning,
-                        LogKind::Stdout => p.log_stdout,
-                    };
-
-                    let contains_query = !q.is_empty() && entry.text.to_lowercase().contains(&q);
-                    let mut rt = RichText::new(format!("[{}] {}", entry.timestamp, entry.text))
-                        .color(base_color)
-                        .monospace()
-                        .size(11.0);
-
-                    if contains_query {
-                        rt = rt.background_color(Color32::from_rgb(180, 80, 0)).color(Color32::WHITE);
-                    }
-
-                    ui.add(egui::Label::new(rt).wrap());
                 }
             });
 

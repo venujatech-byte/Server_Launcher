@@ -37,22 +37,23 @@ Server Launcher comes out-of-the-box with 7 handcrafted color palettes:
 
 ### 🌐 Remote SSH Machines Manager
 - **Multi-Host Left Navigation**: Seamlessly switch between **This PC** and any number of remote SSH servers.
-- **Remote Port Discovery**: Inspect listening processes on remote Linux servers via SSH queries (`ss` / `lsof` / `netstat`).
+- **Remote Port Discovery & Management**: Inspect listening processes on remote Linux servers via SSH queries (`ss` / `lsof` / `netstat`), filter by port/name, inspect process details (`ps`), test endpoints (`curl`), and terminate stuck processes (`kill`) with one click.
 - **Flexible Authentication**: Connect with SSH config aliases, private keys (`~/.ssh/id_rsa`, `~/.ssh/id_ed25519`), or interactive password prompts.
 - **External Remote Terminals**: Launch native terminal sessions directly into remote servers with working directory preloaded.
 
 ### 📊 System Resource & Port Monitoring
-- **Live Performance Metrics**: Real-time per-process **CPU %** and **RAM (MB)** utilization tracking.
+- **Live Performance Metrics**: Real-time per-process **CPU %** and **RAM (MB)** utilization tracking with cached lookup for zero CPU scroll overhead.
 - **Listening Port Scanner**: Live overview of all active TCP/UDP ports on your machine, distinguishing launcher-managed servers from unmanaged background services.
 - **One-Click Import**: Found an unmanaged daemon listening on port 8080 or 3000? Import it directly into the Launcher with prefilled command and directory paths.
 
 ### 📟 Interactive Terminal & Shell Execution
 - **Interactive Inline Terminal**: Inspect stdout/stderr streams or send arbitrary commands (`ps`, `git status`, `npm install`, `curl`) directly inside the card view.
+- **High-Performance Virtualized Logs**: Smooth scrolling with `show_rows` virtualization, distinct scroll persistence, and optional auto-scroll toggle (`📜 Auto-scroll`) eliminating frame drops and jitter.
 - **External Terminal Launcher**: One-click opening of desktop terminals (`gnome-terminal`, `alacritty`, `kitty`, `konsole`, `xterm`, `cmd.exe`, `powershell`) initialized in the server's working directory.
 - **Built-in Slash Commands**: Type `/start`, `/stop`, `/restart`, `/status`, `/clear`, or run custom action buttons from the interactive command bar.
 
 ### 🎨 Customization & Developer Experience
-- **Drag-to-Reorder Cards**: Effortlessly reorder service cards using the drag handle (`⠿`) with persistent order preservation in `servers.json`.
+- **Instant Click Responsiveness**: Fully responsive cards with context menu reordering (`▲ Move Up` / `▼ Move Down`) and zero drag-interception or missed clicks.
 - **Quick Launch Command Palette (`Ctrl+P`)**: Fuzzy-search commands, toggle servers, jump to tabs, or switch themes via keyboard.
 - **Live Log Search (`Ctrl+F`)**: Real-time filtering and highlight for console logs with severity color coding (`stdout`, `stderr`, `stdin`, `launcher`, `warnings`).
 - **One-Click IDE & Explorer Integration**:

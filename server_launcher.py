@@ -297,7 +297,8 @@ def taskkill(pid: int) -> None:
 class Service:
     def __init__(self, app, key, name, subtitle, args, cwd, port,
                  env=None, links=(), external=False, missing=None,
-                 actions=(), custom=False, custom_actions=(), stop_command=""):
+                 actions=(), custom=False, custom_actions=(), stop_command="",
+                 group="General"):
         self.app = app
         self.key = key
         self.name = name
@@ -313,6 +314,7 @@ class Service:
         self.custom = custom
         self.custom_actions = list(custom_actions)  # (label, command)
         self.stop_command = stop_command            # runs before killing
+        self.group = (group or "General").strip() or "General"
 
         self.proc = None
         self.state = "stopped"
@@ -829,6 +831,7 @@ class LauncherApp:
         cwd = entry.get("cwd", ".")
         command = entry.get("command", "")
         port = entry.get("port", 0)
+        group = entry.get("group", "General")
         env = entry.get("env", {})
         actions_raw = entry.get("actions", [])
         links_raw = entry.get("links", [])
@@ -848,6 +851,7 @@ class LauncherApp:
             args, cwd, port, env=env, links=links, custom=True,
             custom_actions=custom_actions,
             stop_command=entry.get("stop_command", ""),
+            group=group,
         )
         return svc
 
@@ -876,6 +880,7 @@ class LauncherApp:
                 "command": subprocess.list2cmdline(svc.args),
                 "stop_command": svc.stop_command,
                 "port": svc.port,
+                "group": svc.group,
                 "env": svc.env_extra,
                 "actions": [{"label": l, "command": c}
                             for l, c in svc.custom_actions],

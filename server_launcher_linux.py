@@ -281,6 +281,17 @@ LABEL = {
     "error": "Exited",
 }
 
+def _group_color(grp: str) -> tuple[str, str]:
+    """Return (background, foreground) colors for a server group badge."""
+    g = (grp or "General").lower()
+    if "front" in g:
+        return ("#132f38", "#00cec9")   # Cyan / Teal
+    elif "back" in g:
+        return ("#2a2040", "#a29bfe")   # Purple / Indigo
+    elif "db" in g or "data" in g or "sql" in g or "redis" in g or "mongo" in g:
+        return ("#3a2818", "#f39c12")   # Amber / Orange
+    return ("#252838", "#a4b0be")       # Slate / Muted
+
 ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07")
 
 EH = "#252830"       # entry bg
@@ -791,7 +802,8 @@ def _get_project_env(cwd: Path, env_extra: dict) -> dict:
 class Service:
     def __init__(self, app, key, name, subtitle, args, cwd, port,
                  env=None, links=(), external=False, missing=None,
-                 actions=(), custom=False, custom_actions=(), stop_command=""):
+                 actions=(), custom=False, custom_actions=(), stop_command="",
+                 group="General"):
         self.app = app
         self.key = key
         self.name = name
@@ -807,6 +819,7 @@ class Service:
         self.custom = custom
         self.custom_actions = list(custom_actions)  # (label, command)
         self.stop_command = stop_command            # runs before killing
+        self.group = (group or "General").strip() or "General"
 
         self.proc = None
         self.sub_proc = None                        # currently running one-off command
@@ -1154,6 +1167,7 @@ SERVER_TEMPLATES = [
         "name": "React (Vite)",
         "command": "npm run dev",
         "port": 5173,
+        "group": "Frontend",
         "actions": [{"label": "Build", "command": "npm run build"}, {"label": "Install", "command": "npm install"}],
         "links": [{"label": "Localhost", "url": "http://localhost:5173"}],
     },
@@ -1161,6 +1175,7 @@ SERVER_TEMPLATES = [
         "name": "Next.js",
         "command": "npm run dev",
         "port": 3000,
+        "group": "Frontend",
         "actions": [{"label": "Build", "command": "npm run build"}, {"label": "Install", "command": "npm install"}],
         "links": [{"label": "Localhost", "url": "http://localhost:3000"}],
     },
@@ -1168,6 +1183,7 @@ SERVER_TEMPLATES = [
         "name": "FastAPI (Uvicorn)",
         "command": "uvicorn main:app --reload --port 8000",
         "port": 8000,
+        "group": "Backend",
         "actions": [{"label": "Install reqs", "command": "pip install -r requirements.txt"}],
         "links": [{"label": "Swagger Docs", "url": "http://localhost:8000/docs"}],
     },
@@ -1175,6 +1191,7 @@ SERVER_TEMPLATES = [
         "name": "Flask",
         "command": "flask run --port 5000 --debug",
         "port": 5000,
+        "group": "Backend",
         "env": {"FLASK_ENV": "development", "FLASK_DEBUG": "1"},
         "actions": [{"label": "Install reqs", "command": "pip install -r requirements.txt"}],
         "links": [{"label": "Localhost", "url": "http://localhost:5000"}],
@@ -1183,6 +1200,7 @@ SERVER_TEMPLATES = [
         "name": "Django",
         "command": "python manage.py runserver 0.0.0.0:8000",
         "port": 8000,
+        "group": "Backend",
         "actions": [{"label": "Migrate", "command": "python manage.py migrate"}],
         "links": [{"label": "Admin Panel", "url": "http://localhost:8000/admin"}],
     },
@@ -1190,6 +1208,7 @@ SERVER_TEMPLATES = [
         "name": "Node / Express",
         "command": "node server.js",
         "port": 3000,
+        "group": "Backend",
         "actions": [{"label": "Install", "command": "npm install"}],
         "links": [{"label": "Localhost", "url": "http://localhost:3000"}],
     },
@@ -1198,17 +1217,20 @@ SERVER_TEMPLATES = [
         "command": "postgres -D ./data",
         "stop_command": "pg_ctl stop -D ./data",
         "port": 5432,
+        "group": "DB",
     },
     {
         "name": "Redis",
         "command": "redis-server",
         "stop_command": "redis-cli shutdown",
         "port": 6379,
+        "group": "DB",
     },
     {
         "name": "MongoDB",
         "command": "mongod --dbpath ./data/db",
         "port": 27017,
+        "group": "DB",
     },
 ]
 
@@ -1352,6 +1374,25 @@ class ServerDialog(tk.Toplevel):
         self._lbl(f, "Server name *")
         self.name_var = tk.StringVar(value=(self.edit or {}).get("name", ""))
         self._entry(f, self.name_var)
+
+        # Group
+        self._lbl(f, "Server group (Frontend / Backend / DB)")
+        self._hint(f, "Tag servers for group start/stop. Pick preset or type custom:")
+        self.group_var = tk.StringVar(value=(self.edit or {}).get("group", "General"))
+        grp_row = tk.Frame(f, bg=CARD_BG)
+        grp_row.pack(fill="x", pady=(0, 2))
+        self.group_cb = ttk.Combobox(grp_row, textvariable=self.group_var,
+                                     values=["Frontend", "Backend", "DB", "General"],
+                                     font=font_mono(10))
+        self.group_cb.pack(side="left", fill="x", expand=True, ipady=3)
+
+        preset_btns = tk.Frame(f, bg=CARD_BG)
+        preset_btns.pack(fill="x", pady=(2, 6))
+        for p in ["Frontend", "Backend", "DB", "General"]:
+            tk.Button(preset_btns, text=p, bg=EH, fg=TEXT,
+                      activebackground=EH_HOVER, activeforeground=TEXT,
+                      font=font_ui(8), relief="flat", padx=8, pady=1,
+                      command=lambda val=p: self.group_var.set(val)).pack(side="left", padx=(0, 4))
 
         # Working directory
         self._lbl(f, "Working directory (path) *")
@@ -1498,6 +1539,9 @@ class ServerDialog(tk.Toplevel):
         self.stopcmd_var.set(tpl.get("stop_command", ""))
         self.port_var.set(str(tpl.get("port", 0)))
 
+        if "group" in tpl:
+            self.group_var.set(tpl["group"])
+
         # Populate env text
         if "env" in tpl:
             self.env_text.delete("1.0", "end")
@@ -1595,6 +1639,7 @@ class ServerDialog(tk.Toplevel):
             "command": cmd,
             "stop_command": self.stopcmd_var.get().strip(),
             "port": port,
+            "group": self.group_var.get().strip() or "General",
             "env": env,
             "actions": actions,
             "links": links,
@@ -1700,20 +1745,22 @@ class CommandPaletteDialog(tk.Toplevel):
         for svc in self.services.values():
             s_name = svc.name.lower()
             s_cmd = " ".join(svc.args).lower()
+            s_grp = getattr(svc, "group", "General").lower()
 
             # Start/stop entry
             match = True
             for t in tokens:
-                if t not in s_name and t not in s_cmd and t not in ("start", "stop"):
+                if t not in s_name and t not in s_cmd and t not in s_grp and t not in ("start", "stop"):
                     match = False
                     break
 
             if match:
+                grp_tag = " [%s]" % svc.group if getattr(svc, "group", None) else ""
                 if svc.alive:
-                    label = "⏹  Stop %s" % svc.name
+                    label = "⏹  Stop %s%s" % (svc.name, grp_tag)
                     item = (label, "stop", svc.key, None, None)
                 else:
-                    label = "▶  Start %s" % svc.name
+                    label = "▶  Start %s%s" % (svc.name, grp_tag)
                     item = (label, "start", svc.key, None, None)
                 self._items.append(item)
                 self.listbox.insert(tk.END, "  " + label)
@@ -1722,7 +1769,7 @@ class CommandPaletteDialog(tk.Toplevel):
             for act_label, act_cmd in svc.custom_actions:
                 act_match = True
                 for t in tokens:
-                    if t not in act_label.lower() and t not in act_cmd.lower() and t not in s_name:
+                    if t not in act_label.lower() and t not in act_cmd.lower() and t not in s_name and t not in s_grp:
                         act_match = False
                         break
                 if act_match:
@@ -1730,6 +1777,23 @@ class CommandPaletteDialog(tk.Toplevel):
                     item = (label, "action", svc.key, act_cmd, act_label)
                     self._items.append(item)
                     self.listbox.insert(tk.END, "  " + label)
+
+        # Group actions
+        groups_seen = set()
+        for svc in self.services.values():
+            grp = getattr(svc, "group", "General") or "General"
+            if grp in groups_seen:
+                continue
+            groups_seen.add(grp)
+            grp_lower = grp.lower()
+            grp_match = not tokens or any(t in grp_lower or t in "group" for t in tokens)
+            if grp_match:
+                start_lbl = "▶  Start Group: %s" % grp
+                stop_lbl = "⏹  Stop Group: %s" % grp
+                self._items.append((start_lbl, "start_group", grp, None, None))
+                self.listbox.insert(tk.END, "  " + start_lbl)
+                self._items.append((stop_lbl, "stop_group", grp, None, None))
+                self.listbox.insert(tk.END, "  " + stop_lbl)
 
         if self._items:
             self.listbox.selection_set(0)
@@ -1805,6 +1869,7 @@ class LauncherApp:
         cwd = entry.get("cwd", ".")
         command = entry.get("command", "")
         port = entry.get("port", 0)
+        group = entry.get("group", "General")
         env = entry.get("env", {})
         actions_raw = entry.get("actions", [])
         links_raw = entry.get("links", [])
@@ -1825,6 +1890,7 @@ class LauncherApp:
             args, cwd, port, env=env, links=links, custom=True,
             custom_actions=custom_actions,
             stop_command=entry.get("stop_command", ""),
+            group=group,
         )
         return svc
 
@@ -1853,6 +1919,7 @@ class LauncherApp:
                 "command": format_command(svc.args),
                 "stop_command": svc.stop_command,
                 "port": svc.port,
+                "group": svc.group,
                 "env": svc.env_extra,
                 "actions": [{"label": l, "command": c}
                             for l, c in svc.custom_actions],
@@ -1930,6 +1997,11 @@ class LauncherApp:
         left = tk.Frame(body, bg=BG)
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 16))
 
+        # Group filter bar
+        self._active_group_filter = "All"
+        self._filter_bar = tk.Frame(left, bg=BG)
+        self._filter_bar.pack(fill="x", pady=(0, 8))
+
         self.card_canvas = tk.Canvas(left, bg=BG, highlightthickness=0)
         self.card_scroll = ttk.Scrollbar(left, orient="vertical",
                                          command=self.card_canvas.yview)
@@ -1951,8 +2023,7 @@ class LauncherApp:
         self.card_canvas.bind("<Configure>", _on_canvas_configure)
         _bind_canvas_scroll(self.card_canvas)
 
-        for svc in self.services.values():
-            self._build_card(self._cards_frame, svc)
+        self._rebuild_cards()
 
         self.notebook = ttk.Notebook(body)
         self.notebook.grid(row=0, column=1, sticky="nsew")
@@ -2211,6 +2282,87 @@ class LauncherApp:
 
     # -- card building ----------------------------------------------------
 
+    def _rebuild_cards(self) -> None:
+        """Rebuild the left panel cards grouped by their assigned group, respecting filter."""
+        if not hasattr(self, "_filter_bar") or not hasattr(self, "_cards_frame"):
+            return
+
+        for w in self._filter_bar.winfo_children():
+            w.destroy()
+
+        groups = []
+        for svc in self.services.values():
+            g = svc.group or "General"
+            if g not in groups:
+                groups.append(g)
+        groups.sort()
+
+        if self._active_group_filter != "All" and self._active_group_filter not in groups:
+            self._active_group_filter = "All"
+
+        filter_container = tk.Frame(self._filter_bar, bg=BG)
+        filter_container.pack(fill="x")
+        tk.Label(filter_container, text="Group:", bg=BG, fg=MUTED,
+                 font=font_ui(8, bold=True)).pack(side="left", padx=(0, 4))
+
+        for opt in ["All"] + groups:
+            is_active = (opt == self._active_group_filter)
+            btn = tk.Button(
+                filter_container,
+                text=opt,
+                bg=ACCENT if is_active else EH,
+                fg="#ffffff" if is_active else TEXT,
+                activebackground=ACCENT_HOVER if is_active else EH_HOVER,
+                activeforeground="#ffffff",
+                font=font_ui(8, bold=is_active),
+                relief="flat",
+                padx=8, pady=2,
+                command=lambda g=opt: self._set_group_filter(g),
+            )
+            btn.pack(side="left", padx=(0, 4))
+
+        for w in self._cards_frame.winfo_children():
+            w.destroy()
+        self.cards.clear()
+
+        grouped_svcs: dict[str, list[Service]] = {}
+        for svc in self.services.values():
+            grp = svc.group or "General"
+            if self._active_group_filter != "All" and grp != self._active_group_filter:
+                continue
+            grouped_svcs.setdefault(grp, []).append(svc)
+
+        for grp_name in sorted(grouped_svcs.keys()):
+            svcs = grouped_svcs[grp_name]
+            gh = tk.Frame(self._cards_frame, bg="#181b26", padx=10, pady=6,
+                          highlightthickness=1, highlightbackground=CARD_BORDER)
+            gh.pack(fill="x", pady=(2, 8))
+
+            gbg, gfg = _group_color(grp_name)
+            tk.Label(gh, text="🏷️  %s (%d)" % (grp_name.upper(), len(svcs)),
+                     bg="#181b26", fg=gfg, font=font_ui(9, bold=True)).pack(side="left")
+
+            tk.Button(gh, text="⏹ Stop Group", bg=EH, fg=DANGER,
+                      activebackground=EH_HOVER, activeforeground=DANGER,
+                      font=font_ui(8, bold=True), relief="flat", padx=8, pady=2,
+                      command=lambda g=grp_name: self.stop_group(g)).pack(side="right", padx=(4, 0))
+
+            tk.Button(gh, text="▶ Start Group", bg="#008f68", fg="#ffffff",
+                      activebackground=SUCCESS, activeforeground="#ffffff",
+                      font=font_ui(8, bold=True), relief="flat", padx=8, pady=2,
+                      command=lambda g=grp_name: self.start_group(g)).pack(side="right")
+
+            for svc in svcs:
+                self._build_card(self._cards_frame, svc)
+                self._refresh(svc.key)
+
+        self.card_canvas.update_idletasks()
+        self.card_canvas.configure(scrollregion=self.card_canvas.bbox("all"))
+
+    def _set_group_filter(self, grp: str) -> None:
+        self._active_group_filter = grp
+        self._rebuild_cards()
+
     def _build_card(self, parent: tk.Frame, svc: Service) -> None:
         outer = tk.Frame(parent, bg=CARD_BORDER, bd=0, padx=1, pady=1)
         outer.pack(fill="x", pady=(0, 10))
@@ -2235,6 +2387,15 @@ class LauncherApp:
         tk.Label(name_holder, text=svc.name, bg=CARD_BG, fg=TEXT,
                  font=font_ui(11, bold=True),
                  anchor="w").pack(side="left")
+        grp_name = svc.group or "General"
+        gbg, gfg = _group_color(grp_name)
+        grp_badge = tk.Label(
+            name_holder, text=" %s " % grp_name,
+            bg=gbg, fg=gfg,
+            font=font_mono(8, bold=True),
+            relief="flat", padx=4, pady=1
+        )
+        grp_badge.pack(side="left", padx=(6, 0))
         if svc.port:
             port_badge = tk.Label(
                 name_holder, text=" :%s " % svc.port,
@@ -2602,6 +2763,13 @@ class LauncherApp:
             return
 
         label, action, key, cmd, act_label = dlg.result
+        if action == "start_group":
+            self.start_group(key)
+            return
+        elif action == "stop_group":
+            self.stop_group(key)
+            return
+
         svc = self.services.get(key)
         if not svc:
             return
@@ -2630,12 +2798,9 @@ class LauncherApp:
         self._attach_action_handlers(svc)
         self.services[svc.key] = svc
 
-        self._build_card(self._cards_frame, svc)
         self._build_log_tab(svc)
         self.notebook.select(len(self.notebook.tabs()) - 1)
-
-        self.card_canvas.update_idletasks()
-        self.card_canvas.configure(scrollregion=self.card_canvas.bbox("all"))
+        self._rebuild_cards()
 
         self._persist_custom()
         self._refresh_overview()
@@ -2657,6 +2822,7 @@ class LauncherApp:
             "command": format_command(svc.args),
             "stop_command": svc.stop_command,
             "port": svc.port,
+            "group": svc.group,
             "env": svc.env_extra,
             "actions": [{"label": l, "command": c} for l, c in svc.custom_actions],
             "links": [{"label": l, "url": u} for l, u in svc.links],
@@ -2677,21 +2843,14 @@ class LauncherApp:
         self.services.pop(old_key, None)
         self.services[new_key] = new_svc
 
-        # destroy old card + tab
-        self.cards[old_key]["outer"].destroy()
-        del self.cards[old_key]
         for i, tab_id in enumerate(self.notebook.tabs()):
             if self.notebook.tab(tab_id, "text").strip() == svc.name:
                 self.notebook.forget(i)
         if old_key in self.logs:
             del self.logs[old_key]
 
-        # build new card + tab
-        self._build_card(self._cards_frame, new_svc)
         self._build_log_tab(new_svc)
-
-        self.card_canvas.update_idletasks()
-        self.card_canvas.configure(scrollregion=self.card_canvas.bbox("all"))
+        self._rebuild_cards()
 
         self._persist_custom()
         self._refresh_overview()
@@ -2707,8 +2866,6 @@ class LauncherApp:
                                    % svc.name):
             return
 
-        self.cards[svc.key]["outer"].destroy()
-        del self.cards[svc.key]
         for i, tab_id in enumerate(self.notebook.tabs()):
             if self.notebook.tab(tab_id, "text").strip() == svc.name:
                 self.notebook.forget(i)
@@ -2717,12 +2874,30 @@ class LauncherApp:
             del self.logs[svc.key]
 
         del self.services[svc.key]
+        self._rebuild_cards()
+
         self._persist_custom()
         self._refresh_overview()
         self._update_header_count()
 
     def _update_header_count(self) -> None:
         pass
+
+    def start_group(self, group_name: str) -> None:
+        """Start all stopped servers belonging to group_name."""
+        def _worker():
+            for key in list(self.services.keys()):
+                svc = self.services.get(key)
+                if svc and (svc.group or "General") == group_name and not svc.alive and not svc.missing:
+                    svc.start()
+                    time.sleep(0.5)
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def stop_group(self, group_name: str) -> None:
+        """Stop all running servers belonging to group_name."""
+        for svc in self.services.values():
+            if (svc.group or "General") == group_name and svc.alive:
+                svc.stop()
 
     def toggle(self, svc: Service) -> None:
         if svc.alive:

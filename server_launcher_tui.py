@@ -568,6 +568,7 @@ class Service:
         self, app, key, name, subtitle, args, cwd, port,
         env=None, links=(), external=False, missing=None,
         actions=(), custom=False, custom_actions=(), stop_command="",
+        group="General",
     ):
         self.app            = app
         self.key            = key
@@ -584,6 +585,7 @@ class Service:
         self.custom         = custom
         self.custom_actions = list(custom_actions)   # [(label, command), …]
         self.stop_command   = stop_command
+        self.group          = (group or "General").strip() or "General"
 
         self.proc:     subprocess.Popen | None = None
         self.sub_proc: subprocess.Popen | None = None
@@ -830,6 +832,43 @@ class Service:
 # UI Widgets
 # ══════════════════════════════════════════════════════════════════════════════
 
+class GroupHeader(Widget):
+    """Section header for a group of servers with group start/stop buttons."""
+
+    class StartGroup(Message):
+        def __init__(self, group: str) -> None:
+            self.group = group
+            super().__init__()
+
+    class StopGroup(Message):
+        def __init__(self, group: str) -> None:
+            self.group = group
+            super().__init__()
+
+    DEFAULT_CSS = ""
+
+    def __init__(self, group_name: str, count: int, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.group_name = group_name
+        self.count = count
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(classes="grp-header-box"):
+            yield Static(f"🏷  {self.group_name.upper()} ({self.count})", classes="grp-title")
+            yield Button("▶ Start", id="btn-grp-start", classes="btn-grp-start")
+            yield Button("⏹ Stop",  id="btn-grp-stop",  classes="btn-grp-stop")
+
+    @on(Button.Pressed, "#btn-grp-start")
+    def _on_start(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(self.StartGroup(self.group_name))
+
+    @on(Button.Pressed, "#btn-grp-stop")
+    def _on_stop(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(self.StopGroup(self.group_name))
+
+
 class ServerCard(Widget):
     """One card per service in the left panel."""
 
@@ -871,11 +910,13 @@ class ServerCard(Widget):
         svc = self.svc
         state = svc.state
         with Vertical(classes="card-inner"):
-            # Row 1: dot  name  port  state
+            # Row 1: dot  name  group  port  state
             with Horizontal(classes="card-row1"):
                 yield Static(DOT_CHAR.get(state, "○"),
                              id="dot", classes=f"dot dot-{state}")
                 yield Static(svc.name, classes="svc-name")
+                if svc.group:
+                    yield Static(svc.group, classes=f"grp-tag grp-{svc.group.lower()}")
                 if svc.port:
                     yield Static(f":{svc.port}", classes="port-badge")
                 yield Static(
@@ -1188,6 +1229,7 @@ SERVER_TEMPLATES = [
         "name": "React (Vite)",
         "command": "npm run dev",
         "port": 5173,
+        "group": "Frontend",
         "actions": [{"label": "Build", "command": "npm run build"}, {"label": "Install", "command": "npm install"}],
         "links": [{"label": "Localhost", "url": "http://localhost:5173"}],
     },
@@ -1195,6 +1237,7 @@ SERVER_TEMPLATES = [
         "name": "Next.js",
         "command": "npm run dev",
         "port": 3000,
+        "group": "Frontend",
         "actions": [{"label": "Build", "command": "npm run build"}, {"label": "Install", "command": "npm install"}],
         "links": [{"label": "Localhost", "url": "http://localhost:3000"}],
     },
@@ -1202,6 +1245,7 @@ SERVER_TEMPLATES = [
         "name": "FastAPI (Uvicorn)",
         "command": "uvicorn main:app --reload --port 8000",
         "port": 8000,
+        "group": "Backend",
         "actions": [{"label": "Install reqs", "command": "pip install -r requirements.txt"}],
         "links": [{"label": "Swagger Docs", "url": "http://localhost:8000/docs"}],
     },
@@ -1209,6 +1253,7 @@ SERVER_TEMPLATES = [
         "name": "Flask",
         "command": "flask run --port 5000 --debug",
         "port": 5000,
+        "group": "Backend",
         "env": {"FLASK_ENV": "development", "FLASK_DEBUG": "1"},
         "actions": [{"label": "Install reqs", "command": "pip install -r requirements.txt"}],
         "links": [{"label": "Localhost", "url": "http://localhost:5000"}],
@@ -1217,6 +1262,7 @@ SERVER_TEMPLATES = [
         "name": "Django",
         "command": "python manage.py runserver 0.0.0.0:8000",
         "port": 8000,
+        "group": "Backend",
         "actions": [{"label": "Migrate", "command": "python manage.py migrate"}],
         "links": [{"label": "Admin Panel", "url": "http://localhost:8000/admin"}],
     },
@@ -1224,6 +1270,7 @@ SERVER_TEMPLATES = [
         "name": "Node / Express",
         "command": "node server.js",
         "port": 3000,
+        "group": "Backend",
         "actions": [{"label": "Install", "command": "npm install"}],
         "links": [{"label": "Localhost", "url": "http://localhost:3000"}],
     },
@@ -1232,17 +1279,20 @@ SERVER_TEMPLATES = [
         "command": "postgres -D ./data",
         "stop_command": "pg_ctl stop -D ./data",
         "port": 5432,
+        "group": "DB",
     },
     {
         "name": "Redis",
         "command": "redis-server",
         "stop_command": "redis-cli shutdown",
         "port": 6379,
+        "group": "DB",
     },
     {
         "name": "MongoDB",
         "command": "mongod --dbpath ./data/db",
         "port": 27017,
+        "group": "DB",
     },
 ]
 
@@ -1284,6 +1334,14 @@ class AddServerModal(ModalScreen[dict | None]):
                 yield Static("Server name *", classes="field-label")
                 yield Input(value=e.get("name", ""),
                             placeholder="My Server", id="inp-name")
+
+                yield Static("Group  (Frontend / Backend / DB)", classes="field-label")
+                yield Static(
+                    "Tag servers for group start/stop. e.g. Frontend, Backend, DB",
+                    classes="field-hint",
+                )
+                yield Input(value=e.get("group", "General"),
+                            placeholder="Frontend / Backend / DB", id="inp-group")
 
                 yield Static("Working directory *", classes="field-label")
                 yield Input(value=e.get("cwd", ""),
@@ -1368,6 +1426,9 @@ class AddServerModal(ModalScreen[dict | None]):
                 self.query_one("#inp-stopcmd", Input).value = t.get("stop_command", "")
                 self.query_one("#inp-port", Input).value = str(t.get("port", 0))
 
+                if "group" in t:
+                    self.query_one("#inp-group", Input).value = t.get("group", "General")
+
                 if "env" in t:
                     env_lines = "\n".join(f"{k}={v}" for k, v in t["env"].items())
                     self.query_one("#inp-env", TextArea).text = env_lines
@@ -1394,6 +1455,7 @@ class AddServerModal(ModalScreen[dict | None]):
     def _save_btn(self, event: Button.Pressed) -> None:
         event.stop()
         name      = self.query_one("#inp-name",    Input).value.strip()
+        group     = self.query_one("#inp-group",   Input).value.strip() or "General"
         cwd       = self.query_one("#inp-cwd",     Input).value.strip()
         cmd       = self.query_one("#inp-cmd",     Input).value.strip()
         stop_cmd  = self.query_one("#inp-stopcmd", Input).value.strip()
@@ -1450,7 +1512,8 @@ class AddServerModal(ModalScreen[dict | None]):
         self.dismiss({
             "key": key, "name": name, "cwd": cwd,
             "command": cmd, "stop_command": stop_cmd,
-            "port": port, "env": env, "actions": actions, "links": links,
+            "port": port, "group": group,
+            "env": env, "actions": actions, "links": links,
         })
 
 
@@ -1485,15 +1548,29 @@ class CommandPaletteModal(ModalScreen[tuple | None]):
         q = q.lower()
         items: list[tuple] = []
         for svc in self._services.values():
-            match = not q or q in svc.name.lower()
+            grp_name = svc.group or "General"
+            match = not q or q in svc.name.lower() or q in grp_name.lower()
             if match:
+                grp_tag = f" [{grp_name}]" if svc.group else ""
                 if svc.alive:
-                    items.append(("⏹  Stop  " + svc.name, "stop", svc.key))
+                    items.append(("⏹  Stop  " + svc.name + grp_tag, "stop", svc.key))
                 else:
-                    items.append(("▶  Start " + svc.name, "start", svc.key))
+                    items.append(("▶  Start " + svc.name + grp_tag, "start", svc.key))
             for lbl, cmd in svc.custom_actions:
-                if not q or q in lbl.lower() or q in svc.name.lower():
+                if not q or q in lbl.lower() or q in svc.name.lower() or q in grp_name.lower():
                     items.append((f"⚡  {lbl}  [{svc.name}]", "action", svc.key, cmd, lbl))
+
+        # Group-level actions
+        groups_seen = set()
+        for svc in self._services.values():
+            grp = getattr(svc, "group", "General") or "General"
+            if grp in groups_seen:
+                continue
+            groups_seen.add(grp)
+            if not q or q in grp.lower() or "group" in q:
+                items.append((f"▶  Start Group: {grp}", "start_group", grp))
+                items.append((f"⏹  Stop Group: {grp}", "stop_group", grp))
+
         self._items = items
         results = self.query_one("#pal-results", VerticalScroll)
         results.remove_children()
@@ -1568,8 +1645,8 @@ Screen { background: #0f1117; }
 
 /* ── Left Panel ─────────────────────────────────────────────────────────── */
 #left-panel {
-    width: 38;
-    min-width: 34;
+    width: 44;
+    min-width: 38;
     background: #0f1117;
     border-right: solid #2a2e3a;
 }
@@ -1584,6 +1661,59 @@ Screen { background: #0f1117; }
     text-style: bold;
 }
 #add-server-btn:hover { background: #7f70f0; }
+
+/* ── Group Header ────────────────────────────────────────────────────────── */
+GroupHeader {
+    height: auto;
+    margin-top: 1;
+    margin-bottom: 0;
+    padding: 0;
+}
+.grp-header-box {
+    height: 1;
+    width: 1fr;
+    background: #141722;
+    padding: 0 1;
+    align: left middle;
+}
+.grp-title {
+    width: 1fr;
+    color: #8c7ae6;
+    text-style: bold;
+}
+.btn-grp-start {
+    background: #008f68;
+    color: white;
+    border: none;
+    min-width: 7;
+    height: 1;
+    text-style: bold;
+    padding: 0 1;
+}
+.btn-grp-start:hover { background: #00b894; }
+.btn-grp-stop {
+    background: #e17055;
+    color: white;
+    border: none;
+    min-width: 6;
+    height: 1;
+    margin-left: 1;
+    text-style: bold;
+    padding: 0 1;
+}
+.btn-grp-stop:hover { background: #d04030; }
+
+.grp-tag {
+    background: #252838;
+    color: #a4b0be;
+    text-style: bold;
+    width: auto;
+    padding: 0 1;
+    margin-right: 1;
+}
+.grp-frontend { color: #00cec9; background: #132f38; }
+.grp-backend  { color: #a29bfe; background: #2a2040; }
+.grp-db       { color: #fdcb6e; background: #3a2818; }
 
 /* ── Right Panel ─────────────────────────────────────────────────────────── */
 #right-panel { width: 1fr; }
@@ -1813,6 +1943,7 @@ CommandPaletteModal { align: center top; }
         cwd     = entry.get("cwd", ".")
         command = entry.get("command", "")
         port    = entry.get("port", 0)
+        group   = entry.get("group", "General")
         env     = entry.get("env", {})
         args    = split_command(command) if command else (
             [os.environ.get("SHELL", "bash")] if not IS_WINDOWS else ["cmd"]
@@ -1831,6 +1962,7 @@ CommandPaletteModal { align: center top; }
             env=env, links=links, custom=True,
             custom_actions=custom_actions,
             stop_command=entry.get("stop_command", ""),
+            group=group,
         )
 
     def _persist(self) -> None:
@@ -1842,6 +1974,7 @@ CommandPaletteModal { align: center top; }
                 "command":      format_command(svc.args),
                 "stop_command": svc.stop_command,
                 "port":         svc.port,
+                "group":        svc.group,
                 "env":          svc.env_extra,
                 "actions":      [{"label": l, "command": c} for l, c in svc.custom_actions],
                 "links":        [{"label": l, "url":     u} for l, u in svc.links],
@@ -1858,8 +1991,15 @@ CommandPaletteModal { align: center top; }
             # ── Left: server list
             with Vertical(id="left-panel"):
                 with VerticalScroll(id="server-scroll"):
+                    grouped: dict[str, list[Service]] = {}
                     for svc in self.services.values():
-                        yield ServerCard(svc, id=f"card-{svc.key}")
+                        grouped.setdefault(svc.group, []).append(svc)
+                    for grp_name in sorted(grouped.keys()):
+                        svcs = grouped[grp_name]
+                        slug = re.sub(r"[^a-zA-Z0-9]+", "_", grp_name.lower())
+                        yield GroupHeader(grp_name, len(svcs), id=f"grp-hdr-{slug}")
+                        for svc in svcs:
+                            yield ServerCard(svc, id=f"card-{svc.key}")
                 yield Button("＋  Add Server", id="add-server-btn")
             # ── Right: tabs + content
             with Vertical(id="right-panel"):
@@ -2007,8 +2147,29 @@ CommandPaletteModal { align: center top; }
         await self._edit_server(event.svc)
 
     @on(ServerCard.DeleteServer)
+    @on(GroupHeader.StartGroup)
+    def _handle_start_group(self, event: GroupHeader.StartGroup) -> None:
+        self.action_start_group(event.group)
+
+    @on(GroupHeader.StopGroup)
+    def _handle_stop_group(self, event: GroupHeader.StopGroup) -> None:
+        self.action_stop_group(event.group)
+
     async def _delete_server_msg(self, event: ServerCard.DeleteServer) -> None:
         await self._delete_server(event.svc)
+
+    async def _refresh_card_list(self) -> None:
+        scroll = self.query_one("#server-scroll", VerticalScroll)
+        await scroll.remove_children()
+        grouped: dict[str, list[Service]] = {}
+        for svc in self.services.values():
+            grouped.setdefault(svc.group, []).append(svc)
+        for grp_name in sorted(grouped.keys()):
+            svcs = grouped[grp_name]
+            slug = re.sub(r"[^a-zA-Z0-9]+", "_", grp_name.lower())
+            await scroll.mount(GroupHeader(grp_name, len(svcs), id=f"grp-hdr-{slug}"))
+            for svc in svcs:
+                await scroll.mount(ServerCard(svc, id=f"card-{svc.key}"))
 
     # ── Add Server ────────────────────────────────────────────────────────────
 
@@ -2027,8 +2188,7 @@ CommandPaletteModal { align: center top; }
         svc = self._make_service(r)
         self.services[svc.key] = svc
 
-        scroll = self.query_one("#server-scroll", VerticalScroll)
-        await scroll.mount(ServerCard(svc, id=f"card-{svc.key}"))
+        await self._refresh_card_list()
 
         tabs = self.query_one("#main-tabs", Tabs)
         await tabs.add_tab(Tab(svc.name, id=f"tab-{svc.key}"))
@@ -2051,7 +2211,7 @@ CommandPaletteModal { align: center top; }
         entry = {
             "key": svc.key, "name": svc.name, "cwd": str(svc.cwd),
             "command": format_command(svc.args), "stop_command": svc.stop_command,
-            "port": svc.port, "env": svc.env_extra,
+            "port": svc.port, "group": svc.group, "env": svc.env_extra,
             "actions": [{"label": l, "command": c} for l, c in svc.custom_actions],
             "links":   [{"label": l, "url":     u} for l, u in svc.links],
         }
@@ -2069,11 +2229,7 @@ CommandPaletteModal { align: center top; }
         self.services.pop(old_key, None)
         self.services[new.key] = new
 
-        # Replace card
-        try: await self.query_one(f"#card-{old_key}", ServerCard).remove()
-        except Exception: pass
-        scroll = self.query_one("#server-scroll", VerticalScroll)
-        await scroll.mount(ServerCard(new, id=f"card-{new.key}"))
+        await self._refresh_card_list()
 
         # Replace tab
         tabs = self.query_one("#main-tabs", Tabs)
@@ -2110,8 +2266,7 @@ CommandPaletteModal { align: center top; }
     async def _apply_delete(self, svc: Service) -> None:
         key = svc.key
         self.services.pop(key, None)
-        try: await self.query_one(f"#card-{key}", ServerCard).remove()
-        except Exception: pass
+        await self._refresh_card_list()
         try: await self.query_one("#main-tabs", Tabs).remove_tab(f"tab-{key}")
         except Exception: pass
         try: await self.query_one(f"#pane-{key}", ServerLogPane).remove()
@@ -2128,6 +2283,12 @@ CommandPaletteModal { align: center top; }
                 return
             action = result[1]
             key    = result[2]
+            if action == "start_group":
+                self.action_start_group(key)
+                return
+            elif action == "stop_group":
+                self.action_stop_group(key)
+                return
             svc    = self.services.get(key)
             if not svc:
                 return
@@ -2140,6 +2301,21 @@ CommandPaletteModal { align: center top; }
                 self._switch_to(key)
 
         self.push_screen(CommandPaletteModal(self.services), _callback)
+
+    def action_start_group(self, group: str) -> None:
+        def _worker() -> None:
+            for svc in list(self.services.values()):
+                if svc.group == group and not svc.alive and not svc.missing:
+                    svc.start()
+                    time.sleep(0.5)
+        threading.Thread(target=_worker, daemon=True).start()
+        self.notify(f"Starting group: {group}…")
+
+    def action_stop_group(self, group: str) -> None:
+        for svc in self.services.values():
+            if svc.group == group and svc.alive:
+                svc.stop()
+        self.notify(f"Stopping group: {group}…")
 
     def action_start_all(self) -> None:
         def _worker() -> None:

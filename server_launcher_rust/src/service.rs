@@ -60,6 +60,9 @@ pub struct Service {
     child_handle: Option<Child>,
 
     max_logs: usize,
+
+    pub restart_at: Option<std::time::Instant>,
+    pub crash_timestamps: Vec<std::time::Instant>,
 }
 
 impl Service {
@@ -76,6 +79,8 @@ impl Service {
             stdin_writer: None,
             child_handle: None,
             max_logs: 3000,
+            restart_at: None,
+            crash_timestamps: Vec::new(),
         }
     }
 
@@ -111,6 +116,7 @@ impl Service {
     }
 
     pub fn start(&mut self) {
+        self.restart_at = None;
         if self.state == ServiceState::Running || self.state == ServiceState::Starting {
             return;
         }
@@ -237,6 +243,7 @@ impl Service {
     }
 
     pub fn stop(&mut self) {
+        self.restart_at = None;
         if self.state == ServiceState::Stopped {
             return;
         }
@@ -361,12 +368,28 @@ impl Service {
     }
 
     pub fn poll_status(&mut self, sys: &mut System) {
-        // Fast path: if service is completely stopped, do nothing and burn zero CPU
-        if self.state == ServiceState::Stopped && self.child_handle.is_none() && self.pid.is_none() {
+        // Fast path: if service is completely stopped and no restart scheduled, do nothing
+        if self.state == ServiceState::Stopped && self.child_handle.is_none() && self.pid.is_none() && self.restart_at.is_none() {
             self.port_open = false;
             self.cpu_usage = 0.0;
             self.memory_mb = 0.0;
             return;
+        }
+
+        // Check pending auto-restart timer
+        if let Some(restart_time) = self.restart_at {
+            if std::time::Instant::now() >= restart_time {
+                self.restart_at = None;
+                self.append_log(
+                    "[launcher] Auto-restarting crashed service now...".to_string(),
+                    LogKind::Launcher,
+                );
+                self.start();
+                return;
+            } else {
+                // Keep Errored state while waiting for restart delay
+                return;
+            }
         }
 
         if self.config.own_console {
@@ -390,6 +413,32 @@ impl Service {
                         self.memory_mb = 0.0;
                         self.port_open = false;
                         let _ = std::fs::remove_file(&pid_file);
+
+                        self.append_log(
+                            "[launcher] Console process terminated.".to_string(),
+                            LogKind::Launcher,
+                        );
+
+                        if self.config.auto_restart {
+                            let now = std::time::Instant::now();
+                            self.crash_timestamps.retain(|&t| now.duration_since(t) < Duration::from_secs(10));
+                            self.crash_timestamps.push(now);
+
+                            if self.crash_timestamps.len() > 5 {
+                                self.append_log(
+                                    "[launcher] Crash loop detected (>5 crashes in 10s). Auto-restart paused. Click 'Start' to retry.".to_string(),
+                                    LogKind::Error,
+                                );
+                                self.restart_at = None;
+                            } else {
+                                self.state = ServiceState::Errored;
+                                self.append_log(
+                                    "[launcher] Auto-restart on crash enabled. Restarting in 2 seconds...".to_string(),
+                                    LogKind::Warning,
+                                );
+                                self.restart_at = Some(now + Duration::from_millis(2000));
+                            }
+                        }
                         return;
                     } else {
                         self.state = ServiceState::Running;
@@ -399,7 +448,6 @@ impl Service {
         } else if let Some(child) = &mut self.child_handle {
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    self.state = ServiceState::Stopped;
                     self.pid = None;
                     self.child_handle = None;
                     self.stdin_writer = None;
@@ -407,10 +455,42 @@ impl Service {
                     self.cpu_usage = 0.0;
                     self.memory_mb = 0.0;
                     self.port_open = false;
-                    self.append_log(
-                        format!("[launcher] Process exited with status: {}", status),
-                        LogKind::Launcher,
-                    );
+
+                    let is_crash = !status.success();
+                    if is_crash {
+                        self.state = ServiceState::Errored;
+                        self.append_log(
+                            format!("[launcher] Process crashed with status: {}", status),
+                            LogKind::Error,
+                        );
+                    } else {
+                        self.state = ServiceState::Stopped;
+                        self.append_log(
+                            format!("[launcher] Process exited with status: {}", status),
+                            LogKind::Launcher,
+                        );
+                    }
+
+                    if self.config.auto_restart {
+                        let now = std::time::Instant::now();
+                        self.crash_timestamps.retain(|&t| now.duration_since(t) < Duration::from_secs(10));
+                        self.crash_timestamps.push(now);
+
+                        if self.crash_timestamps.len() > 5 {
+                            self.append_log(
+                                "[launcher] Crash loop detected (>5 crashes in 10s). Auto-restart paused. Click 'Start' to retry.".to_string(),
+                                LogKind::Error,
+                            );
+                            self.restart_at = None;
+                        } else {
+                            self.state = ServiceState::Errored;
+                            self.append_log(
+                                "[launcher] Auto-restart on crash enabled. Restarting in 2 seconds...".to_string(),
+                                LogKind::Warning,
+                            );
+                            self.restart_at = Some(now + Duration::from_millis(2000));
+                        }
+                    }
                     return;
                 }
                 Ok(None) => {

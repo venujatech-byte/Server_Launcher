@@ -1516,7 +1516,7 @@ fn read_proc_cmd_and_cwd(pid: u32) -> (Option<String>, Option<String>) {
 impl eframe::App for LauncherApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         let any_running = self.services.iter().any(|s| {
-            s.state == ServiceState::Running || s.state == ServiceState::Starting
+            s.state == ServiceState::Running || s.state == ServiceState::Starting || s.restart_at.is_some()
         });
 
         // Periodic poll only if any services are active (every 1000ms)
@@ -2006,11 +2006,14 @@ impl LauncherApp {
                                         render_group_badge(ui, &s.config.group);
 
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            let st_text = if is_running { "Running" } else { "Stopped" };
-                                            let st_col = if is_running {
-                                                Color32::from_rgb(16, 185, 129)
+                                            let (st_text, st_col) = if s.restart_at.is_some() {
+                                                ("⟳ Restarting...", Color32::from_rgb(245, 158, 11))
+                                            } else if is_running {
+                                                ("Running", Color32::from_rgb(16, 185, 129))
+                                            } else if s.state == ServiceState::Errored {
+                                                ("Errored", Color32::from_rgb(239, 68, 68))
                                             } else {
-                                                Color32::from_rgb(100, 116, 139)
+                                                ("Stopped", Color32::from_rgb(100, 116, 139))
                                             };
                                             ui.label(RichText::new(st_text).size(11.5).strong().color(st_col));
                                         });
@@ -2113,6 +2116,13 @@ impl LauncherApp {
                                             &mut s.config.own_console,
                                             RichText::new("console").size(11.0).color(Color32::from_rgb(148, 163, 184)),
                                         ).changed() {
+                                            to_save_config = true;
+                                        }
+
+                                        if ui.checkbox(
+                                            &mut s.config.auto_restart,
+                                            RichText::new("auto-restart").size(11.0).color(Color32::from_rgb(148, 163, 184)),
+                                        ).on_hover_text("Auto-restart this server if it exits unexpectedly or crashes").changed() {
                                             to_save_config = true;
                                         }
 
@@ -3259,6 +3269,17 @@ impl LauncherApp {
                 .rounding(Rounding::same(4.0));
                 if ui.add(find_btn).clicked() {
                     self.search_open.insert(key.to_string(), !search_is_open);
+                }
+
+                let mut auto_restart = self.find_service(key).map(|s| s.config.auto_restart).unwrap_or(false);
+                if ui.checkbox(
+                    &mut auto_restart,
+                    RichText::new("Auto-restart").size(11.0).color(Color32::from_rgb(162, 155, 254)),
+                ).on_hover_text("Auto-restart this server if it exits unexpectedly or crashes").changed() {
+                    if let Some(s) = self.find_service_mut(key) {
+                        s.config.auto_restart = auto_restart;
+                        self.persist_config();
+                    }
                 }
             });
         });

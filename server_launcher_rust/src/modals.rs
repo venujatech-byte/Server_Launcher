@@ -217,6 +217,7 @@ impl AddEditModalState {
         self.stop_command = cfg.stop_command.clone();
         self.port_str = cfg.port.to_string();
         self.own_console = cfg.own_console;
+        self.auto_restart = cfg.auto_restart;
 
         let mut env_lines = Vec::new();
         for (k, v) in &cfg.env {
@@ -360,6 +361,7 @@ impl AddEditModalState {
             port,
             group,
             own_console: self.own_console,
+            auto_restart: self.auto_restart,
             env,
             actions,
             links,
@@ -648,6 +650,20 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState) -> Mo
                     );
                     ui.label(
                         RichText::new("Opens in a native terminal emulator (gnome-terminal, konsole, cmd.exe, etc.)")
+                            .size(10.5)
+                            .color(Color32::from_rgb(123, 131, 148)),
+                    );
+                    ui.add_space(8.0);
+
+                    // Auto-restart on crash checkbox
+                    ui.checkbox(
+                        &mut state.auto_restart,
+                        RichText::new("Auto-restart on crash")
+                            .size(12.0)
+                            .color(Color32::from_rgb(220, 225, 235)),
+                    );
+                    ui.label(
+                        RichText::new("Automatically restarts this server if the process exits unexpectedly or crashes")
                             .size(10.5)
                             .color(Color32::from_rgb(123, 131, 148)),
                     );

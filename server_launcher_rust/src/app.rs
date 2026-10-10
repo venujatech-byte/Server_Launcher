@@ -29,6 +29,8 @@ pub enum SlashAction {
     Status,
     Edit,
     Help,
+    Console,
+    SendStdin(String),
     RunAction(String),
     OpenLink(String),
 }
@@ -2061,7 +2063,10 @@ impl eframe::App for LauncherApp {
             _ => {}
         }
 
-        if any_running {
+        let is_scanning = self.scanner.is_scanning.lock().map(|s| *s).unwrap_or(false);
+        if is_scanning {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        } else if any_running {
             // When servers are running, repaint every 500ms for smooth stats & uptime display
             ctx.request_repaint_after(std::time::Duration::from_millis(500));
         } else {
@@ -2072,6 +2077,14 @@ impl eframe::App for LauncherApp {
 }
 
 impl LauncherApp {
+    pub fn refresh_server_list(&mut self) {
+        self.scanner.trigger_scan();
+        for s in &mut self.services {
+            s.poll_status(&mut self.sys);
+        }
+        self.last_poll = Instant::now();
+    }
+
     fn get_proc_cmd_and_cwd(&mut self, pid: u32) -> (Option<String>, Option<String>) {
         if let Some((cmd, cwd, last_read)) = self.proc_info_cache.get(&pid) {
             if last_read.elapsed() < std::time::Duration::from_secs(5) {
@@ -2375,6 +2388,17 @@ impl LauncherApp {
                                             crate::service::open_folder(&s.config.cwd);
                                         }
 
+                                        let btn_console = egui::Button::new(
+                                            RichText::new("🖥️").size(12.0).color(Color32::from_rgb(168, 85, 247)),
+                                        )
+                                        .fill(Color32::from_rgb(34, 30, 48))
+                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(55, 45, 75)))
+                                        .rounding(Rounding::same(5.0))
+                                        .min_size(egui::vec2(26.0, 24.0));
+                                        if ui.add(btn_console).on_hover_text("Open in console / terminal window").clicked() {
+                                            s.open_console();
+                                        }
+
                                         let btn_edit = egui::Button::new(
                                             RichText::new("Edit").size(11.0).color(Color32::from_rgb(203, 213, 225)),
                                         )
@@ -2577,12 +2601,24 @@ impl LauncherApp {
                     .color(p.text_primary),
             );
             ui.add_space(8.0);
-            let scan_time = self.scanner.get_last_scan_time();
-            ui.label(
-                RichText::new(format!("last scan: {}", scan_time))
-                    .size(11.5)
-                    .color(p.text_muted),
-            );
+            let is_scanning = self.scanner.is_scanning.lock().map(|s| *s).unwrap_or(false);
+            if is_scanning {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(
+                        RichText::new("refreshing…")
+                            .size(11.5)
+                            .color(p.accent),
+                    );
+                });
+            } else {
+                let scan_time = self.scanner.get_last_scan_time();
+                ui.label(
+                    RichText::new(format!("last scan: {}", scan_time))
+                        .size(11.5)
+                        .color(p.text_muted),
+                );
+            }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let btn_refresh = egui::Button::new(
@@ -2595,7 +2631,7 @@ impl LauncherApp {
                 .stroke(Stroke::new(1.0_f32, p.border))
                 .rounding(Rounding::same(4.0));
                 if ui.add(btn_refresh).clicked() {
-                    self.scanner.trigger_scan();
+                    self.refresh_server_list();
                 }
 
                 // Search Box with 🔍 icon, hint, clear button, and Ctrl+F focus support
@@ -2631,6 +2667,13 @@ impl LauncherApp {
                             if self.focus_overview_search {
                                 resp.request_focus();
                                 self.focus_overview_search = false;
+                                self.refresh_server_list();
+                            }
+                            if resp.changed() {
+                                self.refresh_server_list();
+                            }
+                            if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                                self.refresh_server_list();
                             }
                             if !self.overview_search_query.is_empty() {
                                 if ui
@@ -2645,6 +2688,7 @@ impl LauncherApp {
                                     .clicked()
                                 {
                                     self.overview_search_query.clear();
+                                    self.refresh_server_list();
                                 }
                             }
                         });
@@ -2716,6 +2760,16 @@ impl LauncherApp {
                 for &idx in &managed_indices {
                     let s = &self.services[idx];
                     let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
+
+                    let card_height = if is_running { 76.0 } else { 58.0 };
+                    let current_pos = ui.cursor().min;
+                    let approx_rect = egui::Rect::from_min_size(current_pos, egui::vec2(ui.available_width(), card_height));
+                    if !ui.clip_rect().expand(120.0).intersects(approx_rect) {
+                        ui.allocate_space(egui::vec2(ui.available_width(), card_height));
+                        ui.add_space(6.0);
+                        continue;
+                    }
+
                     let card_resp = Frame::none()
                         .fill(p.bg_card)
                         .stroke(Stroke::new(1.0_f32, p.border))
@@ -2845,6 +2899,16 @@ impl LauncherApp {
                                         crate::service::open_in_vscode(&s.config.cwd);
                                     }
 
+                                    let btn_console = egui::Button::new(
+                                        RichText::new("🖥️").size(11.0).color(Color32::from_rgb(168, 85, 247)),
+                                    )
+                                    .fill(p.bg_button)
+                                    .stroke(Stroke::new(1.0_f32, p.border))
+                                    .rounding(Rounding::same(5.0));
+                                    if ui.add(btn_console).on_hover_text("Open in console / terminal window").clicked() {
+                                        s.open_console();
+                                    }
+
                                     let st_text = if is_running { "Running" } else { "Stopped" };
                                     let st_color = if is_running {
                                         p.success
@@ -2857,6 +2921,13 @@ impl LauncherApp {
                         });
 
                     card_resp.response.context_menu(|ui| {
+                        if ui.button("🖥️ Open in Console").clicked() {
+                            if let Some(s) = self.services.get(idx) {
+                                s.open_console();
+                            }
+                            ui.close_menu();
+                        }
+                        ui.separator();
                         let cur_autostart = self.services.get(idx).map(|s| s.config.autostart).unwrap_or(false);
                         let auto_label = if cur_autostart { "🚀 Disable Launch Autostart" } else { "🚀 Enable Launch Autostart" };
                         if ui.button(auto_label).clicked() {
@@ -3533,7 +3604,7 @@ impl LauncherApp {
                 }
 
                 if let Some((name, pid, port, cmd, cwd)) = to_launch_external_terminal {
-                    let _ = crate::service::launch_external_terminal(&name, pid, port, &cwd, &cmd);
+                    crate::service::open_in_console(&name, pid, port, &cwd, &cmd);
                 }
 
                 if let Some((pid_opt, port, name, cmd, cwd)) = to_kill_pid {
@@ -3740,6 +3811,20 @@ impl LauncherApp {
                     crate::service::open_in_vscode(&cwd);
                 }
 
+                let console_btn = egui::Button::new(
+                    RichText::new("🖥️ Console")
+                        .size(11.0)
+                        .color(p.accent_light),
+                )
+                .fill(p.bg_button)
+                .stroke(Stroke::new(1.0_f32, p.border))
+                .rounding(Rounding::same(4.0));
+                if ui.add(console_btn).on_hover_text("Open interactive console / terminal window in working directory").clicked() {
+                    if let Some(s) = self.find_service(key) {
+                        s.open_console();
+                    }
+                }
+
                 let mut auto_restart = self.find_service(key).map(|s| s.config.auto_restart).unwrap_or(false);
                 if ui.checkbox(
                     &mut auto_restart,
@@ -3944,6 +4029,54 @@ impl LauncherApp {
                 category: "Utility",
                 action: SlashAction::Help,
             },
+            SlashCommand {
+                name: "/console".to_string(),
+                description: "Open in external console / terminal window".to_string(),
+                category: "Utility",
+                action: SlashAction::Console,
+            },
+            SlashCommand {
+                name: "/terminal".to_string(),
+                description: "Open in external console / terminal window".to_string(),
+                category: "Utility",
+                action: SlashAction::Console,
+            },
+            SlashCommand {
+                name: "/h".to_string(),
+                description: "Send 'h + enter' to server (Vite / dev server help)".to_string(),
+                category: "Input",
+                action: SlashAction::SendStdin("h".to_string()),
+            },
+            SlashCommand {
+                name: "/r".to_string(),
+                description: "Send 'r + enter' to server (restart dev server)".to_string(),
+                category: "Input",
+                action: SlashAction::SendStdin("r".to_string()),
+            },
+            SlashCommand {
+                name: "/o".to_string(),
+                description: "Send 'o + enter' to server (open in browser)".to_string(),
+                category: "Input",
+                action: SlashAction::SendStdin("o".to_string()),
+            },
+            SlashCommand {
+                name: "/u".to_string(),
+                description: "Send 'u + enter' to server (show URLs)".to_string(),
+                category: "Input",
+                action: SlashAction::SendStdin("u".to_string()),
+            },
+            SlashCommand {
+                name: "/c".to_string(),
+                description: "Send 'c + enter' to server (clear console)".to_string(),
+                category: "Input",
+                action: SlashAction::SendStdin("c".to_string()),
+            },
+            SlashCommand {
+                name: "/q".to_string(),
+                description: "Send 'q + enter' to server (quit dev server)".to_string(),
+                category: "Input",
+                action: SlashAction::SendStdin("q".to_string()),
+            },
         ];
 
         for act in &actions {
@@ -4018,12 +4151,46 @@ impl LauncherApp {
         let mut clicked_cmd: Option<SlashCommand> = None;
         let mut execute_action: Option<SlashAction> = None;
 
+        // Quick Dev Server Shortcuts Toolbar (when running)
+        if is_running {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);
+                ui.label(RichText::new("⌨ Dev Server Shortcuts:").size(11.0).color(p.text_muted));
+                let shortcuts = [
+                    ("h (help)", "h", "Send 'h + enter' (show dev server help & shortcuts)"),
+                    ("r (restart)", "r", "Send 'r + enter' (restart dev server)"),
+                    ("o (open)", "o", "Send 'o + enter' (open in browser)"),
+                    ("u (url)", "u", "Send 'u + enter' (show server URLs)"),
+                    ("c (clear)", "c", "Send 'c + enter' (clear dev console)"),
+                    ("q (quit)", "q", "Send 'q + enter' (quit dev server)"),
+                ];
+                for (label, key_cmd, tip) in shortcuts {
+                    let btn = egui::Button::new(RichText::new(label).size(10.5).color(p.accent_light))
+                        .fill(p.bg_button)
+                        .stroke(Stroke::new(1.0_f32, p.border))
+                        .rounding(Rounding::same(3.0));
+                    if ui.add(btn).on_hover_text(tip).clicked() {
+                        if let Some(s) = self.find_service(key) {
+                            s.send_input(key_cmd);
+                        }
+                    }
+                }
+            });
+            ui.add_space(2.0);
+        }
+
         let resp = ui.horizontal(|ui| {
             ui.label(RichText::new("❯").color(p.accent).strong().size(13.0));
 
+            let hint = if is_running {
+                "Send input to server (e.g. h + enter for help, r to restart)..."
+            } else {
+                "Type '/' for commands, or run command in directory (e.g. npm i, cargo test)..."
+            };
+
             let text_edit = egui::TextEdit::singleline(&mut input_val)
-                .hint_text("Type '/' for commands, or run command in directory (e.g. npm i, cargo test)...")
-                .desired_width(ui.available_width() - 250.0);
+                .hint_text(hint)
+                .desired_width(ui.available_width() - 325.0);
 
             let edit_resp = ui.add(text_edit);
 
@@ -4053,6 +4220,16 @@ impl LauncherApp {
             if ui.add(btn_clear).clicked() {
                 if let Some(s) = self.find_service(key) {
                     s.clear_logs();
+                }
+            }
+
+            let btn_console = egui::Button::new(RichText::new("🖥️ Console").size(11.0).color(p.accent_light))
+                .fill(p.bg_button)
+                .stroke(Stroke::new(1.0_f32, p.border))
+                .rounding(Rounding::same(4.0));
+            if ui.add(btn_console).on_hover_text("Open in external console / terminal window").clicked() {
+                if let Some(s) = self.find_service(key) {
+                    s.open_console();
                 }
             }
 
@@ -4184,13 +4361,45 @@ impl LauncherApp {
                     }
                 } else {
                     // Regular command or stdin
-                    if is_running {
+                    let is_active = self.find_service(key).map(|s| s.is_active()).unwrap_or(false);
+
+                    if is_active {
                         if let Some(s) = self.find_service(key) {
                             s.send_input(&trimmed);
                         }
                     } else {
-                        // Server is NOT running: execute directly in cwd!
-                        self.run_service_action(key, &trimmed);
+                        let lower = trimmed.to_lowercase();
+                        let s_cmd = self.find_service(key).map(|s| s.config.command.clone());
+                        if lower == "h" || lower == "help" || lower == "?" {
+                            if let Some(s) = self.find_service(key) {
+                                s.append_log(
+                                    "[hint] Server is currently stopped. Click '▶ Start' (or type /start) to launch it. Once running, you can send 'h + enter', 'r + enter', 'o + enter' and other interactive shortcuts directly to the server.".to_string(),
+                                    LogKind::Launcher,
+                                );
+                            }
+                        } else if lower == "start" || lower == "s" || s_cmd.as_deref().map(|c| c.to_lowercase() == lower).unwrap_or(false) {
+                            if let Some(s) = self.find_service_mut(key) {
+                                s.start();
+                            }
+                        } else if lower == "restart" || lower == "r" {
+                            if let Some(s) = self.find_service_mut(key) {
+                                s.restart();
+                            }
+                        } else if lower == "q" || lower == "quit" || lower == "exit" {
+                            if let Some(s) = self.find_service(key) {
+                                s.append_log("[hint] Server is already stopped.".to_string(), LogKind::Launcher);
+                            }
+                        } else if lower == "o" || lower == "u" || lower == "c" {
+                            if let Some(s) = self.find_service(key) {
+                                s.append_log(
+                                    format!("[hint] '{}' is an interactive dev server shortcut. Click '▶ Start' to launch the server first, then send it.", trimmed),
+                                    LogKind::Launcher,
+                                );
+                            }
+                        } else {
+                            // Server is NOT running: execute directly in cwd!
+                            self.run_service_action(key, &trimmed);
+                        }
                     }
                 }
                 input_val.clear();
@@ -4251,6 +4460,7 @@ impl LauncherApp {
                         help.push_str("• /clear    - Clear terminal logs\n");
                         help.push_str("• /status   - Show status, PID, port, uptime and resource usage\n");
                         help.push_str("• /edit     - Open configuration modal for this server\n");
+                        help.push_str("• /console  - Open server in external console / terminal window\n");
                         help.push_str("• /help     - Show this command reference\n");
                         if !s.config.actions.is_empty() {
                             help.push_str("\nCustom Actions:\n");
@@ -4269,6 +4479,16 @@ impl LauncherApp {
                         help.push_str("\nWhen server is stopped: Type any command (e.g. npm i, cargo test) to run it directly in this server directory.\n");
                         help.push_str("When server is running: Type any text to send directly to process standard input.\n");
                         s.append_log(help, LogKind::Launcher);
+                    }
+                }
+                SlashAction::Console => {
+                    if let Some(s) = self.find_service(key) {
+                        s.open_console();
+                    }
+                }
+                SlashAction::SendStdin(txt) => {
+                    if let Some(s) = self.find_service(key) {
+                        s.send_input(&txt);
                     }
                 }
                 SlashAction::RunAction(cmd) => {

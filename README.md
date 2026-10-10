@@ -56,9 +56,10 @@ Server Launcher comes out-of-the-box with 7 handcrafted color palettes:
 - **Instant Click Responsiveness**: Fully responsive cards with context menu reordering (`▲ Move Up` / `▼ Move Down`) and zero drag-interception or missed clicks.
 - **Quick Launch Command Palette (`Ctrl+P`)**: Fuzzy-search commands, toggle servers, jump to tabs, or switch themes via keyboard.
 - **Live Log Search (`Ctrl+F`)**: Real-time filtering and highlight for console logs with severity color coding (`stdout`, `stderr`, `stdin`, `launcher`, `warnings`).
-- **One-Click IDE & Explorer Integration**:
+- **One-Click IDE, Explorer & Console Integration**:
   - 📁 **Open Folder**: Open working directory in native file manager (`xdg-open` / File Explorer).
   - 💻 **Open in VS Code**: Launch the project directory directly in Visual Studio Code (`code .`).
+  - 🖥️ **Open in Console**: Launch an external desktop terminal emulator (`ptyxis`, `gnome-terminal`, `alacritty`, `cmd.exe`, etc.) initialized in the server's working directory.
   - 🔗 **Browser Links**: Quick-open web dashboards, API docs, or localhost endpoints in your default browser.
 
 ---

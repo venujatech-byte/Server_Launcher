@@ -342,14 +342,27 @@ impl Service {
         }
     }
 
+    pub fn is_active(&self) -> bool {
+        self.state == ServiceState::Running
+            || self.state == ServiceState::Starting
+            || self.stdin_writer.is_some()
+            || self.child_handle.is_some()
+            || self.pid.is_some()
+    }
+
     pub fn send_input(&self, input_text: &str) {
         if let Some(stdin_mutex) = &self.stdin_writer {
             if let Ok(mut writer) = stdin_mutex.lock() {
                 let _ = writeln!(writer, "{}", input_text);
                 let _ = writer.flush();
                 self.append_log(format!("> {}", input_text), LogKind::Stdin);
+                return;
             }
         }
+        self.append_log(
+            format!("[warning] Cannot send '{}': server is not running or stdin is closed.", input_text),
+            LogKind::Warning,
+        );
     }
 
     pub fn send_interrupt(&self) {
@@ -365,6 +378,17 @@ impl Service {
             }
             self.append_log("[launcher] Sent interrupt (SIGINT)".to_string(), LogKind::Launcher);
         }
+    }
+
+    pub fn open_console(&self) {
+        let name = self.config.name.clone();
+        let pid = self.pid;
+        let port = self.config.port;
+        let cwd = self.config.cwd.clone();
+        let cmd = self.config.command.clone();
+        thread::spawn(move || {
+            let _ = launch_external_terminal(&name, pid, port, &cwd, &cmd);
+        });
     }
 
     pub fn poll_status(&mut self, sys: &mut System) {
@@ -717,6 +741,15 @@ pub fn open_in_vscode(cwd: &str) {
     });
 }
 
+pub fn open_in_console(name: &str, pid: Option<u32>, port: u16, cwd: &str, cmd_str: &str) {
+    let name = name.to_string();
+    let cwd = cwd.to_string();
+    let cmd_str = cmd_str.to_string();
+    thread::spawn(move || {
+        let _ = launch_external_terminal(&name, pid, port, &cwd, &cmd_str);
+    });
+}
+
 pub fn launch_external_terminal(
     name: &str,
     pid: Option<u32>,
@@ -729,7 +762,8 @@ pub fn launch_external_terminal(
     {
         let pid_num = pid.unwrap_or(0);
         let script_dir = std::env::temp_dir();
-        let script_path = script_dir.join(format!("launcher_term_{}.sh", port));
+        let safe_name: String = name.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
+        let script_path = script_dir.join(format!("launcher_term_{}_{}.sh", safe_name, port));
 
         let script_content = format!(
 r#"#!/usr/bin/env bash
@@ -775,28 +809,55 @@ exec bash
         }
 
         let script_str = script_path.to_string_lossy().to_string();
-        let chosen = find_terminal();
 
-        let mut cmd;
-        if let Some((term, args)) = chosen {
-            cmd = Command::new(term);
-            for arg in args {
-                cmd.arg(arg);
-            }
-            cmd.arg(&script_str);
-        } else {
-            cmd = Command::new("x-terminal-emulator");
-            cmd.args(&["-e", &script_str]);
-        }
-
-        cmd.current_dir(cwd_path);
-        #[cfg(unix)]
+        #[cfg(target_os = "macos")]
         {
-            use std::os::unix::process::CommandExt;
-            cmd.process_group(0);
+            let mut cmd = Command::new("open");
+            cmd.args(&["-a", "Terminal", &script_str]);
+            return cmd.spawn().map(|_| ()).map_err(|e| format!("Failed to spawn Terminal: {}", e));
         }
-        cmd.spawn().map_err(|e| format!("Failed to spawn terminal: {}", e))?;
-        Ok(())
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let chosen = find_terminal();
+
+            let mut cmd;
+            if let Some((term, args)) = chosen {
+                cmd = Command::new(term);
+                for arg in args {
+                    cmd.arg(arg);
+                }
+                cmd.arg(&script_str);
+            } else {
+                let mut fallback_spawned = false;
+                for fb in &["x-terminal-emulator", "xterm", "sh"] {
+                    let mut c = Command::new(fb);
+                    if *fb == "sh" {
+                        c.args(&["-c", &script_str]);
+                    } else {
+                        c.args(&["-e", &script_str]);
+                    }
+                    c.current_dir(cwd_path);
+                    if c.spawn().is_ok() {
+                        fallback_spawned = true;
+                        break;
+                    }
+                }
+                if !fallback_spawned {
+                    return Err("No compatible terminal emulator found on this system".to_string());
+                }
+                return Ok(());
+            }
+
+            cmd.current_dir(cwd_path);
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                cmd.process_group(0);
+            }
+            cmd.spawn().map_err(|e| format!("Failed to spawn terminal: {}", e))?;
+            Ok(())
+        }
     }
 
     #[cfg(target_os = "windows")]
@@ -1140,6 +1201,33 @@ mod tests {
         push_log_line("", &logs, 100, LogKind::Stdout);
         let locked = logs.lock().unwrap();
         assert_eq!(locked.len(), 0);
+    }
+
+    #[test]
+    fn test_service_send_input_stopped_warning() {
+        let cfg = ServerConfig {
+            key: "test_srv".to_string(),
+            name: "Test Server".to_string(),
+            command: "echo test".to_string(),
+            cwd: ".".to_string(),
+            port: 3000,
+            auto_restart: false,
+            autostart: false,
+            group: "default".to_string(),
+            env: std::collections::HashMap::new(),
+            actions: Vec::new(),
+            links: Vec::new(),
+            stop_command: String::new(),
+            own_console: false,
+        };
+        let s = Service::new(cfg);
+        assert!(!s.is_active());
+
+        s.send_input("h");
+        let logs = s.logs.lock().unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].kind, LogKind::Warning);
+        assert!(logs[0].text.contains("Cannot send 'h': server is not running or stdin is closed."));
     }
 }
 

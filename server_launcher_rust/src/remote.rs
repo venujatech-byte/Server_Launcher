@@ -11,11 +11,38 @@ pub struct RemoteListener {
     pub cmd: String,
 }
 
+pub fn is_sshpass_available() -> bool {
+    #[cfg(unix)]
+    {
+        Command::new("sshpass")
+            .arg("-V")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 /// Test connection to remote SSH host with timeout
 pub fn test_ssh_connection(host: &SshRemoteHost) -> Result<String, String> {
-    let mut cmd = Command::new("ssh");
-    cmd.arg("-o").arg("BatchMode=yes")
-        .arg("-o").arg("ConnectTimeout=5")
+    let has_password = !host.password.trim().is_empty();
+    let mut cmd;
+
+    if has_password && is_sshpass_available() {
+        cmd = Command::new("sshpass");
+        cmd.arg("-e").arg("ssh");
+        cmd.env("SSHPASS", host.password.trim());
+    } else {
+        cmd = Command::new("ssh");
+        if !has_password {
+            cmd.arg("-o").arg("BatchMode=yes");
+        }
+    }
+
+    cmd.arg("-o").arg("ConnectTimeout=5")
         .arg("-o").arg("StrictHostKeyChecking=accept-new")
         .arg("-p").arg(host.port.to_string());
 
@@ -53,9 +80,21 @@ pub fn test_ssh_connection(host: &SshRemoteHost) -> Result<String, String> {
 
 /// Prepare a Command that executes a shell command on the remote host over SSH
 pub fn build_ssh_command(host: &SshRemoteHost, remote_cmd: &str) -> Command {
-    let mut cmd = Command::new("ssh");
-    cmd.arg("-o").arg("BatchMode=yes")
-        .arg("-o").arg("ConnectTimeout=8")
+    let has_password = !host.password.trim().is_empty();
+    let mut cmd;
+
+    if has_password && is_sshpass_available() {
+        cmd = Command::new("sshpass");
+        cmd.arg("-e").arg("ssh");
+        cmd.env("SSHPASS", host.password.trim());
+    } else {
+        cmd = Command::new("ssh");
+        if !has_password {
+            cmd.arg("-o").arg("BatchMode=yes");
+        }
+    }
+
+    cmd.arg("-o").arg("ConnectTimeout=8")
         .arg("-o").arg("StrictHostKeyChecking=accept-new")
         .arg("-p").arg(host.port.to_string());
 
@@ -201,6 +240,26 @@ pub fn launch_external_ssh_terminal(host: &SshRemoteHost) -> Result<(), String> 
         String::new()
     };
 
+    let (pass_block, ssh_cmd) = if !host.password.trim().is_empty() {
+        let escaped_pass = host.password.trim().replace('"', "\\\"").replace('$', "\\$");
+        (
+            format!(
+r#"if command -v sshpass >/dev/null 2>&1; then
+    export SSHPASS="{}"
+    SSH_BIN="sshpass -e ssh"
+else
+    echo "Note: sshpass not installed. Please enter password if prompted."
+    SSH_BIN="ssh"
+fi
+"#,
+                escaped_pass
+            ),
+            "$SSH_BIN"
+        )
+    } else {
+        (String::new(), "ssh")
+    };
+
     let script_content = format!(
 r#"#!/usr/bin/env bash
 echo "=========================================================="
@@ -208,7 +267,8 @@ echo " Server Launcher: Remote SSH Terminal"
 echo " Host   : {name} ({target}:{port})"
 echo "=========================================================="
 echo "Connecting to {target}..."
-ssh -p {port} {key_arg} {target}{cwd_cmd}
+{pass_block}
+{ssh_cmd} -p {port} {key_arg} {target}{cwd_cmd}
 echo ""
 echo "SSH connection closed. Press enter to exit."
 read -r
@@ -217,7 +277,9 @@ read -r
         target = target,
         port = host.port,
         key_arg = key_arg,
-        cwd_cmd = cwd_cmd
+        cwd_cmd = cwd_cmd,
+        pass_block = pass_block,
+        ssh_cmd = ssh_cmd
     );
 
     let _ = std::fs::write(&script_path, script_content);
@@ -267,7 +329,6 @@ read -r
 }
 
 /// Parse ~/.ssh/config to import existing configured hosts
-/// Parse ~/.ssh/config to import existing configured hosts
 pub fn import_from_ssh_config() -> Vec<SshRemoteHost> {
     let home = match std::env::var("HOME") {
         Ok(h) => std::path::PathBuf::from(h),
@@ -302,6 +363,7 @@ pub fn parse_ssh_config_str(content: &str, home: &std::path::Path) -> Vec<SshRem
                     port: *port,
                     user: user.clone(),
                     key_path: key.clone(),
+                    password: String::new(),
                     remote_cwd: String::new(),
                 });
             }

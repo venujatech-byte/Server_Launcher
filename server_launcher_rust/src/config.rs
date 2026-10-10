@@ -60,6 +60,8 @@ pub struct SshRemoteHost {
     #[serde(default)]
     pub key_path: String,
     #[serde(default)]
+    pub password: String,
+    #[serde(default)]
     pub remote_cwd: String,
 }
 

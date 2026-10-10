@@ -978,6 +978,8 @@ pub struct SshHostModalState {
     pub port_str: String,
     pub user: String,
     pub key_path: String,
+    pub password: String,
+    pub show_password: bool,
     pub remote_cwd: String,
     pub test_result: Option<Result<String, String>>,
     pub is_testing: bool,
@@ -993,6 +995,8 @@ impl SshHostModalState {
         self.port_str = "22".to_string();
         self.user = "ubuntu".to_string();
         self.key_path = String::new();
+        self.password = String::new();
+        self.show_password = false;
         self.remote_cwd = String::new();
         self.test_result = None;
         self.is_testing = false;
@@ -1007,6 +1011,8 @@ impl SshHostModalState {
         self.port_str = h.port.to_string();
         self.user = h.user.clone();
         self.key_path = h.key_path.clone();
+        self.password = h.password.clone();
+        self.show_password = false;
         self.remote_cwd = h.remote_cwd.clone();
         self.test_result = None;
         self.is_testing = false;
@@ -1091,6 +1097,24 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState) -> Mo
             });
             ui.add_space(8.0);
 
+            // SSH Password
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("SSH Password (optional if using key/agent):").size(12.0).strong().color(Color32::from_rgb(220, 224, 235)));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let eye_label = if state.show_password { "👁 Hide" } else { "👁 Show" };
+                    if ui.small_button(eye_label).clicked() {
+                        state.show_password = !state.show_password;
+                    }
+                });
+            });
+            ui.add(
+                egui::TextEdit::singleline(&mut state.password)
+                    .password(!state.show_password)
+                    .hint_text("Enter SSH password (for password-based authentication)")
+                    .desired_width(ui.available_width()),
+            );
+            ui.add_space(8.0);
+
             // Default Remote Directory
             ui.label(RichText::new("Default Remote Directory (optional):").size(12.0).strong().color(Color32::from_rgb(220, 224, 235)));
             ui.add(
@@ -1136,6 +1160,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState) -> Mo
                         port,
                         user: state.user.clone(),
                         key_path: state.key_path.clone(),
+                        password: state.password.clone(),
                         remote_cwd: state.remote_cwd.clone(),
                     };
                     state.test_result = Some(crate::remote::test_ssh_connection(&host_obj));
@@ -1176,6 +1201,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState) -> Mo
                             port,
                             user: if state.user.trim().is_empty() { "ubuntu".to_string() } else { state.user.trim().to_string() },
                             key_path: state.key_path.trim().to_string(),
+                            password: state.password.trim().to_string(),
                             remote_cwd: state.remote_cwd.trim().to_string(),
                         };
 

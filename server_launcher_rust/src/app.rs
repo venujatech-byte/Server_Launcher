@@ -1929,6 +1929,7 @@ impl LauncherApp {
                     let mut start_grp = None;
                     let mut stop_grp = None;
                     let mut to_save_config = false;
+                    let mut to_reorder = None;
 
                     for (group_name, indices) in groups {
                         ui.add_space(4.0);
@@ -1974,18 +1975,33 @@ impl LauncherApp {
 
                         // Server Cards for this group
                         for idx in indices {
-                            let s = &mut self.services[idx];
-                            let key = s.config.key.clone();
-                            let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
+                            let (card_resp, cfg_clone) = {
+                                let s = &mut self.services[idx];
+                                let key = s.config.key.clone();
+                                let cfg = s.config.clone();
+                                let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
 
-                            Frame::none()
-                                .fill(Color32::from_rgb(21, 25, 36))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 46, 66)))
-                                .rounding(Rounding::same(8.0))
-                                .inner_margin(egui::Margin::symmetric(14.0, 11.0))
-                                .show(ui, |ui| {
-                                    // Row 1: Status Dot + Name + Group Badge + Status Text
+                                let resp = Frame::none()
+                                    .fill(Color32::from_rgb(21, 25, 36))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 46, 66)))
+                                    .rounding(Rounding::same(8.0))
+                                    .inner_margin(egui::Margin::symmetric(14.0, 11.0))
+                                    .show(ui, |ui| {
+                                    // Row 1: Drag handle + Status Dot + Name + Group Badge + Status Text
                                     ui.horizontal(|ui| {
+                                        let handle_resp = ui.add(
+                                            egui::Label::new(
+                                                RichText::new("⠿")
+                                                    .size(13.5)
+                                                    .color(Color32::from_rgb(110, 120, 140)),
+                                            )
+                                            .sense(egui::Sense::drag()),
+                                        )
+                                        .on_hover_cursor(egui::CursorIcon::Grab)
+                                        .on_hover_text("Drag ⠿ to reorder cards");
+
+                                        handle_resp.dnd_set_drag_payload(idx);
+
                                         let dot_color = if is_running {
                                             Color32::from_rgb(16, 185, 129)
                                         } else {
@@ -2167,8 +2183,57 @@ impl LauncherApp {
                                         });
                                     });
                                 });
+                                (resp, cfg)
+                            };
+
+                            let total_services = self.services.len();
+                            if let Some(hovered_from) = card_resp.response.dnd_hover_payload::<usize>() {
+                                if *hovered_from != idx {
+                                    ui.painter().rect_stroke(
+                                        card_resp.response.rect,
+                                        8.0,
+                                        Stroke::new(2.0_f32, Color32::from_rgb(99, 102, 241)),
+                                    );
+                                }
+                            }
+
+                            if let Some(dropped_from) = card_resp.response.dnd_release_payload::<usize>() {
+                                let from = *dropped_from;
+                                let to = idx;
+                                if from != to && from < total_services && to < total_services {
+                                    to_reorder = Some((from, to));
+                                }
+                            }
+
+                            card_resp.response.context_menu(|ui| {
+                                if idx > 0 {
+                                    if ui.button("▲ Move Up").clicked() {
+                                        to_reorder = Some((idx, idx - 1));
+                                        ui.close_menu();
+                                    }
+                                }
+                                if idx + 1 < total_services {
+                                    if ui.button("▼ Move Down").clicked() {
+                                        to_reorder = Some((idx, idx + 1));
+                                        ui.close_menu();
+                                    }
+                                }
+                                ui.separator();
+                                if ui.button("✏ Edit Server").clicked() {
+                                    to_edit = Some(cfg_clone);
+                                    ui.close_menu();
+                                }
+                            });
 
                             ui.add_space(6.0);
+                        }
+                    }
+
+                    if let Some((from, to)) = to_reorder {
+                        if from < self.services.len() && to < self.services.len() {
+                            let s = self.services.remove(from);
+                            self.services.insert(to, s);
+                            self.persist_config();
                         }
                     }
 
@@ -2423,17 +2488,31 @@ impl LauncherApp {
                 }
 
                 let mut to_toggle: Option<(usize, u8)> = None; // 0=stop, 1=start, 2=restart
+                let mut to_reorder: Option<(usize, usize)> = None;
 
                 for &idx in &managed_indices {
                     let s = &self.services[idx];
                     let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
-                    Frame::none()
+                    let card_resp = Frame::none()
                         .fill(Color32::from_rgb(22, 25, 34))
                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(37, 42, 56)))
                         .rounding(Rounding::same(4.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 11.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
+                                let handle_resp = ui.add(
+                                    egui::Label::new(
+                                        RichText::new("⠿")
+                                            .size(13.5)
+                                            .color(Color32::from_rgb(110, 120, 140)),
+                                    )
+                                    .sense(egui::Sense::drag()),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::Grab)
+                                .on_hover_text("Drag ⠿ to reorder cards");
+
+                                handle_resp.dnd_set_drag_payload(idx);
+
                                 let dot_color = if is_running {
                                     Color32::from_rgb(0, 210, 160)
                                 } else {
@@ -2557,7 +2636,48 @@ impl LauncherApp {
                             });
                         });
 
+                    if let Some(hovered_from) = card_resp.response.dnd_hover_payload::<usize>() {
+                        if *hovered_from != idx {
+                            ui.painter().rect_stroke(
+                                card_resp.response.rect,
+                                4.0_f32,
+                                Stroke::new(2.0_f32, Color32::from_rgb(99, 102, 241)),
+                            );
+                        }
+                    }
+
+                    if let Some(dropped_from) = card_resp.response.dnd_release_payload::<usize>() {
+                        let from = *dropped_from;
+                        let to = idx;
+                        if from != to && from < self.services.len() && to < self.services.len() {
+                            to_reorder = Some((from, to));
+                        }
+                    }
+
+                    card_resp.response.context_menu(|ui| {
+                        if idx > 0 {
+                            if ui.button("▲ Move Up").clicked() {
+                                to_reorder = Some((idx, idx - 1));
+                                ui.close_menu();
+                            }
+                        }
+                        if idx + 1 < self.services.len() {
+                            if ui.button("▼ Move Down").clicked() {
+                                to_reorder = Some((idx, idx + 1));
+                                ui.close_menu();
+                            }
+                        }
+                    });
+
                     ui.add_space(6.0);
+                }
+
+                if let Some((from, to)) = to_reorder {
+                    if from < self.services.len() && to < self.services.len() {
+                        let s = self.services.remove(from);
+                        self.services.insert(to, s);
+                        self.persist_config();
+                    }
                 }
 
                 if let Some((idx, op)) = to_toggle {

@@ -70,7 +70,7 @@ impl LauncherApp {
             active_tab: "overview".to_string(),
             active_group_filter: "All".to_string(),
             lan_ip: get_lan_ip(),
-            sys: System::new_all(),
+            sys: System::new(),
             scanner,
             last_poll: Instant::now(),
             add_edit_modal: AddEditModalState::default(),
@@ -366,9 +366,12 @@ fn read_proc_cmd_and_cwd(pid: u32) -> (Option<String>, Option<String>) {
 
 impl eframe::App for LauncherApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        // Periodic poll (every 800ms)
-        if self.last_poll.elapsed() >= std::time::Duration::from_millis(800) {
-            self.sys.refresh_all();
+        let any_running = self.services.iter().any(|s| {
+            s.state == ServiceState::Running || s.state == ServiceState::Starting
+        });
+
+        // Periodic poll only if any services are active (every 1000ms)
+        if any_running && self.last_poll.elapsed() >= std::time::Duration::from_millis(1000) {
             for s in &mut self.services {
                 s.poll_status(&mut self.sys);
             }
@@ -584,7 +587,13 @@ impl eframe::App for LauncherApp {
             _ => {}
         }
 
-        ctx.request_repaint_after(std::time::Duration::from_millis(150));
+        if any_running {
+            // When servers are running, repaint every 500ms for smooth stats & uptime display
+            ctx.request_repaint_after(std::time::Duration::from_millis(500));
+        } else {
+            // When idle, sleep and repaint reactively on user interaction or 2s heartbeat
+            ctx.request_repaint_after(std::time::Duration::from_secs(2));
+        }
     }
 }
 

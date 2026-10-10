@@ -7,7 +7,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use sysinfo::{Pid, System};
+use sysinfo::{Pid, ProcessesToUpdate, System};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceState {
@@ -375,6 +375,14 @@ impl Service {
     }
 
     pub fn poll_status(&mut self, sys: &mut System) {
+        // Fast path: if service is completely stopped, do nothing and burn zero CPU
+        if self.state == ServiceState::Stopped && self.child_handle.is_none() && self.pid.is_none() {
+            self.port_open = false;
+            self.cpu_usage = 0.0;
+            self.memory_mb = 0.0;
+            return;
+        }
+
         if self.config.own_console {
             let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
             if let Ok(content) = std::fs::read_to_string(&pid_file) {
@@ -394,7 +402,9 @@ impl Service {
                         self.started_at = None;
                         self.cpu_usage = 0.0;
                         self.memory_mb = 0.0;
+                        self.port_open = false;
                         let _ = std::fs::remove_file(&pid_file);
+                        return;
                     } else {
                         self.state = ServiceState::Running;
                     }
@@ -410,10 +420,12 @@ impl Service {
                     self.started_at = None;
                     self.cpu_usage = 0.0;
                     self.memory_mb = 0.0;
+                    self.port_open = false;
                     self.append_log(
                         format!("[launcher] Process exited with status: {}", status),
                         LogKind::Launcher,
                     );
+                    return;
                 }
                 Ok(None) => {
                     self.state = ServiceState::Running;
@@ -422,7 +434,7 @@ impl Service {
             }
         }
 
-        // Poll stats across main pid and child processes
+        // Poll stats across main pid and child processes (ONLY when active)
         if let Some(pid) = self.pid {
             #[cfg(target_os = "linux")]
             {
@@ -434,9 +446,12 @@ impl Service {
                 let total_rss_kb: u64 = all_pids.iter().map(|&p| get_proc_rss_kb_linux(p)).sum();
                 self.memory_mb = (total_rss_kb as f32) / 1024.0;
 
+                // Refresh ONLY our specific PIDs in sysinfo (not the entire OS!)
+                let s_pids: Vec<Pid> = all_pids.iter().map(|&p| Pid::from_u32(p)).collect();
+                sys.refresh_processes(ProcessesToUpdate::Some(&s_pids));
+
                 let mut total_cpu = 0.0;
-                for &p in &all_pids {
-                    let s_pid = Pid::from_u32(p);
+                for &s_pid in &s_pids {
                     if let Some(process) = sys.process(s_pid) {
                         total_cpu += process.cpu_usage();
                     }
@@ -447,6 +462,7 @@ impl Service {
             #[cfg(not(target_os = "linux"))]
             {
                 let s_pid = Pid::from_u32(pid);
+                sys.refresh_processes(ProcessesToUpdate::Some(&[s_pid]));
                 let mut total_cpu = 0.0;
                 let mut total_mem_bytes = 0;
 
@@ -459,12 +475,14 @@ impl Service {
                 self.cpu_usage = total_cpu;
                 self.memory_mb = (total_mem_bytes as f32) / (1024.0 * 1024.0);
             }
-        }
 
-        // Poll port if configured
-        if self.config.port > 0 {
-            let addr = SocketAddr::from(([127, 0, 0, 1], self.config.port));
-            self.port_open = TcpStream::connect_timeout(&addr, Duration::from_millis(100)).is_ok();
+            // Poll port if configured with tiny timeout
+            if self.config.port > 0 {
+                let addr = SocketAddr::from(([127, 0, 0, 1], self.config.port));
+                self.port_open = TcpStream::connect_timeout(&addr, Duration::from_millis(20)).is_ok();
+            }
+        } else {
+            self.port_open = false;
         }
     }
 }

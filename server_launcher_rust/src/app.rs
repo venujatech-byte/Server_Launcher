@@ -2246,24 +2246,26 @@ impl LauncherApp {
                                         };
                                         draw_status_dot(ui, dot_color);
 
+                                        let status_w = 72.0;
+                                        let name_w = (ui.available_width() - status_w).max(60.0);
+
+                                        let name_resp = ui.add_sized(
+                                            [name_w, 18.0],
+                                            egui::Label::new(
+                                                RichText::new(&s.config.name)
+                                                    .strong()
+                                                    .size(13.5)
+                                                    .color(if is_selected_tab { p.accent } else { p.text_primary }),
+                                            )
+                                            .truncate()
+                                            .sense(egui::Sense::click()),
+                                        );
+                                        if name_resp.clicked() {
+                                            to_switch_tab = Some(key.clone());
+                                        }
+
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             ui.label(RichText::new(st_text).size(11.0).strong().color(st_col));
-
-                                            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                                let name_resp = ui.add(
-                                                    egui::Label::new(
-                                                        RichText::new(&s.config.name)
-                                                            .strong()
-                                                            .size(13.5)
-                                                            .color(if is_selected_tab { p.accent } else { p.text_primary }),
-                                                    )
-                                                    .truncate()
-                                                    .sense(egui::Sense::click()),
-                                                );
-                                                if name_resp.clicked() {
-                                                    to_switch_tab = Some(key.clone());
-                                                }
-                                            });
                                         });
                                     });
 
@@ -2330,117 +2332,123 @@ impl LauncherApp {
 
                                     ui.add_space(6.0);
 
-                                    // Row 3: Action Buttons (Start, Stop, Restart, VS Code, Folder, Edit, Delete, Move Up/Down)
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.spacing_mut().item_spacing = egui::vec2(5.0, 4.0);
-
+                                    // Row 3: Primary Server Controls (Start / Stop & Restart)
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
                                         if is_running {
                                             let btn_stop = egui::Button::new(
-                                                RichText::new("Stop").size(11.5).strong().color(Color32::WHITE),
+                                                RichText::new("⏹ Stop").size(11.0).strong().color(Color32::WHITE),
                                             )
                                             .fill(Color32::from_rgb(239, 68, 68))
                                             .rounding(Rounding::same(5.0))
-                                            .min_size(egui::vec2(48.0, 24.0));
+                                            .min_size(egui::vec2(58.0, 24.0));
                                             if ui.add(btn_stop).on_hover_text("Stop this server").clicked() {
                                                 to_stop = Some(idx);
                                             }
 
                                             let btn_restart = egui::Button::new(
-                                                RichText::new("Restart").size(11.5).strong().color(Color32::WHITE),
+                                                RichText::new("⟳ Restart").size(11.0).strong().color(Color32::WHITE),
                                             )
                                             .fill(Color32::from_rgb(245, 158, 11))
                                             .rounding(Rounding::same(5.0))
-                                            .min_size(egui::vec2(52.0, 24.0));
+                                            .min_size(egui::vec2(68.0, 24.0));
                                             if ui.add(btn_restart).on_hover_text("Restart this server").clicked() {
                                                 to_restart = Some(idx);
                                             }
                                         } else {
                                             let btn_start = egui::Button::new(
-                                                RichText::new("▶ Start").size(11.5).strong().color(Color32::WHITE),
+                                                RichText::new("▶ Start").size(11.0).strong().color(Color32::WHITE),
                                             )
                                             .fill(Color32::from_rgb(16, 185, 129))
                                             .rounding(Rounding::same(5.0))
-                                            .min_size(egui::vec2(54.0, 24.0));
+                                            .min_size(egui::vec2(64.0, 24.0));
                                             if ui.add(btn_start).on_hover_text("Start this server").clicked() {
                                                 to_start = Some(idx);
                                             }
                                         }
+                                    });
+
+                                    ui.add_space(4.0);
+
+                                    // Row 3.5: Additional Action Buttons (placed DOWN, not right)
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
 
                                         let btn_vscode = egui::Button::new(
-                                            RichText::new("💻").size(12.0).color(Color32::from_rgb(56, 189, 248)),
+                                            RichText::new("💻").size(11.5).color(Color32::from_rgb(56, 189, 248)),
                                         )
                                         .fill(Color32::from_rgb(24, 38, 54))
                                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 60, 80)))
-                                        .rounding(Rounding::same(5.0))
-                                        .min_size(egui::vec2(26.0, 24.0));
+                                        .rounding(Rounding::same(4.0))
+                                        .min_size(egui::vec2(25.0, 22.0));
                                         if ui.add(btn_vscode).on_hover_text("Open in VS Code (code .)").clicked() {
                                             crate::service::open_in_vscode(&s.config.cwd);
                                         }
 
                                         let btn_folder = egui::Button::new(
-                                            RichText::new("📁").size(12.0).color(Color32::from_rgb(203, 213, 225)),
+                                            RichText::new("📁").size(11.5).color(Color32::from_rgb(203, 213, 225)),
                                         )
                                         .fill(Color32::from_rgb(33, 38, 52))
                                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(50, 56, 75)))
-                                        .rounding(Rounding::same(5.0))
-                                        .min_size(egui::vec2(26.0, 24.0));
+                                        .rounding(Rounding::same(4.0))
+                                        .min_size(egui::vec2(25.0, 22.0));
                                         if ui.add(btn_folder).on_hover_text("Open working directory in file manager").clicked() {
                                             crate::service::open_folder(&s.config.cwd);
                                         }
 
                                         let btn_console = egui::Button::new(
-                                            RichText::new("🖥️").size(12.0).color(Color32::from_rgb(168, 85, 247)),
+                                            RichText::new("🖥️").size(11.5).color(Color32::from_rgb(168, 85, 247)),
                                         )
                                         .fill(Color32::from_rgb(34, 30, 48))
                                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(55, 45, 75)))
-                                        .rounding(Rounding::same(5.0))
-                                        .min_size(egui::vec2(26.0, 24.0));
+                                        .rounding(Rounding::same(4.0))
+                                        .min_size(egui::vec2(25.0, 22.0));
                                         if ui.add(btn_console).on_hover_text("Open in console / terminal window").clicked() {
                                             s.open_console();
                                         }
 
                                         let btn_edit = egui::Button::new(
-                                            RichText::new("Edit").size(11.0).color(Color32::from_rgb(203, 213, 225)),
+                                            RichText::new("Edit").size(10.5).color(Color32::from_rgb(203, 213, 225)),
                                         )
                                         .fill(Color32::from_rgb(33, 38, 52))
                                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(50, 56, 75)))
-                                        .rounding(Rounding::same(5.0))
-                                        .min_size(egui::vec2(36.0, 24.0));
+                                        .rounding(Rounding::same(4.0))
+                                        .min_size(egui::vec2(34.0, 22.0));
                                         if ui.add(btn_edit).on_hover_text("Edit server configuration").clicked() {
                                             to_edit = Some(s.config.clone());
                                         }
 
                                         let btn_del = egui::Button::new(
-                                            RichText::new("Delete").size(11.0).color(Color32::from_rgb(248, 113, 113)),
+                                            RichText::new("Delete").size(10.5).color(Color32::from_rgb(248, 113, 113)),
                                         )
                                         .fill(Color32::from_rgb(45, 30, 35))
                                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(70, 40, 48)))
-                                        .rounding(Rounding::same(5.0))
-                                        .min_size(egui::vec2(44.0, 24.0));
+                                        .rounding(Rounding::same(4.0))
+                                        .min_size(egui::vec2(42.0, 22.0));
                                         if ui.add(btn_del).on_hover_text("Delete server").clicked() {
                                             to_delete = Some(key.clone());
                                         }
 
                                         if idx > 0 {
                                             let btn_up = egui::Button::new(
-                                                RichText::new("▲").size(10.0).color(Color32::from_rgb(160, 175, 200)),
+                                                RichText::new("▲").size(9.5).color(Color32::from_rgb(160, 175, 200)),
                                             )
                                             .fill(Color32::from_rgb(30, 35, 48))
                                             .stroke(Stroke::new(1.0_f32, Color32::from_rgb(50, 56, 75)))
-                                            .rounding(Rounding::same(5.0))
-                                            .min_size(egui::vec2(22.0, 24.0));
+                                            .rounding(Rounding::same(4.0))
+                                            .min_size(egui::vec2(20.0, 22.0));
                                             if ui.add(btn_up).on_hover_text("Move server up").clicked() {
                                                 to_reorder = Some((idx, idx - 1));
                                             }
                                         }
                                         if idx + 1 < total_services {
                                             let btn_down = egui::Button::new(
-                                                RichText::new("▼").size(10.0).color(Color32::from_rgb(160, 175, 200)),
+                                                RichText::new("▼").size(9.5).color(Color32::from_rgb(160, 175, 200)),
                                             )
                                             .fill(Color32::from_rgb(30, 35, 48))
                                             .stroke(Stroke::new(1.0_f32, Color32::from_rgb(50, 56, 75)))
-                                            .rounding(Rounding::same(5.0))
-                                            .min_size(egui::vec2(22.0, 24.0));
+                                            .rounding(Rounding::same(4.0))
+                                            .min_size(egui::vec2(20.0, 22.0));
                                             if ui.add(btn_down).on_hover_text("Move server down").clicked() {
                                                 to_reorder = Some((idx, idx + 1));
                                             }
@@ -2991,39 +2999,38 @@ impl LauncherApp {
                 let mut to_launch_external_terminal: Option<(String, Option<u32>, u16, String, String)> = None;
 
                 let unmanaged_raw: Vec<_> = listeners
-                    .into_iter()
-                    .filter(|l| !managed_ports.contains(&l.port))
-                    .collect();
-
-                let mut proc_info_map: HashMap<u32, (Option<String>, Option<String>)> = HashMap::new();
-                for l in &unmanaged_raw {
-                    if let Some(pid) = l.pid {
-                        let info = self.get_proc_cmd_and_cwd(pid);
-                        proc_info_map.insert(pid, info);
-                    }
-                }
-
-                let unmanaged_listeners: Vec<_> = unmanaged_raw
-                    .into_iter()
-                    .filter(|l| {
-                        if q.is_empty() {
-                            return true;
-                        }
-                        let cmd_str = l.pid.and_then(|p| proc_info_map.get(&p)).and_then(|(c, _)| c.as_ref()).map(|s| s.as_str()).unwrap_or("");
-                        l.name.to_lowercase().contains(&q)
-                            || l.port.to_string().contains(&q)
-                            || l.proto.to_lowercase().contains(&q)
-                            || cmd_str.to_lowercase().contains(&q)
-                            || l.pid.map(|p| p.to_string().contains(&q)).unwrap_or(false)
-                    })
-                    .collect();
-
-                let running_ports: BTreeSet<u16> = self
-                    .scanner
-                    .get_listeners()
                     .iter()
-                    .map(|l| l.port)
+                    .filter(|l| !managed_ports.contains(&l.port))
+                    .cloned()
                     .collect();
+
+                let unmanaged_listeners: Vec<_> = if q.is_empty() {
+                    unmanaged_raw
+                } else {
+                    unmanaged_raw
+                        .into_iter()
+                        .filter(|l| {
+                            if l.name.to_lowercase().contains(&q)
+                                || l.port.to_string().contains(&q)
+                                || l.proto.to_lowercase().contains(&q)
+                                || l.pid.map(|p| p.to_string().contains(&q)).unwrap_or(false)
+                            {
+                                return true;
+                            }
+                            if let Some(pid) = l.pid {
+                                let (cmd, _) = self.get_proc_cmd_and_cwd(pid);
+                                if let Some(c) = cmd {
+                                    if c.to_lowercase().contains(&q) {
+                                        return true;
+                                    }
+                                }
+                            }
+                            false
+                        })
+                        .collect()
+                };
+
+                let running_ports: BTreeSet<u16> = listeners.iter().map(|l| l.port).collect();
 
                 let visible_stopped: Vec<_> = self
                     .stopped_external
@@ -3093,8 +3100,18 @@ impl LauncherApp {
                         });
                 } else {
                     for listener in &unmanaged_listeners {
+                        let is_expanded = self.expanded_listeners.contains(&listener.port);
+                        let card_height = if is_expanded { 150.0 } else { 50.0 };
+                        let current_pos = ui.cursor().min;
+                        let approx_rect = egui::Rect::from_min_size(current_pos, egui::vec2(ui.available_width(), card_height));
+                        if !ui.clip_rect().expand(120.0).intersects(approx_rect) {
+                            ui.allocate_space(egui::vec2(ui.available_width(), card_height));
+                            ui.add_space(6.0);
+                            continue;
+                        }
+
                         let (cmd_opt, cwd_opt) = listener.pid
-                            .and_then(|p| proc_info_map.get(&p).cloned())
+                            .map(|p| self.get_proc_cmd_and_cwd(p))
                             .unwrap_or((None, None));
                         let cmd_str = cmd_opt.unwrap_or_default();
                         let cwd_str = cwd_opt.unwrap_or_default();
@@ -3372,6 +3389,16 @@ impl LauncherApp {
 
                     // Render any stopped external processes
                     for (port, name, cmd, cwd) in &visible_stopped {
+                        let is_expanded = self.expanded_listeners.contains(port);
+                        let card_height = if is_expanded { 120.0 } else { 50.0 };
+                        let current_pos = ui.cursor().min;
+                        let approx_rect = egui::Rect::from_min_size(current_pos, egui::vec2(ui.available_width(), card_height));
+                        if !ui.clip_rect().expand(120.0).intersects(approx_rect) {
+                            ui.allocate_space(egui::vec2(ui.available_width(), card_height));
+                            ui.add_space(6.0);
+                            continue;
+                        }
+
                         Frame::none()
                             .fill(p.bg_card)
                             .stroke(Stroke::new(1.0_f32, p.border))

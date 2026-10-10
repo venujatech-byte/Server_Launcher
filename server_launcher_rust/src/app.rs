@@ -78,6 +78,11 @@ pub struct LauncherApp {
 
     // App header icon texture
     icon_texture: Option<egui::TextureHandle>,
+
+    // External listeners resource monitoring toggle (CPU & RAM)
+    show_other_process_metrics: bool,
+    other_metrics: HashMap<u32, (f32, f32)>,
+    last_other_poll: Instant,
 }
 
 impl LauncherApp {
@@ -133,6 +138,9 @@ impl LauncherApp {
             autocomplete_selected: 0,
             expanded_listeners: BTreeSet::new(),
             icon_texture,
+            show_other_process_metrics: false,
+            other_metrics: HashMap::new(),
+            last_other_poll: Instant::now(),
         }
     }
 
@@ -470,6 +478,31 @@ impl eframe::App for LauncherApp {
                 s.poll_status(&mut self.sys);
             }
             self.last_poll = Instant::now();
+        }
+
+        // Periodic poll for other listening processes if user ticked the checkbox
+        if self.show_other_process_metrics && self.active_tab == "overview" {
+            ctx.request_repaint_after(std::time::Duration::from_millis(1000));
+            if self.other_metrics.is_empty() || self.last_other_poll.elapsed() >= std::time::Duration::from_millis(1000) {
+                let listeners = self.scanner.get_listeners();
+                let pids: Vec<u32> = listeners.iter().filter_map(|l| l.pid).collect();
+                if !pids.is_empty() {
+                    let s_pids: Vec<sysinfo::Pid> = pids.iter().map(|&p| sysinfo::Pid::from_u32(p)).collect();
+                    self.sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&s_pids));
+                    for &pid in &pids {
+                        let s_pid = sysinfo::Pid::from_u32(pid);
+                        let cpu = self.sys.process(s_pid).map(|p| p.cpu_usage()).unwrap_or(0.0);
+                        #[cfg(target_os = "linux")]
+                        let mem = (crate::service::get_proc_rss_kb_linux(pid) as f32) / 1024.0;
+                        #[cfg(not(target_os = "linux"))]
+                        let mem = self.sys.process(s_pid).map(|p| (p.memory() as f32) / (1024.0 * 1024.0)).unwrap_or(0.0);
+                        self.other_metrics.insert(pid, (cpu, mem));
+                    }
+                }
+                self.last_other_poll = Instant::now();
+            }
+        } else if !self.show_other_process_metrics && !self.other_metrics.is_empty() {
+            self.other_metrics.clear();
         }
 
         self.handle_global_shortcuts(ctx);
@@ -1427,12 +1460,26 @@ impl LauncherApp {
                     )
                 };
 
-                ui.label(
-                    RichText::new(other_title)
-                        .size(13.5)
-                        .strong()
-                        .color(Color32::from_rgb(228, 231, 238)),
-                );
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(other_title)
+                            .size(13.5)
+                            .strong()
+                            .color(Color32::from_rgb(228, 231, 238)),
+                    );
+                    ui.add_space(8.0);
+                    let is_metrics_on = self.show_other_process_metrics;
+                    ui.checkbox(
+                        &mut self.show_other_process_metrics,
+                        RichText::new("Show CPU & RAM usage")
+                            .size(11.5)
+                            .color(if is_metrics_on {
+                                Color32::from_rgb(162, 155, 254)
+                            } else {
+                                Color32::from_rgb(148, 163, 184)
+                            }),
+                    );
+                });
                 ui.add_space(8.0);
 
                 if unmanaged_listeners.is_empty() && visible_stopped.is_empty() {
@@ -1521,6 +1568,24 @@ impl LauncherApp {
                                             "Running",
                                             Color32::from_rgb(52, 211, 153),
                                         );
+
+                                        if self.show_other_process_metrics {
+                                            if let Some(pid) = listener.pid {
+                                                let (cpu, mem) = self.other_metrics.get(&pid).copied().unwrap_or((0.0, 0.0));
+                                                render_metric_pill(
+                                                    ui,
+                                                    "⚡",
+                                                    &format!("{:.1}%", cpu),
+                                                    Color32::from_rgb(96, 165, 250),
+                                                );
+                                                render_metric_pill(
+                                                    ui,
+                                                    "💾",
+                                                    &format!("{:.1} MB", mem),
+                                                    Color32::from_rgb(52, 211, 153),
+                                                );
+                                            }
+                                        }
 
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             // + Add Server button

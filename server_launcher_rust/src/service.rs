@@ -510,7 +510,7 @@ fn get_child_pids_linux(pid: u32) -> Vec<u32> {
 }
 
 #[cfg(target_os = "linux")]
-fn get_proc_rss_kb_linux(pid: u32) -> u64 {
+pub fn get_proc_rss_kb_linux(pid: u32) -> u64 {
     // Check if this PID is a thread group leader (process) or internal thread
     if let Ok(status) = std::fs::read_to_string(format!("/proc/{}/status", pid)) {
         let mut tgid = pid;

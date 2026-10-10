@@ -87,6 +87,7 @@ impl AddEditModalState {
     }
 }
 
+#[allow(dead_code)]
 pub enum ModalAction {
     SaveServer(ServerConfig, Option<String>), // (config, old_key if edit)
     DeleteServer(String),

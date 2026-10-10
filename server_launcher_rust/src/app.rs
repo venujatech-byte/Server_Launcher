@@ -5,7 +5,7 @@ use crate::modals::{
 };
 use crate::service::{LogKind, Service, ServiceState};
 use eframe::egui;
-use egui::{Color32, Context, Key, Modifiers, RichText, ScrollArea, Stroke, Ui, Vec2};
+use egui::{Color32, Context, Key, Modifiers, RichText, Rounding, ScrollArea, Stroke, Ui};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -31,7 +31,9 @@ pub struct LauncherApp {
 
     // Command input state per service key
     input_texts: HashMap<String, String>,
+    #[allow(dead_code)]
     input_histories: HashMap<String, Vec<String>>,
+    #[allow(dead_code)]
     history_indices: HashMap<String, usize>,
 }
 
@@ -387,8 +389,11 @@ impl LauncherApp {
                         let mut col = 0;
                         for idx in indices {
                             let s = &self.services[idx];
-                            egui::Frame::card(ui.style())
-                                .stroke(Stroke::new(1.0, Color32::from_rgb(45, 52, 70)))
+                            egui::Frame::none()
+                                .fill(Color32::from_rgb(26, 30, 43))
+                                .rounding(Rounding::same(6.0))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 52, 70)))
+                                .inner_margin(10.0)
                                 .show(ui, |ui| {
                                     ui.set_width(280.0);
                                     ui.vertical(|ui| {
@@ -622,11 +627,11 @@ impl LauncherApp {
         // Bottom Interactive Command Row
         ui.horizontal(|ui| {
             ui.label(RichText::new("❯").color(Color32::from_rgb(108, 92, 231)).strong());
-            let input_str = self.input_texts.entry(key.to_string()).or_default();
+            let mut input_val = self.input_texts.get(key).cloned().unwrap_or_default();
             let mut do_send = false;
 
             let resp = ui.add(
-                egui::TextEdit::singleline(input_str)
+                egui::TextEdit::singleline(&mut input_val)
                     .hint_text("Send input to running server or terminal…")
                     .desired_width(ui.available_width() - 200.0),
             );
@@ -639,27 +644,39 @@ impl LauncherApp {
                 do_send = true;
             }
 
+            let mut send_interrupt_req = false;
             if ui.button("Ctrl+C").clicked() {
+                send_interrupt_req = true;
+            }
+
+            let mut clear_logs_req = false;
+            if ui.button("Clear Logs").clicked() {
+                clear_logs_req = true;
+            }
+
+            if send_interrupt_req {
                 if let Some(s) = self.find_service(key) {
                     s.send_interrupt();
                 }
             }
 
-            if ui.button("Clear Logs").clicked() {
+            if clear_logs_req {
                 if let Some(s) = self.find_service(key) {
                     s.clear_logs();
                 }
             }
 
             if do_send {
-                let to_send = input_str.trim().to_string();
+                let to_send = input_val.trim().to_string();
                 if !to_send.is_empty() {
                     if let Some(s) = self.find_service(key) {
                         s.send_input(&to_send);
                     }
-                    input_str.clear();
+                    input_val.clear();
                 }
             }
+
+            self.input_texts.insert(key.to_string(), input_val);
         });
     }
 }

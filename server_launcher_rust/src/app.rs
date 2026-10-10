@@ -120,41 +120,127 @@ impl LauncherApp {
         self.services.iter().find(|s| s.config.key == key)
     }
 
+    fn run_service_action(&mut self, key: &str, command: &str) {
+        if let Some(s) = self.find_service_mut(key) {
+            s.append_log(format!("[action] Executing: {}", command), LogKind::Launcher);
+            let cwd = s.config.cwd.clone();
+            let cmd_str = command.to_string();
+            let logs_clone = s.logs.clone();
+            std::thread::spawn(move || {
+                #[cfg(target_os = "windows")]
+                let output = std::process::Command::new("cmd.exe")
+                    .args(&["/C", &cmd_str])
+                    .current_dir(if cwd.is_empty() { ".".to_string() } else { cwd })
+                    .output();
+
+                #[cfg(not(target_os = "windows"))]
+                let output = std::process::Command::new("sh")
+                    .args(&["-c", &cmd_str])
+                    .current_dir(if cwd.is_empty() { ".".to_string() } else { cwd })
+                    .output();
+
+                if let Ok(out) = output {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    for line in stdout.lines() {
+                        let entry = crate::service::LogEntry::new(
+                            line.to_string(),
+                            crate::service::LogKind::Stdout,
+                        );
+                        if let Ok(mut l) = logs_clone.lock() {
+                            l.push_back(entry);
+                        }
+                    }
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    for line in stderr.lines() {
+                        let entry = crate::service::LogEntry::new(
+                            line.to_string(),
+                            crate::service::LogKind::Stderr,
+                        );
+                        if let Ok(mut l) = logs_clone.lock() {
+                            l.push_back(entry);
+                        }
+                    }
+                }
+            });
+        }
+    }
+
     fn collect_palette_actions(&self) -> Vec<(String, PaletteAction)> {
         let mut items = Vec::new();
 
+        // 1. Server Start / Stop / Restart & View Logs
         for s in &self.services {
-            if s.state == ServiceState::Running {
+            let grp_tag = if s.config.group.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", s.config.group)
+            };
+
+            if s.state == ServiceState::Running || s.state == ServiceState::Starting {
                 items.push((
-                    format!("Stop  {}", s.config.name),
+                    format!("⏹  Stop {}{}", s.config.name, grp_tag),
                     PaletteAction::StopServer(s.config.key.clone()),
+                ));
+                items.push((
+                    format!("🔄  Restart {}{}", s.config.name, grp_tag),
+                    PaletteAction::RestartServer(s.config.key.clone()),
                 ));
             } else {
                 items.push((
-                    format!("Start  {}", s.config.name),
+                    format!("▶  Start {}{}", s.config.name, grp_tag),
                     PaletteAction::StartServer(s.config.key.clone()),
                 ));
             }
             items.push((
-                format!("View Logs:  {}", s.config.name),
+                format!("📜  View logs: {}", s.config.name),
                 PaletteAction::SelectTab(s.config.key.clone()),
             ));
+
+            // Custom actions
+            for act in &s.config.actions {
+                items.push((
+                    format!("⚡  {} [{}]", act.label, s.config.name),
+                    PaletteAction::RunAction {
+                        key: s.config.key.clone(),
+                        command: act.command.clone(),
+                    },
+                ));
+            }
+
+            // Links
+            for lnk in &s.config.links {
+                items.push((
+                    format!("🔗  Open {} ({})", lnk.label, lnk.url),
+                    PaletteAction::OpenLink(lnk.url.clone()),
+                ));
+            }
         }
 
+        // 2. Group actions
         let mut groups = BTreeSet::new();
         for s in &self.services {
             groups.insert(s.config.group.clone());
         }
         for g in groups {
             items.push((
-                format!("Start Group: {}", g),
+                format!("▶  Start Group: {}", g),
                 PaletteAction::StartGroup(g.clone()),
             ));
             items.push((
-                format!("Stop Group: {}", g),
+                format!("⏹  Stop Group: {}", g),
                 PaletteAction::StopGroup(g.clone()),
             ));
         }
+
+        // 3. Global actions
+        items.push((
+            "▶  Start All Servers".to_string(),
+            PaletteAction::StartAll,
+        ));
+        items.push((
+            "⏹  Stop All Servers".to_string(),
+            PaletteAction::StopAll,
+        ));
 
         items
     }
@@ -415,14 +501,31 @@ impl eframe::App for LauncherApp {
                     s.stop();
                 }
             }
+            ModalAction::ExecutePaletteAction(PaletteAction::RestartServer(k)) => {
+                if let Some(s) = self.find_service_mut(&k) {
+                    s.restart();
+                }
+            }
             ModalAction::ExecutePaletteAction(PaletteAction::SelectTab(k)) => {
                 self.active_tab = k;
+            }
+            ModalAction::ExecutePaletteAction(PaletteAction::RunAction { key, command }) => {
+                self.run_service_action(&key, &command);
+            }
+            ModalAction::ExecutePaletteAction(PaletteAction::OpenLink(url)) => {
+                ctx.open_url(egui::OpenUrl::new_tab(&url));
             }
             ModalAction::ExecutePaletteAction(PaletteAction::StartGroup(g)) => {
                 self.start_group(&g);
             }
             ModalAction::ExecutePaletteAction(PaletteAction::StopGroup(g)) => {
                 self.stop_group(&g);
+            }
+            ModalAction::ExecutePaletteAction(PaletteAction::StartAll) => {
+                self.start_all();
+            }
+            ModalAction::ExecutePaletteAction(PaletteAction::StopAll) => {
+                self.stop_all();
             }
             _ => {}
         }
@@ -491,6 +594,7 @@ impl LauncherApp {
 
                     let mut to_start = None;
                     let mut to_stop = None;
+                    let mut to_restart = None;
                     let mut to_edit = None;
                     let mut to_delete = None;
                     let mut to_switch_tab = None;
@@ -585,19 +689,54 @@ impl LauncherApp {
                                         });
                                     });
 
-                                    ui.add_space(4.0);
+                                    ui.add_space(3.0);
 
                                     // Row 2: Subtitle / command
                                     ui.label(
                                         RichText::new(&s.config.command)
-                                            .size(11.0)
+                                            .size(10.5)
                                             .monospace()
                                             .color(Color32::from_rgb(123, 131, 148)),
                                     );
 
-                                    ui.add_space(8.0);
+                                    // Row 2.5: If running, display PID, CPU%, RAM MB, Uptime!
+                                    if is_running {
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            if let Some(pid) = s.pid {
+                                                ui.label(
+                                                    RichText::new(format!("PID: {}", pid))
+                                                        .size(10.0)
+                                                        .color(Color32::from_rgb(160, 168, 185)),
+                                                );
+                                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(60, 68, 85)));
+                                            }
+                                            ui.label(
+                                                RichText::new(format!("CPU: {:.1}%", s.cpu_usage))
+                                                    .size(10.0)
+                                                    .color(Color32::from_rgb(116, 185, 255)),
+                                            );
+                                            ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(60, 68, 85)));
+                                            ui.label(
+                                                RichText::new(format!("RAM: {:.1} MB", s.memory_mb))
+                                                    .size(10.0)
+                                                    .color(Color32::from_rgb(85, 239, 196)),
+                                            );
+                                            let uptime = s.uptime_formatted();
+                                            if !uptime.is_empty() {
+                                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(60, 68, 85)));
+                                                ui.label(
+                                                    RichText::new(format!("⏱ {}", uptime))
+                                                        .size(10.0)
+                                                        .color(Color32::from_rgb(253, 203, 110)),
+                                                );
+                                            }
+                                        });
+                                    }
 
-                                    // Row 3: Action Buttons (Start, [ ] own console, Edit, Delete)
+                                    ui.add_space(6.0);
+
+                                    // Row 3: Action Buttons (Start, Stop, Restart, [ ] own console, Edit, Delete)
                                     ui.horizontal(|ui| {
                                         if is_running {
                                             let btn_stop = egui::Button::new(
@@ -605,9 +744,19 @@ impl LauncherApp {
                                             )
                                             .fill(Color32::from_rgb(208, 64, 48))
                                             .rounding(Rounding::same(4.0))
-                                            .min_size(egui::vec2(55.0, 22.0));
+                                            .min_size(egui::vec2(48.0, 22.0));
                                             if ui.add(btn_stop).clicked() {
                                                 to_stop = Some(idx);
+                                            }
+
+                                            let btn_restart = egui::Button::new(
+                                                RichText::new("Restart").size(11.0).strong().color(Color32::WHITE),
+                                            )
+                                            .fill(Color32::from_rgb(230, 126, 34))
+                                            .rounding(Rounding::same(4.0))
+                                            .min_size(egui::vec2(52.0, 22.0));
+                                            if ui.add(btn_restart).clicked() {
+                                                to_restart = Some(idx);
                                             }
                                         } else {
                                             let btn_start = egui::Button::new(
@@ -615,7 +764,7 @@ impl LauncherApp {
                                             )
                                             .fill(Color32::from_rgb(0, 210, 160))
                                             .rounding(Rounding::same(4.0))
-                                            .min_size(egui::vec2(55.0, 22.0));
+                                            .min_size(egui::vec2(52.0, 22.0));
                                             if ui.add(btn_start).clicked() {
                                                 to_start = Some(idx);
                                             }
@@ -623,12 +772,12 @@ impl LauncherApp {
 
                                         ui.checkbox(
                                             &mut s.config.own_console,
-                                            RichText::new("own console").size(10.5).color(Color32::from_rgb(123, 131, 148)),
+                                            RichText::new("console").size(10.0).color(Color32::from_rgb(123, 131, 148)),
                                         );
 
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             let btn_del = egui::Button::new(
-                                                RichText::new("Delete").size(11.0).color(Color32::from_rgb(200, 205, 216)),
+                                                RichText::new("Delete").size(10.5).color(Color32::from_rgb(200, 205, 216)),
                                             )
                                             .fill(Color32::from_rgb(37, 40, 51))
                                             .rounding(Rounding::same(4.0));
@@ -637,7 +786,7 @@ impl LauncherApp {
                                             }
 
                                             let btn_edit = egui::Button::new(
-                                                RichText::new("Edit").size(11.0).color(Color32::from_rgb(200, 205, 216)),
+                                                RichText::new("Edit").size(10.5).color(Color32::from_rgb(200, 205, 216)),
                                             )
                                             .fill(Color32::from_rgb(37, 40, 51))
                                             .rounding(Rounding::same(4.0));
@@ -656,6 +805,7 @@ impl LauncherApp {
                     if let Some(g) = stop_grp { self.stop_group(&g); }
                     if let Some(idx) = to_start { self.services[idx].start(); }
                     if let Some(idx) = to_stop { self.services[idx].stop(); }
+                    if let Some(idx) = to_restart { self.services[idx].restart(); }
                     if let Some(k) = to_switch_tab { self.active_tab = k; }
                     if let Some(cfg) = to_edit { self.add_edit_modal.open_edit(&cfg); }
                     if let Some(k) = to_delete {
@@ -804,7 +954,7 @@ impl LauncherApp {
                 );
                 ui.add_space(8.0);
 
-                let mut to_toggle = None;
+                let mut to_toggle: Option<(usize, u8)> = None; // 0=stop, 1=start, 2=restart
 
                 for (idx, s) in self.services.iter().enumerate() {
                     let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
@@ -823,40 +973,88 @@ impl LauncherApp {
                                 draw_status_dot(ui, dot_color);
 
                                 ui.vertical(|ui| {
-                                    ui.label(
-                                        RichText::new(&s.config.name)
-                                            .size(13.5)
-                                            .strong()
-                                            .color(Color32::from_rgb(230, 234, 242)),
-                                    );
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            RichText::new(&s.config.name)
+                                                .size(13.5)
+                                                .strong()
+                                                .color(Color32::from_rgb(230, 234, 242)),
+                                        );
+                                        render_group_badge(ui, &s.config.group);
+                                    });
+
                                     ui.label(
                                         RichText::new(&s.config.command)
-                                            .size(11.0)
+                                            .size(10.5)
                                             .monospace()
                                             .color(Color32::from_rgb(123, 131, 148)),
                                     );
+
+                                    if is_running {
+                                        ui.add_space(2.0);
+                                        ui.horizontal(|ui| {
+                                            if let Some(pid) = s.pid {
+                                                ui.label(
+                                                    RichText::new(format!("PID: {}", pid))
+                                                        .size(10.0)
+                                                        .color(Color32::from_rgb(160, 168, 185)),
+                                                );
+                                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(60, 68, 85)));
+                                            }
+                                            ui.label(
+                                                RichText::new(format!("CPU: {:.1}%", s.cpu_usage))
+                                                    .size(10.0)
+                                                    .color(Color32::from_rgb(116, 185, 255)),
+                                            );
+                                            ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(60, 68, 85)));
+                                            ui.label(
+                                                RichText::new(format!("RAM: {:.1} MB", s.memory_mb))
+                                                    .size(10.0)
+                                                    .color(Color32::from_rgb(85, 239, 196)),
+                                            );
+                                            let uptime = s.uptime_formatted();
+                                            if !uptime.is_empty() {
+                                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(60, 68, 85)));
+                                                ui.label(
+                                                    RichText::new(format!("⏱ {}", uptime))
+                                                        .size(10.0)
+                                                        .color(Color32::from_rgb(253, 203, 110)),
+                                                );
+                                            }
+                                        });
+                                    }
                                 });
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     if is_running {
-                                        let btn = egui::Button::new(
+                                        let btn_stop = egui::Button::new(
                                             RichText::new("Stop").size(11.0).strong().color(Color32::WHITE),
                                         )
                                         .fill(Color32::from_rgb(208, 64, 48))
                                         .rounding(Rounding::same(4.0))
-                                        .min_size(egui::vec2(55.0, 22.0));
-                                        if ui.add(btn).clicked() {
-                                            to_toggle = Some((idx, false));
+                                        .min_size(egui::vec2(50.0, 22.0));
+                                        if ui.add(btn_stop).clicked() {
+                                            to_toggle = Some((idx, 0));
+                                        }
+
+                                        let btn_restart = egui::Button::new(
+                                            RichText::new("Restart").size(11.0).strong().color(Color32::WHITE),
+                                        )
+                                        .fill(Color32::from_rgb(230, 126, 34))
+                                        .rounding(Rounding::same(4.0))
+                                        .min_size(egui::vec2(54.0, 22.0));
+                                        if ui.add(btn_restart).clicked() {
+                                            to_toggle = Some((idx, 2));
                                         }
                                     } else {
-                                        let btn = egui::Button::new(
+                                        let btn_start = egui::Button::new(
                                             RichText::new("Start").size(11.0).strong().color(Color32::WHITE),
                                         )
                                         .fill(Color32::from_rgb(0, 210, 160))
                                         .rounding(Rounding::same(4.0))
-                                        .min_size(egui::vec2(55.0, 22.0));
-                                        if ui.add(btn).clicked() {
-                                            to_toggle = Some((idx, true));
+                                        .min_size(egui::vec2(54.0, 22.0));
+                                        if ui.add(btn_start).clicked() {
+                                            to_toggle = Some((idx, 1));
                                         }
                                     }
 
@@ -874,11 +1072,12 @@ impl LauncherApp {
                     ui.add_space(6.0);
                 }
 
-                if let Some((idx, start)) = to_toggle {
-                    if start {
-                        self.services[idx].start();
-                    } else {
-                        self.services[idx].stop();
+                if let Some((idx, op)) = to_toggle {
+                    match op {
+                        0 => self.services[idx].stop(),
+                        1 => self.services[idx].start(),
+                        2 => self.services[idx].restart(),
+                        _ => {}
                     }
                 }
 
@@ -960,45 +1159,145 @@ impl LauncherApp {
     // Right Panel Tab 1+: Server Log View + Ctrl+F Search + Command Bar
     // ─────────────────────────────────────────────────────────────────────────
     fn render_server_log_content(&mut self, ui: &mut Ui, key: &str) {
-        let (name, is_running) = {
+        let (name, is_running, pid, cpu, mem, uptime, actions, links) = {
             if let Some(s) = self.find_service(key) {
-                (s.config.name.clone(), s.state == ServiceState::Running)
+                (
+                    s.config.name.clone(),
+                    s.state == ServiceState::Running || s.state == ServiceState::Starting,
+                    s.pid,
+                    s.cpu_usage,
+                    s.memory_mb,
+                    s.uptime_formatted(),
+                    s.config.actions.clone(),
+                    s.config.links.clone(),
+                )
             } else {
                 ui.label("Service not found.");
                 return;
             }
         };
 
-        // Sub-header above logs: Service name + Find toggle + Start/Stop
+        // Sub-header above logs: Service name + Metrics + Find toggle + Start/Stop/Restart
         ui.horizontal(|ui| {
-            ui.label(RichText::new(&name).size(15.0).strong().color(Color32::from_rgb(228, 231, 238)));
+            ui.label(
+                RichText::new(&name)
+                    .size(15.0)
+                    .strong()
+                    .color(Color32::from_rgb(228, 231, 238)),
+            );
+
+            if is_running {
+                ui.add_space(8.0);
+                if let Some(p) = pid {
+                    ui.label(
+                        RichText::new(format!("PID: {}", p))
+                            .size(10.5)
+                            .color(Color32::from_rgb(160, 168, 185)),
+                    );
+                    ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(60, 68, 85)));
+                }
+                ui.label(
+                    RichText::new(format!("CPU: {:.1}%", cpu))
+                        .size(10.5)
+                        .color(Color32::from_rgb(116, 185, 255)),
+                );
+                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(60, 68, 85)));
+                ui.label(
+                    RichText::new(format!("RAM: {:.1} MB", mem))
+                        .size(10.5)
+                        .color(Color32::from_rgb(85, 239, 196)),
+                );
+                if !uptime.is_empty() {
+                    ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(60, 68, 85)));
+                    ui.label(
+                        RichText::new(format!("⏱ {}", uptime))
+                            .size(10.5)
+                            .color(Color32::from_rgb(253, 203, 110)),
+                    );
+                }
+            }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if is_running {
-                    let btn_stop = egui::Button::new(RichText::new("Stop").size(11.0).strong().color(Color32::WHITE))
-                        .fill(Color32::from_rgb(208, 64, 48))
-                        .rounding(Rounding::same(4.0));
+                    let btn_stop = egui::Button::new(
+                        RichText::new("Stop").size(11.0).strong().color(Color32::WHITE),
+                    )
+                    .fill(Color32::from_rgb(208, 64, 48))
+                    .rounding(Rounding::same(4.0));
                     if ui.add(btn_stop).clicked() {
-                        if let Some(s) = self.find_service_mut(key) { s.stop(); }
+                        if let Some(s) = self.find_service_mut(key) {
+                            s.stop();
+                        }
+                    }
+
+                    let btn_restart = egui::Button::new(
+                        RichText::new("Restart").size(11.0).strong().color(Color32::WHITE),
+                    )
+                    .fill(Color32::from_rgb(230, 126, 34))
+                    .rounding(Rounding::same(4.0));
+                    if ui.add(btn_restart).clicked() {
+                        if let Some(s) = self.find_service_mut(key) {
+                            s.restart();
+                        }
                     }
                 } else {
-                    let btn_start = egui::Button::new(RichText::new("Start").size(11.0).strong().color(Color32::WHITE))
-                        .fill(Color32::from_rgb(0, 210, 160))
-                        .rounding(Rounding::same(4.0));
+                    let btn_start = egui::Button::new(
+                        RichText::new("Start").size(11.0).strong().color(Color32::WHITE),
+                    )
+                    .fill(Color32::from_rgb(0, 210, 160))
+                    .rounding(Rounding::same(4.0));
                     if ui.add(btn_start).clicked() {
-                        if let Some(s) = self.find_service_mut(key) { s.start(); }
+                        if let Some(s) = self.find_service_mut(key) {
+                            s.start();
+                        }
                     }
                 }
 
                 let search_is_open = self.search_open.get(key).copied().unwrap_or(false);
-                let find_btn = egui::Button::new(RichText::new("🔍 Find (Ctrl+F)").size(11.0).color(Color32::from_rgb(200, 205, 216)))
-                    .fill(Color32::from_rgb(37, 40, 51))
-                    .rounding(Rounding::same(4.0));
+                let find_btn = egui::Button::new(
+                    RichText::new("🔍 Find (Ctrl+F)")
+                        .size(11.0)
+                        .color(Color32::from_rgb(200, 205, 216)),
+                )
+                .fill(Color32::from_rgb(37, 40, 51))
+                .rounding(Rounding::same(4.0));
                 if ui.add(find_btn).clicked() {
                     self.search_open.insert(key.to_string(), !search_is_open);
                 }
             });
         });
+
+        // Quick Sub-command & Link Buttons Bar (if defined)
+        if !actions.is_empty() || !links.is_empty() {
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                for act in &actions {
+                    let act_btn = egui::Button::new(
+                        RichText::new(format!("⚡ {}", act.label))
+                            .size(10.5)
+                            .color(Color32::from_rgb(253, 203, 110)),
+                    )
+                    .fill(Color32::from_rgb(37, 40, 51))
+                    .rounding(Rounding::same(4.0));
+                    if ui.add(act_btn).clicked() {
+                        self.run_service_action(key, &act.command);
+                    }
+                }
+
+                for lnk in &links {
+                    let lnk_btn = egui::Button::new(
+                        RichText::new(format!("🔗 {}", lnk.label))
+                            .size(10.5)
+                            .color(Color32::from_rgb(116, 185, 255)),
+                    )
+                    .fill(Color32::from_rgb(37, 40, 51))
+                    .rounding(Rounding::same(4.0));
+                    if ui.add(lnk_btn).clicked() {
+                        ui.ctx().open_url(egui::OpenUrl::new_tab(&lnk.url));
+                    }
+                }
+            });
+        }
 
         ui.add_space(4.0);
         ui.separator();

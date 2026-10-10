@@ -35,6 +35,12 @@ fn main() -> eframe::Result<()> {
             visuals.widgets.active.rounding = Rounding::same(4.0);
             cc.egui_ctx.set_visuals(visuals);
 
+            let mut style = (*cc.egui_ctx.style()).clone();
+            for (_style, font_id) in style.text_styles.iter_mut() {
+                font_id.size = (font_id.size * 1.10).round();
+            }
+            cc.egui_ctx.set_style(style);
+
             Ok(Box::new(LauncherApp::new(cc)))
         }),
     )

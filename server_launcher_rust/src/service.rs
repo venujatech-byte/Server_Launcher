@@ -53,6 +53,7 @@ pub struct Service {
     pub port_open: bool,
     pub cpu_usage: f32,
     pub memory_mb: f32,
+    pub started_at: Option<std::time::Instant>,
 
     pub logs: Arc<Mutex<VecDeque<LogEntry>>>,
     stdin_writer: Option<Arc<Mutex<ChildStdin>>>,
@@ -70,6 +71,7 @@ impl Service {
             port_open: false,
             cpu_usage: 0.0,
             memory_mb: 0.0,
+            started_at: None,
             logs: Arc::new(Mutex::new(VecDeque::with_capacity(3000))),
             stdin_writer: None,
             child_handle: None,
@@ -143,6 +145,7 @@ impl Service {
             Ok(mut child) => {
                 let pid = child.id();
                 self.pid = Some(pid);
+                self.started_at = Some(std::time::Instant::now());
                 self.state = ServiceState::Running;
                 self.append_log(
                     format!("[launcher] Process spawned (PID: {})", pid),
@@ -265,10 +268,34 @@ impl Service {
 
         self.pid = None;
         self.stdin_writer = None;
+        self.started_at = None;
         self.state = ServiceState::Stopped;
         self.cpu_usage = 0.0;
         self.memory_mb = 0.0;
         self.append_log("[launcher] Service stopped.".to_string(), LogKind::Launcher);
+    }
+
+    pub fn restart(&mut self) {
+        self.stop();
+        self.start();
+    }
+
+    pub fn uptime_formatted(&self) -> String {
+        if let Some(start) = self.started_at {
+            let secs = start.elapsed().as_secs();
+            let h = secs / 3600;
+            let m = (secs % 3600) / 60;
+            let s = secs % 60;
+            if h > 0 {
+                format!("{}h {:02}m", h, m)
+            } else if m > 0 {
+                format!("{}m {:02}s", m, s)
+            } else {
+                format!("{}s", s)
+            }
+        } else {
+            String::new()
+        }
     }
 
     pub fn send_input(&self, input_text: &str) {
@@ -305,6 +332,7 @@ impl Service {
                     self.pid = None;
                     self.child_handle = None;
                     self.stdin_writer = None;
+                    self.started_at = None;
                     self.cpu_usage = 0.0;
                     self.memory_mb = 0.0;
                     self.append_log(
@@ -319,13 +347,20 @@ impl Service {
             }
         }
 
-        // Poll stats
+        // Poll stats across main pid and child processes
         if let Some(pid) = self.pid {
             let s_pid = Pid::from_u32(pid);
-            if let Some(process) = sys.process(s_pid) {
-                self.cpu_usage = process.cpu_usage();
-                self.memory_mb = (process.memory() as f32) / (1024.0 * 1024.0);
+            let mut total_cpu = 0.0;
+            let mut total_mem_bytes = 0;
+
+            for (p_pid, process) in sys.processes() {
+                if *p_pid == s_pid || process.parent() == Some(s_pid) {
+                    total_cpu += process.cpu_usage();
+                    total_mem_bytes += process.memory();
+                }
             }
+            self.cpu_usage = total_cpu;
+            self.memory_mb = (total_mem_bytes as f32) / (1024.0 * 1024.0);
         }
 
         // Poll port if configured

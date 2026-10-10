@@ -90,3 +90,4 @@ mod tests {
         let _ = is_app_autostart_enabled();
     }
 }
+

@@ -1,7 +1,7 @@
 use crate::config::ServerConfig;
 use chrono::Local;
-use std::collections::VecDeque;
-use std::io::{BufRead, BufReader, Write};
+use std::collections::{HashMap, VecDeque};
+use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -80,12 +80,27 @@ impl Service {
     }
 
     pub fn append_log(&self, text: String, kind: LogKind) {
-        let entry = LogEntry::new(text, kind);
-        if let Ok(mut logs) = self.logs.lock() {
-            if logs.len() >= self.max_logs {
-                logs.pop_front();
+        if text.contains('\n') || text.contains('\r') {
+            for line in text.split(|c| c == '\n' || c == '\r') {
+                let trimmed = line.trim_end();
+                if !trimmed.is_empty() {
+                    let entry = LogEntry::new(trimmed.to_string(), kind.clone());
+                    if let Ok(mut logs) = self.logs.lock() {
+                        if logs.len() >= self.max_logs {
+                            logs.pop_front();
+                        }
+                        logs.push_back(entry);
+                    }
+                }
             }
-            logs.push_back(entry);
+        } else {
+            let entry = LogEntry::new(text, kind);
+            if let Ok(mut logs) = self.logs.lock() {
+                if logs.len() >= self.max_logs {
+                    logs.pop_front();
+                }
+                logs.push_back(entry);
+            }
         }
     }
 
@@ -170,9 +185,7 @@ impl Service {
             cmd.current_dir(&cwd_str);
         }
 
-        for (k, v) in env_vars {
-            cmd.env(k, v);
-        }
+        prepare_environment(&mut cmd, &cwd_str, &env_vars);
 
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
@@ -193,49 +206,22 @@ impl Service {
                     self.stdin_writer = Some(Arc::new(Mutex::new(stdin)));
                 }
 
-                // Pipe stdout reader thread
                 if let Some(stdout) = child.stdout.take() {
-                    let logs_clone = Arc::clone(&self.logs);
-                    let max_logs = self.max_logs;
-                    thread::spawn(move || {
-                        let reader = BufReader::new(stdout);
-                        for line in reader.lines().flatten() {
-                            let kind = if line.to_lowercase().contains("error:")
-                                || line.to_lowercase().contains("exception")
-                            {
-                                LogKind::Error
-                            } else if line.to_lowercase().contains("warning:") {
-                                LogKind::Warning
-                            } else {
-                                LogKind::Stdout
-                            };
-                            let entry = LogEntry::new(line, kind);
-                            if let Ok(mut l) = logs_clone.lock() {
-                                if l.len() >= max_logs {
-                                    l.pop_front();
-                                }
-                                l.push_back(entry);
-                            }
-                        }
-                    });
+                    spawn_stream_reader(
+                        stdout,
+                        Arc::clone(&self.logs),
+                        self.max_logs,
+                        LogKind::Stdout,
+                    );
                 }
 
-                // Pipe stderr reader thread
                 if let Some(stderr) = child.stderr.take() {
-                    let logs_clone = Arc::clone(&self.logs);
-                    let max_logs = self.max_logs;
-                    thread::spawn(move || {
-                        let reader = BufReader::new(stderr);
-                        for line in reader.lines().flatten() {
-                            let entry = LogEntry::new(line, LogKind::Stderr);
-                            if let Ok(mut l) = logs_clone.lock() {
-                                if l.len() >= max_logs {
-                                    l.pop_front();
-                                }
-                                l.push_back(entry);
-                            }
-                        }
-                    });
+                    spawn_stream_reader(
+                        stderr,
+                        Arc::clone(&self.logs),
+                        self.max_logs,
+                        LogKind::Stderr,
+                    );
                 }
 
                 self.child_handle = Some(child);
@@ -559,7 +545,7 @@ pub fn get_proc_rss_kb_linux(pid: u32) -> u64 {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn find_terminal() -> Option<(&'static str, &'static [&'static str])> {
+pub fn find_terminal() -> Option<(&'static str, &'static [&'static str])> {
     let terminals: &[(&str, &[&str])] = &[
         ("ptyxis", &["--new-window", "--"]),
         ("kgx", &["-e"]),
@@ -591,6 +577,98 @@ fn find_terminal() -> Option<(&'static str, &'static [&'static str])> {
         }
     }
     None
+}
+
+pub fn launch_external_terminal(
+    name: &str,
+    pid: Option<u32>,
+    port: u16,
+    cwd: &str,
+    cmd_str: &str,
+) -> Result<(), String> {
+    let cwd_path = if cwd.is_empty() { "." } else { cwd };
+    #[cfg(not(target_os = "windows"))]
+    {
+        let pid_num = pid.unwrap_or(0);
+        let script_dir = std::env::temp_dir();
+        let script_path = script_dir.join(format!("launcher_term_{}.sh", port));
+
+        let script_content = format!(
+r#"#!/usr/bin/env bash
+cd "{cwd}" 2>/dev/null || true
+echo "=========================================================="
+echo " Server Launcher: External Terminal"
+echo " Service : {name}"
+echo " Port    : :{port}"
+echo " PID     : {pid_num}"
+echo " CWD     : {cwd}"
+echo " Command : {cmd_str}"
+echo "=========================================================="
+echo ""
+if command -v journalctl >/dev/null 2>&1 && [ "{pid_num}" -gt 0 ]; then
+    echo "--- Systemd / journald output for PID {pid_num} ---"
+    journalctl _PID={pid_num} -n 25 --no-pager 2>/dev/null || true
+    echo ""
+fi
+echo "Interactive shell opened in {cwd}."
+echo "Type exit or press Ctrl+D to close."
+echo ""
+exec bash
+"#,
+            cwd = cwd_path,
+            name = name,
+            port = port,
+            pid_num = pid_num,
+            cmd_str = cmd_str
+        );
+
+        if let Err(e) = std::fs::write(&script_path, script_content) {
+            return Err(format!("Failed to write terminal script: {}", e));
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = std::fs::metadata(&script_path) {
+                let mut perms = metadata.permissions();
+                perms.set_mode(0o755);
+                let _ = std::fs::set_permissions(&script_path, perms);
+            }
+        }
+
+        let script_str = script_path.to_string_lossy().to_string();
+        let chosen = find_terminal();
+
+        let mut cmd;
+        if let Some((term, args)) = chosen {
+            cmd = Command::new(term);
+            for arg in args {
+                cmd.arg(arg);
+            }
+            cmd.arg(&script_str);
+        } else {
+            cmd = Command::new("x-terminal-emulator");
+            cmd.args(&["-e", &script_str]);
+        }
+
+        cmd.current_dir(cwd_path);
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+        cmd.spawn().map_err(|e| format!("Failed to spawn terminal: {}", e))?;
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = Command::new("cmd.exe");
+        let title = format!("Server: {} (: {})", name, port);
+        cmd.args(&["/K", &format!("title {} && cd /d \"{}\"", title, cwd_path)]);
+        cmd.spawn().map_err(|e| format!("Failed to spawn cmd: {}", e))?;
+        Ok(())
+    }
 }
 
 fn spawn_own_console(
@@ -696,3 +774,234 @@ fn spawn_own_console(
         cmd.spawn()
     }
 }
+
+pub fn strip_ansi(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            if let Some(&next) = chars.peek() {
+                if next == '[' {
+                    chars.next(); // consume '['
+                    while let Some(&ch) = chars.peek() {
+                        chars.next();
+                        if ch >= '@' && ch <= '~' {
+                            break;
+                        }
+                    }
+                    continue;
+                } else if next == ']' {
+                    chars.next(); // consume ']'
+                    while let Some(&ch) = chars.peek() {
+                        chars.next();
+                        if ch == '\x07' || ch == '\x1b' {
+                            if ch == '\x1b' && chars.peek() == Some(&'\\') {
+                                chars.next();
+                            }
+                            break;
+                        }
+                    }
+                    continue;
+                } else if next == '(' || next == ')' {
+                    chars.next();
+                    chars.next();
+                    continue;
+                }
+            }
+        } else if c != '\r' {
+            out.push(c);
+        }
+    }
+    out
+}
+
+pub fn push_log_line(
+    raw_line: &str,
+    logs: &Arc<Mutex<VecDeque<LogEntry>>>,
+    max_logs: usize,
+    default_kind: LogKind,
+) {
+    let cleaned = strip_ansi(raw_line);
+    let trimmed = cleaned.trim_end_matches(['\r', '\n']);
+    if trimmed.is_empty() {
+        return;
+    }
+
+    let kind = match default_kind {
+        LogKind::Stderr => {
+            let lower = trimmed.to_lowercase();
+            if lower.contains("warning:") || lower.contains("warn:") {
+                LogKind::Warning
+            } else {
+                LogKind::Stderr
+            }
+        }
+        _ => {
+            let lower = trimmed.to_lowercase();
+            if lower.contains("error:") || lower.contains("exception") || lower.contains("fatal:") {
+                LogKind::Error
+            } else if lower.contains("warning:") || lower.contains("warn:") {
+                LogKind::Warning
+            } else {
+                default_kind
+            }
+        }
+    };
+
+    let entry = LogEntry::new(trimmed.to_string(), kind);
+    if let Ok(mut l) = logs.lock() {
+        if l.len() >= max_logs {
+            l.pop_front();
+        }
+        l.push_back(entry);
+    }
+}
+
+pub fn spawn_stream_reader<R: Read + Send + 'static>(
+    mut stream: R,
+    logs: Arc<Mutex<VecDeque<LogEntry>>>,
+    max_logs: usize,
+    default_kind: LogKind,
+) {
+    thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        let mut pending = Vec::new();
+
+        loop {
+            match stream.read(&mut buf) {
+                Ok(0) => {
+                    // EOF reached: flush any remaining bytes
+                    if !pending.is_empty() {
+                        let text = String::from_utf8_lossy(&pending);
+                        for line in text.split(|c| c == '\n' || c == '\r') {
+                            push_log_line(line, &logs, max_logs, default_kind.clone());
+                        }
+                    }
+                    break;
+                }
+                Ok(n) => {
+                    let chunk = &buf[..n];
+                    pending.extend_from_slice(chunk);
+
+                    // Check if pending contains any newline or carriage return delimiter
+                    if pending.contains(&b'\n') || pending.contains(&b'\r') {
+                        let mut last_delim = 0;
+                        for (idx, b) in pending.iter().enumerate() {
+                            if *b == b'\n' || *b == b'\r' {
+                                last_delim = idx + 1;
+                            }
+                        }
+
+                        let complete_part = String::from_utf8_lossy(&pending[..last_delim]).to_string();
+                        for line in complete_part.split(|c| c == '\n' || c == '\r') {
+                            push_log_line(line, &logs, max_logs, default_kind.clone());
+                        }
+
+                        pending = pending[last_delim..].to_vec();
+                    } else if pending.len() > 1024 {
+                        // Flush long output lines even without newline to prevent stalling
+                        let text = String::from_utf8_lossy(&pending).to_string();
+                        push_log_line(&text, &logs, max_logs, default_kind.clone());
+                        pending.clear();
+                    }
+                }
+                Err(_) => {
+                    if !pending.is_empty() {
+                        let text = String::from_utf8_lossy(&pending);
+                        for line in text.split(|c| c == '\n' || c == '\r') {
+                            push_log_line(line, &logs, max_logs, default_kind.clone());
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    });
+}
+
+pub fn prepare_environment(cmd: &mut Command, cwd_str: &str, env_vars: &HashMap<String, String>) {
+    // Unbuffer Python and force UTF-8 output across all runtimes
+    cmd.env("PYTHONUNBUFFERED", "1");
+    cmd.env("PYTHONIOENCODING", "utf-8");
+    cmd.env("FORCE_COLOR", "1");
+
+    for (k, v) in env_vars {
+        cmd.env(k, v);
+    }
+
+    if !cwd_str.is_empty() && cwd_str != "." {
+        let cwd_path = std::path::Path::new(cwd_str);
+        let mut path_additions = Vec::new();
+
+        // Check virtualenv
+        for folder in [".venv", "venv", "env", ".virtualenv"] {
+            let venv_dir = cwd_path.join(folder);
+            #[cfg(unix)]
+            let bin_dir = venv_dir.join("bin");
+            #[cfg(windows)]
+            let bin_dir = venv_dir.join("Scripts");
+
+            if bin_dir.is_dir() {
+                path_additions.push(bin_dir.to_string_lossy().to_string());
+                cmd.env("VIRTUAL_ENV", venv_dir.to_string_lossy().to_string());
+                break;
+            }
+        }
+
+        // Check node_modules/.bin
+        let node_bin = cwd_path.join("node_modules").join(".bin");
+        if node_bin.is_dir() {
+            path_additions.push(node_bin.to_string_lossy().to_string());
+        }
+
+        if !path_additions.is_empty() {
+            let current_path = std::env::var("PATH").unwrap_or_default();
+            #[cfg(unix)]
+            let sep = ":";
+            #[cfg(windows)]
+            let sep = ";";
+
+            let new_path = format!("{}{}{}", path_additions.join(sep), sep, current_path);
+            cmd.env("PATH", new_path);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_ansi() {
+        let input = "\x1b[32mSuccess!\x1b[0m \x1b[1;31mError text\x1b[0m\r\n";
+        let cleaned = strip_ansi(input);
+        assert_eq!(cleaned, "Success! Error text\n");
+    }
+
+    #[test]
+    fn test_push_log_line_classification() {
+        let logs = Arc::new(Mutex::new(VecDeque::new()));
+        push_log_line("\x1b[31mError: connection refused\x1b[0m", &logs, 100, LogKind::Stdout);
+        push_log_line("\x1b[33mWarning: low disk space\x1b[0m", &logs, 100, LogKind::Stdout);
+        push_log_line("Server ready on port 3000", &logs, 100, LogKind::Stdout);
+
+        let locked = logs.lock().unwrap();
+        assert_eq!(locked.len(), 3);
+        assert_eq!(locked[0].kind, LogKind::Error);
+        assert_eq!(locked[0].text, "Error: connection refused");
+        assert_eq!(locked[1].kind, LogKind::Warning);
+        assert_eq!(locked[1].text, "Warning: low disk space");
+        assert_eq!(locked[2].kind, LogKind::Stdout);
+        assert_eq!(locked[2].text, "Server ready on port 3000");
+    }
+
+    #[test]
+    fn test_push_log_line_empty() {
+        let logs = Arc::new(Mutex::new(VecDeque::new()));
+        push_log_line("\r\n", &logs, 100, LogKind::Stdout);
+        push_log_line("", &logs, 100, LogKind::Stdout);
+        let locked = logs.lock().unwrap();
+        assert_eq!(locked.len(), 0);
+    }
+}
+

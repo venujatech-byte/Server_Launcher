@@ -154,6 +154,7 @@ pub struct AddEditModalState {
     pub stop_command: String,
     pub port_str: String,
     pub own_console: bool,
+    pub auto_restart: bool,
     pub env_text: String,
     pub actions: Vec<(String, String)>,
     pub links: Vec<(String, String)>,
@@ -174,6 +175,7 @@ impl AddEditModalState {
         self.stop_command.clear();
         self.port_str = "0".to_string();
         self.own_console = false;
+        self.auto_restart = false;
         self.env_text.clear();
         self.actions.clear();
         self.links.clear();
@@ -369,6 +371,8 @@ impl AddEditModalState {
 pub enum ModalAction {
     SaveServer(ServerConfig, Option<String>),
     DeleteServer(String),
+    SaveSshHost(crate::config::SshRemoteHost, Option<String>),
+    DeleteSshHost(String),
     ExecutePaletteAction(PaletteAction),
     None,
 }
@@ -947,3 +951,236 @@ pub fn render_command_palette(
     state.open = is_open;
     action
 }
+
+#[derive(Clone, Default)]
+pub struct SshHostModalState {
+    pub open: bool,
+    pub is_edit: bool,
+    pub editing_id: Option<String>,
+    pub name: String,
+    pub host: String,
+    pub port_str: String,
+    pub user: String,
+    pub key_path: String,
+    pub remote_cwd: String,
+    pub test_result: Option<Result<String, String>>,
+    pub is_testing: bool,
+}
+
+impl SshHostModalState {
+    pub fn open_add(&mut self) {
+        self.open = true;
+        self.is_edit = false;
+        self.editing_id = None;
+        self.name = String::new();
+        self.host = String::new();
+        self.port_str = "22".to_string();
+        self.user = "ubuntu".to_string();
+        self.key_path = String::new();
+        self.remote_cwd = String::new();
+        self.test_result = None;
+        self.is_testing = false;
+    }
+
+    pub fn open_edit(&mut self, h: &crate::config::SshRemoteHost) {
+        self.open = true;
+        self.is_edit = true;
+        self.editing_id = Some(h.id.clone());
+        self.name = h.name.clone();
+        self.host = h.host.clone();
+        self.port_str = h.port.to_string();
+        self.user = h.user.clone();
+        self.key_path = h.key_path.clone();
+        self.remote_cwd = h.remote_cwd.clone();
+        self.test_result = None;
+        self.is_testing = false;
+    }
+}
+
+pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState) -> ModalAction {
+    if !state.open {
+        return ModalAction::None;
+    }
+
+    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+        state.open = false;
+        return ModalAction::None;
+    }
+
+    let mut action = ModalAction::None;
+    let title = if state.is_edit { "Edit SSH Remote PC" } else { "Add SSH Remote PC" };
+
+    let mut is_open = state.open;
+    Window::new(title)
+        .open(&mut is_open)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .default_width(480.0)
+        .show(ctx, |ui| {
+            ui.add_space(6.0);
+
+            // Display Name
+            ui.label(RichText::new("Display Name:").size(12.0).strong().color(Color32::from_rgb(220, 224, 235)));
+            ui.add(
+                egui::TextEdit::singleline(&mut state.name)
+                    .hint_text("e.g. Dev Cloud Server, Staging VPS")
+                    .desired_width(ui.available_width()),
+            );
+            ui.add_space(8.0);
+
+            // Host & Port row
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Host / IP Address:").size(12.0).strong().color(Color32::from_rgb(220, 224, 235)));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.host)
+                            .hint_text("e.g. 192.168.1.100 or vps.example.com")
+                            .desired_width(ui.available_width() - 90.0),
+                    );
+                });
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Port:").size(12.0).strong().color(Color32::from_rgb(220, 224, 235)));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.port_str)
+                            .hint_text("22")
+                            .desired_width(75.0),
+                    );
+                });
+            });
+            ui.add_space(8.0);
+
+            // Username
+            ui.label(RichText::new("SSH Username:").size(12.0).strong().color(Color32::from_rgb(220, 224, 235)));
+            ui.add(
+                egui::TextEdit::singleline(&mut state.user)
+                    .hint_text("e.g. ubuntu, root, ec2-user")
+                    .desired_width(ui.available_width()),
+            );
+            ui.add_space(8.0);
+
+            // Private Key File
+            ui.label(RichText::new("SSH Private Key Path (optional if using agent/default):").size(12.0).strong().color(Color32::from_rgb(220, 224, 235)));
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.key_path)
+                        .hint_text("e.g. ~/.ssh/id_ed25519 or /home/user/.ssh/id_rsa")
+                        .desired_width(ui.available_width() - 85.0),
+                );
+                if ui.button("Browse...").clicked() {
+                    if let Some(path) = rfd::FileDialog::new().pick_file() {
+                        state.key_path = path.to_string_lossy().to_string();
+                    }
+                }
+            });
+            ui.add_space(8.0);
+
+            // Default Remote Directory
+            ui.label(RichText::new("Default Remote Directory (optional):").size(12.0).strong().color(Color32::from_rgb(220, 224, 235)));
+            ui.add(
+                egui::TextEdit::singleline(&mut state.remote_cwd)
+                    .hint_text("e.g. /var/www or /home/ubuntu/app")
+                    .desired_width(ui.available_width()),
+            );
+            ui.add_space(10.0);
+
+            // Test connection result banner
+            if let Some(res) = &state.test_result {
+                match res {
+                    Ok(msg) => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("✓").size(13.0).color(Color32::from_rgb(16, 185, 129)));
+                            ui.label(RichText::new(msg).size(11.5).color(Color32::from_rgb(52, 211, 153)));
+                        });
+                    }
+                    Err(err) => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("✗").size(13.0).color(Color32::from_rgb(239, 68, 68)));
+                            ui.label(RichText::new(err).size(11.5).color(Color32::from_rgb(248, 113, 113)));
+                        });
+                    }
+                }
+                ui.add_space(8.0);
+            }
+
+            ui.separator();
+            ui.add_space(6.0);
+
+            ui.horizontal(|ui| {
+                // Test Connection button
+                let test_btn = egui::Button::new(RichText::new("⚡ Test Connection").size(11.5).color(Color32::from_rgb(162, 155, 254)))
+                    .fill(Color32::from_rgb(32, 34, 52))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(108, 92, 231)));
+                if ui.add(test_btn).clicked() {
+                    let port = state.port_str.trim().parse::<u16>().unwrap_or(22);
+                    let host_obj = crate::config::SshRemoteHost {
+                        id: "test".to_string(),
+                        name: state.name.clone(),
+                        host: state.host.clone(),
+                        port,
+                        user: state.user.clone(),
+                        key_path: state.key_path.clone(),
+                        remote_cwd: state.remote_cwd.clone(),
+                    };
+                    state.test_result = Some(crate::remote::test_ssh_connection(&host_obj));
+                }
+
+                if state.is_edit {
+                    if let Some(id_to_del) = state.editing_id.clone() {
+                        let del_btn = egui::Button::new(RichText::new("Delete Host").size(11.5).color(Color32::from_rgb(239, 68, 68)))
+                            .fill(Color32::from_rgb(38, 20, 20));
+                        if ui.add(del_btn).clicked() {
+                            action = ModalAction::DeleteSshHost(id_to_del);
+                            state.open = false;
+                        }
+                    }
+                }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let save_btn = egui::Button::new(RichText::new("Save Host").size(12.0).strong().color(Color32::WHITE))
+                        .fill(Color32::from_rgb(108, 92, 231))
+                        .rounding(Rounding::same(5.0))
+                        .min_size(egui::vec2(85.0, 28.0));
+
+                    if ui.add(save_btn).clicked() && !state.host.trim().is_empty() {
+                        let port = state.port_str.trim().parse::<u16>().unwrap_or(22);
+                        let name = if state.name.trim().is_empty() {
+                            state.host.trim().to_string()
+                        } else {
+                            state.name.trim().to_string()
+                        };
+                        let id = state.editing_id.clone().unwrap_or_else(|| {
+                            format!("ssh_{}", uuid_short())
+                        });
+
+                        let host_obj = crate::config::SshRemoteHost {
+                            id,
+                            name,
+                            host: state.host.trim().to_string(),
+                            port,
+                            user: if state.user.trim().is_empty() { "ubuntu".to_string() } else { state.user.trim().to_string() },
+                            key_path: state.key_path.trim().to_string(),
+                            remote_cwd: state.remote_cwd.trim().to_string(),
+                        };
+
+                        action = ModalAction::SaveSshHost(host_obj, state.editing_id.clone());
+                        state.open = false;
+                    }
+
+                    if ui.button(RichText::new("Cancel").size(12.0).color(Color32::from_rgb(180, 185, 200))).clicked() {
+                        state.open = false;
+                    }
+                });
+            });
+        });
+
+    state.open = is_open;
+    action
+}
+
+fn uuid_short() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    format!("{:x}", d.as_millis() % 0xffffff)
+}
+

@@ -1,7 +1,11 @@
-use crate::config::ConfigFile;
+use crate::config::{ConfigFile, SshRemoteHost};
 use crate::modals::{
-    render_add_edit_modal, render_command_palette, AddEditModalState, CommandPaletteState,
-    ModalAction, PaletteAction,
+    render_add_edit_modal, render_command_palette, render_ssh_host_modal, AddEditModalState,
+    CommandPaletteState, ModalAction, PaletteAction, SshHostModalState,
+};
+use crate::remote::{
+    build_ssh_command, fetch_remote_listeners, import_from_ssh_config,
+    launch_external_ssh_terminal, test_ssh_connection, RemoteListener,
 };
 use crate::scanner::{get_lan_ip, SystemPortScanner};
 use crate::service::{LogKind, Service, ServiceState};
@@ -9,8 +13,9 @@ use eframe::egui;
 use egui::{
     Color32, Context, Frame, Key, Modifiers, RichText, Rounding, ScrollArea, Stroke, Ui,
 };
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use sysinfo::System;
 
@@ -83,6 +88,26 @@ pub struct LauncherApp {
     show_other_process_metrics: bool,
     other_metrics: HashMap<u32, (f32, f32)>,
     last_other_poll: Instant,
+
+    // Inline terminal state for PC listening processes
+    open_inline_terminals: BTreeSet<u16>,
+    inline_terminal_sessions: HashMap<u16, ExternalTerminalSession>,
+    inline_terminal_inputs: HashMap<u16, String>,
+
+    // Navigation & Remote SSH machines
+    selected_machine: String, // "local" or host.id
+    ssh_hosts: Vec<SshRemoteHost>,
+    ssh_host_modal: SshHostModalState,
+    remote_listeners: Arc<Mutex<HashMap<String, Vec<RemoteListener>>>>,
+    remote_scanning: Arc<Mutex<BTreeSet<String>>>,
+    remote_terminal_logs: Arc<Mutex<HashMap<String, Arc<Mutex<VecDeque<crate::service::LogEntry>>>>>>,
+    remote_terminal_inputs: HashMap<String, String>,
+    remote_connection_status: Arc<Mutex<HashMap<String, Result<String, String>>>>,
+    remote_connecting: Arc<Mutex<BTreeSet<String>>>,
+}
+
+pub struct ExternalTerminalSession {
+    pub logs: Arc<Mutex<VecDeque<crate::service::LogEntry>>>,
 }
 
 impl LauncherApp {
@@ -115,6 +140,16 @@ impl LauncherApp {
             }
         };
 
+        let selected_machine = "local".to_string();
+        let ssh_hosts = config_file.ssh_hosts;
+        let ssh_host_modal = SshHostModalState::default();
+        let remote_listeners = Arc::new(Mutex::new(HashMap::new()));
+        let remote_scanning = Arc::new(Mutex::new(BTreeSet::new()));
+        let remote_terminal_logs = Arc::new(Mutex::new(HashMap::new()));
+        let remote_terminal_inputs = HashMap::new();
+        let remote_connection_status = Arc::new(Mutex::new(HashMap::new()));
+        let remote_connecting = Arc::new(Mutex::new(BTreeSet::new()));
+
         Self {
             config_path,
             services,
@@ -141,12 +176,25 @@ impl LauncherApp {
             show_other_process_metrics: false,
             other_metrics: HashMap::new(),
             last_other_poll: Instant::now(),
+            open_inline_terminals: BTreeSet::new(),
+            inline_terminal_sessions: HashMap::new(),
+            inline_terminal_inputs: HashMap::new(),
+            selected_machine,
+            ssh_hosts,
+            ssh_host_modal,
+            remote_listeners,
+            remote_scanning,
+            remote_terminal_logs,
+            remote_terminal_inputs,
+            remote_connection_status,
+            remote_connecting,
         }
     }
 
     fn persist_config(&self) {
         let cfg = ConfigFile {
             servers: self.services.iter().map(|s| s.config.clone()).collect(),
+            ssh_hosts: self.ssh_hosts.clone(),
         };
         let _ = cfg.save_to_file(&self.config_path);
     }
@@ -191,75 +239,75 @@ impl LauncherApp {
         if let Some(s) = self.find_service_mut(key) {
             s.append_log(format!("[action] Executing: {}", command), LogKind::Launcher);
             let cwd = s.config.cwd.clone();
+            let env_vars = s.config.env.clone();
             let cmd_str = command.to_string();
             let logs_clone = s.logs.clone();
             std::thread::spawn(move || {
                 let current_dir = if cwd.is_empty() { ".".to_string() } else { cwd };
                 #[cfg(target_os = "windows")]
-                let output = std::process::Command::new("cmd.exe")
-                    .args(&["/C", &cmd_str])
-                    .current_dir(&current_dir)
-                    .output();
+                let mut cmd = std::process::Command::new("cmd.exe");
+                #[cfg(target_os = "windows")]
+                cmd.args(&["/C", &cmd_str]);
 
                 #[cfg(not(target_os = "windows"))]
-                let output = std::process::Command::new("sh")
-                    .args(&["-c", &cmd_str])
-                    .current_dir(&current_dir)
-                    .output();
+                let mut cmd = std::process::Command::new("sh");
+                #[cfg(not(target_os = "windows"))]
+                cmd.args(&["-c", &cmd_str]);
 
-                match output {
-                    Ok(out) => {
-                        let mut has_output = false;
-                        let stdout = String::from_utf8_lossy(&out.stdout);
-                        for line in stdout.lines() {
-                            has_output = true;
-                            let entry = crate::service::LogEntry::new(
-                                line.to_string(),
+                cmd.current_dir(&current_dir);
+                crate::service::prepare_environment(&mut cmd, &current_dir, &env_vars);
+
+                cmd.stdout(std::process::Stdio::piped());
+                cmd.stderr(std::process::Stdio::piped());
+
+                match cmd.spawn() {
+                    Ok(mut child) => {
+                        if let Some(stdout) = child.stdout.take() {
+                            crate::service::spawn_stream_reader(
+                                stdout,
+                                logs_clone.clone(),
+                                3000,
                                 crate::service::LogKind::Stdout,
                             );
-                            if let Ok(mut l) = logs_clone.lock() {
-                                if l.len() >= 3000 {
-                                    l.pop_front();
-                                }
-                                l.push_back(entry);
-                            }
                         }
-                        let stderr = String::from_utf8_lossy(&out.stderr);
-                        for line in stderr.lines() {
-                            has_output = true;
-                            let entry = crate::service::LogEntry::new(
-                                line.to_string(),
+                        if let Some(stderr) = child.stderr.take() {
+                            crate::service::spawn_stream_reader(
+                                stderr,
+                                logs_clone.clone(),
+                                3000,
                                 crate::service::LogKind::Stderr,
                             );
-                            if let Ok(mut l) = logs_clone.lock() {
-                                if l.len() >= 3000 {
-                                    l.pop_front();
-                                }
-                                l.push_back(entry);
-                            }
                         }
-                        if out.status.success() {
-                            if !has_output {
-                                let entry = crate::service::LogEntry::new(
-                                    "[action completed successfully]".to_string(),
-                                    crate::service::LogKind::Launcher,
-                                );
-                                if let Ok(mut l) = logs_clone.lock() {
-                                    l.push_back(entry);
+
+                        match child.wait() {
+                            Ok(status) => {
+                                if status.success() {
+                                    crate::service::push_log_line(
+                                        "[action completed successfully]",
+                                        &logs_clone,
+                                        3000,
+                                        crate::service::LogKind::Launcher,
+                                    );
+                                } else {
+                                    let code = status
+                                        .code()
+                                        .map(|c| c.to_string())
+                                        .unwrap_or_else(|| "signal".to_string());
+                                    crate::service::push_log_line(
+                                        &format!("[action exited with error code {}]", code),
+                                        &logs_clone,
+                                        3000,
+                                        crate::service::LogKind::Warning,
+                                    );
                                 }
                             }
-                        } else {
-                            let code = out
-                                .status
-                                .code()
-                                .map(|c| c.to_string())
-                                .unwrap_or_else(|| "signal".to_string());
-                            let entry = crate::service::LogEntry::new(
-                                format!("[action exited with error code {}]", code),
-                                crate::service::LogKind::Warning,
-                            );
-                            if let Ok(mut l) = logs_clone.lock() {
-                                l.push_back(entry);
+                            Err(e) => {
+                                crate::service::push_log_line(
+                                    &format!("[action error] Failed while waiting: {}", e),
+                                    &logs_clone,
+                                    3000,
+                                    crate::service::LogKind::Error,
+                                );
                             }
                         }
                     }
@@ -275,6 +323,241 @@ impl LauncherApp {
                 }
             });
         }
+    }
+
+    fn ensure_inline_session(
+        &mut self,
+        port: u16,
+        name: &str,
+        pid: Option<u32>,
+        cmd_str: &str,
+        cwd_str: &str,
+    ) {
+        if !self.inline_terminal_sessions.contains_key(&port) {
+            let logs = Arc::new(Mutex::new(VecDeque::with_capacity(1000)));
+            let pid_str = pid.map(|p| p.to_string()).unwrap_or_else(|| "N/A".to_string());
+            let entry_welcome = crate::service::LogEntry::new(
+                format!("[terminal] Attached to {} (Port :{}, PID {})", name, port, pid_str),
+                crate::service::LogKind::Launcher,
+            );
+            if let Ok(mut l) = logs.lock() {
+                l.push_back(entry_welcome);
+                if !cwd_str.is_empty() {
+                    l.push_back(crate::service::LogEntry::new(
+                        format!("[terminal] CWD: {}", cwd_str),
+                        crate::service::LogKind::Launcher,
+                    ));
+                }
+                if !cmd_str.is_empty() {
+                    l.push_back(crate::service::LogEntry::new(
+                        format!("[terminal] Command: {}", cmd_str),
+                        crate::service::LogKind::Launcher,
+                    ));
+                }
+            }
+
+            self.inline_terminal_sessions.insert(
+                port,
+                ExternalTerminalSession {
+                    logs,
+                },
+            );
+
+            // Fetch initial journald or process output in background thread
+            self.refresh_inline_logs(port, pid, cwd_str);
+        }
+    }
+
+    fn refresh_inline_logs(&self, port: u16, pid: Option<u32>, cwd: &str) {
+        if let Some(session) = self.inline_terminal_sessions.get(&port) {
+            let logs_clone = session.logs.clone();
+            let _ = cwd;
+            std::thread::spawn(move || {
+                if let Some(pid_val) = pid {
+                    // 1. Try reading journalctl logs for this PID
+                    let output = std::process::Command::new("journalctl")
+                        .args(&["--no-pager", "-n", "35", &format!("_PID={}", pid_val)])
+                        .output();
+
+                    if let Ok(out) = output {
+                        let text = String::from_utf8_lossy(&out.stdout);
+                        let mut has_lines = false;
+                        for line in text.lines() {
+                            if !line.trim().is_empty() && !line.starts_with("-- No entries --") {
+                                has_lines = true;
+                                crate::service::push_log_line(line, &logs_clone, 1000, crate::service::LogKind::Stdout);
+                            }
+                        }
+                        if has_lines {
+                            return;
+                        }
+                    }
+
+                    // 2. Check if /proc/<pid>/fd/1 is a log file
+                    #[cfg(target_os = "linux")]
+                    {
+                        let fd1_path = format!("/proc/{}/fd/1", pid_val);
+                        if let Ok(target) = std::fs::read_link(&fd1_path) {
+                            if target.is_file() {
+                                let output = std::process::Command::new("tail")
+                                    .args(&["-n", "30", &target.to_string_lossy()])
+                                    .output();
+                                if let Ok(out) = output {
+                                    let text = String::from_utf8_lossy(&out.stdout);
+                                    for line in text.lines() {
+                                        crate::service::push_log_line(line, &logs_clone, 1000, crate::service::LogKind::Stdout);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    fn run_inline_command(&self, port: u16, cmd: &str, cwd: &str) {
+        if let Some(session) = self.inline_terminal_sessions.get(&port) {
+            let logs_clone = session.logs.clone();
+            let cmd_str = cmd.to_string();
+            let cwd_owned = if cwd.is_empty() { ".".to_string() } else { cwd.to_string() };
+
+            crate::service::push_log_line(&format!("> {}", cmd), &logs_clone, 1000, crate::service::LogKind::Stdin);
+
+            std::thread::spawn(move || {
+                #[cfg(target_os = "windows")]
+                let mut c = std::process::Command::new("cmd.exe");
+                #[cfg(target_os = "windows")]
+                c.args(&["/C", &cmd_str]);
+
+                #[cfg(not(target_os = "windows"))]
+                let mut c = std::process::Command::new("sh");
+                #[cfg(not(target_os = "windows"))]
+                c.args(&["-c", &cmd_str]);
+
+                c.current_dir(&cwd_owned);
+                let empty_env = std::collections::HashMap::new();
+                crate::service::prepare_environment(&mut c, &cwd_owned, &empty_env);
+
+                c.stdout(std::process::Stdio::piped());
+                c.stderr(std::process::Stdio::piped());
+
+                match c.spawn() {
+                    Ok(mut child) => {
+                        if let Some(stdout) = child.stdout.take() {
+                            crate::service::spawn_stream_reader(stdout, logs_clone.clone(), 1000, crate::service::LogKind::Stdout);
+                        }
+                        if let Some(stderr) = child.stderr.take() {
+                            crate::service::spawn_stream_reader(stderr, logs_clone.clone(), 1000, crate::service::LogKind::Stderr);
+                        }
+                        let _ = child.wait();
+                    }
+                    Err(e) => {
+                        crate::service::push_log_line(&format!("[error] Failed to execute: {}", e), &logs_clone, 1000, crate::service::LogKind::Error);
+                    }
+                }
+            });
+        }
+    }
+
+    fn clear_inline_logs(&self, port: u16) {
+        if let Some(session) = self.inline_terminal_sessions.get(&port) {
+            if let Ok(mut l) = session.logs.lock() {
+                l.clear();
+            }
+        }
+    }
+
+    fn render_inline_terminal(
+        &mut self,
+        ui: &mut egui::Ui,
+        port: u16,
+        _name: &str,
+        pid: Option<u32>,
+        cwd: &str,
+    ) {
+        Frame::none()
+            .fill(Color32::from_rgb(10, 12, 17))
+            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 52, 70)))
+            .rounding(Rounding::same(6.0))
+            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("● Live Terminal").size(11.5).strong().color(Color32::from_rgb(52, 211, 153)));
+                    let pid_str = pid.map(|p| p.to_string()).unwrap_or_else(|| "N/A".to_string());
+                    ui.label(RichText::new(format!("Port :{} | PID {}", port, pid_str)).size(10.5).color(Color32::from_rgb(148, 163, 184)));
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("✕ Close").clicked() {
+                            self.open_inline_terminals.remove(&port);
+                        }
+                        if ui.button("⟳ Refresh Logs").on_hover_text("Fetch latest systemd/journald process output").clicked() {
+                            self.refresh_inline_logs(port, pid, cwd);
+                        }
+                        if ui.button("🗑 Clear").clicked() {
+                            self.clear_inline_logs(port);
+                        }
+                    });
+                });
+                ui.separator();
+
+                ScrollArea::both()
+                    .stick_to_bottom(true)
+                    .max_height(200.0)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        if let Some(session) = self.inline_terminal_sessions.get(&port) {
+                            if let Ok(logs) = session.logs.lock() {
+                                if logs.is_empty() {
+                                    ui.label(
+                                        RichText::new("No captured output yet. Type a shell command below or click 'Refresh Logs'.")
+                                            .italics()
+                                            .size(11.0)
+                                            .color(Color32::from_rgb(120, 130, 145)),
+                                    );
+                                } else {
+                                    for entry in logs.iter() {
+                                        let color = match entry.kind {
+                                            crate::service::LogKind::Stderr | crate::service::LogKind::Error => Color32::from_rgb(239, 68, 68),
+                                            crate::service::LogKind::Warning => Color32::from_rgb(245, 158, 11),
+                                            crate::service::LogKind::Launcher => Color32::from_rgb(162, 155, 254),
+                                            crate::service::LogKind::Stdin => Color32::from_rgb(52, 211, 153),
+                                            crate::service::LogKind::Stdout => Color32::from_rgb(203, 213, 225),
+                                        };
+                                        let rt = RichText::new(format!("[{}] {}", entry.timestamp, entry.text))
+                                            .color(color)
+                                            .monospace()
+                                            .size(10.5);
+                                        ui.add(egui::Label::new(rt).wrap());
+                                    }
+                                }
+                            }
+                        }
+                    });
+
+                ui.add_space(4.0);
+                ui.separator();
+
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(">").monospace().strong().color(Color32::from_rgb(52, 211, 153)));
+                    let input_ref = self.inline_terminal_inputs.entry(port).or_default();
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(input_ref)
+                            .hint_text("Run shell command in directory (e.g. ps, ls -la, tail log, curl)...")
+                            .desired_width(ui.available_width() - 65.0)
+                            .font(egui::TextStyle::Monospace),
+                    );
+
+                    let enter_pressed = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if (enter_pressed || ui.button("Run").clicked()) && !input_ref.trim().is_empty() {
+                        let cmd = input_ref.trim().to_string();
+                        input_ref.clear();
+                        self.run_inline_command(port, &cmd, cwd);
+                        resp.request_focus();
+                    }
+                });
+            });
     }
 
     fn collect_palette_actions(&self) -> Vec<(String, PaletteAction)> {
@@ -392,6 +675,770 @@ impl LauncherApp {
         {
             self.stop_all();
         }
+    }
+
+    fn ensure_remote_connected(&self, host: &SshRemoteHost) {
+        let is_testing = {
+            let connecting = self.remote_connecting.lock().unwrap();
+            connecting.contains(&host.id)
+        };
+        let has_status = {
+            let status = self.remote_connection_status.lock().unwrap();
+            status.contains_key(&host.id)
+        };
+
+        if !is_testing && !has_status {
+            self.test_remote_host(host);
+        }
+    }
+
+    fn test_remote_host(&self, host: &SshRemoteHost) {
+        {
+            let mut connecting = self.remote_connecting.lock().unwrap();
+            connecting.insert(host.id.clone());
+        }
+        let host_clone = host.clone();
+        let status_arc = self.remote_connection_status.clone();
+        let connecting_arc = self.remote_connecting.clone();
+
+        std::thread::spawn(move || {
+            let res = test_ssh_connection(&host_clone);
+            if let Ok(mut status) = status_arc.lock() {
+                status.insert(host_clone.id.clone(), res);
+            }
+            if let Ok(mut connecting) = connecting_arc.lock() {
+                connecting.remove(&host_clone.id);
+            }
+        });
+    }
+
+    fn trigger_remote_scan(&self, host: &SshRemoteHost) {
+        let is_scanning = {
+            let scanning = self.remote_scanning.lock().unwrap();
+            scanning.contains(&host.id)
+        };
+        if is_scanning {
+            return;
+        }
+
+        {
+            let mut scanning = self.remote_scanning.lock().unwrap();
+            scanning.insert(host.id.clone());
+        }
+
+        let host_clone = host.clone();
+        let listeners_arc = self.remote_listeners.clone();
+        let scanning_arc = self.remote_scanning.clone();
+
+        std::thread::spawn(move || {
+            let res = fetch_remote_listeners(&host_clone);
+            if let Ok(listeners) = res {
+                if let Ok(mut map) = listeners_arc.lock() {
+                    map.insert(host_clone.id.clone(), listeners);
+                }
+            }
+            if let Ok(mut scanning) = scanning_arc.lock() {
+                scanning.remove(&host_clone.id);
+            }
+        });
+    }
+
+    fn get_remote_logs(&self, host_id: &str) -> Arc<Mutex<VecDeque<crate::service::LogEntry>>> {
+        let mut map = self.remote_terminal_logs.lock().unwrap();
+        if let Some(logs) = map.get(host_id) {
+            logs.clone()
+        } else {
+            let logs = Arc::new(Mutex::new(VecDeque::with_capacity(1000)));
+            logs.lock().unwrap().push_back(crate::service::LogEntry::new(
+                "[ssh] Terminal initialized. Ready to execute remote commands.".to_string(),
+                crate::service::LogKind::Launcher,
+            ));
+            map.insert(host_id.to_string(), logs.clone());
+            logs
+        }
+    }
+
+    fn run_remote_ssh_command(&self, host: &SshRemoteHost, cmd_str: &str) {
+        let logs = self.get_remote_logs(&host.id);
+        let prompt = format!("{}> {}", host.user, cmd_str);
+        crate::service::push_log_line(&prompt, &logs, 1000, crate::service::LogKind::Stdin);
+
+        let host_clone = host.clone();
+        let cmd_owned = cmd_str.to_string();
+        let logs_clone = logs.clone();
+
+        std::thread::spawn(move || {
+            let mut c = build_ssh_command(&host_clone, &cmd_owned);
+            c.stdout(std::process::Stdio::piped());
+            c.stderr(std::process::Stdio::piped());
+
+            match c.spawn() {
+                Ok(mut child) => {
+                    if let Some(stdout) = child.stdout.take() {
+                        crate::service::spawn_stream_reader(stdout, logs_clone.clone(), 1000, crate::service::LogKind::Stdout);
+                    }
+                    if let Some(stderr) = child.stderr.take() {
+                        crate::service::spawn_stream_reader(stderr, logs_clone.clone(), 1000, crate::service::LogKind::Stderr);
+                    }
+                    let _ = child.wait();
+                }
+                Err(e) => {
+                    crate::service::push_log_line(
+                        &format!("[error] Failed to start SSH process: {}", e),
+                        &logs_clone,
+                        1000,
+                        crate::service::LogKind::Error,
+                    );
+                }
+            }
+        });
+    }
+
+    fn clear_remote_terminal_logs(&self, host_id: &str) {
+        if let Ok(map) = self.remote_terminal_logs.lock() {
+            if let Some(logs) = map.get(host_id) {
+                if let Ok(mut l) = logs.lock() {
+                    l.clear();
+                }
+            }
+        }
+    }
+
+    fn render_machines_nav_bar(&mut self, ui: &mut Ui) {
+        ui.vertical(|ui| {
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new("MACHINES")
+                    .size(10.5)
+                    .strong()
+                    .color(Color32::from_rgb(130, 138, 158)),
+            );
+            ui.add_space(8.0);
+
+            // 1. This PC (Local) item
+            let is_local_selected = self.selected_machine == "local";
+            let running_count = self
+                .services
+                .iter()
+                .filter(|s| s.state == ServiceState::Running)
+                .count();
+
+            let local_bg = if is_local_selected {
+                Color32::from_rgb(32, 38, 55)
+            } else {
+                Color32::from_rgb(20, 23, 31)
+            };
+            let local_stroke = if is_local_selected {
+                Stroke::new(1.0_f32, Color32::from_rgb(99, 102, 241))
+            } else {
+                Stroke::new(1.0_f32, Color32::from_rgb(35, 40, 52))
+            };
+
+            let local_card = Frame::none()
+                .fill(local_bg)
+                .stroke(local_stroke)
+                .rounding(Rounding::same(6.0))
+                .inner_margin(egui::Margin::symmetric(10.0, 9.0));
+
+            let local_resp = local_card
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("🖥").size(16.0));
+                        ui.add_space(2.0);
+                        ui.vertical(|ui| {
+                            ui.label(
+                                RichText::new("This PC")
+                                    .size(12.5)
+                                    .strong()
+                                    .color(if is_local_selected {
+                                        Color32::WHITE
+                                    } else {
+                                        Color32::from_rgb(215, 220, 230)
+                                    }),
+                            );
+                            ui.label(
+                                RichText::new(if running_count > 0 {
+                                    format!("{} running", running_count)
+                                } else {
+                                    "Localhost".to_string()
+                                })
+                                .size(10.0)
+                                .color(if running_count > 0 {
+                                    Color32::from_rgb(0, 210, 160)
+                                } else {
+                                    Color32::from_rgb(115, 122, 138)
+                                }),
+                            );
+                        });
+                    });
+                })
+                .response;
+
+            let local_interact = ui.interact(local_resp.rect, local_resp.id, egui::Sense::click());
+            if local_interact.clicked() {
+                self.selected_machine = "local".to_string();
+            }
+
+            ui.add_space(14.0);
+
+            // 2. SSH Remote PCs Section Header
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("SSH REMOTES")
+                        .size(10.5)
+                        .strong()
+                        .color(Color32::from_rgb(130, 138, 158)),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let btn_add = egui::Button::new(
+                        RichText::new("+ Add")
+                            .size(10.0)
+                            .strong()
+                            .color(Color32::from_rgb(162, 155, 254)),
+                    )
+                    .fill(Color32::from_rgb(30, 32, 45))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(50, 54, 72)))
+                    .rounding(Rounding::same(3.0));
+
+                    if ui.add(btn_add).on_hover_text("Add new SSH Remote PC").clicked() {
+                        self.ssh_host_modal.open_add();
+                    }
+                });
+            });
+            ui.add_space(6.0);
+
+            // 3. List of SSH Hosts
+            let mut host_to_edit: Option<SshRemoteHost> = None;
+            let mut host_to_delete: Option<String> = None;
+            let mut host_to_test: Option<SshRemoteHost> = None;
+            let mut host_to_term: Option<SshRemoteHost> = None;
+
+            ScrollArea::vertical()
+                .id_salt("ssh_hosts_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if self.ssh_hosts.is_empty() {
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new("No remote PCs added yet.\nClick '+ Add' or Import below.")
+                                .size(10.5)
+                                .color(Color32::from_rgb(100, 108, 125)),
+                        );
+                    } else {
+                        for host in &self.ssh_hosts {
+                            let is_selected = self.selected_machine == host.id;
+                            let status = {
+                                let map = self.remote_connection_status.lock().unwrap();
+                                map.get(&host.id).cloned()
+                            };
+                            let is_connecting = {
+                                let map = self.remote_connecting.lock().unwrap();
+                                map.contains(&host.id)
+                            };
+
+                            let (status_color, status_text) = if is_connecting {
+                                (Color32::from_rgb(250, 204, 21), "○ connecting")
+                            } else if let Some(Ok(_)) = &status {
+                                (Color32::from_rgb(0, 210, 160), "● online")
+                            } else if let Some(Err(_)) = &status {
+                                (Color32::from_rgb(239, 68, 68), "● error")
+                            } else {
+                                (Color32::from_rgb(115, 122, 138), "○ idle")
+                            };
+
+                            let host_bg = if is_selected {
+                                Color32::from_rgb(32, 38, 55)
+                            } else {
+                                Color32::from_rgb(20, 23, 31)
+                            };
+                            let host_stroke = if is_selected {
+                                Stroke::new(1.0_f32, Color32::from_rgb(99, 102, 241))
+                            } else {
+                                Stroke::new(1.0_f32, Color32::from_rgb(35, 40, 52))
+                            };
+
+                            let card = Frame::none()
+                                .fill(host_bg)
+                                .stroke(host_stroke)
+                                .rounding(Rounding::same(6.0))
+                                .inner_margin(egui::Margin::symmetric(9.0, 8.0));
+
+                            let card_resp = card
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("🌐").size(15.0));
+                                        ui.add_space(2.0);
+                                        ui.vertical(|ui| {
+                                            ui.label(
+                                                RichText::new(&host.name)
+                                                    .size(12.0)
+                                                    .strong()
+                                                    .color(if is_selected {
+                                                        Color32::WHITE
+                                                    } else {
+                                                        Color32::from_rgb(215, 220, 230)
+                                                    }),
+                                            );
+                                            ui.label(
+                                                RichText::new(status_text)
+                                                    .size(9.5)
+                                                    .color(status_color),
+                                            );
+                                        });
+
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            let btn_gear = egui::Button::new(
+                                                RichText::new("⚙").size(11.0).color(Color32::from_rgb(130, 138, 155)),
+                                            )
+                                            .fill(Color32::TRANSPARENT);
+                                            if ui.add(btn_gear).on_hover_text("Edit remote host settings").clicked() {
+                                                host_to_edit = Some(host.clone());
+                                            }
+                                        });
+                                    });
+                                })
+                                .response;
+
+                            let card_interact = ui.interact(card_resp.rect, card_resp.id, egui::Sense::click());
+                            if card_interact.clicked() {
+                                self.selected_machine = host.id.clone();
+                            }
+
+                            card_resp.context_menu(|ui| {
+                                if ui.button("⚙ Edit Host").clicked() {
+                                    host_to_edit = Some(host.clone());
+                                    ui.close_menu();
+                                }
+                                if ui.button("🔄 Test Connection").clicked() {
+                                    host_to_test = Some(host.clone());
+                                    ui.close_menu();
+                                }
+                                if ui.button("↗ Launch External Terminal").clicked() {
+                                    host_to_term = Some(host.clone());
+                                    ui.close_menu();
+                                }
+                                ui.separator();
+                                if ui.button(RichText::new("🗑 Delete Host").color(Color32::from_rgb(239, 68, 68))).clicked() {
+                                    host_to_delete = Some(host.id.clone());
+                                    ui.close_menu();
+                                }
+                            });
+
+                            ui.add_space(4.0);
+                        }
+                    }
+
+                    ui.add_space(14.0);
+                    // Import ~/.ssh/config button
+                    let btn_import = egui::Button::new(
+                        RichText::new("📥 Import ~/.ssh/config")
+                            .size(10.5)
+                            .color(Color32::from_rgb(148, 163, 184)),
+                    )
+                    .fill(Color32::from_rgb(26, 30, 42))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 50, 68)))
+                    .rounding(Rounding::same(4.0))
+                    .min_size(egui::vec2(ui.available_width(), 26.0));
+
+                    if ui.add(btn_import).on_hover_text("Read ~/.ssh/config and add configured remote hosts").clicked() {
+                        let imported = import_from_ssh_config();
+                        let mut added = 0;
+                        for inh in imported {
+                            if !self.ssh_hosts.iter().any(|h| h.host == inh.host && h.port == inh.port && h.user == inh.user) {
+                                self.ssh_hosts.push(inh);
+                                added += 1;
+                            }
+                        }
+                        if added > 0 {
+                            self.persist_config();
+                        }
+                    }
+                });
+
+            if let Some(h) = host_to_test {
+                self.test_remote_host(&h);
+            }
+            if let Some(h) = host_to_term {
+                let _ = launch_external_ssh_terminal(&h);
+            }
+            if let Some(h) = host_to_edit {
+                self.ssh_host_modal.open_edit(&h);
+            }
+            if let Some(id) = host_to_delete {
+                if let Some(pos) = self.ssh_hosts.iter().position(|h| h.id == id) {
+                    self.ssh_hosts.remove(pos);
+                    if self.selected_machine == id {
+                        self.selected_machine = "local".to_string();
+                    }
+                    self.persist_config();
+                }
+            }
+        });
+    }
+
+    fn render_remote_pc_dashboard(&mut self, ui: &mut Ui, host_id: &str) {
+        let host_opt = self.ssh_hosts.iter().find(|h| h.id == host_id).cloned();
+        let host = match host_opt {
+            Some(h) => h,
+            None => {
+                ui.label(RichText::new("Selected SSH host not found.").color(Color32::from_rgb(239, 68, 68)));
+                return;
+            }
+        };
+
+        // Ensure background connection check has started
+        self.ensure_remote_connected(&host);
+
+        let status = {
+            let map = self.remote_connection_status.lock().unwrap();
+            map.get(&host.id).cloned()
+        };
+        let is_connecting = {
+            let map = self.remote_connecting.lock().unwrap();
+            map.contains(&host.id)
+        };
+        let is_scanning = {
+            let map = self.remote_scanning.lock().unwrap();
+            map.contains(&host.id)
+        };
+
+        // If connected and no scan triggered yet, trigger scan
+        if let Some(Ok(_)) = &status {
+            let has_scanned = {
+                let map = self.remote_listeners.lock().unwrap();
+                map.contains_key(&host.id)
+            };
+            if !has_scanned && !is_scanning {
+                self.trigger_remote_scan(&host);
+            }
+        }
+
+        ui.vertical(|ui| {
+            // Dashboard Header Bar
+            Frame::none()
+                .fill(Color32::from_rgb(20, 23, 31))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 43, 58)))
+                .rounding(Rounding::same(8.0))
+                .inner_margin(egui::Margin::symmetric(16.0, 12.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("🌐").size(24.0));
+                        ui.add_space(4.0);
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(&host.name)
+                                        .size(18.0)
+                                        .strong()
+                                        .color(Color32::from_rgb(235, 238, 245)),
+                                );
+                                ui.add_space(8.0);
+                                if is_connecting {
+                                    ui.label(
+                                        RichText::new("○ Connecting...")
+                                            .size(11.0)
+                                            .color(Color32::from_rgb(250, 204, 21)),
+                                    );
+                                } else if let Some(Ok(info)) = &status {
+                                    ui.label(
+                                        RichText::new(format!("● Online ({})", info))
+                                            .size(11.0)
+                                            .strong()
+                                            .color(Color32::from_rgb(0, 210, 160)),
+                                    );
+                                } else if let Some(Err(err)) = &status {
+                                    ui.label(
+                                        RichText::new(format!("● Connection Error: {}", err))
+                                            .size(11.0)
+                                            .color(Color32::from_rgb(239, 68, 68)),
+                                    );
+                                } else {
+                                    ui.label(
+                                        RichText::new("○ Idle")
+                                            .size(11.0)
+                                            .color(Color32::from_rgb(130, 138, 155)),
+                                    );
+                                }
+                            });
+
+                            let target_desc = format!(
+                                "ssh://{}@{}:{} {}",
+                                host.user,
+                                host.host,
+                                host.port,
+                                if !host.remote_cwd.is_empty() {
+                                    format!("(cwd: {})", host.remote_cwd)
+                                } else {
+                                    String::new()
+                                }
+                            );
+                            ui.label(
+                                RichText::new(target_desc)
+                                    .size(11.0)
+                                    .color(Color32::from_rgb(120, 128, 145)),
+                            );
+                        });
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let btn_edit = egui::Button::new(
+                                RichText::new("⚙ Edit")
+                                    .size(11.5)
+                                    .color(Color32::from_rgb(200, 205, 215)),
+                            )
+                            .fill(Color32::from_rgb(32, 36, 48))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(50, 56, 75)))
+                            .rounding(Rounding::same(4.0));
+                            if ui.add(btn_edit).clicked() {
+                                self.ssh_host_modal.open_edit(&host);
+                            }
+
+                            let btn_reconnect = egui::Button::new(
+                                RichText::new("🔄 Reconnect")
+                                    .size(11.5)
+                                    .color(Color32::from_rgb(200, 205, 215)),
+                            )
+                            .fill(Color32::from_rgb(32, 36, 48))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(50, 56, 75)))
+                            .rounding(Rounding::same(4.0));
+                            if ui.add(btn_reconnect).clicked() {
+                                self.test_remote_host(&host);
+                                self.trigger_remote_scan(&host);
+                            }
+
+                            let btn_ext = egui::Button::new(
+                                RichText::new("↗ External Terminal")
+                                    .size(11.5)
+                                    .strong()
+                                    .color(Color32::from_rgb(96, 165, 250)),
+                            )
+                            .fill(Color32::from_rgb(20, 30, 48))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(59, 130, 246)))
+                            .rounding(Rounding::same(4.0));
+                            if ui.add(btn_ext).on_hover_text("Open desktop terminal connected via SSH").clicked() {
+                                let _ = launch_external_ssh_terminal(&host);
+                            }
+
+                            let scan_label = if is_scanning { "Scanning..." } else { "Scan Ports" };
+                            let btn_scan = egui::Button::new(
+                                RichText::new(scan_label)
+                                    .size(11.5)
+                                    .color(Color32::from_rgb(162, 155, 254)),
+                            )
+                            .fill(Color32::from_rgb(34, 30, 52))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(108, 92, 231)))
+                            .rounding(Rounding::same(4.0));
+                            if ui.add(btn_scan).clicked() {
+                                self.trigger_remote_scan(&host);
+                            }
+                        });
+                    });
+                });
+
+            ui.add_space(10.0);
+
+            // Two sections:
+            // Top section: Remote Listening Processes & Ports
+            // Bottom section: Interactive SSH Terminal
+            ui.label(
+                RichText::new("REMOTE LISTENING SERVICES")
+                    .size(11.5)
+                    .strong()
+                    .color(Color32::from_rgb(148, 163, 184)),
+            );
+            ui.add_space(4.0);
+
+            let listeners = {
+                let map = self.remote_listeners.lock().unwrap();
+                map.get(&host.id).cloned().unwrap_or_default()
+            };
+
+            Frame::none()
+                .fill(Color32::from_rgb(15, 17, 23))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(35, 40, 54)))
+                .rounding(Rounding::same(6.0))
+                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                .show(ui, |ui| {
+                    if listeners.is_empty() {
+                        ui.horizontal(|ui| {
+                            if is_scanning {
+                                ui.label(RichText::new("Scanning remote listening ports (ss -tulpn)...").size(11.5).color(Color32::from_rgb(250, 204, 21)));
+                            } else {
+                                ui.label(RichText::new("No active listening ports detected on remote PC (or ss/netstat permission needed). Click 'Scan Ports' above.").size(11.5).color(Color32::from_rgb(120, 128, 145)));
+                            }
+                        });
+                    } else {
+                        ScrollArea::vertical()
+                            .id_salt("remote_listeners_scroll")
+                            .max_height(160.0)
+                            .show(ui, |ui| {
+                                for l in &listeners {
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            RichText::new(format!(":{}", l.port))
+                                                .size(12.5)
+                                                .strong()
+                                                .color(Color32::from_rgb(0, 210, 160)),
+                                        );
+                                        ui.label(
+                                            RichText::new(format!("[{}]", l.proto))
+                                                .size(10.5)
+                                                .color(Color32::from_rgb(130, 138, 155)),
+                                        );
+                                        ui.label(
+                                            RichText::new(&l.name)
+                                                .size(12.0)
+                                                .strong()
+                                                .color(Color32::from_rgb(230, 233, 240)),
+                                        );
+                                        if let Some(pid) = l.pid {
+                                            ui.label(
+                                                RichText::new(format!("PID {}", pid))
+                                                    .size(10.5)
+                                                    .color(Color32::from_rgb(120, 128, 145)),
+                                            );
+                                        }
+                                        if !l.cmd.is_empty() {
+                                            ui.label(
+                                                RichText::new(format!("• {}", l.cmd))
+                                                    .size(10.5)
+                                                    .color(Color32::from_rgb(90, 98, 115)),
+                                            );
+                                        }
+                                    });
+                                    ui.separator();
+                                }
+                            });
+                    }
+                });
+
+            ui.add_space(12.0);
+
+            // Bottom Section: Interactive SSH Shell Terminal
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("REMOTE SSH TERMINAL")
+                        .size(11.5)
+                        .strong()
+                        .color(Color32::from_rgb(148, 163, 184)),
+                );
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let btn_clear = egui::Button::new(
+                        RichText::new("Clear")
+                            .size(11.0)
+                            .color(Color32::from_rgb(160, 168, 185)),
+                    )
+                    .fill(Color32::from_rgb(25, 28, 38))
+                    .rounding(Rounding::same(3.0));
+                    if ui.add(btn_clear).clicked() {
+                        self.clear_remote_terminal_logs(&host.id);
+                    }
+
+                    // Quick Command Buttons
+                    let quick_cmds = [
+                        ("df -h", "Disk Usage"),
+                        ("free -m", "Memory Usage"),
+                        ("uptime", "Uptime & Load"),
+                        ("docker ps", "Docker Containers"),
+                        ("ss -tulpn", "Listening Ports"),
+                    ];
+                    for (qcmd, qtip) in quick_cmds {
+                        let btn = egui::Button::new(
+                            RichText::new(qcmd)
+                                .size(10.5)
+                                .color(Color32::from_rgb(162, 155, 254)),
+                        )
+                        .fill(Color32::from_rgb(28, 30, 44))
+                        .rounding(Rounding::same(3.0));
+                        if ui.add(btn).on_hover_text(qtip).clicked() {
+                            self.run_remote_ssh_command(&host, qcmd);
+                        }
+                    }
+                });
+            });
+            ui.add_space(4.0);
+
+            // Terminal Log Output Box
+            let term_logs = self.get_remote_logs(&host.id);
+            let available_height = ui.available_height() - 44.0;
+
+            Frame::none()
+                .fill(Color32::from_rgb(10, 12, 17))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(35, 40, 54)))
+                .rounding(Rounding::same(6.0))
+                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                .show(ui, |ui| {
+                    ScrollArea::both()
+                        .id_salt(format!("remote_term_scroll_{}", host.id))
+                        .stick_to_bottom(true)
+                        .auto_shrink([false, false])
+                        .max_height(available_height)
+                        .show(ui, |ui| {
+                            let logs_guard = term_logs.lock().unwrap();
+                            for entry in logs_guard.iter() {
+                                let (col, bg) = match entry.kind {
+                                    crate::service::LogKind::Stdout => (Color32::from_rgb(220, 225, 235), Color32::TRANSPARENT),
+                                    crate::service::LogKind::Stderr | crate::service::LogKind::Error => (Color32::from_rgb(255, 107, 107), Color32::TRANSPARENT),
+                                    crate::service::LogKind::Stdin => (Color32::from_rgb(162, 155, 254), Color32::TRANSPARENT),
+                                    crate::service::LogKind::Launcher => (Color32::from_rgb(0, 210, 160), Color32::TRANSPARENT),
+                                    crate::service::LogKind::Warning => (Color32::from_rgb(250, 204, 21), Color32::TRANSPARENT),
+                                };
+
+                                let rt = RichText::new(&entry.text)
+                                    .font(egui::FontId::monospace(11.5))
+                                    .color(col)
+                                    .background_color(bg);
+                                ui.add(egui::Label::new(rt).wrap());
+                            }
+                        });
+                });
+
+            ui.add_space(6.0);
+
+            // Command Input Box
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("{}@{}:~$", host.user, host.host))
+                        .font(egui::FontId::monospace(12.0))
+                        .strong()
+                        .color(Color32::from_rgb(0, 210, 160)),
+                );
+
+                let (cmd_to_run, execute) = {
+                    let input_text = self.remote_terminal_inputs.entry(host.id.clone()).or_insert_with(String::new);
+                    let text_resp = ui.add(
+                        egui::TextEdit::singleline(input_text)
+                            .font(egui::FontId::monospace(12.0))
+                            .desired_width(ui.available_width() - 85.0)
+                            .hint_text("Type remote command and press Enter (e.g. ls -la, uname -a)..."),
+                    );
+
+                    let btn_run = egui::Button::new(
+                        RichText::new("Execute")
+                            .size(11.5)
+                            .strong()
+                            .color(Color32::WHITE),
+                    )
+                    .fill(Color32::from_rgb(108, 92, 231))
+                    .rounding(Rounding::same(4.0));
+
+                    let run_clicked = ui.add(btn_run).clicked();
+                    let hit_enter = text_resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                    if (run_clicked || hit_enter) && !input_text.trim().is_empty() {
+                        let cmd = input_text.trim().to_string();
+                        input_text.clear();
+                        text_resp.request_focus();
+                        (Some(cmd), true)
+                    } else {
+                        (None, false)
+                    }
+                };
+
+                if let (Some(cmd), true) = (cmd_to_run, execute) {
+                    self.run_remote_ssh_command(&host, &cmd);
+                }
+            });
+        });
     }
 }
 
@@ -540,14 +1587,26 @@ impl eframe::App for LauncherApp {
                                 .color(Color32::from_rgb(235, 238, 245)),
                         );
                         ui.add_space(2.0);
-                        ui.label(
-                            RichText::new(format!(
+                        let subtitle = if self.selected_machine == "local" {
+                            format!(
                                 "this pc: {}    servers: {}",
                                 self.lan_ip,
                                 self.services.len()
-                            ))
-                            .size(11.5)
-                            .color(Color32::from_rgb(123, 131, 148)),
+                            )
+                        } else if let Some(h) = self.ssh_hosts.iter().find(|h| h.id == self.selected_machine) {
+                            format!(
+                                "ssh remote: {} ({}:{})",
+                                h.name,
+                                h.host,
+                                h.port
+                            )
+                        } else {
+                            format!("this pc: {}", self.lan_ip)
+                        };
+                        ui.label(
+                            RichText::new(subtitle)
+                                .size(11.5)
+                                .color(Color32::from_rgb(123, 131, 148)),
                         );
                     });
 
@@ -613,44 +1672,85 @@ impl eframe::App for LauncherApp {
             });
 
         // ═════════════════════════════════════════════════════════════════════
-        // LEFT SIDEBAR: Full Window Height (~350px width)
+        // LEFT MACHINES NAV BAR (Switch between This PC and SSH Remotes)
         // ═════════════════════════════════════════════════════════════════════
-        egui::SidePanel::left("left_sidebar")
-            .resizable(true)
-            .default_width(345.0)
-            .min_width(300.0)
-            .max_width(450.0)
+        egui::SidePanel::left("machines_nav_bar")
+            .resizable(false)
+            .exact_width(180.0)
             .frame(
                 Frame::none()
-                    .fill(Color32::from_rgb(15, 17, 23))
+                    .fill(Color32::from_rgb(12, 14, 19))
                     .inner_margin(egui::Margin {
-                        left: 14.0,
-                        right: 12.0,
+                        left: 10.0,
+                        right: 10.0,
                         top: 8.0,
                         bottom: 12.0,
                     }),
             )
             .show(ctx, |ui| {
-                self.render_left_panel(ui);
+                self.render_machines_nav_bar(ui);
             });
 
-        // ═════════════════════════════════════════════════════════════════════
-        // RIGHT MAIN AREA: Full Window Height & Remaining Width
-        // ═════════════════════════════════════════════════════════════════════
-        egui::CentralPanel::default()
-            .frame(
-                Frame::none()
-                    .fill(Color32::from_rgb(15, 17, 23))
-                    .inner_margin(egui::Margin {
-                        left: 6.0,
-                        right: 18.0,
-                        top: 8.0,
-                        bottom: 14.0,
-                    }),
-            )
-            .show(ctx, |ui| {
-                self.render_right_panel(ui);
-            });
+        if self.selected_machine == "local" {
+            // ═════════════════════════════════════════════════════════════════
+            // LEFT SIDEBAR: Full Window Height (~350px width)
+            // ═════════════════════════════════════════════════════════════════
+            egui::SidePanel::left("left_sidebar")
+                .resizable(true)
+                .default_width(345.0)
+                .min_width(300.0)
+                .max_width(450.0)
+                .frame(
+                    Frame::none()
+                        .fill(Color32::from_rgb(15, 17, 23))
+                        .inner_margin(egui::Margin {
+                            left: 14.0,
+                            right: 12.0,
+                            top: 8.0,
+                            bottom: 12.0,
+                        }),
+                )
+                .show(ctx, |ui| {
+                    self.render_left_panel(ui);
+                });
+
+            // ═════════════════════════════════════════════════════════════════
+            // RIGHT MAIN AREA: Full Window Height & Remaining Width
+            // ═════════════════════════════════════════════════════════════════
+            egui::CentralPanel::default()
+                .frame(
+                    Frame::none()
+                        .fill(Color32::from_rgb(15, 17, 23))
+                        .inner_margin(egui::Margin {
+                            left: 6.0,
+                            right: 18.0,
+                            top: 8.0,
+                            bottom: 14.0,
+                        }),
+                )
+                .show(ctx, |ui| {
+                    self.render_right_panel(ui);
+                });
+        } else {
+            // ═════════════════════════════════════════════════════════════════
+            // SSH REMOTE PC DASHBOARD
+            // ═════════════════════════════════════════════════════════════════
+            egui::CentralPanel::default()
+                .frame(
+                    Frame::none()
+                        .fill(Color32::from_rgb(15, 17, 23))
+                        .inner_margin(egui::Margin {
+                            left: 12.0,
+                            right: 18.0,
+                            top: 8.0,
+                            bottom: 14.0,
+                        }),
+                )
+                .show(ctx, |ui| {
+                    let machine_id = self.selected_machine.clone();
+                    self.render_remote_pc_dashboard(ui, &machine_id);
+                });
+        }
 
         // ═════════════════════════════════════════════════════════════════════
         // MODALS
@@ -718,6 +1818,34 @@ impl eframe::App for LauncherApp {
             }
             ModalAction::ExecutePaletteAction(PaletteAction::StopAll) => {
                 self.stop_all();
+            }
+            _ => {}
+        }
+
+        let ssh_modal_action = render_ssh_host_modal(ctx, &mut self.ssh_host_modal);
+        match ssh_modal_action {
+            ModalAction::SaveSshHost(new_host, old_id) => {
+                if let Some(old) = old_id {
+                    if let Some(pos) = self.ssh_hosts.iter().position(|h| h.id == old) {
+                        self.ssh_hosts[pos] = new_host.clone();
+                    }
+                    if self.selected_machine == old {
+                        self.selected_machine = new_host.id.clone();
+                    }
+                } else {
+                    self.selected_machine = new_host.id.clone();
+                    self.ssh_hosts.push(new_host);
+                }
+                self.persist_config();
+            }
+            ModalAction::DeleteSshHost(id) => {
+                if let Some(pos) = self.ssh_hosts.iter().position(|h| h.id == id) {
+                    self.ssh_hosts.remove(pos);
+                    if self.selected_machine == id {
+                        self.selected_machine = "local".to_string();
+                    }
+                    self.persist_config();
+                }
             }
             _ => {}
         }
@@ -1409,6 +2537,7 @@ impl LauncherApp {
                 let mut to_import: Option<(String, u16, String, String)> = None;
                 let mut to_start_stopped: Option<(u16, String, String)> = None;
                 let mut to_remove_stopped: Option<u16> = None;
+                let mut to_launch_external_terminal: Option<(String, Option<u32>, u16, String, String)> = None;
 
                 let unmanaged_listeners: Vec<_> = listeners
                     .into_iter()
@@ -1685,6 +2814,59 @@ impl LauncherApp {
                                                                 .color(Color32::from_rgb(123, 131, 148)),
                                                         );
                                                     }
+
+                                                    ui.add_space(8.0);
+                                                    ui.horizontal(|ui| {
+                                                        let is_inline_open = self.open_inline_terminals.contains(&listener.port);
+                                                        let inline_btn_text = if is_inline_open {
+                                                            "📟 Hide Inline Terminal"
+                                                        } else {
+                                                            "📟 View Output (Inline Terminal)"
+                                                        };
+                                                        let btn_inline = egui::Button::new(
+                                                            RichText::new(inline_btn_text)
+                                                                .size(11.0)
+                                                                .strong()
+                                                                .color(if is_inline_open { Color32::from_rgb(255, 215, 0) } else { Color32::from_rgb(162, 155, 254) }),
+                                                        )
+                                                        .fill(if is_inline_open { Color32::from_rgb(38, 32, 12) } else { Color32::from_rgb(32, 30, 52) })
+                                                        .stroke(Stroke::new(1.0_f32, if is_inline_open { Color32::from_rgb(245, 158, 11) } else { Color32::from_rgb(108, 92, 231) }))
+                                                        .rounding(Rounding::same(4.0));
+
+                                                        if ui.add(btn_inline).on_hover_text("Open inline terminal to view live process output and run shell commands in working directory").clicked() {
+                                                            if is_inline_open {
+                                                                self.open_inline_terminals.remove(&listener.port);
+                                                            } else {
+                                                                self.open_inline_terminals.insert(listener.port);
+                                                                self.ensure_inline_session(listener.port, &listener.name, listener.pid, &cmd_str, &cwd_str);
+                                                            }
+                                                        }
+
+                                                        let btn_external = egui::Button::new(
+                                                            RichText::new("↗ External Terminal")
+                                                                .size(11.0)
+                                                                .strong()
+                                                                .color(Color32::from_rgb(96, 165, 250)),
+                                                        )
+                                                        .fill(Color32::from_rgb(20, 30, 48))
+                                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(59, 130, 246)))
+                                                        .rounding(Rounding::same(4.0));
+
+                                                        if ui.add(btn_external).on_hover_text("Open desktop terminal window (gnome-terminal, alacritty, etc.) in working directory").clicked() {
+                                                            to_launch_external_terminal = Some((
+                                                                listener.name.clone(),
+                                                                listener.pid,
+                                                                listener.port,
+                                                                cmd_str.clone(),
+                                                                cwd_str.clone(),
+                                                            ));
+                                                        }
+                                                    });
+
+                                                    if self.open_inline_terminals.contains(&listener.port) {
+                                                        ui.add_space(8.0);
+                                                        self.render_inline_terminal(ui, listener.port, &listener.name, listener.pid, &cwd_str);
+                                                    }
                                                 });
                                             });
                                     }
@@ -1834,6 +3016,59 @@ impl LauncherApp {
                                                                 .color(Color32::from_rgb(123, 131, 148)),
                                                         );
                                                     }
+
+                                                    ui.add_space(8.0);
+                                                    ui.horizontal(|ui| {
+                                                        let is_inline_open = self.open_inline_terminals.contains(port);
+                                                        let inline_btn_text = if is_inline_open {
+                                                            "📟 Hide Inline Terminal"
+                                                        } else {
+                                                            "📟 View Output (Inline Terminal)"
+                                                        };
+                                                        let btn_inline = egui::Button::new(
+                                                            RichText::new(inline_btn_text)
+                                                                .size(11.0)
+                                                                .strong()
+                                                                .color(if is_inline_open { Color32::from_rgb(255, 215, 0) } else { Color32::from_rgb(162, 155, 254) }),
+                                                        )
+                                                        .fill(if is_inline_open { Color32::from_rgb(38, 32, 12) } else { Color32::from_rgb(32, 30, 52) })
+                                                        .stroke(Stroke::new(1.0_f32, if is_inline_open { Color32::from_rgb(245, 158, 11) } else { Color32::from_rgb(108, 92, 231) }))
+                                                        .rounding(Rounding::same(4.0));
+
+                                                        if ui.add(btn_inline).on_hover_text("Open inline terminal to run shell commands in working directory").clicked() {
+                                                            if is_inline_open {
+                                                                self.open_inline_terminals.remove(port);
+                                                            } else {
+                                                                self.open_inline_terminals.insert(*port);
+                                                                self.ensure_inline_session(*port, name, None, cmd, cwd);
+                                                            }
+                                                        }
+
+                                                        let btn_external = egui::Button::new(
+                                                            RichText::new("↗ External Terminal")
+                                                                .size(11.0)
+                                                                .strong()
+                                                                .color(Color32::from_rgb(96, 165, 250)),
+                                                        )
+                                                        .fill(Color32::from_rgb(20, 30, 48))
+                                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(59, 130, 246)))
+                                                        .rounding(Rounding::same(4.0));
+
+                                                        if ui.add(btn_external).on_hover_text("Open desktop terminal window (gnome-terminal, alacritty, etc.) in working directory").clicked() {
+                                                            to_launch_external_terminal = Some((
+                                                                name.clone(),
+                                                                None,
+                                                                *port,
+                                                                cmd.clone(),
+                                                                cwd.clone(),
+                                                            ));
+                                                        }
+                                                    });
+
+                                                    if self.open_inline_terminals.contains(port) {
+                                                        ui.add_space(8.0);
+                                                        self.render_inline_terminal(ui, *port, name, None, cwd);
+                                                    }
                                                 });
                                             });
                                     }
@@ -1842,6 +3077,10 @@ impl LauncherApp {
 
                         ui.add_space(6.0);
                     }
+                }
+
+                if let Some((name, pid, port, cmd, cwd)) = to_launch_external_terminal {
+                    let _ = crate::service::launch_external_terminal(&name, pid, port, &cwd, &cmd);
                 }
 
                 if let Some((pid_opt, port, name, cmd, cwd)) = to_kill_pid {
@@ -2109,7 +3348,7 @@ impl LauncherApp {
         let filter_active = self.filter_lines.get(key).copied().unwrap_or(false) && !q.is_empty();
 
         let available_height = ui.available_height() - 44.0;
-        ScrollArea::vertical()
+        ScrollArea::both()
             .stick_to_bottom(true)
             .auto_shrink([false, false])
             .max_height(available_height)
@@ -2138,7 +3377,7 @@ impl LauncherApp {
                         rt = rt.background_color(Color32::from_rgb(180, 80, 0)).color(Color32::WHITE);
                     }
 
-                    ui.label(rt);
+                    ui.add(egui::Label::new(rt).wrap());
                 }
             });
 

@@ -31,6 +31,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub own_console: bool,
     #[serde(default)]
+    pub auto_restart: bool,
+    #[serde(default)]
     pub env: HashMap<String, String>,
     #[serde(default)]
     pub actions: Vec<CustomAction>,
@@ -46,9 +48,34 @@ fn default_group() -> String {
     "General".to_string()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SshRemoteHost {
+    pub id: String,
+    pub name: String,
+    pub host: String,
+    #[serde(default = "default_ssh_port")]
+    pub port: u16,
+    #[serde(default = "default_ssh_user")]
+    pub user: String,
+    #[serde(default)]
+    pub key_path: String,
+    #[serde(default)]
+    pub remote_cwd: String,
+}
+
+fn default_ssh_port() -> u16 {
+    22
+}
+
+fn default_ssh_user() -> String {
+    "ubuntu".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConfigFile {
     pub servers: Vec<ServerConfig>,
+    #[serde(default)]
+    pub ssh_hosts: Vec<SshRemoteHost>,
 }
 
 impl ConfigFile {

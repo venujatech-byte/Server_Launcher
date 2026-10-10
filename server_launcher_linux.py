@@ -1843,6 +1843,7 @@ class CommandPaletteDialog(tk.Toplevel):
 class LauncherApp:
     def __init__(self, root: tk.Tk):
         self.root = root
+        self._apply_app_icon()
         Fonts.init(root)
 
         self.events = queue.Queue()
@@ -1875,6 +1876,15 @@ class LauncherApp:
         self.root.after(1500, self._poll_ports)
         self.root.after(1000, self._poll_stats)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _apply_app_icon(self) -> None:
+        try:
+            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.png")
+            if os.path.exists(icon_path):
+                self._app_icon_img = tk.PhotoImage(file=icon_path)
+                self.root.iconphoto(True, self._app_icon_img)
+        except Exception:
+            pass
 
     def open_log_search(self) -> None:
         """Handle Ctrl+F: Open search bar for current active server log tab."""

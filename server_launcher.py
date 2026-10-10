@@ -811,6 +811,7 @@ class ServerDialog(tk.Toplevel):
 class LauncherApp:
     def __init__(self, root: tk.Tk):
         self.root = root
+        self._apply_app_icon()
         self.events = queue.Queue()
         self.services: dict[str, Service] = {}
         self.cards: dict[str, dict] = {}
@@ -822,6 +823,15 @@ class LauncherApp:
         self.root.after(120, self._drain)
         self.root.after(1500, self._poll_ports)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _apply_app_icon(self) -> None:
+        try:
+            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.png")
+            if os.path.exists(icon_path):
+                self._app_icon_img = tk.PhotoImage(file=icon_path)
+                self.root.iconphoto(True, self._app_icon_img)
+        except Exception:
+            pass
 
     # -- config -----------------------------------------------------------
 

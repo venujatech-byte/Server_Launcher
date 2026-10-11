@@ -130,6 +130,7 @@ fi"#
     )
 }
 
+#[allow(dead_code)]
 pub fn build_remote_stop_all_cmd(listeners: &[RemoteListener], host_port: u16) -> String {
     let targets: Vec<_> = listeners.iter().filter(|l| l.port != host_port && l.port != 22).collect();
     if targets.is_empty() {
@@ -148,6 +149,7 @@ pub fn build_remote_stop_all_cmd(listeners: &[RemoteListener], host_port: u16) -
     script
 }
 
+#[allow(dead_code)]
 pub fn build_remote_restart_all_cmd(listeners: &[RemoteListener], host_port: u16) -> String {
     let targets: Vec<_> = listeners.iter().filter(|l| l.port != host_port && l.port != 22).collect();
     if targets.is_empty() {

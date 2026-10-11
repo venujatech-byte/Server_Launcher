@@ -16,8 +16,8 @@ use crate::systemd::{
     SystemdService,
 };
 use crate::remote::{
-    build_remote_restart_all_cmd, build_remote_restart_cmd, build_remote_start_cmd,
-    build_remote_stop_all_cmd, build_remote_stop_cmd, build_ssh_command,
+    build_remote_restart_cmd, build_remote_start_cmd,
+    build_remote_stop_cmd, build_ssh_command,
     clean_service_name, fetch_remote_listeners, guess_remote_start_cmd,
     import_from_ssh_config, launch_external_ssh_terminal, test_ssh_connection,
     RemoteListener, RemoteStoppedServer,
@@ -1993,31 +1993,6 @@ impl LauncherApp {
                     if ui.add(btn_add).on_hover_text("Start a new server or process on remote host").clicked() {
                         self.remote_start_server_modal.open_for_host(host);
                     }
-
-                    // Stop All & Restart All
-                    if !listeners.is_empty() {
-                        let btn_stop_all = egui::Button::new(
-                            RichText::new("⏹ Stop All").size(10.0).color(Color32::from_rgb(254, 202, 202)),
-                        )
-                        .fill(Color32::from_rgb(0x7f, 0x1d, 0x1d))
-                        .rounding(Rounding::same(999.0));
-                        if ui.add(btn_stop_all).on_hover_text("Stop all non-SSH remote servers").clicked() {
-                            let stop_cmd = build_remote_stop_all_cmd(&listeners, host.port);
-                            self.run_remote_ssh_command(host, &stop_cmd, Some(ui.ctx().clone()));
-                            self.schedule_remote_scan(host, 1500, ui.ctx().clone());
-                        }
-
-                        let btn_restart_all = egui::Button::new(
-                            RichText::new("⟳ Restart All").size(10.0).color(Color32::from_rgb(207, 250, 254)),
-                        )
-                        .fill(Color32::from_rgb(0x15, 0x5e, 0x75))
-                        .rounding(Rounding::same(999.0));
-                        if ui.add(btn_restart_all).on_hover_text("Restart all non-SSH remote servers").clicked() {
-                            let restart_cmd = build_remote_restart_all_cmd(&listeners, host.port);
-                            self.run_remote_ssh_command(host, &restart_cmd, Some(ui.ctx().clone()));
-                            self.schedule_remote_scan(host, 2000, ui.ctx().clone());
-                        }
-                    }
                 });
             });
             ui.add_space(4.0);
@@ -3010,43 +2985,6 @@ impl eframe::App for LauncherApp {
                             if ui.add(btn_add_server).on_hover_text("Start a new server or process on remote host").clicked() {
                                 self.remote_start_server_modal.open_for_host(host);
                             }
-
-                            let listeners_for_all = {
-                                let map = self.remote_listeners.lock().unwrap();
-                                map.get(&host.id).cloned().unwrap_or_default()
-                            };
-
-                            if !listeners_for_all.is_empty() {
-                                let btn_stop_all = egui::Button::new(
-                                    RichText::new("⏹ Stop All")
-                                        .size(11.5)
-                                        .color(Color32::from_rgb(254, 202, 202)),
-                                )
-                                .fill(Color32::from_rgb(0x7f, 0x1d, 0x1d))
-                                .stroke(Stroke::NONE)
-                                .rounding(Rounding::same(999.0))
-                                .min_size(egui::vec2(80.0, 28.0));
-                                if ui.add(btn_stop_all).on_hover_text("Stop all non-SSH remote servers").clicked() {
-                                    let stop_cmd = build_remote_stop_all_cmd(&listeners_for_all, host.port);
-                                    self.run_remote_ssh_command(host, &stop_cmd, Some(ui.ctx().clone()));
-                                    self.schedule_remote_scan(host, 1500, ui.ctx().clone());
-                                }
-
-                                let btn_restart_all = egui::Button::new(
-                                    RichText::new("⟳ Restart All")
-                                        .size(11.5)
-                                        .color(Color32::from_rgb(207, 250, 254)),
-                                )
-                                .fill(Color32::from_rgb(0x15, 0x5e, 0x75))
-                                .stroke(Stroke::NONE)
-                                .rounding(Rounding::same(999.0))
-                                .min_size(egui::vec2(92.0, 28.0));
-                                if ui.add(btn_restart_all).on_hover_text("Restart all non-SSH remote servers").clicked() {
-                                    let restart_cmd = build_remote_restart_all_cmd(&listeners_for_all, host.port);
-                                    self.run_remote_ssh_command(host, &restart_cmd, Some(ui.ctx().clone()));
-                                    self.schedule_remote_scan(host, 2000, ui.ctx().clone());
-                                }
-                            }
                         } else {
                             // LOCAL PC CONTROLS (+ Add Server, Quick Launch, Stop All, Start All, Search)
                             // + Add Server (Primary Accent Pill)
@@ -3077,36 +3015,6 @@ impl eframe::App for LauncherApp {
                             if ui.add(btn_pal).clicked() {
                                 self.palette_modal.open = true;
                                 self.palette_modal.query.clear();
-                            }
-
-                            // Stop all (M3 Danger Subdued Pill)
-                            let btn_stop_all = egui::Button::new(
-                                RichText::new("⏹ Stop All")
-                                    .size(11.5)
-                                    .strong()
-                                    .color(p.danger),
-                            )
-                            .fill(p.danger_subtle)
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(84.0, 28.0));
-                            if ui.add(btn_stop_all).clicked() {
-                                self.stop_all();
-                            }
-
-                            // Start all (M3 Success Subdued Pill)
-                            let btn_start_all = egui::Button::new(
-                                RichText::new("▶ Start All")
-                                    .size(11.5)
-                                    .strong()
-                                    .color(p.success),
-                            )
-                            .fill(p.success_subtle)
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(84.0, 28.0));
-                            if ui.add(btn_start_all).clicked() {
-                                self.start_all();
                             }
 
                             // Search Pill Bar (with Ctrl+K hint chip)

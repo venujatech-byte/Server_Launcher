@@ -3843,13 +3843,19 @@ impl LauncherApp {
                         ui.add_space(6.0);
                         ui.label(RichText::new("Loading systemd services over SSH...").size(12.0).color(p.text_muted));
                     } else if let Some(ref key) = s_key {
-                        let err_opt = self.remote_services_errors.lock().ok().and_then(|e| e.get(key).cloned());
+                        let err_opt = self.remote_services_errors.lock().ok()
+                            .and_then(|e| e.get(key).cloned())
+                            .filter(|e| !e.is_empty()); // skip empty error strings
                         if let Some(err) = err_opt {
-                            ui.label(RichText::new(format!("Error loading services: {}", err)).size(11.5).color(p.danger));
+                            ui.label(RichText::new("⚠ Failed to load services").size(12.0).strong().color(p.danger));
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(&err).size(11.0).color(p.danger));
+                            ui.add_space(8.0);
+                            ui.label(RichText::new("Click '🔄' to retry.").size(11.0).color(p.text_muted));
                         } else {
                             ui.label(RichText::new("No systemd services found").size(12.0).color(p.text_muted));
                             ui.add_space(4.0);
-                            ui.label(RichText::new("Click '🔄' to scan or switch scope.").size(11.0).color(p.text_muted));
+                            ui.label(RichText::new("Click '🔄' to refresh or switch scope (User ↔ System).").size(11.0).color(p.text_muted));
                         }
                     } else {
                         ui.label(RichText::new("No systemd services found").size(12.0).color(p.text_muted));

@@ -82,18 +82,52 @@ pub fn list_local_services(user_mode: bool) -> Result<Vec<SystemdService>, Strin
 }
 
 pub fn list_remote_services(host: &SshRemoteHost, user_mode: bool) -> Result<Vec<SystemdService>, String> {
-    let flag = if user_mode { "--user" } else { "" };
-    let cmd_str = format!("systemctl {} list-units --type=service --all --no-pager --plain --no-legend 2>/dev/null", flag);
+    let pass = host.password.trim();
+    let cmd_str = if user_mode {
+        // Non-interactive SSH sessions lack XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS.
+        // We must set them explicitly so `systemctl --user` can connect to the user's bus.
+        // Also try with --no-legend first, fall back without it for older systemd versions.
+        concat!(
+            "uid=$(id -u); ",
+            "export XDG_RUNTIME_DIR=/run/user/$uid; ",
+            "export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; ",
+            "systemctl --user list-units --type=service --all --no-pager --plain --no-legend 2>/dev/null ",
+            "|| systemctl --user list-units --type=service --all --no-pager --plain 2>/dev/null"
+        ).to_string()
+    } else {
+        // System scope: try plain first (works if user has read access),
+        // then sudo -n (passwordless sudo), then password sudo, then --no-legend fallback.
+        if !pass.is_empty() {
+            format!(
+                "echo {pass} | sudo -S systemctl list-units --type=service --all --no-pager --plain --no-legend 2>/dev/null \
+                 || sudo -n systemctl list-units --type=service --all --no-pager --plain --no-legend 2>/dev/null \
+                 || systemctl list-units --type=service --all --no-pager --plain --no-legend 2>/dev/null \
+                 || systemctl list-units --type=service --all --no-pager --plain 2>/dev/null",
+                pass = pass
+            )
+        } else {
+            "sudo -n systemctl list-units --type=service --all --no-pager --plain --no-legend 2>/dev/null \
+             || systemctl list-units --type=service --all --no-pager --plain --no-legend 2>/dev/null \
+             || systemctl list-units --type=service --all --no-pager --plain 2>/dev/null".to_string()
+        }
+    };
+
     let mut cmd = build_ssh_command(host, &cmd_str);
 
     match cmd.output() {
         Ok(out) => {
-            if out.status.success() {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                Ok(parse_systemctl_output(&stdout, user_mode))
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let parsed = parse_systemctl_output(&stdout, user_mode);
+            if parsed.is_empty() && !out.status.success() {
+                // Command failed with no output — try to get a useful error from stderr
+                let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                if err.is_empty() {
+                    Err("systemctl failed. Check SSH connectivity and that systemd is running on the remote host.".to_string())
+                } else {
+                    Err(err)
+                }
             } else {
-                let err = String::from_utf8_lossy(&out.stderr);
-                Err(err.trim().to_string())
+                Ok(parsed)
             }
         }
         Err(e) => Err(format!("SSH error: {}", e)),
@@ -149,7 +183,11 @@ pub fn control_local_service(unit: &str, action: &str, user_mode: bool) -> Resul
 
 pub fn control_remote_service(host: &SshRemoteHost, unit: &str, action: &str, user_mode: bool) -> Result<String, String> {
     let cmd_str = if user_mode {
-        format!("systemctl --user {} {}", action, unit)
+        // Set XDG_RUNTIME_DIR so systemctl --user works in non-interactive SSH sessions
+        format!(
+            "uid=$(id -u); export XDG_RUNTIME_DIR=/run/user/$uid; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; systemctl --user {} {}",
+            action, unit
+        )
     } else {
         // For system services:
         // If password is provided, try echo password | sudo -S systemctl
@@ -177,6 +215,11 @@ pub fn control_remote_service(host: &SshRemoteHost, unit: &str, action: &str, us
                 } else {
                     err_trimmed
                 };
+                let final_err = if final_err.is_empty() {
+                    format!("systemctl {} failed (exit {}). Check sudo permissions or try 'system' scope.", action, out.status.code().unwrap_or(-1))
+                } else {
+                    final_err
+                };
                 if final_err.contains("Interactive authentication required") {
                     Err(format!("{}. Tip: System-level services on remote machines require root. Configure passwordless sudo for '{}' on the remote host (e.g. '{} ALL=(ALL) NOPASSWD: /bin/systemctl') or set the SSH password in Edit Host.", final_err, host.user, host.user))
                 } else {
@@ -202,12 +245,54 @@ pub fn fetch_local_journal(unit: &str, user_mode: bool, lines: usize) -> Result<
 }
 
 pub fn fetch_remote_journal(host: &SshRemoteHost, unit: &str, user_mode: bool, lines: usize) -> Result<String, String> {
-    let flag = if user_mode { "--user" } else { "" };
-    let cmd_str = format!("journalctl {} -u {} -n {} --no-pager", flag, unit, lines);
+    let pass = host.password.trim();
+    let cmd_str = if user_mode {
+        // Set XDG_RUNTIME_DIR so journalctl --user works in non-interactive SSH sessions
+        format!(
+            "uid=$(id -u); export XDG_RUNTIME_DIR=/run/user/$uid; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; journalctl --user -u {} -n {} --no-pager 2>/dev/null",
+            unit, lines
+        )
+    } else {
+        // System journal: try plain first, then sudo (for root-only logs).
+        // Password-based sudo: echo pass | sudo -S journalctl ...
+        // Passwordless sudo: sudo -n journalctl ...
+        // Final fallback: plain journalctl (works if user is in 'adm'/'systemd-journal' group)
+        if !pass.is_empty() {
+            format!(
+                "echo {pass} | sudo -S journalctl -u {unit} -n {lines} --no-pager 2>/dev/null \
+                 || sudo -n journalctl -u {unit} -n {lines} --no-pager 2>/dev/null \
+                 || journalctl -u {unit} -n {lines} --no-pager 2>/dev/null",
+                pass = pass, unit = unit, lines = lines
+            )
+        } else {
+            format!(
+                "sudo -n journalctl -u {unit} -n {lines} --no-pager 2>/dev/null \
+                 || journalctl -u {unit} -n {lines} --no-pager 2>/dev/null",
+                unit = unit, lines = lines
+            )
+        }
+    };
     let mut cmd = build_ssh_command(host, &cmd_str);
 
     match cmd.output() {
-        Ok(out) => Ok(String::from_utf8_lossy(&out.stdout).to_string()),
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            if stdout.trim().is_empty() {
+                if !out.status.success() {
+                    let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                    Err(if err.is_empty() {
+                        format!("journalctl returned no output for '{}'. The service may not have logged anything yet, or you may need sudo access.", unit)
+                    } else {
+                        err
+                    })
+                } else {
+                    // Command succeeded but no output = no logs yet
+                    Ok(format!("-- No journal entries found for {} --", unit))
+                }
+            } else {
+                Ok(stdout)
+            }
+        }
         Err(e) => Err(format!("SSH journalctl error: {}", e)),
     }
 }

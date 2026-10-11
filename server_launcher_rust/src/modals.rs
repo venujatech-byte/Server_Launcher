@@ -3,7 +3,7 @@ use crate::config::{CustomAction, CustomLink, CustomScript, SavedCommand, Server
 use crate::scripts::ScriptModalState;
 use crate::systemd::NewServiceDefinition;
 use crate::theme::ThemePalette;
-use egui::{Color32, Context, Frame, Key, RichText, Rounding, Stroke, Window};
+use egui::{Color32, Context, Key, RichText, Rounding, Stroke, Window};
 use std::collections::HashMap;
 
 pub struct ServerTemplate {
@@ -616,44 +616,6 @@ pub struct CommandPaletteState {
     pub selected_idx: usize,
 }
 
-fn render_modal_titlebar_controls(ui: &mut egui::Ui, palette: &ThemePalette) -> bool {
-    let mut close_clicked = false;
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-
-        // Vector-drawn Close button (no missing font glyph box)
-        let (rect, resp) = ui.allocate_exact_size(egui::vec2(24.0, 20.0), egui::Sense::click());
-        let hovered = resp.hovered();
-        let bg = if hovered { palette.danger } else { Color32::TRANSPARENT };
-        let stroke_color = if hovered { Color32::WHITE } else { palette.text_muted };
-        if bg != Color32::TRANSPARENT {
-            ui.painter().rect_filled(rect, Rounding::same(4.0), bg);
-        }
-        let d = 3.5;
-        let c = rect.center();
-        let stroke = Stroke::new(1.2_f32, stroke_color);
-        ui.painter().line_segment([egui::pos2(c.x - d, c.y - d), egui::pos2(c.x + d, c.y + d)], stroke);
-        ui.painter().line_segment([egui::pos2(c.x + d, c.y - d), egui::pos2(c.x - d, c.y + d)], stroke);
-        if resp.on_hover_text("Close").clicked() {
-            close_clicked = true;
-        }
-
-        // Vector-drawn square button
-        let (sq_rect, sq_resp) = ui.allocate_exact_size(egui::vec2(24.0, 20.0), egui::Sense::hover());
-        if sq_resp.hovered() {
-            ui.painter().rect_filled(
-                sq_rect,
-                Rounding::same(4.0),
-                if palette.is_dark { Color32::from_rgba_unmultiplied(255, 255, 255, 18) } else { Color32::from_rgba_unmultiplied(0, 0, 0, 14) },
-            );
-        }
-        let c = sq_rect.center();
-        let sq = egui::Rect::from_center_size(c, egui::vec2(8.0, 8.0));
-        ui.painter().rect_stroke(sq, Rounding::ZERO, Stroke::new(1.1_f32, palette.text_muted));
-    });
-    close_clicked
-}
-
 pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palette: &ThemePalette) -> ModalAction {
     if !state.open {
         return ModalAction::None;
@@ -676,120 +638,61 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
     let max_h = (screen.height() - 40.0).max(400.0);
 
     let mut is_open = state.open;
-    Window::new("add_server_modal_dialog")
-        .open(&mut is_open)
-        .title_bar(false)
-        .collapsible(false)
-        .resizable(false)
-        .min_width(modal_w)
-        .max_width(modal_w)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .default_height(640.0)
-        .max_height(max_h)
-        .frame(
-            Frame::none()
-                .fill(Color32::from_rgb(17, 19, 27))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
-                .rounding(Rounding::same(16.0))
-                .inner_margin(egui::Margin {
-                    left: 20.0,
-                    right: 20.0,
-                    top: 14.0,
-                    bottom: 16.0,
-                })
-                .shadow(egui::epaint::Shadow {
-                    offset: egui::vec2(0.0, 8.0),
-                    blur: 24.0,
-                    spread: 0.0,
-                    color: Color32::from_black_alpha(200),
-                }),
-        )
-        .show(ctx, |ui| {
-            ui.set_max_width(ui.available_width());
+    Window::new(
+        RichText::new(window_title)
+            .size(15.0)
+            .strong()
+            .color(palette.text_primary),
+    )
+    .open(&mut is_open)
+    .collapsible(false)
+    .resizable(false)
+    .min_width(modal_w)
+    .max_width(modal_w)
+    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+    .default_height(640.0)
+    .max_height(max_h)
+    .show(ctx, |ui| {
+        ui.set_max_width(ui.available_width());
+        ui.add_space(4.0);
 
-            // ── Custom Titlebar (matching screenshot media_1791738768235_27fc755a.png) ──
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(45, 212, 191)));
-                ui.label(
-                    RichText::new("SERVER LAUNCHER")
-                        .size(10.0)
-                        .monospace()
-                        .strong()
-                        .color(Color32::from_rgb(113, 118, 134)),
-                );
-
-                let center_w = (ui.available_width() - 50.0).max(100.0);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(center_w, 18.0),
-                    egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                    |ui| {
-                        ui.label(
-                            RichText::new(window_title)
-                                .size(12.0)
-                                .color(palette.text_secondary),
-                        );
-                    },
-                );
-
-                if render_modal_titlebar_controls(ui, palette) {
-                    state.open = false;
-                }
-            });
-
-            ui.add_space(14.0);
-
-            // ── Modal Header: Title + servers.json badge ──
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
+        // ── Subtitle + servers.json badge ──
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.label(RichText::new("Saved to").size(11.0).color(palette.text_muted));
+            egui::Frame::none()
+                .fill(Color32::from_rgb(22, 25, 35))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
+                .rounding(Rounding::same(3.0))
+                .inner_margin(egui::Margin::symmetric(5.0, 1.0))
+                .show(ui, |ui| {
                     ui.label(
-                        RichText::new(if state.is_edit {
-                            "Edit server"
-                        } else {
-                            "Add a new server"
-                        })
-                        .size(20.0)
-                        .strong()
-                        .color(palette.text_primary),
+                        RichText::new("servers.json")
+                            .size(10.5)
+                            .monospace()
+                            .color(Color32::from_rgb(180, 185, 200)),
                     );
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        ui.label(RichText::new("Saved to").size(11.0).color(palette.text_muted));
-                        egui::Frame::none()
-                            .fill(Color32::from_rgb(22, 25, 35))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
-                            .rounding(Rounding::same(3.0))
-                            .inner_margin(egui::Margin::symmetric(5.0, 1.0))
-                            .show(ui, |ui| {
-                                ui.label(
-                                    RichText::new("servers.json")
-                                        .size(10.5)
-                                        .monospace()
-                                        .color(Color32::from_rgb(180, 185, 200)),
-                                );
-                            });
-                        ui.label(RichText::new("— no code changes needed.").size(11.0).color(palette.text_muted));
+                });
+            ui.label(RichText::new("— no code changes needed.").size(11.0).color(palette.text_muted));
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(14, 15, 22))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 50)))
+                    .rounding(Rounding::same(4.0))
+                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new("servers.json")
+                                .size(10.5)
+                                .monospace()
+                                .color(Color32::from_rgb(110, 118, 138)),
+                        );
                     });
-                });
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    egui::Frame::none()
-                        .fill(Color32::from_rgb(14, 15, 22))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 50)))
-                        .rounding(Rounding::same(4.0))
-                        .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                        .show(ui, |ui| {
-                            ui.label(
-                                RichText::new("servers.json")
-                                    .size(10.5)
-                                    .monospace()
-                                    .color(Color32::from_rgb(110, 118, 138)),
-                            );
-                        });
-                });
             });
+        });
 
-            ui.add_space(12.0);
+        ui.add_space(10.0);
 
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
@@ -1470,103 +1373,53 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
     let max_h = (screen.height() - 40.0).max(420.0);
 
     let mut is_open = state.open;
-    Window::new("add_ssh_host_modal_dialog")
-        .open(&mut is_open)
-        .title_bar(false)
-        .collapsible(false)
-        .resizable(false)
-        .min_width(modal_w)
-        .max_width(modal_w)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .default_height(620.0)
-        .max_height(max_h)
-        .frame(
-            Frame::none()
-                .fill(Color32::from_rgb(17, 19, 27))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
-                .rounding(Rounding::same(16.0))
-                .inner_margin(egui::Margin {
-                    left: 20.0,
-                    right: 20.0,
-                    top: 14.0,
-                    bottom: 16.0,
-                })
-                .shadow(egui::epaint::Shadow {
-                    offset: egui::vec2(0.0, 8.0),
-                    blur: 24.0,
-                    spread: 0.0,
-                    color: Color32::from_black_alpha(200),
-                }),
-        )
-        .show(ctx, |ui| {
-            ui.set_max_width(ui.available_width());
+    Window::new(
+        RichText::new(title)
+            .size(15.0)
+            .strong()
+            .color(palette.text_primary),
+    )
+    .open(&mut is_open)
+    .collapsible(false)
+    .resizable(false)
+    .min_width(modal_w)
+    .max_width(modal_w)
+    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+    .default_height(620.0)
+    .max_height(max_h)
+    .show(ctx, |ui| {
+        ui.set_max_width(ui.available_width());
+        ui.add_space(4.0);
 
-            // ── Custom Titlebar (matching Add Server modal & screenshot media_1791738768250_1c9fb24d.png) ──
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(45, 212, 191)));
-                ui.label(
-                    RichText::new("SERVER LAUNCHER")
-                        .size(10.0)
-                        .monospace()
-                        .strong()
-                        .color(Color32::from_rgb(113, 118, 134)),
-                );
-
-                let center_w = (ui.available_width() - 50.0).max(100.0);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(center_w, 18.0),
-                    egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                    |ui| {
-                        ui.label(
-                            RichText::new(title)
-                                .size(12.0)
-                                .color(palette.text_secondary),
-                        );
-                    },
-                );
-
-                if render_modal_titlebar_controls(ui, palette) {
-                    state.open = false;
-                }
-            });
-
-            ui.add_space(14.0);
-
-            // ── Modal Header: Title + Saved To Subtitle + SSH v2 badge ──
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(title).size(20.0).strong().color(palette.text_primary));
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        ui.label(RichText::new("Saved to").size(11.0).color(palette.text_muted));
-                        egui::Frame::none()
-                            .fill(Color32::from_rgb(22, 25, 35))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
-                            .rounding(Rounding::same(3.0))
-                            .inner_margin(egui::Margin::symmetric(5.0, 1.0))
-                            .show(ui, |ui| {
-                                ui.label(RichText::new("remote_hosts.json").size(10.5).monospace().color(Color32::from_rgb(180, 185, 200)));
-                            });
-                        ui.label(RichText::new("— encrypted vault credentials.").size(11.0).color(palette.text_muted));
-                    });
+        // ── Subtitle row: Saved to remote_hosts.json ──
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.label(RichText::new("Saved to").size(11.0).color(palette.text_muted));
+            egui::Frame::none()
+                .fill(Color32::from_rgb(22, 25, 35))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
+                .rounding(Rounding::same(3.0))
+                .inner_margin(egui::Margin::symmetric(5.0, 1.0))
+                .show(ui, |ui| {
+                    ui.label(RichText::new("remote_hosts.json").size(10.5).monospace().color(Color32::from_rgb(180, 185, 200)));
                 });
+            ui.label(RichText::new("— encrypted vault credentials.").size(11.0).color(palette.text_muted));
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    egui::Frame::none()
-                        .fill(Color32::from_rgb(19, 21, 30))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 52)))
-                        .rounding(Rounding::same(12.0))
-                        .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 4.0;
-                                ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(196, 192, 255)));
-                                ui.label(RichText::new("SSH v2 (OpenSSH)").size(10.5).monospace().color(Color32::from_rgb(180, 185, 200)));
-                            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(19, 21, 30))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 52)))
+                    .rounding(Rounding::same(12.0))
+                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(196, 192, 255)));
+                            ui.label(RichText::new("SSH v2 (OpenSSH)").size(10.5).monospace().color(Color32::from_rgb(180, 185, 200)));
                         });
-                });
+                    });
             });
+        });
 
             ui.add_space(12.0);
 

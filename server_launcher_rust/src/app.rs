@@ -60,6 +60,7 @@ pub enum SidebarTab {
     Scripts,
     Commands,
     SystemMD,
+    Sensors,
 }
 
 impl SidebarTab {
@@ -69,6 +70,7 @@ impl SidebarTab {
             SidebarTab::Scripts => "📜 Scripts",
             SidebarTab::Commands => "⚡ Cmds",
             SidebarTab::SystemMD => "⚙ SystemD",
+            SidebarTab::Sensors => "🌡 Sensors",
         }
     }
 }
@@ -147,6 +149,7 @@ pub struct LauncherApp {
     remote_search_query: HashMap<String, String>,
     // Close confirmation dialog state
     close_confirm_open: bool,
+    close_confirmed: bool,
 
     // Scripts State
     pub script_executions: HashMap<String, ScriptExecution>,
@@ -174,6 +177,15 @@ pub struct LauncherApp {
     pub service_action_msg: Option<String>,
     pub journal_refresh_interval: u32,
     pub last_journal_refresh: Instant,
+
+    // Sensors State
+    pub sensors_collector: crate::sensors::SystemSensorsCollector,
+    pub sensors_snapshot: crate::sensors::SystemSensorsSnapshot,
+    pub sensors_refresh_interval: u32,
+    pub last_sensors_refresh: Instant,
+    pub remote_sensors_snapshots: HashMap<String, crate::sensors::SystemSensorsSnapshot>,
+    pub sensors_search_query: String,
+    pub sensors_category_filter: String,
 }
 
 pub struct ExternalTerminalSession {
@@ -340,6 +352,7 @@ impl LauncherApp {
             proc_info_cache: HashMap::new(),
             remote_search_query: HashMap::new(),
             close_confirm_open: false,
+            close_confirmed: false,
 
             script_executions,
             script_modal: ScriptModalState::default(),
@@ -364,6 +377,14 @@ impl LauncherApp {
             service_action_msg: None,
             journal_refresh_interval: config_file.journal_refresh_interval.unwrap_or(0),
             last_journal_refresh: Instant::now(),
+
+            sensors_collector: crate::sensors::SystemSensorsCollector::new(),
+            sensors_snapshot: crate::sensors::SystemSensorsSnapshot::default(),
+            sensors_refresh_interval: 2,
+            last_sensors_refresh: Instant::now() - Duration::from_secs(10),
+            remote_sensors_snapshots: HashMap::new(),
+            sensors_search_query: String::new(),
+            sensors_category_filter: "All".to_string(),
         }
     }
 
@@ -1415,15 +1436,21 @@ impl LauncherApp {
                 }
             }
 
-            // Split layout: Left panel (width 290px with Tabs on top) + Right panel (Remaining width)
+            // Split layout: Left panel (width 380px with Tabs on top) + Right panel (Remaining width)
+            let total_h = ui.available_height();
             ui.horizontal(|ui| {
-                let left_w = 290.0;
+                ui.set_height(total_h);
+                ui.set_min_height(total_h);
+
+                let left_w = 380.0;
                 let right_w = (ui.available_width() - left_w - 12.0).max(300.0);
 
-                // LEFT PANEL (290px)
-                ui.allocate_ui_with_layout(egui::vec2(left_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                // LEFT PANEL (380px)
+                ui.allocate_ui_with_layout(egui::vec2(left_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_width(left_w);
                     ui.set_max_width(left_w);
+                    ui.set_height(total_h);
+                    ui.set_min_height(total_h);
                     // 1. Navigation Tabs on top of left panel
                     self.render_sidebar_tabs_bar(ui);
                     ui.add_space(6.0);
@@ -1436,20 +1463,24 @@ impl LauncherApp {
                         SidebarTab::Scripts => self.render_scripts_left_panel(ui, Some(&host.id)),
                         SidebarTab::Commands => self.render_commands_left_panel(ui, Some(&host.id)),
                         SidebarTab::SystemMD => self.render_systemd_left_panel(ui, Some(&host.id)),
+                        SidebarTab::Sensors => self.render_sensors_left_panel(ui, Some(&host.id)),
                     }
                 });
 
                 ui.separator();
 
                 // RIGHT PANEL (Remaining width)
-                ui.allocate_ui_with_layout(egui::vec2(right_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_width(right_w);
                     ui.set_max_width(right_w);
+                    ui.set_height(total_h);
+                    ui.set_min_height(total_h);
                     match self.active_sidebar_tab {
                         SidebarTab::Servers => self.render_remote_servers_right_panel(ui, &host),
                         SidebarTab::Scripts => self.render_scripts_right_panel(ui, Some(&host.id)),
                         SidebarTab::Commands => self.render_commands_right_panel(ui, Some(&host.id)),
                         SidebarTab::SystemMD => self.render_systemd_right_panel(ui, Some(&host.id)),
+                        SidebarTab::Sensors => self.render_sensors_right_panel(ui, Some(&host.id)),
                     }
                 });
             });
@@ -1678,9 +1709,12 @@ impl LauncherApp {
             });
             ui.add_space(4.0);
 
-            // Terminal Log Output Box
+            // Integrated Dark Terminal Window (Output + Prompt at bottom, fills full available height)
+            let total_term_h = (ui.available_height() - 4.0).max(200.0);
+            let prompt_bar_h = 36.0;
+            let scroll_h = (total_term_h - prompt_bar_h - 22.0).max(80.0);
+
             let term_logs = self.get_remote_logs(&host.id);
-            let available_height = ui.available_height() - 44.0;
 
             Frame::none()
                 .fill(Color32::from_rgb(10, 12, 17))
@@ -1688,12 +1722,18 @@ impl LauncherApp {
                 .rounding(Rounding::same(6.0))
                 .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                 .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.set_height(total_term_h);
+
+                    // 1. Scrollable Output Log Area
                     ScrollArea::both()
                         .id_salt(format!("remote_term_scroll_{}", host.id))
                         .stick_to_bottom(true)
                         .auto_shrink([false, false])
-                        .max_height(available_height)
+                        .max_height(scroll_h)
                         .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.set_min_height(scroll_h);
                             let logs_guard = term_logs.lock().unwrap();
                             for entry in logs_guard.iter() {
                                 let (col, bg) = match entry.kind {
@@ -1711,53 +1751,55 @@ impl LauncherApp {
                                 ui.add(egui::Label::new(rt).wrap());
                             }
                         });
+
+                    ui.add_space(4.0);
+                    ui.separator();
+                    ui.add_space(4.0);
+
+                    // 2. Command Input Box anchored at bottom of terminal
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!("{}@{}:~$", host.user, host.host))
+                                .font(egui::FontId::monospace(12.0))
+                                .strong()
+                                .color(Color32::from_rgb(0, 210, 160)),
+                        );
+
+                        let (cmd_to_run, execute) = {
+                            let input_text = self.remote_terminal_inputs.entry(host.id.clone()).or_insert_with(String::new);
+                            let text_resp = ui.add(
+                                egui::TextEdit::singleline(input_text)
+                                    .font(egui::FontId::monospace(12.0))
+                                    .desired_width(ui.available_width() - 85.0)
+                                    .hint_text("Type remote command and press Enter (e.g. ls -la, uname -a)..."),
+                            );
+
+                            let btn_run = egui::Button::new(
+                                RichText::new("Execute")
+                                    .size(11.5)
+                                    .strong()
+                                    .color(Color32::WHITE),
+                            )
+                            .fill(Color32::from_rgb(108, 92, 231))
+                            .rounding(Rounding::same(4.0));
+
+                            let run_clicked = ui.add(btn_run).clicked();
+                            let hit_enter = text_resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                            if (run_clicked || hit_enter) && !input_text.trim().is_empty() {
+                                let cmd = input_text.trim().to_string();
+                                input_text.clear();
+                                text_resp.request_focus();
+                                (Some(cmd), true)
+                            } else {
+                                (None, false)
+                            }
+                        };
+
+                        if let (Some(cmd), true) = (cmd_to_run, execute) {
+                            self.run_remote_ssh_command(host, &cmd);
+                        }
+                    });
                 });
-
-            ui.add_space(6.0);
-
-            // Command Input Box
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(format!("{}@{}:~$", host.user, host.host))
-                        .font(egui::FontId::monospace(12.0))
-                        .strong()
-                        .color(Color32::from_rgb(0, 210, 160)),
-                );
-
-                let (cmd_to_run, execute) = {
-                    let input_text = self.remote_terminal_inputs.entry(host.id.clone()).or_insert_with(String::new);
-                    let text_resp = ui.add(
-                        egui::TextEdit::singleline(input_text)
-                            .font(egui::FontId::monospace(12.0))
-                            .desired_width(ui.available_width() - 85.0)
-                            .hint_text("Type remote command and press Enter (e.g. ls -la, uname -a)..."),
-                    );
-
-                    let btn_run = egui::Button::new(
-                        RichText::new("Execute")
-                            .size(11.5)
-                            .strong()
-                            .color(Color32::WHITE),
-                    )
-                    .fill(Color32::from_rgb(108, 92, 231))
-                    .rounding(Rounding::same(4.0));
-
-                    let run_clicked = ui.add(btn_run).clicked();
-                    let hit_enter = text_resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-                    if (run_clicked || hit_enter) && !input_text.trim().is_empty() {
-                        let cmd = input_text.trim().to_string();
-                        input_text.clear();
-                        text_resp.request_focus();
-                        (Some(cmd), true)
-                    } else {
-                        (None, false)
-                    }
-                };
-
-                if let (Some(cmd), true) = (cmd_to_run, execute) {
-                    self.run_remote_ssh_command(host, &cmd);
-                }
-            });
         });
     }
 }
@@ -1845,12 +1887,13 @@ impl eframe::App for LauncherApp {
         });
 
         if ctx.input(|i| i.viewport().close_requested()) {
-            if any_running && !self.close_confirm_open {
+            if self.close_confirmed {
+                // User already approved exit - let egui close
+            } else if any_running && !self.close_confirm_open {
                 // Block close and show dialog
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.close_confirm_open = true;
             }
-            // If no running servers, egui will close normally
         }
 
         if self.close_confirm_open {
@@ -1862,11 +1905,17 @@ impl eframe::App for LauncherApp {
             let choice = render_close_confirmation_modal(ctx, &mut self.close_confirm_open, &running_info, &p);
             match choice {
                 CloseConfirmChoice::StopAndExit => {
+                    self.close_confirmed = true;
+                    self.close_confirm_open = false;
                     self.stop_all();
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    std::process::exit(0);
                 }
                 CloseConfirmChoice::KeepRunningAndExit => {
+                    self.close_confirmed = true;
+                    self.close_confirm_open = false;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    std::process::exit(0);
                 }
                 CloseConfirmChoice::Cancel => {
                     self.close_confirm_open = false;
@@ -2084,7 +2133,7 @@ impl eframe::App for LauncherApp {
         egui::SidePanel::left("machines_nav_bar")
             .resizable(false)
             .exact_width(52.0)
-            .show_separator_line(false)
+            .show_separator_line(true)
             .frame(
                 Frame::none()
                     .fill(p.bg_machines_nav)
@@ -2103,12 +2152,12 @@ impl eframe::App for LauncherApp {
 
         if self.selected_machine == "local" {
             // ═════════════════════════════════════════════════════════════════
-            // LEFT SIDEBAR: Full Window Height (~285px width)
+            // LEFT SIDEBAR: Full Window Height (~380px width)
             // ═════════════════════════════════════════════════════════════════
             egui::SidePanel::left("left_sidebar")
                 .resizable(false)
-                .exact_width(285.0)
-                .show_separator_line(false)
+                .exact_width(380.0)
+                .show_separator_line(true)
                 .frame(
                     Frame::none()
                         .fill(p.bg_sidebar)
@@ -2335,6 +2384,9 @@ impl eframe::App for LauncherApp {
             ctx.request_repaint();
         } else if is_scanning {
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        } else if self.active_sidebar_tab == SidebarTab::Sensors && self.sensors_refresh_interval > 0 {
+            // Repaint dynamically matching sensors interval (minimum 500ms for smooth UI)
+            ctx.request_repaint_after(std::time::Duration::from_millis(500));
         } else if any_running {
             // When servers are running, repaint every 1.5s — stats update rate doesn't need to be faster
             ctx.request_repaint_after(std::time::Duration::from_millis(1500));
@@ -2413,23 +2465,23 @@ impl LauncherApp {
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // TOP NAVIGATION TABS BAR (Servers, Scripts, Commands, SystemMD)
+    // TOP NAVIGATION TABS BAR (Servers, Scripts, Commands, SystemMD, Sensors)
     // ═════════════════════════════════════════════════════════════════════════
     fn render_sidebar_tabs_bar(&mut self, ui: &mut Ui) {
         let p = self.theme.palette();
-        ui.set_width(ui.available_width());
-        ui.set_max_width(ui.available_width());
+        let avail_w = ui.available_width().max(60.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
+            ui.spacing_mut().button_padding = egui::vec2(4.0, 4.0);
             let tabs = [
                 (SidebarTab::Servers, SidebarTab::Servers.label()),
                 (SidebarTab::Scripts, SidebarTab::Scripts.label()),
                 (SidebarTab::Commands, SidebarTab::Commands.label()),
                 (SidebarTab::SystemMD, SidebarTab::SystemMD.label()),
+                (SidebarTab::Sensors, SidebarTab::Sensors.label()),
             ];
 
-            let avail_w = ui.available_width().max(60.0);
-            let btn_w = ((avail_w - 9.0) / 4.0).max(10.0);
+            let btn_w = ((avail_w - 14.0) / 5.0).max(10.0);
 
             for (tab, label) in tabs {
                 let is_active = self.active_sidebar_tab == tab;
@@ -2480,7 +2532,7 @@ impl LauncherApp {
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
             ui.set_max_width(ui.available_width());
-            // 0. Top 4 Navigation Tabs Bar
+            // 0. Top 5 Navigation Tabs Bar
             self.render_sidebar_tabs_bar(ui);
             ui.add_space(6.0);
             ui.separator();
@@ -2491,6 +2543,7 @@ impl LauncherApp {
                 SidebarTab::Scripts => self.render_scripts_left_panel(ui, None),
                 SidebarTab::Commands => self.render_commands_left_panel(ui, None),
                 SidebarTab::SystemMD => self.render_systemd_left_panel(ui, None),
+                SidebarTab::Sensors => self.render_sensors_left_panel(ui, None),
             }
         });
     }
@@ -2501,6 +2554,7 @@ impl LauncherApp {
             SidebarTab::Scripts => self.render_scripts_right_panel(ui, None),
             SidebarTab::Commands => self.render_commands_right_panel(ui, None),
             SidebarTab::SystemMD => self.render_systemd_right_panel(ui, None),
+            SidebarTab::Sensors => self.render_sensors_right_panel(ui, None),
         }
     }
 
@@ -3638,6 +3692,7 @@ impl LauncherApp {
                                 ui.set_width(ui.available_width());
                                 ui.set_max_width(ui.available_width());
                                 ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 6.0;
                                     let status_dot = if is_active {
                                         RichText::new("●").size(12.0).color(Color32::from_rgb(16, 185, 129))
                                     } else if is_failed {
@@ -3647,16 +3702,24 @@ impl LauncherApp {
                                     };
                                     ui.label(status_dot);
 
-                                    let status_w = 65.0;
-                                    let name_w = (ui.available_width() - status_w).max(40.0);
+                                    let status_w = 68.0;
+                                    let name_w = (ui.available_width() - status_w - 6.0).max(40.0);
 
                                     let title = RichText::new(&s.name).size(12.0).strong().color(if is_selected { p.accent_light } else { p.text_primary });
-                                    let name_resp = ui.add_sized(
-                                        [name_w, 16.0],
-                                        egui::Label::new(title)
-                                            .truncate()
-                                            .sense(egui::Sense::click()),
-                                    );
+                                    let name_resp = ui.allocate_ui_with_layout(
+                                        egui::vec2(name_w, 16.0),
+                                        egui::Layout::left_to_right(egui::Align::Center),
+                                        |ui| {
+                                            ui.set_max_width(name_w);
+                                            ui.add(
+                                                egui::Label::new(title)
+                                                    .truncate()
+                                                    .sense(egui::Sense::click()),
+                                            )
+                                            .on_hover_text(&s.name)
+                                        },
+                                    ).inner;
+
                                     if name_resp.clicked() {
                                         selected = Some(s.name.clone());
                                     }
@@ -3675,15 +3738,22 @@ impl LauncherApp {
 
                                 if !s.description.is_empty() {
                                     ui.add_space(2.0);
-                                    let desc_w = (ui.available_width() - 4.0).max(40.0);
-                                    ui.add_sized(
-                                        [desc_w, 14.0],
-                                        egui::Label::new(
-                                            RichText::new(&s.description)
-                                                .size(10.5)
-                                                .color(p.text_muted),
-                                        )
-                                        .truncate(),
+                                    let desc_w = ui.available_width().max(40.0);
+                                    ui.allocate_ui_with_layout(
+                                        egui::vec2(desc_w, 14.0),
+                                        egui::Layout::left_to_right(egui::Align::Center),
+                                        |ui| {
+                                            ui.set_max_width(desc_w);
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(&s.description)
+                                                        .size(10.5)
+                                                        .color(p.text_muted),
+                                                )
+                                                .truncate(),
+                                            )
+                                            .on_hover_text(&s.description);
+                                        },
                                     );
                                 }
                             });
@@ -3966,6 +4036,638 @@ impl LauncherApp {
     }
 
     // ═════════════════════════════════════════════════════════════════════════
+    // SENSORS TAB: Left Sidebar (Quick Overview Cards & Category Filters)
+    // ═════════════════════════════════════════════════════════════════════════
+    fn render_sensors_left_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
+        let p = self.theme.palette();
+        ui.set_width(ui.available_width());
+        ui.set_max_width(ui.available_width());
+
+        // Fetch or refresh sensors snapshot
+        let snap = if let Some(hid) = host_id {
+            self.remote_sensors_snapshots.get(hid).cloned().unwrap_or_default()
+        } else {
+            if self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval.max(1) as u64) {
+                self.sensors_snapshot = self.sensors_collector.collect();
+                self.last_sensors_refresh = Instant::now();
+            }
+            self.sensors_snapshot.clone()
+        };
+
+        ui.vertical(|ui| {
+            ui.set_width(ui.available_width());
+            ui.set_max_width(ui.available_width());
+
+            // Header Row: Title & Manual Refresh
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("HARDWARE SENSORS").size(12.0).strong().color(p.text_muted));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let btn_ref = egui::Button::new(RichText::new("🔄").size(11.0).color(p.text_secondary))
+                        .fill(p.bg_button);
+                    if ui.add(btn_ref).on_hover_text("Refresh all sensors now").clicked() {
+                        if let Some(hid) = host_id {
+                            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                if let Ok(s) = crate::sensors::query_remote_sensors(&host) {
+                                    self.remote_sensors_snapshots.insert(hid.to_string(), s);
+                                }
+                            }
+                        } else {
+                            self.sensors_snapshot = self.sensors_collector.collect();
+                        }
+                        self.last_sensors_refresh = Instant::now();
+                    }
+
+                    // Auto-refresh interval dropdown
+                    let interval_label = match self.sensors_refresh_interval {
+                        0 => "⏱ Off".to_string(),
+                        s => format!("⏱ {}s", s),
+                    };
+                    egui::ComboBox::from_id_salt("sensors_refresh_interval_combo")
+                        .selected_text(RichText::new(interval_label).size(10.0).color(p.text_primary))
+                        .width(72.0)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.sensors_refresh_interval, 0, "Off (Manual)");
+                            ui.selectable_value(&mut self.sensors_refresh_interval, 1, "1 second");
+                            ui.selectable_value(&mut self.sensors_refresh_interval, 2, "2 seconds");
+                            ui.selectable_value(&mut self.sensors_refresh_interval, 3, "3 seconds");
+                            ui.selectable_value(&mut self.sensors_refresh_interval, 5, "5 seconds");
+                        });
+                });
+            });
+
+            ui.add_space(6.0);
+
+            // Search filter
+            ui.add(
+                egui::TextEdit::singleline(&mut self.sensors_search_query)
+                    .hint_text("🔍 Filter sensors & temps...")
+                    .desired_width(ui.available_width()),
+            );
+
+            ui.add_space(8.0);
+
+            // Category Filter Pills
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+                let categories = ["All", "CPU", "RAM", "GPU", "Storage", "Network", "Temps"];
+                for cat in categories {
+                    let is_active = self.sensors_category_filter == cat;
+                    let bg = if is_active { p.accent } else { p.bg_button };
+                    let fg = if is_active { p.accent_text } else { p.text_secondary };
+                    let btn = egui::Button::new(RichText::new(cat).size(10.0).strong().color(fg))
+                        .fill(bg)
+                        .stroke(Stroke::new(1.0_f32, if is_active { p.accent } else { p.border }))
+                        .rounding(Rounding::same(4.0));
+                    if ui.add(btn).clicked() {
+                        self.sensors_category_filter = cat.to_string();
+                    }
+                }
+            });
+
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(8.0);
+
+            // Quick Stats Summary Cards in Sidebar
+            ScrollArea::vertical()
+                .id_salt("sensors_left_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.set_max_width(ui.available_width());
+
+                    // Card 1: CPU Quick Card
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .stroke(Stroke::new(1.0_f32, p.border))
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("🖥 CPU").size(12.0).strong().color(p.text_primary));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if let Some(t) = snap.cpu_temp {
+                                        ui.label(RichText::new(format!("{:.1}°C", t)).size(11.0).strong().color(crate::sensors::temp_color(t)));
+                                    }
+                                });
+                            });
+                            ui.add_space(3.0);
+                            let cpu_val = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
+                            ui.add(egui::ProgressBar::new(cpu_val).text(format!("{:.1}% ({} cores)", snap.cpu_global_usage, snap.cpu_cores_logical)).animate(false));
+                        });
+
+                    ui.add_space(6.0);
+
+                    // Card 2: RAM Quick Card
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .stroke(Stroke::new(1.0_f32, p.border))
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("🧠 Memory").size(12.0).strong().color(p.text_primary));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if let Some(t) = snap.ram_temp {
+                                        ui.label(RichText::new(format!("{:.1}°C", t)).size(11.0).strong().color(crate::sensors::temp_color(t)));
+                                    }
+                                });
+                            });
+                            ui.add_space(3.0);
+                            let mem_val = (snap.mem_usage_pct / 100.0).clamp(0.0, 1.0);
+                            let used_str = crate::sensors::format_bytes(snap.mem_used_bytes);
+                            let total_str = crate::sensors::format_bytes(snap.mem_total_bytes);
+                            ui.add(egui::ProgressBar::new(mem_val).text(format!("{:.1}% ({} / {})", snap.mem_usage_pct, used_str, total_str)).animate(false));
+                        });
+
+                    ui.add_space(6.0);
+
+                    // Card 3: GPU Quick Card (if detected)
+                    if let Some(gpu) = snap.gpus.first() {
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::new(1.0_f32, p.border))
+                            .rounding(Rounding::same(6.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("🎮 GPU").size(12.0).strong().color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if let Some(t) = gpu.temp {
+                                            ui.label(RichText::new(format!("{:.1}°C", t)).size(11.0).strong().color(crate::sensors::temp_color(t)));
+                                        }
+                                    });
+                                });
+                                ui.add_space(3.0);
+                                if let Some(load) = gpu.load_pct {
+                                    let load_val = (load / 100.0).clamp(0.0, 1.0);
+                                    ui.add(egui::ProgressBar::new(load_val).text(format!("{:.1}% Load", load)).animate(false));
+                                } else {
+                                    ui.label(RichText::new(&gpu.name).size(10.5).color(p.text_secondary));
+                                }
+                            });
+
+                        ui.add_space(6.0);
+                    }
+
+                    // Card 4: Network Live Bandwidth Card
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .stroke(Stroke::new(1.0_f32, p.border))
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("🌐 Network").size(12.0).strong().color(p.text_primary));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new(format!("{} ifaces", snap.networks.len())).size(10.5).color(p.text_muted));
+                                });
+                            });
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("↓").size(11.5).strong().color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(crate::sensors::format_rate(snap.total_rx_rate_bps)).size(11.0).monospace().color(p.text_primary));
+                                ui.add_space(8.0);
+                                ui.label(RichText::new("↑").size(11.5).strong().color(Color32::from_rgb(168, 85, 247)));
+                                ui.label(RichText::new(crate::sensors::format_rate(snap.total_tx_rate_bps)).size(11.0).monospace().color(p.text_primary));
+                            });
+                        });
+
+                    ui.add_space(6.0);
+
+                    // Card 5: Sensors Count Card
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .stroke(Stroke::new(1.0_f32, p.border))
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("🌡 Temperature Probes").size(12.0).strong().color(p.text_primary));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new(format!("{}", snap.temp_sensors.len())).size(12.0).strong().color(p.accent));
+                                });
+                            });
+                            ui.add_space(3.0);
+                            let hot_count = snap.temp_sensors.iter().filter(|s| s.temp >= 75.0).count();
+                            let warm_count = snap.temp_sensors.iter().filter(|s| s.temp >= 55.0 && s.temp < 75.0).count();
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(format!("Normal: {}", snap.temp_sensors.len().saturating_sub(hot_count + warm_count))).size(10.5).color(Color32::from_rgb(16, 185, 129)));
+                                if warm_count > 0 {
+                                    ui.label(RichText::new(format!("Warm: {}", warm_count)).size(10.5).color(Color32::from_rgb(245, 158, 11)));
+                                }
+                                if hot_count > 0 {
+                                    ui.label(RichText::new(format!("Hot: {}", hot_count)).size(10.5).strong().color(Color32::from_rgb(239, 68, 68)));
+                                }
+                            });
+                        });
+                });
+        });
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // SENSORS TAB: Right Main Area (Full Sensors & Hardware Monitor Viewer)
+    // ═════════════════════════════════════════════════════════════════════════
+    fn render_sensors_right_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
+        let p = self.theme.palette();
+
+        // Auto-refresh timer logic
+        if let Some(hid) = host_id {
+            if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
+                self.last_sensors_refresh = Instant::now();
+                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                    if let Ok(s) = crate::sensors::query_remote_sensors(&host) {
+                        self.remote_sensors_snapshots.insert(hid.to_string(), s);
+                    }
+                }
+            }
+        } else if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
+            self.sensors_snapshot = self.sensors_collector.collect();
+            self.last_sensors_refresh = Instant::now();
+        }
+
+        let snap = if let Some(hid) = host_id {
+            self.remote_sensors_snapshots.get(hid).cloned().unwrap_or_default()
+        } else {
+            self.sensors_snapshot.clone()
+        };
+
+        let filter_cat = self.sensors_category_filter.clone();
+        let search_q = self.sensors_search_query.trim().to_lowercase();
+
+        let show_cpu = filter_cat == "All" || filter_cat == "CPU";
+        let show_ram = filter_cat == "All" || filter_cat == "RAM";
+        let show_gpu = filter_cat == "All" || filter_cat == "GPU";
+        let show_storage = filter_cat == "All" || filter_cat == "Storage";
+        let show_net = filter_cat == "All" || filter_cat == "Network";
+        let show_temps = filter_cat == "All" || filter_cat == "Temps";
+
+        ui.vertical(|ui| {
+            // ═════════════════════════════════════════════════════════════════
+            // Header Card: System Overview Bar
+            // ═════════════════════════════════════════════════════════════════
+            Frame::none()
+                .fill(p.bg_card)
+                .stroke(Stroke::new(1.0_f32, p.border))
+                .rounding(Rounding::same(6.0))
+                .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("🌡").size(22.0));
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                let title = if let Some(hid) = host_id {
+                                    format!("Hardware Sensors Monitor — Remote Host ({})", hid)
+                                } else {
+                                    "Hardware Sensors & System Resource Monitor".to_string()
+                                };
+                                ui.label(RichText::new(title).size(15.0).strong().color(p.text_primary));
+                                if self.sensors_refresh_interval > 0 {
+                                    ui.label(RichText::new(format!("● Live ({}s refresh)", self.sensors_refresh_interval)).size(11.0).color(Color32::from_rgb(16, 185, 129)));
+                                } else {
+                                    ui.label(RichText::new("○ Manual refresh").size(11.0).color(p.text_muted));
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(&snap.cpu_brand).size(11.0).strong().color(p.text_secondary));
+                                ui.label(RichText::new("•").size(11.0).color(p.text_muted));
+                                ui.label(RichText::new(format!("{} Physical / {} Logical Cores", snap.cpu_cores_physical, snap.cpu_cores_logical)).size(11.0).color(p.text_muted));
+                                if snap.cpu_frequency_mhz > 0 {
+                                    ui.label(RichText::new("•").size(11.0).color(p.text_muted));
+                                    ui.label(RichText::new(format!("{} MHz", snap.cpu_frequency_mhz)).size(11.0).monospace().color(p.info));
+                                }
+                                ui.label(RichText::new("•").size(11.0).color(p.text_muted));
+                                ui.label(RichText::new(format!("{} Total RAM", crate::sensors::format_bytes(snap.mem_total_bytes))).size(11.0).color(p.success));
+                            });
+                        });
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let btn_ref = egui::Button::new(RichText::new("🔄 Refresh Now").size(11.5).strong().color(Color32::WHITE))
+                                .fill(p.accent)
+                                .rounding(Rounding::same(4.0));
+                            if ui.add(btn_ref).clicked() {
+                                if let Some(hid) = host_id {
+                                    if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                        if let Ok(s) = crate::sensors::query_remote_sensors(&host) {
+                                            self.remote_sensors_snapshots.insert(hid.to_string(), s);
+                                        }
+                                    }
+                                } else {
+                                    self.sensors_snapshot = self.sensors_collector.collect();
+                                }
+                                self.last_sensors_refresh = Instant::now();
+                            }
+                        });
+                    });
+                });
+
+            ui.add_space(8.0);
+
+            // ═════════════════════════════════════════════════════════════════
+            // Main Scrollable Area for Sensors Sections
+            // ═════════════════════════════════════════════════════════════════
+            ScrollArea::vertical()
+                .id_salt("sensors_main_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+
+                    // SECTION 1: CPU MONITOR & PER-CORE BREAKDOWN
+                    if show_cpu {
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::new(1.0_f32, p.border))
+                            .rounding(Rounding::same(6.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("🖥 Central Processing Unit (CPU)").size(13.5).strong().color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if let Some(t) = snap.cpu_temp {
+                                            ui.label(RichText::new(format!("Package: {:.1}°C", t)).size(12.0).strong().color(crate::sensors::temp_color(t)));
+                                        }
+                                    });
+                                });
+
+                                ui.add_space(6.0);
+                                let global_pct = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
+                                ui.add(egui::ProgressBar::new(global_pct).text(format!("Global Usage: {:.1}%", snap.cpu_global_usage)).animate(false));
+
+                                // Per-core usages grid
+                                if !snap.cpu_core_usages.is_empty() {
+                                    ui.add_space(8.0);
+                                    ui.label(RichText::new("Per-Core Utilization:").size(11.0).color(p.text_muted));
+                                    ui.add_space(4.0);
+
+                                    let cols = 4.min(snap.cpu_core_usages.len().max(1));
+                                    egui::Grid::new("cpu_cores_grid")
+                                        .num_columns(cols)
+                                        .spacing(egui::vec2(12.0, 6.0))
+                                        .show(ui, |ui| {
+                                            for (i, &usage) in snap.cpu_core_usages.iter().enumerate() {
+                                                let core_val = (usage / 100.0).clamp(0.0, 1.0);
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new(format!("C{}:", i)).size(10.5).color(p.text_muted));
+                                                    ui.add(egui::ProgressBar::new(core_val).desired_width(120.0).text(format!("{:.0}%", usage)).animate(false));
+                                                });
+                                                if (i + 1) % cols == 0 {
+                                                    ui.end_row();
+                                                }
+                                            }
+                                        });
+                                }
+                            });
+
+                        ui.add_space(8.0);
+                    }
+
+                    // SECTION 2: RAM & SWAP MEMORY
+                    if show_ram {
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::new(1.0_f32, p.border))
+                            .rounding(Rounding::same(6.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("🧠 System Memory (RAM) & Swap").size(13.5).strong().color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if let Some(t) = snap.ram_temp {
+                                            ui.label(RichText::new(format!("SODIMM: {:.1}°C", t)).size(12.0).strong().color(crate::sensors::temp_color(t)));
+                                        }
+                                    });
+                                });
+
+                                ui.add_space(6.0);
+                                let mem_pct = (snap.mem_usage_pct / 100.0).clamp(0.0, 1.0);
+                                let used_str = crate::sensors::format_bytes(snap.mem_used_bytes);
+                                let free_str = crate::sensors::format_bytes(snap.mem_free_bytes);
+                                let total_str = crate::sensors::format_bytes(snap.mem_total_bytes);
+                                ui.add(egui::ProgressBar::new(mem_pct).text(format!("RAM: {:.1}% (Used: {} / Total: {}, Free: {})", snap.mem_usage_pct, used_str, total_str, free_str)).animate(false));
+
+                                if snap.swap_total_bytes > 0 {
+                                    ui.add_space(6.0);
+                                    let swap_pct = (snap.swap_usage_pct / 100.0).clamp(0.0, 1.0);
+                                    let swap_used = crate::sensors::format_bytes(snap.swap_used_bytes);
+                                    let swap_total = crate::sensors::format_bytes(snap.swap_total_bytes);
+                                    ui.add(egui::ProgressBar::new(swap_pct).text(format!("Swap: {:.1}% ({} / {})", snap.swap_usage_pct, swap_used, swap_total)).animate(false));
+                                }
+                            });
+
+                        ui.add_space(8.0);
+                    }
+
+                    // SECTION 3: GPU MONITOR
+                    if show_gpu && !snap.gpus.is_empty() {
+                        for (idx, gpu) in snap.gpus.iter().enumerate() {
+                            Frame::none()
+                                .fill(p.bg_card)
+                                .stroke(Stroke::new(1.0_f32, p.border))
+                                .rounding(Rounding::same(6.0))
+                                .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(format!("🎮 GPU #{}: {}", idx, gpu.name)).size(13.5).strong().color(p.text_primary));
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            if let Some(t) = gpu.temp {
+                                                ui.label(RichText::new(format!("Temp: {:.1}°C", t)).size(12.0).strong().color(crate::sensors::temp_color(t)));
+                                            }
+                                        });
+                                    });
+
+                                    ui.add_space(4.0);
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(format!("Driver: {}", gpu.driver)).size(10.5).color(p.text_muted));
+                                        if let (Some(used), Some(total)) = (gpu.mem_used_mb, gpu.mem_total_mb) {
+                                            ui.label(RichText::new("•").size(10.5).color(p.text_muted));
+                                            ui.label(RichText::new(format!("VRAM: {} MB / {} MB", used, total)).size(10.5).color(p.info));
+                                        }
+                                    });
+
+                                    if let Some(load) = gpu.load_pct {
+                                        ui.add_space(6.0);
+                                        let load_pct = (load / 100.0).clamp(0.0, 1.0);
+                                        ui.add(egui::ProgressBar::new(load_pct).text(format!("GPU Core Load: {:.1}%", load)).animate(false));
+                                    }
+                                });
+
+                            ui.add_space(8.0);
+                        }
+                    }
+
+                    // SECTION 4: STORAGE / DISKS
+                    if show_storage && !snap.disks.is_empty() {
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::new(1.0_f32, p.border))
+                            .rounding(Rounding::same(6.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("💾 Storage & Mounted Disks").size(13.5).strong().color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if let Some(t) = snap.storage_temp {
+                                            ui.label(RichText::new(format!("NVMe/Drive: {:.1}°C", t)).size(12.0).strong().color(crate::sensors::temp_color(t)));
+                                        }
+                                    });
+                                });
+
+                                ui.add_space(6.0);
+                                for d in &snap.disks {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(&d.mount_point).size(12.0).strong().color(p.text_primary));
+                                        ui.label(RichText::new(format!("({})", d.name)).size(10.5).color(p.text_muted));
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            let used_s = crate::sensors::format_bytes(d.used_bytes);
+                                            let total_s = crate::sensors::format_bytes(d.total_bytes);
+                                            ui.label(RichText::new(format!("{} / {} ({:.1}%)", used_s, total_s, d.usage_pct)).size(11.0).monospace().color(p.text_secondary));
+                                        });
+                                    });
+
+                                    let disk_pct = (d.usage_pct / 100.0).clamp(0.0, 1.0);
+                                    ui.add(egui::ProgressBar::new(disk_pct).text(format!("{:.1}% used", d.usage_pct)).animate(false));
+                                    ui.add_space(4.0);
+                                }
+                            });
+
+                        ui.add_space(8.0);
+                    }
+
+                    // SECTION 5: NETWORK TRAFFIC & INTERFACES
+                    if show_net && !snap.networks.is_empty() {
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::new(1.0_f32, p.border))
+                            .rounding(Rounding::same(6.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("🌐 Network Interfaces & Real-Time Bandwidth").size(13.5).strong().color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("Total ↓").size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new(crate::sensors::format_rate(snap.total_rx_rate_bps)).size(11.0).monospace().color(p.text_primary));
+                                            ui.add_space(6.0);
+                                            ui.label(RichText::new("↑").size(11.0).color(Color32::from_rgb(168, 85, 247)));
+                                            ui.label(RichText::new(crate::sensors::format_rate(snap.total_tx_rate_bps)).size(11.0).monospace().color(p.text_primary));
+                                        });
+                                    });
+                                });
+
+                                ui.add_space(6.0);
+                                egui::Grid::new("network_interfaces_grid")
+                                    .num_columns(5)
+                                    .striped(true)
+                                    .spacing(egui::vec2(16.0, 6.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new("Interface").size(11.0).strong().color(p.text_muted));
+                                        ui.label(RichText::new("Download Rate").size(11.0).strong().color(Color32::from_rgb(56, 189, 248)));
+                                        ui.label(RichText::new("Upload Rate").size(11.0).strong().color(Color32::from_rgb(168, 85, 247)));
+                                        ui.label(RichText::new("Total Received").size(11.0).strong().color(p.text_muted));
+                                        ui.label(RichText::new("Total Sent").size(11.0).strong().color(p.text_muted));
+                                        ui.end_row();
+
+                                        for net in &snap.networks {
+                                            ui.label(RichText::new(&net.name).size(11.5).strong().color(p.text_primary));
+                                            ui.label(RichText::new(crate::sensors::format_rate(net.rx_rate_bps)).size(11.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new(crate::sensors::format_rate(net.tx_rate_bps)).size(11.0).monospace().color(Color32::from_rgb(168, 85, 247)));
+                                            ui.label(RichText::new(crate::sensors::format_bytes(net.rx_bytes)).size(10.5).monospace().color(p.text_secondary));
+                                            ui.label(RichText::new(crate::sensors::format_bytes(net.tx_bytes)).size(10.5).monospace().color(p.text_secondary));
+                                            ui.end_row();
+                                        }
+                                    });
+                            });
+
+                        ui.add_space(8.0);
+                    }
+
+                    // SECTION 6: COMPLETE HARDWARE TEMPERATURE SENSORS TABLE
+                    if show_temps {
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::new(1.0_f32, p.border))
+                            .rounding(Rounding::same(6.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(format!("🌡 All Hardware Temperature Probes ({})", snap.temp_sensors.len())).size(13.5).strong().color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(RichText::new("Status badge: ● <55°C Normal | ● 55-75°C Warm | ● >75°C High").size(10.5).color(p.text_muted));
+                                    });
+                                });
+
+                                ui.add_space(6.0);
+
+                                let filtered_sensors: Vec<&crate::sensors::TempSensor> = snap.temp_sensors.iter().filter(|s| {
+                                    if search_q.is_empty() {
+                                        true
+                                    } else {
+                                        s.name.to_lowercase().contains(&search_q)
+                                            || s.chip.to_lowercase().contains(&search_q)
+                                            || s.category.label().to_lowercase().contains(&search_q)
+                                    }
+                                }).collect();
+
+                                if filtered_sensors.is_empty() {
+                                    ui.add_space(10.0);
+                                    ui.vertical_centered(|ui| {
+                                        ui.label(RichText::new("No temperature sensors matching the filter.").size(11.5).color(p.text_muted));
+                                    });
+                                } else {
+                                    egui::Grid::new("all_temp_sensors_grid")
+                                        .num_columns(5)
+                                        .striped(true)
+                                        .spacing(egui::vec2(20.0, 7.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new("Component / Label").size(11.0).strong().color(p.text_muted));
+                                            ui.label(RichText::new("Category").size(11.0).strong().color(p.text_muted));
+                                            ui.label(RichText::new("Chip Driver").size(11.0).strong().color(p.text_muted));
+                                            ui.label(RichText::new("Current Temp").size(11.0).strong().color(p.text_muted));
+                                            ui.label(RichText::new("Thresholds (Max / Crit)").size(11.0).strong().color(p.text_muted));
+                                            ui.end_row();
+
+                                            for s in filtered_sensors {
+                                                // Component & emoji
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new(s.category.emoji()).size(13.0));
+                                                    ui.label(RichText::new(&s.name).size(12.0).strong().color(p.text_primary));
+                                                });
+
+                                                // Category Pill
+                                                ui.label(RichText::new(s.category.label()).size(10.5).color(p.text_secondary));
+
+                                                // Chip Driver
+                                                ui.label(RichText::new(&s.chip).size(10.5).monospace().color(p.text_muted));
+
+                                                // Current Temperature with color badge
+                                                let t_color = crate::sensors::temp_color(s.temp);
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new("●").size(12.0).color(t_color));
+                                                    ui.label(RichText::new(format!("{:.1}°C", s.temp)).size(12.0).strong().color(t_color));
+                                                });
+
+                                                // Thresholds
+                                                let thresh_str = match (s.max, s.crit) {
+                                                    (Some(m), Some(c)) => format!("Max: {:.0}°C / Crit: {:.0}°C", m, c),
+                                                    (Some(m), None) => format!("Max: {:.0}°C", m),
+                                                    (None, Some(c)) => format!("Crit: {:.0}°C", c),
+                                                    (None, None) => "—".to_string(),
+                                                };
+                                                ui.label(RichText::new(thresh_str).size(10.5).color(p.text_muted));
+
+                                                ui.end_row();
+                                            }
+                                        });
+                                }
+                            });
+
+                        ui.add_space(8.0);
+                    }
+                });
+        });
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
     // LEFT SIDEBAR: Group Filter + Server Cards (Expands full height)
     // ═════════════════════════════════════════════════════════════════════════
     fn render_servers_left_panel(&mut self, ui: &mut Ui) {
@@ -4052,6 +4754,25 @@ impl LauncherApp {
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
+                                    let header_text = format!("🏷  {} ({})", group_name.to_uppercase(), indices.len());
+                                    let title_w = (ui.available_width() - 145.0).max(40.0);
+                                    ui.allocate_ui_with_layout(
+                                        egui::vec2(title_w, 20.0),
+                                        egui::Layout::left_to_right(egui::Align::Center),
+                                        |ui| {
+                                            ui.set_max_width(title_w);
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(header_text)
+                                                        .size(11.5)
+                                                        .strong()
+                                                        .color(p.accent_light),
+                                                )
+                                                .truncate(),
+                                            );
+                                        },
+                                    );
+
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         let btn_stop_grp = egui::Button::new(
                                             RichText::new("⏹ Stop").size(10.5).color(Color32::WHITE),
@@ -4070,19 +4791,6 @@ impl LauncherApp {
                                         if ui.add(btn_start_grp).on_hover_text("Start all servers in this group").clicked() {
                                             start_grp = Some(group_name.clone());
                                         }
-
-                                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                            let header_text = format!("🏷  {} ({})", group_name.to_uppercase(), indices.len());
-                                             ui.add(
-                                                egui::Label::new(
-                                                    RichText::new(header_text)
-                                                        .size(11.5)
-                                                        .strong()
-                                                        .color(p.accent_light),
-                                                )
-                                                .truncate(),
-                                            );
-                                        });
                                     });
                                 });
                             });
@@ -4116,6 +4824,7 @@ impl LauncherApp {
                                     };
 
                                     ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 6.0;
                                         let dot_color = if is_running {
                                             p.success
                                         } else {
@@ -4123,20 +4832,28 @@ impl LauncherApp {
                                         };
                                         draw_status_dot(ui, dot_color);
 
-                                        let status_w = 72.0;
-                                        let name_w = (ui.available_width() - status_w).max(60.0);
+                                        let status_w = 75.0;
+                                        let name_w = (ui.available_width() - status_w - 6.0).max(40.0);
 
-                                        let name_resp = ui.add_sized(
-                                            [name_w, 18.0],
-                                            egui::Label::new(
-                                                RichText::new(&s.config.name)
-                                                    .strong()
-                                                    .size(13.5)
-                                                    .color(if is_selected_tab { p.accent } else { p.text_primary }),
-                                            )
-                                            .truncate()
-                                            .sense(egui::Sense::click()),
-                                        );
+                                        let name_resp = ui.allocate_ui_with_layout(
+                                            egui::vec2(name_w, 18.0),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.set_max_width(name_w);
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        RichText::new(&s.config.name)
+                                                            .strong()
+                                                            .size(13.0)
+                                                            .color(if is_selected_tab { p.accent } else { p.text_primary }),
+                                                    )
+                                                    .truncate()
+                                                    .sense(egui::Sense::click()),
+                                                )
+                                                .on_hover_text(&s.config.name)
+                                            },
+                                        ).inner;
+
                                         if name_resp.clicked() {
                                             to_switch_tab = Some(key.clone());
                                         }

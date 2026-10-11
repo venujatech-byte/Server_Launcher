@@ -7,6 +7,7 @@ mod service;
 pub mod autostart;
 pub mod commands;
 pub mod scripts;
+pub mod sensors;
 pub mod systemd;
 pub mod theme;
 

@@ -101,28 +101,68 @@ pub fn list_remote_services(host: &SshRemoteHost, user_mode: bool) -> Result<Vec
 }
 
 pub fn control_local_service(unit: &str, action: &str, user_mode: bool) -> Result<String, String> {
-    let mut cmd = Command::new("systemctl");
     if user_mode {
-        cmd.arg("--user");
-    }
-    cmd.arg(action).arg(unit);
+        let mut cmd = Command::new("systemctl");
+        cmd.arg("--user").arg(action).arg(unit);
+        match cmd.output() {
+            Ok(out) => {
+                if out.status.success() {
+                    Ok(format!("Successfully ran {} on {}", action, unit))
+                } else {
+                    let err = String::from_utf8_lossy(&out.stderr);
+                    Err(err.trim().to_string())
+                }
+            }
+            Err(e) => Err(format!("Failed to execute systemctl {}: {}", action, e)),
+        }
+    } else {
+        // System-level services require root privileges.
+        // Try pkexec (GUI/polkit prompt) first if on graphical Linux desktop, or systemctl fallback
+        let out = Command::new("pkexec")
+            .arg("systemctl")
+            .arg(action)
+            .arg(unit)
+            .output();
 
-    match cmd.output() {
-        Ok(out) => {
-            if out.status.success() {
-                Ok(format!("Successfully ran {} on {}", action, unit))
-            } else {
-                let err = String::from_utf8_lossy(&out.stderr);
-                Err(err.trim().to_string())
+        match out {
+            Ok(o) if o.status.success() => Ok(format!("Successfully ran {} on {}", action, unit)),
+            _ => {
+                let mut cmd = Command::new("systemctl");
+                cmd.arg(action).arg(unit);
+                match cmd.output() {
+                    Ok(o) if o.status.success() => Ok(format!("Successfully ran {} on {}", action, unit)),
+                    Ok(o) => {
+                        let err = String::from_utf8_lossy(&o.stderr);
+                        let msg = err.trim().to_string();
+                        if msg.contains("Interactive authentication required") {
+                            Err(format!("{}. System-level units require root (sudo). Run via root terminal or configure polkit/sudoers.", msg))
+                        } else {
+                            Err(msg)
+                        }
+                    }
+                    Err(e) => Err(format!("Failed to execute systemctl {}: {}", action, e)),
+                }
             }
         }
-        Err(e) => Err(format!("Failed to execute systemctl {}: {}", action, e)),
     }
 }
 
 pub fn control_remote_service(host: &SshRemoteHost, unit: &str, action: &str, user_mode: bool) -> Result<String, String> {
-    let flag = if user_mode { "--user" } else { "" };
-    let cmd_str = format!("systemctl {} {} {}", flag, action, unit);
+    let cmd_str = if user_mode {
+        format!("systemctl --user {} {}", action, unit)
+    } else {
+        // For system services:
+        // If password is provided, try echo password | sudo -S systemctl
+        // Otherwise try sudo -n systemctl, then systemctl directly
+        let pass = host.password.trim();
+        if !pass.is_empty() {
+            format!("echo {} | sudo -S systemctl {} {} 2>/dev/null || sudo -n systemctl {} {} 2>/dev/null || systemctl {} {}",
+                pass, action, unit, action, unit, action, unit)
+        } else {
+            format!("sudo -n systemctl {} {} 2>/dev/null || systemctl {} {}",
+                action, unit, action, unit)
+        }
+    };
     let mut cmd = build_ssh_command(host, &cmd_str);
 
     match cmd.output() {
@@ -131,7 +171,17 @@ pub fn control_remote_service(host: &SshRemoteHost, unit: &str, action: &str, us
                 Ok(format!("Remote {} on {} succeeded", action, unit))
             } else {
                 let err = String::from_utf8_lossy(&out.stderr);
-                Err(err.trim().to_string())
+                let err_trimmed = err.trim().to_string();
+                let final_err = if err_trimmed.is_empty() {
+                    String::from_utf8_lossy(&out.stdout).trim().to_string()
+                } else {
+                    err_trimmed
+                };
+                if final_err.contains("Interactive authentication required") {
+                    Err(format!("{}. Tip: System-level services on remote machines require root. Configure passwordless sudo for '{}' on the remote host (e.g. '{} ALL=(ALL) NOPASSWD: /bin/systemctl') or set the SSH password in Edit Host.", final_err, host.user, host.user))
+                } else {
+                    Err(final_err)
+                }
             }
         }
         Err(e) => Err(format!("SSH control error: {}", e)),

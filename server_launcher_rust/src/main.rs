@@ -74,7 +74,8 @@ fn main() -> eframe::Result<()> {
         .with_app_id("server_launcher")
         .with_title("Server Launcher (Rust)")
         .with_inner_size([1200.0, 780.0])
-        .with_min_inner_size([800.0, 500.0]);
+        .with_min_inner_size([800.0, 500.0])
+        .with_transparent(false);
 
     if let Some(icon) = load_app_icon() {
         viewport = viewport.with_icon(icon);

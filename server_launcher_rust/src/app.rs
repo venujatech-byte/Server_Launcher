@@ -2068,6 +2068,7 @@ impl eframe::App for LauncherApp {
         egui::SidePanel::left("machines_nav_bar")
             .resizable(false)
             .exact_width(52.0)
+            .show_separator_line(false)
             .frame(
                 Frame::none()
                     .fill(p.bg_machines_nav)
@@ -2079,16 +2080,19 @@ impl eframe::App for LauncherApp {
                     }),
             )
             .show(ctx, |ui| {
+                ui.set_width(ui.available_width());
+                ui.set_min_width(ui.available_width());
                 self.render_machines_nav_bar(ui);
             });
 
         if self.selected_machine == "local" {
             // ═════════════════════════════════════════════════════════════════
-            // LEFT SIDEBAR: Full Window Height (~300px width)
+            // LEFT SIDEBAR: Full Window Height (~285px width)
             // ═════════════════════════════════════════════════════════════════
             egui::SidePanel::left("left_sidebar")
                 .resizable(false)
-                .exact_width(290.0)
+                .exact_width(285.0)
+                .show_separator_line(false)
                 .frame(
                     Frame::none()
                         .fill(p.bg_sidebar)
@@ -2100,6 +2104,8 @@ impl eframe::App for LauncherApp {
                         }),
                 )
                 .show(ctx, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.set_min_width(ui.available_width());
                     self.render_left_panel(ui);
                 });
 
@@ -2394,6 +2400,7 @@ impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     fn render_sidebar_tabs_bar(&mut self, ui: &mut Ui) {
         let p = self.theme.palette();
+        ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
             let tabs = [
@@ -2443,7 +2450,9 @@ impl LauncherApp {
     }
 
     fn render_left_panel(&mut self, ui: &mut Ui) {
+        ui.set_width(ui.available_width());
         ui.vertical(|ui| {
+            ui.set_width(ui.available_width());
             // 0. Top 4 Navigation Tabs Bar
             self.render_sidebar_tabs_bar(ui);
             ui.add_space(8.0);
@@ -2471,7 +2480,9 @@ impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     fn render_scripts_left_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
         let p = self.theme.palette();
+        ui.set_width(ui.available_width());
         ui.vertical(|ui| {
+            ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.label(RichText::new("CUSTOM SCRIPTS").size(12.0).strong().color(p.text_muted));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2522,6 +2533,7 @@ impl LauncherApp {
                 .id_salt("scripts_left_scroll")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
                     let mut to_run = None;
                     let mut to_stop = None;
                     let mut to_edit = None;
@@ -2548,6 +2560,7 @@ impl LauncherApp {
                             .rounding(Rounding::same(6.0))
                             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                             .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     let status_text = if is_running {
                                         RichText::new("●").size(12.0).color(Color32::from_rgb(16, 185, 129))
@@ -2870,7 +2883,9 @@ impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     fn render_commands_left_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
         let p = self.theme.palette();
+        ui.set_width(ui.available_width());
         ui.vertical(|ui| {
+            ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.label(RichText::new("SAVED COMMANDS").size(12.0).strong().color(p.text_muted));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2952,6 +2967,7 @@ impl LauncherApp {
                 .id_salt("saved_commands_scroll")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
                     let mut to_run_cmd = None;
                     let mut to_edit = None;
                     let mut to_delete = None;
@@ -2963,6 +2979,7 @@ impl LauncherApp {
                             .rounding(Rounding::same(6.0))
                             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                             .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new(&c.name).size(12.5).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -3268,7 +3285,9 @@ impl LauncherApp {
             self.local_services_user
         };
 
+        ui.set_width(ui.available_width());
         ui.vertical(|ui| {
+            ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.label(RichText::new("SYSTEMD SERVICES").size(12.0).strong().color(p.text_muted));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -3410,6 +3429,7 @@ impl LauncherApp {
                 .id_salt("systemd_services_scroll")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
                     let mut selected = None;
 
                     for s in &filtered_services {
@@ -3429,6 +3449,7 @@ impl LauncherApp {
                             .rounding(Rounding::same(6.0))
                             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                             .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     let status_dot = if is_active {
                                         RichText::new("●").size(12.0).color(Color32::from_rgb(16, 185, 129))
@@ -3708,7 +3729,9 @@ impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     fn render_servers_left_panel(&mut self, ui: &mut Ui) {
         let p = self.theme.palette();
+        ui.set_width(ui.available_width());
         ui.vertical(|ui| {
+            ui.set_width(ui.available_width());
             // 1. Group Filter Pills Bar
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("Group:").size(11.5).color(p.text_muted));
@@ -3751,6 +3774,7 @@ impl LauncherApp {
                 .id_salt("left_cards_scroll")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
                     let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
                     for (idx, s) in self.services.iter().enumerate() {
                         if self.active_group_filter == "All" || self.active_group_filter == s.config.group {

@@ -7457,72 +7457,157 @@ impl LauncherApp {
     fn render_servers_right_panel(&mut self, ui: &mut Ui) {
         let p = self.theme.palette();
         ui.vertical(|ui| {
-            // Notebook Tabs Strip (matching screenshot)
-            ui.horizontal(|ui| {
-                // Tab 0: Server Overview
-                let is_ov_active = self.active_tab == "overview";
-                let ov_bg = if is_ov_active {
-                    p.bg_card
-                } else {
-                    p.bg_sidebar
-                };
+            // Notebook Tabs Strip (Material 3 Dark Cockpit)
+            let online_count = self.services.iter().filter(|s| s.state == ServiceState::Running).count();
+            let total_count = self.services.len();
 
-                let ov_btn = egui::Button::new(
-                    RichText::new("  Server Overview  ")
-                        .size(12.0)
-                        .strong()
-                        .color(if is_ov_active { p.text_primary } else { p.text_secondary }),
-                )
-                .fill(ov_bg)
-                .stroke(Stroke::NONE)
-                .rounding(Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 });
+            let mut to_switch_tab: Option<String> = None;
 
-                if ui.add(ov_btn).clicked() {
-                    self.active_tab = "overview".to_string();
-                }
+            ScrollArea::horizontal()
+                .id_salt("notebook_tabs_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
+                    ui.horizontal(|ui| {
+                        // Tab 0: Server Overview
+                        let is_ov_active = self.active_tab == "overview";
+                        let ov_bg = if is_ov_active {
+                            p.bg_card
+                        } else {
+                            p.bg_sidebar.gamma_multiply(0.65)
+                        };
+                        let ov_stroke = if is_ov_active {
+                            Stroke::new(1.5_f32, p.accent)
+                        } else {
+                            Stroke::new(1.0_f32, p.border.gamma_multiply(0.4))
+                        };
 
-                // Server tabs
-                for s in &self.services {
-                    let is_active = self.active_tab == s.config.key;
-                    let bg = if is_active {
-                        p.terminal_bg
-                    } else {
-                        p.bg_sidebar
-                    };
+                        let ov_frame = Frame::none()
+                            .fill(ov_bg)
+                            .stroke(ov_stroke)
+                            .rounding(Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 })
+                            .inner_margin(egui::Margin::symmetric(10.0, 6.0));
 
-                    let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
-                    let tab_title = if is_running && s.config.port > 0 {
-                        format!("  {} (: {})  ", s.config.name, s.config.port)
-                    } else {
-                        format!("  {}  ", s.config.name)
-                    };
+                        let ov_resp = ov_frame.show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+                                ui.label(
+                                    RichText::new("📊 Server Overview")
+                                        .size(12.0)
+                                        .strong()
+                                        .color(if is_ov_active { p.text_primary } else { p.text_secondary }),
+                                );
 
-                    let tab_btn = egui::Button::new(
-                        RichText::new(tab_title)
-                            .size(12.0)
-                            .color(if is_active { p.text_primary } else { p.text_secondary }),
-                    )
-                    .fill(bg)
-                    .stroke(Stroke::NONE)
-                    .rounding(Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 });
+                                // Chip: online count
+                                let chip_bg = if is_ov_active {
+                                    p.accent.gamma_multiply(0.2)
+                                } else {
+                                    p.bg_card.gamma_multiply(0.5)
+                                };
+                                let chip_color = if online_count > 0 {
+                                    Color32::from_rgb(52, 211, 153)
+                                } else {
+                                    p.text_muted
+                                };
+                                Frame::none()
+                                    .fill(chip_bg)
+                                    .rounding(Rounding::same(999.0))
+                                    .inner_margin(egui::Margin::symmetric(6.0, 1.5))
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            RichText::new(format!("{}/{}", online_count, total_count))
+                                                .size(10.0)
+                                                .monospace()
+                                                .color(chip_color),
+                                        );
+                                    });
+                            });
+                        }).response;
 
-                    if ui.add(tab_btn).clicked() {
-                        self.active_tab = s.config.key.clone();
-                    }
-                }
-            });
+                        let ov_interact = ui.interact(ov_resp.rect, ui.id().with("tab_overview"), egui::Sense::click());
+                        if ov_interact.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                        if ov_interact.clicked() {
+                            to_switch_tab = Some("overview".to_string());
+                        }
+
+                        // Server tabs
+                        for s in &self.services {
+                            let is_active = self.active_tab == s.config.key;
+                            let (dot_char, dot_color) = match s.state {
+                                ServiceState::Running => ("●", Color32::from_rgb(52, 211, 153)),
+                                ServiceState::Starting => ("●", Color32::from_rgb(251, 191, 36)),
+                                ServiceState::Stopping => ("●", Color32::from_rgb(249, 115, 22)),
+                                ServiceState::Errored => ("●", Color32::from_rgb(239, 68, 68)),
+                                ServiceState::Stopped => ("○", Color32::from_rgb(148, 163, 184)),
+                            };
+
+                            let bg = if is_active {
+                                p.bg_card
+                            } else {
+                                p.bg_sidebar.gamma_multiply(0.65)
+                            };
+                            let stroke = if is_active {
+                                Stroke::new(1.5_f32, p.accent)
+                            } else {
+                                Stroke::new(1.0_f32, p.border.gamma_multiply(0.4))
+                            };
+
+                            let tab_frame = Frame::none()
+                                .fill(bg)
+                                .stroke(stroke)
+                                .rounding(Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 })
+                                .inner_margin(egui::Margin::symmetric(10.0, 6.0));
+
+                            let tab_resp = tab_frame.show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing = egui::vec2(5.0, 0.0);
+                                    ui.label(RichText::new(dot_char).size(11.0).color(dot_color));
+                                    ui.label(
+                                        RichText::new(&s.config.name)
+                                            .size(12.0)
+                                            .strong()
+                                            .color(if is_active { p.text_primary } else { p.text_secondary }),
+                                    );
+
+                                    if s.config.port > 0 {
+                                        let port_color = if s.state == ServiceState::Running {
+                                            Color32::from_rgb(96, 165, 250)
+                                        } else {
+                                            p.text_muted
+                                        };
+                                        ui.label(
+                                            RichText::new(format!(":{}", s.config.port))
+                                                .size(10.5)
+                                                .monospace()
+                                                .color(port_color),
+                                        );
+                                    }
+                                });
+                            }).response;
+
+                            let tab_interact = ui.interact(tab_resp.rect, ui.id().with(&s.config.key), egui::Sense::click());
+                            if tab_interact.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
+                            if tab_interact.clicked() {
+                                to_switch_tab = Some(s.config.key.clone());
+                            }
+                        }
+                    });
+                });
+
+            if let Some(target) = to_switch_tab {
+                self.active_tab = target;
+            }
 
             // Outer Frame for the tab content (FILLS 100% OF REMAINING SPACE!)
-            let content_bg = if self.active_tab == "overview" {
-                p.bg_main
-            } else {
-                p.terminal_bg
-            };
             Frame::none()
-                .fill(content_bg)
+                .fill(p.bg_main)
                 .stroke(Stroke::NONE)
                 .rounding(Rounding { nw: 0.0, ne: 6.0, sw: 6.0, se: 6.0 })
-                .inner_margin(12.0)
+                .inner_margin(10.0)
                 .show(ui, |ui| {
                     ui.set_height(ui.available_height());
                     if self.active_tab == "overview" {
@@ -8850,261 +8935,271 @@ impl LauncherApp {
             }
         };
 
-        // Sub-header above logs:
-        // Row 1: Service name + Live Metrics ... Find toggle + Start/Stop/Restart
+        // ─────────────────────────────────────────────────────────────────────
+        // Section A: Upper Controls Cockpit (Card)
+        // ─────────────────────────────────────────────────────────────────────
         let p = self.theme.palette();
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(&name)
-                    .size(15.0)
-                    .strong()
-                    .color(p.text_primary),
-            );
+        Frame::none()
+            .fill(p.bg_card)
+            .stroke(Stroke::new(1.0_f32, p.border))
+            .rounding(Rounding::same(8.0))
+            .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+            .show(ui, |ui| {
+                // Row 1: Service name + Live Metrics ... Find toggle + Start/Stop/Restart
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(&name)
+                            .size(15.0)
+                            .strong()
+                            .color(p.text_primary),
+                    );
 
-            if is_running {
-                ui.add_space(8.0);
-                if let Some(p) = pid {
-                    render_metric_pill(
-                        ui,
-                        "🆔",
-                        &format!("PID {}", p),
-                        Color32::from_rgb(148, 163, 184),
-                    );
-                }
-                if port > 0 {
-                    let port_color = if port_open {
-                        Color32::from_rgb(96, 165, 250)
-                    } else {
-                        Color32::from_rgb(148, 163, 184)
-                    };
-                    render_metric_pill(
-                        ui,
-                        "🔌",
-                        &format!(":{}", port),
-                        port_color,
-                    );
-                }
-                render_metric_pill(
-                    ui,
-                    "⚡",
-                    &format!("{:.1}%", cpu),
-                    Color32::from_rgb(96, 165, 250),
-                );
-                render_metric_pill(
-                    ui,
-                    "💾",
-                    &format!("{:.1} MB", mem),
-                    Color32::from_rgb(52, 211, 153),
-                );
-                if !uptime.is_empty() {
-                    render_metric_pill(
-                        ui,
-                        "⏱️",
-                        &uptime,
-                        Color32::from_rgb(251, 191, 36),
-                    );
-                }
-            }
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if is_running {
-                    let btn_stop = egui::Button::new(
-                        RichText::new("Stop").size(11.0).strong().color(Color32::WHITE),
-                    )
-                    .fill(p.danger)
-                    .rounding(Rounding::same(4.0));
-                    if ui.add(btn_stop).clicked() {
-                        if let Some(s) = self.find_service_mut(key) {
-                            s.stop();
+                    if is_running {
+                        ui.add_space(8.0);
+                        if let Some(p) = pid {
+                            render_metric_pill(
+                                ui,
+                                "",
+                                &format!("PID {}", p),
+                                Color32::from_rgb(148, 163, 184),
+                            );
+                        }
+                        if port > 0 {
+                            let port_color = if port_open {
+                                Color32::from_rgb(96, 165, 250)
+                            } else {
+                                Color32::from_rgb(148, 163, 184)
+                            };
+                            render_metric_pill(
+                                ui,
+                                "🌐",
+                                &format!(":{}", port),
+                                port_color,
+                            );
+                        }
+                        render_metric_pill(
+                            ui,
+                            "⚡",
+                            &format!("{:.1}%", cpu),
+                            Color32::from_rgb(96, 165, 250),
+                        );
+                        render_metric_pill(
+                            ui,
+                            "💾",
+                            &format!("{:.1} MB", mem),
+                            Color32::from_rgb(52, 211, 153),
+                        );
+                        if !uptime.is_empty() {
+                            render_metric_pill(
+                                ui,
+                                "⏱",
+                                &uptime,
+                                Color32::from_rgb(251, 191, 36),
+                            );
                         }
                     }
 
-                    let btn_restart = egui::Button::new(
-                        RichText::new("Restart").size(11.0).strong().color(Color32::WHITE),
-                    )
-                    .fill(p.warning)
-                    .rounding(Rounding::same(4.0));
-                    if ui.add(btn_restart).clicked() {
-                        if let Some(s) = self.find_service_mut(key) {
-                            s.restart();
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if is_running {
+                            let btn_stop = egui::Button::new(
+                                RichText::new("Stop").size(11.0).strong().color(Color32::WHITE),
+                            )
+                            .fill(p.danger)
+                            .rounding(Rounding::same(4.0));
+                            if ui.add(btn_stop).clicked() {
+                                if let Some(s) = self.find_service_mut(key) {
+                                    s.stop();
+                                }
+                            }
+
+                            let btn_restart = egui::Button::new(
+                                RichText::new("Restart").size(11.0).strong().color(Color32::WHITE),
+                            )
+                            .fill(p.warning)
+                            .rounding(Rounding::same(4.0));
+                            if ui.add(btn_restart).clicked() {
+                                if let Some(s) = self.find_service_mut(key) {
+                                    s.restart();
+                                }
+                            }
+                        } else {
+                            let btn_start = egui::Button::new(
+                                RichText::new("Start").size(11.0).strong().color(Color32::WHITE),
+                            )
+                            .fill(p.success)
+                            .rounding(Rounding::same(4.0));
+                            if ui.add(btn_start).clicked() {
+                                if let Some(s) = self.find_service_mut(key) {
+                                    s.start();
+                                }
+                            }
                         }
-                    }
-                } else {
-                    let btn_start = egui::Button::new(
-                        RichText::new("Start").size(11.0).strong().color(Color32::WHITE),
-                    )
-                    .fill(p.success)
-                    .rounding(Rounding::same(4.0));
-                    if ui.add(btn_start).clicked() {
-                        if let Some(s) = self.find_service_mut(key) {
-                            s.start();
+
+                        let search_is_open = self.search_open.get(key).copied().unwrap_or(false);
+                        let find_btn = egui::Button::new(
+                            RichText::new("🔍 Find (Ctrl+F)")
+                                .size(11.0)
+                                .color(if search_is_open { p.accent } else { p.text_secondary }),
+                        )
+                        .fill(if search_is_open { p.accent.gamma_multiply(0.25) } else { p.bg_button })
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(999.0));
+                        if ui.add(find_btn).clicked() {
+                            self.search_open.insert(key.to_string(), !search_is_open);
                         }
-                    }
-                }
+                    });
+                });
 
-                let search_is_open = self.search_open.get(key).copied().unwrap_or(false);
-                let find_btn = egui::Button::new(
-                    RichText::new("🔍 Find (Ctrl+F)")
-                        .size(11.0)
-                        .color(if search_is_open { p.accent } else { p.text_secondary }),
-                )
-                .fill(if search_is_open { p.accent.gamma_multiply(0.25) } else { p.bg_button })
-                .stroke(Stroke::NONE)
-                .rounding(Rounding::same(999.0));
-                if ui.add(find_btn).clicked() {
-                    self.search_open.insert(key.to_string(), !search_is_open);
-                }
-            });
-        });
+                ui.add_space(6.0);
 
-        ui.add_space(5.0);
+                // Row 2: Secondary Tool Buttons & Service / Log Options
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
 
-        // Row 2: Secondary Tool Buttons & Service / Log Options
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
-
-            let vscode_btn = egui::Button::new(
-                RichText::new("💻 VS Code")
-                    .size(11.0)
-                    .color(p.info),
-            )
-            .fill(p.bg_button)
-            .stroke(Stroke::NONE)
-            .rounding(Rounding::same(999.0));
-            if ui.add(vscode_btn).on_hover_text("Open working directory in VS Code (code .)").clicked() {
-                let cwd = self.find_service(key).map(|s| s.config.cwd.clone()).unwrap_or_default();
-                crate::service::open_in_vscode(&cwd);
-            }
-
-            let folder_btn = egui::Button::new(
-                RichText::new("📁 Folder")
-                    .size(11.0)
-                    .color(p.text_secondary),
-            )
-            .fill(p.bg_button)
-            .stroke(Stroke::NONE)
-            .rounding(Rounding::same(999.0));
-            if ui.add(folder_btn).on_hover_text("Open working directory in file manager (xdg-open)").clicked() {
-                let cwd = self.find_service(key).map(|s| s.config.cwd.clone()).unwrap_or_default();
-                crate::service::open_folder(&cwd);
-            }
-
-            let console_btn = egui::Button::new(
-                RichText::new("🖥️ Console")
-                    .size(11.0)
-                    .color(p.accent_light),
-            )
-            .fill(p.bg_button)
-            .stroke(Stroke::NONE)
-            .rounding(Rounding::same(999.0));
-            if ui.add(console_btn).on_hover_text("Open interactive console / terminal window in working directory").clicked() {
-                if let Some(s) = self.find_service(key) {
-                    s.open_console();
-                }
-            }
-
-            ui.add_space(4.0);
-
-            let mut auto_scroll = self.auto_scroll.get(key).copied().unwrap_or(true);
-            if ui.checkbox(
-                &mut auto_scroll,
-                RichText::new("📜 Auto-scroll").size(11.0).color(p.accent_light),
-            ).on_hover_text("Keep pinned to bottom when new logs arrive (uncheck to scroll up smoothly without jitter)").changed() {
-                self.auto_scroll.insert(key.to_string(), auto_scroll);
-            }
-
-            let mut autostart = self.find_service(key).map(|s| s.config.autostart).unwrap_or(false);
-            if ui.checkbox(
-                &mut autostart,
-                RichText::new("🚀 Autostart").size(11.0).color(p.accent_light),
-            ).on_hover_text("Automatically start this server when Server Launcher opens").changed() {
-                if let Some(s) = self.find_service_mut(key) {
-                    s.config.autostart = autostart;
-                    self.persist_config();
-                }
-            }
-
-            let mut auto_restart = self.find_service(key).map(|s| s.config.auto_restart).unwrap_or(false);
-            if ui.checkbox(
-                &mut auto_restart,
-                RichText::new("⏱️ Auto-restart").size(11.0).color(p.accent_light),
-            ).on_hover_text("Auto-restart this server if it exits unexpectedly or crashes").changed() {
-                if let Some(s) = self.find_service_mut(key) {
-                    s.config.auto_restart = auto_restart;
-                    self.persist_config();
-                }
-            }
-        });
-
-        // Quick Sub-command & Link Buttons Bar (if defined)
-        if !actions.is_empty() || !links.is_empty() {
-            ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
-                for act in &actions {
-                    let act_btn = egui::Button::new(
-                        RichText::new(format!("⚡ {}", act.label))
-                            .size(10.5)
-                            .color(p.warning),
-                    )
-                    .fill(p.bg_button)
-                    .rounding(Rounding::same(4.0));
-                    if ui.add(act_btn).clicked() {
-                        self.run_service_action(key, &act.command);
-                    }
-                }
-
-                for lnk in &links {
-                    let lnk_btn = egui::Button::new(
-                        RichText::new(format!("🔗 {}", lnk.label))
-                            .size(10.5)
+                    let vscode_btn = egui::Button::new(
+                        RichText::new("💻 VS Code")
+                            .size(11.0)
                             .color(p.info),
                     )
                     .fill(p.bg_button)
-                    .rounding(Rounding::same(4.0));
-                    if ui.add(lnk_btn).clicked() {
-                        ui.ctx().open_url(egui::OpenUrl::new_tab(&lnk.url));
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(999.0));
+                    if ui.add(vscode_btn).on_hover_text("Open working directory in VS Code (code .)").clicked() {
+                        let cwd = self.find_service(key).map(|s| s.config.cwd.clone()).unwrap_or_default();
+                        crate::service::open_in_vscode(&cwd);
                     }
-                }
-            });
-        }
 
-        ui.add_space(4.0);
-        ui.separator();
+                    let folder_btn = egui::Button::new(
+                        RichText::new("📁 Folder")
+                            .size(11.0)
+                            .color(p.text_secondary),
+                    )
+                    .fill(p.bg_button)
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(999.0));
+                    if ui.add(folder_btn).on_hover_text("Open working directory in file manager (xdg-open)").clicked() {
+                        let cwd = self.find_service(key).map(|s| s.config.cwd.clone()).unwrap_or_default();
+                        crate::service::open_folder(&cwd);
+                    }
 
-        // Collapsible Search Bar (Ctrl+F)
-        let search_is_open = self.search_open.get(key).copied().unwrap_or(false);
-        if search_is_open {
-            Frame::none()
-                .fill(p.bg_subtle)
-                .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                .rounding(Rounding::same(4.0))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("🔍").color(p.accent));
-                        let q_entry = self.search_queries.entry(key.to_string()).or_default();
-                        let search_input = ui.add(
-                            egui::TextEdit::singleline(q_entry)
-                                .hint_text("Search logs…")
-                                .desired_width(220.0),
-                        );
-                        if search_is_open {
-                            search_input.request_focus();
+                    let console_btn = egui::Button::new(
+                        RichText::new("💻 Console")
+                            .size(11.0)
+                            .color(p.accent_light),
+                    )
+                    .fill(p.bg_button)
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(999.0));
+                    if ui.add(console_btn).on_hover_text("Open interactive console / terminal window in working directory").clicked() {
+                        if let Some(s) = self.find_service(key) {
+                            s.open_console();
+                        }
+                    }
+
+                    ui.add_space(4.0);
+
+                    let mut auto_scroll = self.auto_scroll.get(key).copied().unwrap_or(true);
+                    if ui.checkbox(
+                        &mut auto_scroll,
+                        RichText::new("⬇ Auto-scroll").size(11.0).color(p.accent_light),
+                    ).on_hover_text("Keep pinned to bottom when new logs arrive (uncheck to scroll up smoothly without jitter)").changed() {
+                        self.auto_scroll.insert(key.to_string(), auto_scroll);
+                    }
+
+                    let mut autostart = self.find_service(key).map(|s| s.config.autostart).unwrap_or(false);
+                    if ui.checkbox(
+                        &mut autostart,
+                        RichText::new("🚀 Autostart").size(11.0).color(p.accent_light),
+                    ).on_hover_text("Automatically start this server when Server Launcher opens").changed() {
+                        if let Some(s) = self.find_service_mut(key) {
+                            s.config.autostart = autostart;
+                            self.persist_config();
+                        }
+                    }
+
+                    let mut auto_restart = self.find_service(key).map(|s| s.config.auto_restart).unwrap_or(false);
+                    if ui.checkbox(
+                        &mut auto_restart,
+                        RichText::new("🔄 Auto-restart").size(11.0).color(p.accent_light),
+                    ).on_hover_text("Auto-restart this server if it exits unexpectedly or crashes").changed() {
+                        if let Some(s) = self.find_service_mut(key) {
+                            s.config.auto_restart = auto_restart;
+                            self.persist_config();
+                        }
+                    }
+                });
+
+                // Quick Sub-command & Link Buttons Bar (if defined)
+                if !actions.is_empty() || !links.is_empty() {
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        for act in &actions {
+                            let act_btn = egui::Button::new(
+                                RichText::new(format!("⚡ {}", act.label))
+                                    .size(10.5)
+                                    .color(p.warning),
+                            )
+                            .fill(p.bg_button)
+                            .rounding(Rounding::same(4.0));
+                            if ui.add(act_btn).clicked() {
+                                self.run_service_action(key, &act.command);
+                            }
                         }
 
-                        let filter_entry = self.filter_lines.entry(key.to_string()).or_default();
-                        ui.checkbox(filter_entry, RichText::new("Filter lines").size(11.0).color(p.text_secondary));
-
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("✕").clicked() {
-                                self.search_open.insert(key.to_string(), false);
+                        for lnk in &links {
+                            let lnk_btn = egui::Button::new(
+                                RichText::new(format!("🔗 {}", lnk.label))
+                                    .size(10.5)
+                                    .color(p.info),
+                            )
+                            .fill(p.bg_button)
+                            .rounding(Rounding::same(4.0));
+                            if ui.add(lnk_btn).clicked() {
+                                ui.ctx().open_url(egui::OpenUrl::new_tab(&lnk.url));
                             }
-                        });
+                        }
                     });
-                });
-            ui.add_space(4.0);
-        }
+                }
 
-        // Log Terminal Output Area (fills all space down to the bottom command bar)
+                // Collapsible Search Bar (Ctrl+F)
+                let search_is_open = self.search_open.get(key).copied().unwrap_or(false);
+                if search_is_open {
+                    ui.add_space(4.0);
+                    Frame::none()
+                        .fill(p.bg_subtle)
+                        .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                        .rounding(Rounding::same(4.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("🔍").color(p.accent));
+                                let q_entry = self.search_queries.entry(key.to_string()).or_default();
+                                let search_input = ui.add(
+                                    egui::TextEdit::singleline(q_entry)
+                                        .hint_text("Search logs…")
+                                        .desired_width(220.0),
+                                );
+                                if search_is_open {
+                                    search_input.request_focus();
+                                }
+
+                                let filter_entry = self.filter_lines.entry(key.to_string()).or_default();
+                                ui.checkbox(filter_entry, RichText::new("Filter lines").size(11.0).color(p.text_secondary));
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.button("✕").clicked() {
+                                        self.search_open.insert(key.to_string(), false);
+                                    }
+                                });
+                            });
+                        });
+                }
+            });
+
+        ui.add_space(6.0);
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Section B: Terminal Output Area (Recessed Monospace Code Well)
+        // ─────────────────────────────────────────────────────────────────────
         let logs_vec: Vec<_> = {
             if let Some(s) = self.find_service(key) {
                 if let Ok(l) = s.logs.lock() {
@@ -9125,44 +9220,51 @@ impl LauncherApp {
             .filter(|entry| !filter_active || entry.text.to_lowercase().contains(&q))
             .collect();
 
-        let available_height = ui.available_height() - 44.0;
+        let bottom_dock_reserve = if is_running { 90.0 } else { 58.0 };
+        let terminal_available_height = (ui.available_height() - bottom_dock_reserve).max(80.0);
+        let inner_terminal_height = (terminal_available_height - 18.0).max(60.0);
         let auto_scroll_enabled = self.auto_scroll.get(key).copied().unwrap_or(true);
         let row_height = 18.0_f32;
         let total_rows = filtered_logs.len();
 
-        ScrollArea::both()
-            .id_salt(format!("log_scroll_{}", key))
-            .stick_to_bottom(auto_scroll_enabled)
-            .auto_shrink([false, false])
-            .max_height(available_height)
-            .show_rows(ui, row_height, total_rows, |ui, row_range| {
-                ui.set_width(ui.available_width());
-                for idx in row_range {
-                    if let Some(entry) = filtered_logs.get(idx) {
-                        let base_color = match entry.kind {
-                            LogKind::Launcher => p.log_launcher,
-                            LogKind::Stdin => p.log_stdin,
-                            LogKind::Stderr | LogKind::Error => p.log_stderr,
-                            LogKind::Warning => p.log_warning,
-                            LogKind::Stdout => p.log_stdout,
-                        };
+        Frame::none()
+            .fill(p.terminal_bg)
+            .stroke(Stroke::new(1.0_f32, p.border.gamma_multiply(0.7)))
+            .rounding(Rounding::same(8.0))
+            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+            .show(ui, |ui| {
+                ScrollArea::both()
+                    .id_salt(format!("log_scroll_{}", key))
+                    .stick_to_bottom(auto_scroll_enabled)
+                    .auto_shrink([false, false])
+                    .max_height(inner_terminal_height)
+                    .show_rows(ui, row_height, total_rows, |ui, row_range| {
+                        ui.set_width(ui.available_width());
+                        for idx in row_range {
+                            if let Some(entry) = filtered_logs.get(idx) {
+                                let base_color = match entry.kind {
+                                    LogKind::Launcher => p.log_launcher,
+                                    LogKind::Stdin => p.log_stdin,
+                                    LogKind::Stderr | LogKind::Error => p.log_stderr,
+                                    LogKind::Warning => p.log_warning,
+                                    LogKind::Stdout => p.log_stdout,
+                                };
 
-                        let contains_query = !q.is_empty() && entry.text.to_lowercase().contains(&q);
-                        let mut rt = RichText::new(format!("[{}] {}", entry.timestamp, entry.text))
-                            .color(base_color)
-                            .monospace()
-                            .size(11.0);
+                                let contains_query = !q.is_empty() && entry.text.to_lowercase().contains(&q);
+                                let mut rt = RichText::new(format!("[{}] {}", entry.timestamp, entry.text))
+                                    .color(base_color)
+                                    .monospace()
+                                    .size(11.0);
 
-                        if contains_query {
-                            rt = rt.background_color(Color32::from_rgb(180, 80, 0)).color(Color32::WHITE);
+                                if contains_query {
+                                    rt = rt.background_color(Color32::from_rgb(180, 80, 0)).color(Color32::WHITE);
+                                }
+
+                                ui.add(egui::Label::new(rt));
+                            }
                         }
-
-                        ui.add(egui::Label::new(rt));
-                    }
-                }
+                    });
             });
-
-        ui.separator();
 
         // Build available slash commands
         let mut all_commands: Vec<SlashCommand> = vec![
@@ -9330,90 +9432,104 @@ impl LauncherApp {
         let mut clicked_cmd: Option<SlashCommand> = None;
         let mut execute_action: Option<SlashAction> = None;
 
-        // Quick Dev Server Shortcuts Toolbar (when running)
-        if is_running {
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);
-                ui.label(RichText::new("⌨ Dev Server Shortcuts:").size(11.0).color(p.text_muted));
-                let shortcuts = [
-                    ("h (help)", "h", "Send 'h + enter' (show dev server help & shortcuts)"),
-                    ("r (restart)", "r", "Send 'r + enter' (restart dev server)"),
-                    ("o (open)", "o", "Send 'o + enter' (open in browser)"),
-                    ("u (url)", "u", "Send 'u + enter' (show server URLs)"),
-                    ("c (clear)", "c", "Send 'c + enter' (clear dev console)"),
-                    ("q (quit)", "q", "Send 'q + enter' (quit dev server)"),
-                ];
-                for (label, key_cmd, tip) in shortcuts {
-                    let btn = egui::Button::new(RichText::new(label).size(10.5).color(p.accent_light))
+        // ─────────────────────────────────────────────────────────────────────
+        // Section C: Bottom Command & Shortcuts Dock (Card)
+        // ─────────────────────────────────────────────────────────────────────
+        ui.add_space(6.0);
+
+        let resp = Frame::none()
+            .fill(p.bg_card)
+            .stroke(Stroke::new(1.0_f32, p.border))
+            .rounding(Rounding::same(8.0))
+            .inner_margin(egui::Margin::symmetric(10.0, 7.0))
+            .show(ui, |ui| {
+                // Quick Dev Server Shortcuts Toolbar (when running)
+                if is_running {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);
+                        ui.label(RichText::new("⚡ Shortcuts:").size(11.0).color(p.text_muted));
+                        let shortcuts = [
+                            ("h (help)", "h", "Send 'h + enter' (show dev server help & shortcuts)"),
+                            ("r (restart)", "r", "Send 'r + enter' (restart dev server)"),
+                            ("o (open)", "o", "Send 'o + enter' (open in browser)"),
+                            ("u (url)", "u", "Send 'u + enter' (show server URLs)"),
+                            ("c (clear)", "c", "Send 'c + enter' (clear dev console)"),
+                            ("q (quit)", "q", "Send 'q + enter' (quit dev server)"),
+                        ];
+                        for (label, key_cmd, tip) in shortcuts {
+                            let btn = egui::Button::new(RichText::new(label).size(10.5).color(p.accent_light))
+                                .fill(p.bg_button)
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(999.0));
+                            if ui.add(btn).on_hover_text(tip).clicked() {
+                                if let Some(s) = self.find_service(key) {
+                                    s.send_input(key_cmd);
+                                }
+                            }
+                        }
+                    });
+                    ui.add_space(4.0);
+                }
+
+                let edit_resp = ui.horizontal(|ui| {
+                    ui.label(RichText::new(">").monospace().color(p.accent).strong().size(13.0));
+
+                    let hint = if is_running {
+                        "Send input to server (e.g. h + enter for help, r to restart)..."
+                    } else {
+                        "Type '/' for commands, or run command in directory (e.g. npm i, cargo test)..."
+                    };
+
+                    let text_edit = egui::TextEdit::singleline(&mut input_val)
+                        .hint_text(hint)
+                        .desired_width(ui.available_width() - 325.0);
+
+                    let edit_resp = ui.add(text_edit);
+
+                    if edit_resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                        do_send = true;
+                    }
+
+                    let btn_send = egui::Button::new(RichText::new("Send").size(11.0).strong().color(p.accent_text))
+                        .fill(p.accent)
+                        .rounding(Rounding::same(999.0));
+                    if ui.add(btn_send).clicked() {
+                        do_send = true;
+                    }
+
+                    let btn_ctrlc = egui::Button::new(RichText::new("Ctrl+C").size(11.0).color(p.warning))
+                        .fill(p.bg_button)
+                        .rounding(Rounding::same(999.0));
+                    if ui.add(btn_ctrlc).clicked() {
+                        if let Some(s) = self.find_service(key) {
+                            s.send_interrupt();
+                        }
+                    }
+
+                    let btn_clear = egui::Button::new(RichText::new("Clear").size(11.0).color(p.text_muted))
+                        .fill(p.bg_button)
+                        .rounding(Rounding::same(999.0));
+                    if ui.add(btn_clear).clicked() {
+                        if let Some(s) = self.find_service(key) {
+                            s.clear_logs();
+                        }
+                    }
+
+                    let btn_console = egui::Button::new(RichText::new("💻 Console").size(11.0).color(p.accent_light))
                         .fill(p.bg_button)
                         .stroke(Stroke::NONE)
                         .rounding(Rounding::same(999.0));
-                    if ui.add(btn).on_hover_text(tip).clicked() {
+                    if ui.add(btn_console).on_hover_text("Open in external console / terminal window").clicked() {
                         if let Some(s) = self.find_service(key) {
-                            s.send_input(key_cmd);
+                            s.open_console();
                         }
                     }
-                }
-            });
-            ui.add_space(2.0);
-        }
 
-        let resp = ui.horizontal(|ui| {
-            ui.label(RichText::new("❯").color(p.accent).strong().size(13.0));
+                    edit_resp
+                }).inner;
 
-            let hint = if is_running {
-                "Send input to server (e.g. h + enter for help, r to restart)..."
-            } else {
-                "Type '/' for commands, or run command in directory (e.g. npm i, cargo test)..."
-            };
-
-            let text_edit = egui::TextEdit::singleline(&mut input_val)
-                .hint_text(hint)
-                .desired_width(ui.available_width() - 325.0);
-
-            let edit_resp = ui.add(text_edit);
-
-            if edit_resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                do_send = true;
-            }
-
-            let btn_send = egui::Button::new(RichText::new("Send").size(11.0).strong().color(p.accent_text))
-                .fill(p.accent)
-                .rounding(Rounding::same(999.0));
-            if ui.add(btn_send).clicked() {
-                do_send = true;
-            }
-
-            let btn_ctrlc = egui::Button::new(RichText::new("Ctrl+C").size(11.0).color(p.warning))
-                .fill(p.bg_button)
-                .rounding(Rounding::same(999.0));
-            if ui.add(btn_ctrlc).clicked() {
-                if let Some(s) = self.find_service(key) {
-                    s.send_interrupt();
-                }
-            }
-
-            let btn_clear = egui::Button::new(RichText::new("Clear").size(11.0).color(p.text_muted))
-                .fill(p.bg_button)
-                .rounding(Rounding::same(999.0));
-            if ui.add(btn_clear).clicked() {
-                if let Some(s) = self.find_service(key) {
-                    s.clear_logs();
-                }
-            }
-
-            let btn_console = egui::Button::new(RichText::new("🖥️ Console").size(11.0).color(p.accent_light))
-                .fill(p.bg_button)
-                .stroke(Stroke::NONE)
-                .rounding(Rounding::same(999.0));
-            if ui.add(btn_console).on_hover_text("Open in external console / terminal window").clicked() {
-                if let Some(s) = self.find_service(key) {
-                    s.open_console();
-                }
-            }
-
-            edit_resp
-        }).inner;
+                edit_resp
+            }).inner;
 
         if show_autocomplete {
             let popup_id = egui::Id::new(format!("slash_autocomplete_area_{}", key));

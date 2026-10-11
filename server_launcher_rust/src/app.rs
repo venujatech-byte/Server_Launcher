@@ -1417,6 +1417,8 @@ impl LauncherApp {
 
                 // LEFT PANEL (290px)
                 ui.allocate_ui_with_layout(egui::vec2(left_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(left_w);
+                    ui.set_max_width(left_w);
                     // 1. Navigation Tabs on top of left panel
                     self.render_sidebar_tabs_bar(ui);
                     ui.add_space(8.0);
@@ -1434,6 +1436,8 @@ impl LauncherApp {
 
                 // RIGHT PANEL (Remaining width)
                 ui.allocate_ui_with_layout(egui::vec2(right_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(right_w);
+                    ui.set_max_width(right_w);
                     match self.active_sidebar_tab {
                         SidebarTab::Servers => self.render_remote_servers_right_panel(ui, &host),
                         SidebarTab::Scripts => self.render_scripts_right_panel(ui, Some(&host.id)),
@@ -1517,6 +1521,8 @@ impl LauncherApp {
                     .id_salt(format!("remote_listeners_scroll_{}", host.id))
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.set_max_width(ui.available_width());
                         for l in &visible_listeners {
                             Frame::none()
                                 .fill(Color32::from_rgb(15, 17, 23))
@@ -1525,6 +1531,7 @@ impl LauncherApp {
                                 .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                                 .show(ui, |ui| {
                                     ui.set_width(ui.available_width());
+                                    ui.set_max_width(ui.available_width());
                                     // Row 1: Port badge + Proto + Name
                                     ui.horizontal(|ui| {
                                         ui.label(
@@ -1538,7 +1545,9 @@ impl LauncherApp {
                                                 .size(10.5)
                                                 .color(Color32::from_rgb(130, 138, 155)),
                                         );
-                                        ui.add(
+                                        let name_w = (ui.available_width() - 4.0).max(40.0);
+                                        ui.add_sized(
+                                            [name_w, 16.0],
                                             egui::Label::new(
                                                 RichText::new(&l.name)
                                                     .size(12.0)
@@ -2106,6 +2115,7 @@ impl eframe::App for LauncherApp {
                 .show(ctx, |ui| {
                     ui.set_width(ui.available_width());
                     ui.set_min_width(ui.available_width());
+                    ui.set_max_width(ui.available_width());
                     self.render_left_panel(ui);
                 });
 
@@ -2401,6 +2411,7 @@ impl LauncherApp {
     fn render_sidebar_tabs_bar(&mut self, ui: &mut Ui) {
         let p = self.theme.palette();
         ui.set_width(ui.available_width());
+        ui.set_max_width(ui.available_width());
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
             let tabs = [
@@ -2458,8 +2469,10 @@ impl LauncherApp {
 
     fn render_left_panel(&mut self, ui: &mut Ui) {
         ui.set_width(ui.available_width());
+        ui.set_max_width(ui.available_width());
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
+            ui.set_max_width(ui.available_width());
             // 0. Top 4 Navigation Tabs Bar
             self.render_sidebar_tabs_bar(ui);
             ui.add_space(8.0);
@@ -2541,6 +2554,7 @@ impl LauncherApp {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
+                    ui.set_max_width(ui.available_width());
                     let mut to_run = None;
                     let mut to_stop = None;
                     let mut to_edit = None;
@@ -2568,6 +2582,7 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
+                                ui.set_max_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     let status_text = if is_running {
                                         RichText::new("●").size(12.0).color(Color32::from_rgb(16, 185, 129))
@@ -2576,8 +2591,15 @@ impl LauncherApp {
                                     };
                                     ui.label(status_text);
 
-                                    let title = RichText::new(&s.name).size(12.5).strong().color(p.text_primary);
-                                    if ui.selectable_label(is_selected, title).clicked() {
+                                    let tag_w = 55.0;
+                                    let name_w = (ui.available_width() - tag_w).max(40.0);
+
+                                    let title = RichText::new(&s.name).size(12.5).strong().color(if is_selected { p.accent_light } else { p.text_primary });
+                                    let title_resp = ui.add_sized(
+                                        [name_w, 16.0],
+                                        egui::Label::new(title).truncate().sense(egui::Sense::click()),
+                                    );
+                                    if title_resp.clicked() {
                                         self.selected_script_id = Some(s.id.clone());
                                     }
 
@@ -2601,10 +2623,15 @@ impl LauncherApp {
                                             );
                                         }
                                         if !s.cwd.is_empty() {
-                                            ui.label(
-                                                RichText::new(format!("cwd: {}", s.cwd))
-                                                    .size(10.0)
-                                                    .color(p.text_muted),
+                                            let cwd_w = (ui.available_width() - 4.0).max(40.0);
+                                            ui.add_sized(
+                                                [cwd_w, 14.0],
+                                                egui::Label::new(
+                                                    RichText::new(format!("cwd: {}", s.cwd))
+                                                        .size(10.0)
+                                                        .color(p.text_muted),
+                                                )
+                                                .truncate(),
                                             );
                                         }
                                     });
@@ -2975,6 +3002,7 @@ impl LauncherApp {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
+                    ui.set_max_width(ui.available_width());
                     let mut to_run_cmd = None;
                     let mut to_edit = None;
                     let mut to_delete = None;
@@ -2987,8 +3015,15 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
+                                ui.set_max_width(ui.available_width());
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new(&c.name).size(12.5).strong().color(p.text_primary));
+                                    let cat_w = 60.0;
+                                    let name_w = (ui.available_width() - cat_w).max(40.0);
+
+                                    ui.add_sized(
+                                        [name_w, 16.0],
+                                        egui::Label::new(RichText::new(&c.name).size(12.5).strong().color(p.text_primary)).truncate(),
+                                    );
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.label(
                                             RichText::new(format!("[{}]", c.category))
@@ -2999,19 +3034,29 @@ impl LauncherApp {
                                 });
 
                                 ui.add_space(2.0);
-                                ui.label(
-                                    RichText::new(&c.command)
-                                        .size(11.0)
-                                        .monospace()
-                                        .color(Color32::from_rgb(165, 180, 252)),
+                                let cmd_w = (ui.available_width() - 4.0).max(40.0);
+                                ui.add_sized(
+                                    [cmd_w, 15.0],
+                                    egui::Label::new(
+                                        RichText::new(&c.command)
+                                            .size(11.0)
+                                            .monospace()
+                                            .color(Color32::from_rgb(165, 180, 252)),
+                                    )
+                                    .truncate(),
                                 );
 
                                 if !c.description.is_empty() {
                                     ui.add_space(2.0);
-                                    ui.label(
-                                        RichText::new(&c.description)
-                                            .size(10.5)
-                                            .color(p.text_muted),
+                                    let desc_w = (ui.available_width() - 4.0).max(40.0);
+                                    ui.add_sized(
+                                        [desc_w, 14.0],
+                                        egui::Label::new(
+                                            RichText::new(&c.description)
+                                                .size(10.5)
+                                                .color(p.text_muted),
+                                        )
+                                        .truncate(),
                                     );
                                 }
 
@@ -3415,8 +3460,10 @@ impl LauncherApp {
         };
 
         ui.set_width(ui.available_width());
+        ui.set_max_width(ui.available_width());
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
+            ui.set_max_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.label(RichText::new("SYSTEMD SERVICES").size(12.0).strong().color(p.text_muted));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -3559,6 +3606,7 @@ impl LauncherApp {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
+                    ui.set_max_width(ui.available_width());
                     let mut selected = None;
 
                     for s in &filtered_services {
@@ -3579,6 +3627,7 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
+                                ui.set_max_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     let status_dot = if is_active {
                                         RichText::new("●").size(12.0).color(Color32::from_rgb(16, 185, 129))
@@ -3589,8 +3638,17 @@ impl LauncherApp {
                                     };
                                     ui.label(status_dot);
 
-                                    let title = RichText::new(&s.name).size(12.0).strong().color(p.text_primary);
-                                    if ui.selectable_label(is_selected, title).clicked() {
+                                    let status_w = 65.0;
+                                    let name_w = (ui.available_width() - status_w).max(40.0);
+
+                                    let title = RichText::new(&s.name).size(12.0).strong().color(if is_selected { p.accent_light } else { p.text_primary });
+                                    let name_resp = ui.add_sized(
+                                        [name_w, 16.0],
+                                        egui::Label::new(title)
+                                            .truncate()
+                                            .sense(egui::Sense::click()),
+                                    );
+                                    if name_resp.clicked() {
                                         selected = Some(s.name.clone());
                                     }
 
@@ -3608,10 +3666,15 @@ impl LauncherApp {
 
                                 if !s.description.is_empty() {
                                     ui.add_space(2.0);
-                                    ui.label(
-                                        RichText::new(&s.description)
-                                            .size(10.5)
-                                            .color(p.text_muted),
+                                    let desc_w = (ui.available_width() - 4.0).max(40.0);
+                                    ui.add_sized(
+                                        [desc_w, 14.0],
+                                        egui::Label::new(
+                                            RichText::new(&s.description)
+                                                .size(10.5)
+                                                .color(p.text_muted),
+                                        )
+                                        .truncate(),
                                     );
                                 }
                             });
@@ -3859,8 +3922,10 @@ impl LauncherApp {
     fn render_servers_left_panel(&mut self, ui: &mut Ui) {
         let p = self.theme.palette();
         ui.set_width(ui.available_width());
+        ui.set_max_width(ui.available_width());
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
+            ui.set_max_width(ui.available_width());
             // 1. Group Filter Pills Bar
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("Group:").size(11.5).color(p.text_muted));
@@ -3904,6 +3969,7 @@ impl LauncherApp {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
+                    ui.set_max_width(ui.available_width());
                     let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
                     for (idx, s) in self.services.iter().enumerate() {
                         if self.active_group_filter == "All" || self.active_group_filter == s.config.group {

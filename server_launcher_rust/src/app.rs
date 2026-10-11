@@ -2050,10 +2050,8 @@ impl eframe::App for LauncherApp {
             // LEFT SIDEBAR: Full Window Height (~300px width)
             // ═════════════════════════════════════════════════════════════════
             egui::SidePanel::left("left_sidebar")
-                .resizable(true)
-                .default_width(320.0)
-                .min_width(250.0)
-                .max_width(520.0)
+                .resizable(false)
+                .exact_width(290.0)
                 .frame(
                     Frame::none()
                         .fill(p.bg_sidebar)
@@ -2367,8 +2365,8 @@ impl LauncherApp {
                 (SidebarTab::SystemMD, SidebarTab::SystemMD.label()),
             ];
 
-            let avail_w = ui.available_width();
-            let btn_w = ((avail_w - 12.0) / 4.0).max(52.0);
+            let avail_w = ui.available_width().max(60.0);
+            let btn_w = ((avail_w - 9.0) / 4.0).max(10.0);
 
             for (tab, label) in tabs {
                 let is_active = self.active_sidebar_tab == tab;
@@ -2390,14 +2388,14 @@ impl LauncherApp {
 
                 let btn = egui::Button::new(
                     RichText::new(label)
-                        .size(11.0)
+                        .size(10.5)
                         .strong()
                         .color(fg),
                 )
                 .fill(bg)
                 .stroke(stroke)
                 .rounding(Rounding::same(5.0))
-                .min_size(egui::vec2(btn_w, 26.0));
+                .min_size(egui::vec2(btn_w, 24.0));
 
                 if ui.add(btn).clicked() {
                     self.active_sidebar_tab = tab;
@@ -3672,7 +3670,7 @@ impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     fn render_remote_scripts_tab(&mut self, ui: &mut Ui, host: &SshRemoteHost) {
         ui.horizontal(|ui| {
-            let left_w = 330.0;
+            let left_w = 290.0;
             let right_w = (ui.available_width() - left_w - 12.0).max(300.0);
             ui.allocate_ui(egui::vec2(left_w, ui.available_height()), |ui| {
                 self.render_scripts_left_panel(ui, Some(&host.id));
@@ -3686,7 +3684,7 @@ impl LauncherApp {
 
     fn render_remote_commands_tab(&mut self, ui: &mut Ui, host: &SshRemoteHost) {
         ui.horizontal(|ui| {
-            let left_w = 330.0;
+            let left_w = 290.0;
             let right_w = (ui.available_width() - left_w - 12.0).max(300.0);
             ui.allocate_ui(egui::vec2(left_w, ui.available_height()), |ui| {
                 self.render_commands_left_panel(ui, Some(&host.id));
@@ -3700,7 +3698,7 @@ impl LauncherApp {
 
     fn render_remote_systemd_tab(&mut self, ui: &mut Ui, host: &SshRemoteHost) {
         ui.horizontal(|ui| {
-            let left_w = 330.0;
+            let left_w = 290.0;
             let right_w = (ui.available_width() - left_w - 12.0).max(300.0);
             ui.allocate_ui(egui::vec2(left_w, ui.available_height()), |ui| {
                 self.render_systemd_left_panel(ui, Some(&host.id));

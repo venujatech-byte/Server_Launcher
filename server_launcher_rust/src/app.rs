@@ -2376,6 +2376,20 @@ impl LauncherApp {
                                         ui.add_space(4.0);
                                         ui.horizontal_wrapped(|ui| {
                                             ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+                                            if s.config.port > 0 {
+                                                let (port_text_col, port_bg_col) = if s.port_open {
+                                                    (Color32::from_rgb(96, 165, 250), Color32::from_rgb(18, 38, 56))
+                                                } else {
+                                                    (Color32::from_rgb(160, 170, 190), Color32::from_rgb(26, 30, 42))
+                                                };
+                                                render_metric_pill_custom(
+                                                    ui,
+                                                    "🔌",
+                                                    &format!(":{}", s.config.port),
+                                                    port_text_col,
+                                                    port_bg_col,
+                                                );
+                                            }
                                             if let Some(pid) = s.pid {
                                                 render_metric_pill_custom(
                                                     ui,
@@ -2611,8 +2625,15 @@ impl LauncherApp {
                         p.bg_sidebar
                     };
 
+                    let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
+                    let tab_title = if is_running && s.config.port > 0 {
+                        format!("  {} (: {})  ", s.config.name, s.config.port)
+                    } else {
+                        format!("  {}  ", s.config.name)
+                    };
+
                     let tab_btn = egui::Button::new(
-                        RichText::new(format!("  {}  ", s.config.name))
+                        RichText::new(tab_title)
                             .size(12.0)
                             .color(if is_active { p.text_primary } else { p.text_secondary }),
                     )
@@ -2850,6 +2871,17 @@ impl LauncherApp {
                                     );
                                     render_group_badge(ui, &s.config.group);
 
+                                    if s.config.port > 0 {
+                                        let (port_label, port_color) = if s.port_open {
+                                            (format!(":{}", s.config.port), p.info)
+                                        } else if is_running {
+                                            (format!(":{}", s.config.port), p.accent_light)
+                                        } else {
+                                            (format!(":{}", s.config.port), p.text_muted)
+                                        };
+                                        render_metric_pill(ui, "🔌", &port_label, port_color);
+                                    }
+
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         if is_running {
                                             let btn_stop = egui::Button::new(
@@ -2946,6 +2978,15 @@ impl LauncherApp {
                                                 "🆔",
                                                 &format!("PID {}", pid),
                                                 p.text_muted,
+                                            );
+                                        }
+                                        if s.config.port > 0 {
+                                            let port_color = if s.port_open { p.info } else { p.accent_light };
+                                            render_metric_pill(
+                                                ui,
+                                                "🔌",
+                                                &format!(":{}", s.config.port),
+                                                port_color,
                                             );
                                         }
                                         render_metric_pill(
@@ -3730,12 +3771,14 @@ impl LauncherApp {
     // Right Panel Tab 1+: Server Log View + Ctrl+F Search + Command Bar
     // ─────────────────────────────────────────────────────────────────────────
     fn render_server_log_content(&mut self, ui: &mut Ui, key: &str) {
-        let (name, is_running, pid, cpu, mem, uptime, actions, links) = {
+        let (name, is_running, pid, port, port_open, cpu, mem, uptime, actions, links) = {
             if let Some(s) = self.find_service(key) {
                 (
                     s.config.name.clone(),
                     s.state == ServiceState::Running || s.state == ServiceState::Starting,
                     s.pid,
+                    s.config.port,
+                    s.port_open,
                     s.cpu_usage,
                     s.memory_mb,
                     s.uptime_formatted(),
@@ -3767,6 +3810,19 @@ impl LauncherApp {
                         "🆔",
                         &format!("PID {}", p),
                         Color32::from_rgb(148, 163, 184),
+                    );
+                }
+                if port > 0 {
+                    let port_color = if port_open {
+                        Color32::from_rgb(96, 165, 250)
+                    } else {
+                        Color32::from_rgb(148, 163, 184)
+                    };
+                    render_metric_pill(
+                        ui,
+                        "🔌",
+                        &format!(":{}", port),
+                        port_color,
                     );
                 }
                 render_metric_pill(

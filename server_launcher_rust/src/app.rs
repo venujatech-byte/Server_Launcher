@@ -6036,20 +6036,30 @@ impl LauncherApp {
                             });
                             ui.add_space(3.0);
                             let cpu_val = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
-                            let freq_badge = if snap.cpu_frequency_mhz > 0 {
-                                if snap.cpu_frequency_mhz >= 1000 {
-                                    format!(" @ {:.2} GHz", snap.cpu_frequency_mhz as f64 / 1000.0)
-                                } else {
-                                    format!(" @ {} MHz", snap.cpu_frequency_mhz)
+                            ui.add(egui::ProgressBar::new(cpu_val).text(format!("{:.1}% ({} cores)", snap.cpu_global_usage, snap.cpu_cores_logical)).animate(false));
+
+                            ui.add_space(3.0);
+                            ui.horizontal(|ui| {
+                                if snap.cpu_frequency_mhz > 0 {
+                                    let freq_s = if snap.cpu_frequency_mhz >= 1000 {
+                                        format!("{:.2} GHz", snap.cpu_frequency_mhz as f64 / 1000.0)
+                                    } else {
+                                        format!("{} MHz", snap.cpu_frequency_mhz)
+                                    };
+                                    ui.label(RichText::new(format!("⏱ {}", freq_s)).size(10.5).monospace().color(p.info));
                                 }
-                            } else {
-                                String::new()
-                            };
-                            ui.add(egui::ProgressBar::new(cpu_val).text(format!("{:.1}% ({} cores{})", snap.cpu_global_usage, snap.cpu_cores_logical, freq_badge)).animate(false));
-                            if let Some(w) = snap.cpu_power_watts {
-                                ui.add_space(2.0);
-                                ui.label(RichText::new(format!("⚡ Draw: {:.1} W", w)).size(10.0).color(p.info));
-                            }
+                                if let Some(w) = snap.cpu_power_watts {
+                                    if snap.cpu_frequency_mhz > 0 {
+                                        ui.label(RichText::new("•").size(10.0).color(p.text_muted));
+                                    }
+                                    ui.label(RichText::new(format!("⚡ {:.1} W", w)).size(10.5).strong().color(Color32::from_rgb(250, 204, 21)));
+                                } else if let Some(tdp) = snap.cpu_tdp_watts {
+                                    if snap.cpu_frequency_mhz > 0 {
+                                        ui.label(RichText::new("•").size(10.0).color(p.text_muted));
+                                    }
+                                    ui.label(RichText::new(format!("⚡ TDP: {:.0} W", tdp)).size(10.0).color(p.text_muted));
+                                }
+                            });
                         });
 
                     ui.add_space(6.0);
@@ -6097,15 +6107,71 @@ impl LauncherApp {
                                 ui.add_space(3.0);
                                 if let Some(load) = gpu.load_pct {
                                     let load_val = (load / 100.0).clamp(0.0, 1.0);
-                                    let clk_str = gpu.clock_mhz.map(|c| format!(" @ {} MHz", c)).unwrap_or_default();
-                                    ui.add(egui::ProgressBar::new(load_val).text(format!("{:.1}% Load{}", load, clk_str)).animate(false));
+                                    ui.add(egui::ProgressBar::new(load_val).text(format!("{:.1}% Load", load)).animate(false));
                                 } else {
                                     ui.label(RichText::new(&gpu.name).size(10.5).color(p.text_secondary));
                                 }
-                                if let Some(w) = gpu.power_watts {
-                                    ui.add_space(2.0);
-                                    ui.label(RichText::new(format!("⚡ Draw: {:.1} W", w)).size(10.0).color(p.info));
-                                }
+                                ui.add_space(3.0);
+                                ui.horizontal_wrapped(|ui| {
+                                    if let Some(clk) = gpu.clock_mhz {
+                                        ui.label(RichText::new(format!("⏱ {} MHz", clk)).size(10.5).monospace().color(p.info));
+                                    }
+                                    if let Some(mclk) = gpu.mem_clock_mhz {
+                                        if gpu.clock_mhz.is_some() {
+                                            ui.label(RichText::new("•").size(10.0).color(p.text_muted));
+                                        }
+                                        ui.label(RichText::new(format!("VRAM: {} MHz", mclk)).size(10.0).monospace().color(p.text_muted));
+                                    }
+                                    if let Some(w) = gpu.power_watts {
+                                        if gpu.clock_mhz.is_some() || gpu.mem_clock_mhz.is_some() {
+                                            ui.label(RichText::new("•").size(10.0).color(p.text_muted));
+                                        }
+                                        ui.label(RichText::new(format!("⚡ {:.1} W", w)).size(10.5).strong().color(Color32::from_rgb(250, 204, 21)));
+                                    }
+                                });
+                            });
+
+                        ui.add_space(6.0);
+                    }
+
+                    // Card 4: Storage Live Speed & Capacity Card
+                    if !snap.disks.is_empty() {
+                        let total_disk_bytes: u64 = snap.disks.iter().map(|d| d.total_bytes).sum();
+                        let used_disk_bytes: u64 = snap.disks.iter().map(|d| d.used_bytes).sum();
+                        let disk_usage_pct = if total_disk_bytes > 0 {
+                            (used_disk_bytes as f32 / total_disk_bytes as f32) * 100.0
+                        } else {
+                            0.0
+                        };
+
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("💾 Storage").size(12.0).strong().color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if let Some(t) = snap.storage_temp {
+                                            ui.label(RichText::new(format!("{:.1}°C", t)).size(11.0).strong().color(crate::sensors::temp_color(t)));
+                                        }
+                                    });
+                                });
+                                ui.add_space(3.0);
+                                let disk_bar_val = (disk_usage_pct / 100.0).clamp(0.0, 1.0);
+                                let u_str = crate::sensors::format_bytes(used_disk_bytes);
+                                let t_str = crate::sensors::format_bytes(total_disk_bytes);
+                                ui.add(egui::ProgressBar::new(disk_bar_val).text(format!("{:.1}% ({} / {})", disk_usage_pct, u_str, t_str)).animate(false));
+
+                                ui.add_space(3.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("▼").size(11.0).strong().color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new(crate::sensors::format_rate(snap.total_disk_read_rate_bps)).size(10.5).monospace().color(p.text_primary));
+                                    ui.add_space(6.0);
+                                    ui.label(RichText::new("▲").size(11.0).strong().color(Color32::from_rgb(168, 85, 247)));
+                                    ui.label(RichText::new(crate::sensors::format_rate(snap.total_disk_write_rate_bps)).size(10.5).monospace().color(p.text_primary));
+                                });
                             });
 
                         ui.add_space(6.0);
@@ -6276,7 +6342,7 @@ impl LauncherApp {
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(RichText::new(&snap.cpu_brand).size(11.0).strong().color(p.text_secondary));
                                 ui.label(RichText::new("•").size(11.0).color(p.text_muted));
-                                ui.label(RichText::new(format!("{} Physical / {} Logical Cores", snap.cpu_cores_physical, snap.cpu_cores_logical)).size(11.0).color(p.text_muted));
+                                ui.label(RichText::new(format!("{} Cores", snap.cpu_cores_logical)).size(11.0).color(p.text_muted));
                                 if snap.cpu_frequency_mhz > 0 {
                                     ui.label(RichText::new("•").size(11.0).color(p.text_muted));
                                     let freq_s = if snap.cpu_frequency_mhz >= 1000 {
@@ -6284,10 +6350,18 @@ impl LauncherApp {
                                     } else {
                                         format!("{} MHz", snap.cpu_frequency_mhz)
                                     };
-                                    ui.label(RichText::new(freq_s).size(11.0).monospace().color(p.info));
+                                    ui.label(RichText::new(format!("⏱ {}", freq_s)).size(11.0).monospace().color(p.info));
+                                }
+                                if let Some(w) = snap.cpu_power_watts {
+                                    ui.label(RichText::new("•").size(11.0).color(p.text_muted));
+                                    ui.label(RichText::new(format!("⚡ {:.1} W", w)).size(11.0).strong().color(Color32::from_rgb(250, 204, 21)));
                                 }
                                 ui.label(RichText::new("•").size(11.0).color(p.text_muted));
                                 ui.label(RichText::new(format!("{} Total RAM", crate::sensors::format_bytes(snap.mem_total_bytes))).size(11.0).color(p.success));
+                                if snap.total_disk_read_rate_bps > 0.0 || snap.total_disk_write_rate_bps > 0.0 {
+                                    ui.label(RichText::new("•").size(11.0).color(p.text_muted));
+                                    ui.label(RichText::new(format!("💾 I/O: ▼ {}  ▲ {}", crate::sensors::format_rate(snap.total_disk_read_rate_bps), crate::sensors::format_rate(snap.total_disk_write_rate_bps))).size(11.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                }
                             });
                         });
 
@@ -6486,19 +6560,23 @@ impl LauncherApp {
                                     });
 
                                     ui.add_space(4.0);
-                                    ui.horizontal(|ui| {
+                                    ui.horizontal_wrapped(|ui| {
                                         ui.label(RichText::new(format!("Driver: {}", gpu.driver)).size(10.5).color(p.text_muted));
                                         if let Some(clk) = gpu.clock_mhz {
                                             ui.label(RichText::new("•").size(10.5).color(p.text_muted));
-                                            ui.label(RichText::new(format!("Core Clock: {} MHz", clk)).size(10.5).monospace().color(p.info));
+                                            ui.label(RichText::new(format!("⏱ Core Clock: {} MHz", clk)).size(11.0).strong().monospace().color(p.info));
                                         }
                                         if let Some(mclk) = gpu.mem_clock_mhz {
                                             ui.label(RichText::new("•").size(10.5).color(p.text_muted));
-                                            ui.label(RichText::new(format!("VRAM Clock: {} MHz", mclk)).size(10.5).monospace().color(p.text_secondary));
+                                            ui.label(RichText::new(format!("⏱ VRAM Clock: {} MHz", mclk)).size(11.0).monospace().color(p.accent));
+                                        }
+                                        if let Some(w) = gpu.power_watts {
+                                            ui.label(RichText::new("•").size(10.5).color(p.text_muted));
+                                            ui.label(RichText::new(format!("⚡ Draw: {:.1} W", w)).size(11.0).strong().color(Color32::from_rgb(250, 204, 21)));
                                         }
                                         if let (Some(used), Some(total)) = (gpu.mem_used_mb, gpu.mem_total_mb) {
                                             ui.label(RichText::new("•").size(10.5).color(p.text_muted));
-                                            ui.label(RichText::new(format!("VRAM: {} MB / {} MB", used, total)).size(10.5).color(p.info));
+                                            ui.label(RichText::new(format!("VRAM: {} MB / {} MB", used, total)).size(10.5).color(p.text_secondary));
                                         }
                                     });
 
@@ -6621,6 +6699,14 @@ impl LauncherApp {
                                         if let Some(t) = snap.storage_temp {
                                             ui.label(RichText::new(format!("NVMe/Drive: {:.1}°C", t)).size(12.0).strong().color(crate::sensors::temp_color(t)));
                                         }
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("Total I/O:").size(11.0).color(p.text_muted));
+                                            ui.label(RichText::new("▼").size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new(crate::sensors::format_rate(snap.total_disk_read_rate_bps)).size(11.0).monospace().color(p.text_primary));
+                                            ui.add_space(4.0);
+                                            ui.label(RichText::new("▲").size(11.0).color(Color32::from_rgb(168, 85, 247)));
+                                            ui.label(RichText::new(crate::sensors::format_rate(snap.total_disk_write_rate_bps)).size(11.0).monospace().color(p.text_primary));
+                                        });
                                     });
                                 });
 
@@ -6633,12 +6719,30 @@ impl LauncherApp {
                                             let used_s = crate::sensors::format_bytes(d.used_bytes);
                                             let total_s = crate::sensors::format_bytes(d.total_bytes);
                                             ui.label(RichText::new(format!("{} / {} ({:.1}%)", used_s, total_s, d.usage_pct)).size(11.0).monospace().color(p.text_secondary));
+                                            if d.read_rate_bps > 0.0 || d.write_rate_bps > 0.0 {
+                                                ui.add_space(6.0);
+                                                ui.label(RichText::new(format!("▼ {}  ▲ {}", crate::sensors::format_rate(d.read_rate_bps), crate::sensors::format_rate(d.write_rate_bps))).size(10.5).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                            }
                                         });
                                     });
 
                                     let disk_pct = (d.usage_pct / 100.0).clamp(0.0, 1.0);
                                     ui.add(egui::ProgressBar::new(disk_pct).text(format!("{:.1}% used", d.usage_pct)).animate(false));
-                                    ui.add_space(4.0);
+
+                                    ui.add_space(2.0);
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("Live Speed:").size(10.5).color(p.text_muted));
+                                        ui.label(RichText::new("▼").size(10.5).color(Color32::from_rgb(56, 189, 248)));
+                                        ui.label(RichText::new(format!("Read: {}", crate::sensors::format_rate(d.read_rate_bps))).size(10.5).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                        ui.add_space(6.0);
+                                        ui.label(RichText::new("▲").size(10.5).color(Color32::from_rgb(168, 85, 247)));
+                                        ui.label(RichText::new(format!("Write: {}", crate::sensors::format_rate(d.write_rate_bps))).size(10.5).monospace().color(Color32::from_rgb(168, 85, 247)));
+                                        if d.total_read_bytes > 0 || d.total_write_bytes > 0 {
+                                            ui.label(RichText::new("•").size(10.5).color(p.text_muted));
+                                            ui.label(RichText::new(format!("Lifetime: {} R / {} W", crate::sensors::format_bytes(d.total_read_bytes), crate::sensors::format_bytes(d.total_write_bytes))).size(10.0).color(p.text_muted));
+                                        }
+                                    });
+                                    ui.add_space(6.0);
                                 }
                             });
 

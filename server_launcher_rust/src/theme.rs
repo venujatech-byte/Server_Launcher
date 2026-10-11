@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ThemeMode {
     #[default]
+    NocturnalCommand,
     Dark,
     CatppuccinMocha,
     CatppuccinLatte,
@@ -16,6 +17,7 @@ pub enum ThemeMode {
 impl ThemeMode {
     pub fn all() -> &'static [ThemeMode] {
         &[
+            ThemeMode::NocturnalCommand,
             ThemeMode::Dark,
             ThemeMode::CatppuccinMocha,
             ThemeMode::CatppuccinLatte,
@@ -28,6 +30,7 @@ impl ThemeMode {
 
     pub fn name(&self) -> &'static str {
         match self {
+            ThemeMode::NocturnalCommand => "Nocturnal Command (M3)",
             ThemeMode::Dark => "Dark (Midnight)",
             ThemeMode::CatppuccinMocha => "Catppuccin Mocha",
             ThemeMode::CatppuccinLatte => "Catppuccin Latte",
@@ -40,6 +43,7 @@ impl ThemeMode {
 
     pub fn emoji(&self) -> &'static str {
         match self {
+            ThemeMode::NocturnalCommand => "🌌",
             ThemeMode::Dark => "🌙",
             ThemeMode::CatppuccinMocha => "☕",
             ThemeMode::CatppuccinLatte => "🥛",
@@ -52,6 +56,7 @@ impl ThemeMode {
 
     pub fn id_str(&self) -> &'static str {
         match self {
+            ThemeMode::NocturnalCommand => "nocturnal_command",
             ThemeMode::Dark => "dark",
             ThemeMode::CatppuccinMocha => "catppuccin_mocha",
             ThemeMode::CatppuccinLatte => "catppuccin_latte",
@@ -64,6 +69,7 @@ impl ThemeMode {
 
     pub fn from_id_str(s: &str) -> Self {
         match s.to_lowercase().replace('-', "_").as_str() {
+            "nocturnal" | "nocturnal_command" | "nocturnal-command" | "m3" => ThemeMode::NocturnalCommand,
             "dark" | "midnight" => ThemeMode::Dark,
             "catppuccin" | "catppuccin_mocha" | "mocha" => ThemeMode::CatppuccinMocha,
             "catppuccin_latte" | "latte" => ThemeMode::CatppuccinLatte,
@@ -71,12 +77,52 @@ impl ThemeMode {
             "dracula" => ThemeMode::Dracula,
             "nord" => ThemeMode::Nord,
             "tokyo_night" | "tokyonight" => ThemeMode::TokyoNight,
-            _ => ThemeMode::Dark,
+            _ => ThemeMode::NocturnalCommand,
         }
     }
 
     pub fn palette(&self) -> ThemePalette {
         match self {
+            ThemeMode::NocturnalCommand => ThemePalette {
+                is_dark: true,
+                bg_app: Color32::from_rgb(0x11, 0x11, 0x17),
+                bg_header: Color32::from_rgb(0x11, 0x11, 0x17),
+                bg_machines_nav: Color32::from_rgb(0x0c, 0x0c, 0x11),
+                bg_sidebar: Color32::from_rgb(0x14, 0x15, 0x1d),
+                bg_main: Color32::from_rgb(0x11, 0x11, 0x17),
+                bg_card: Color32::from_rgb(0x18, 0x19, 0x22),        // exact obsidian container #181922
+                bg_card_hover: Color32::from_rgb(0x1f, 0x20, 0x2c),
+                bg_card_active: Color32::from_rgb(0x23, 0x25, 0x33),
+                bg_subtle: Color32::from_rgb(0x15, 0x16, 0x20),
+                bg_input: Color32::from_rgb(0x10, 0x11, 0x17),
+                bg_button: Color32::from_rgb(0x23, 0x25, 0x30),      // micro telemetry pill container #232530
+                bg_button_hover: Color32::from_rgb(0x2a, 0x2c, 0x3a),
+                border: Color32::TRANSPARENT,                        // borderless
+                border_subtle: Color32::TRANSPARENT,                 // borderless
+                text_primary: Color32::from_rgb(0xf1, 0xf5, 0xf9),   // crisp off-white #f1f5f9
+                text_secondary: Color32::from_rgb(0xcb, 0xd5, 0xe1),
+                text_muted: Color32::from_rgb(0x94, 0xa3, 0xb8),      // muted slate #94a3b8
+                accent: Color32::from_rgb(0xc4, 0xc0, 0xff),         // electric violet
+                accent_hover: Color32::from_rgb(0xe3, 0xdf, 0xff),
+                accent_light: Color32::from_rgb(0x5e, 0xea, 0xd4),   // mint cyan #5eead4
+                accent_subtle: Color32::from_rgb(0x13, 0x27, 0x22),
+                accent_text: Color32::from_rgb(0x18, 0x19, 0x22),
+                success: Color32::from_rgb(0x4a, 0xde, 0x80),        // mint green #4ade80
+                success_subtle: Color32::from_rgb(0x13, 0x27, 0x22), // chip running bg #132722
+                warning: Color32::from_rgb(0xfc, 0xd3, 0x4d),
+                warning_subtle: Color32::from_rgb(0x35, 0x22, 0x05),
+                danger: Color32::from_rgb(0xf8, 0x71, 0x71),
+                danger_subtle: Color32::from_rgb(0x99, 0x1b, 0x1b),   // stop button crimson #991b1b
+                info: Color32::from_rgb(0x38, 0xbd, 0xf8),           // command well cyan #38bdf8
+                info_subtle: Color32::from_rgb(0x0e, 0x74, 0x90),    // restart button teal #0e7490
+                terminal_bg: Color32::from_rgb(0x10, 0x11, 0x17),    // recessed well #101117
+                terminal_border: Color32::TRANSPARENT,               // borderless
+                log_stdout: Color32::from_rgb(0xf1, 0xf5, 0xf9),
+                log_stderr: Color32::from_rgb(0xf8, 0x71, 0x71),
+                log_launcher: Color32::from_rgb(0xc4, 0xc0, 0xff),
+                log_stdin: Color32::from_rgb(0x4a, 0xde, 0x80),
+                log_warning: Color32::from_rgb(0xfc, 0xd3, 0x4d),
+            },
             ThemeMode::Dark => ThemePalette {
                 is_dark: true,
                 bg_app: Color32::from_rgb(15, 17, 23),
@@ -417,28 +463,34 @@ impl ThemePalette {
 
         visuals.widgets.noninteractive.bg_fill = self.bg_card;
         visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, self.text_secondary);
-        visuals.widgets.noninteractive.rounding = Rounding::same(4.0);
+        visuals.widgets.noninteractive.bg_stroke = Stroke::NONE;
+        visuals.widgets.noninteractive.rounding = Rounding::same(8.0);
 
         visuals.widgets.inactive.bg_fill = self.bg_button;
         visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, self.text_secondary);
-        visuals.widgets.inactive.rounding = Rounding::same(4.0);
+        visuals.widgets.inactive.bg_stroke = Stroke::NONE;
+        visuals.widgets.inactive.rounding = Rounding::same(8.0);
 
         visuals.widgets.hovered.bg_fill = self.bg_button_hover;
         visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, self.text_primary);
-        visuals.widgets.hovered.rounding = Rounding::same(6.0);
+        visuals.widgets.hovered.bg_stroke = Stroke::NONE;
+        visuals.widgets.hovered.rounding = Rounding::same(8.0);
 
         visuals.widgets.active.bg_fill = self.accent;
         visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, self.accent_text);
-        visuals.widgets.active.rounding = Rounding::same(6.0);
+        visuals.widgets.active.bg_stroke = Stroke::NONE;
+        visuals.widgets.active.rounding = Rounding::same(8.0);
 
         visuals.widgets.open.bg_fill = self.bg_card;
         visuals.widgets.open.fg_stroke = Stroke::new(1.0_f32, self.text_primary);
+        visuals.widgets.open.bg_stroke = Stroke::NONE;
 
         visuals.selection.bg_fill = self.accent;
-        visuals.selection.stroke = Stroke::new(1.0_f32, self.accent_text);
+        visuals.selection.stroke = Stroke::NONE;
 
         visuals.override_text_color = Some(self.text_primary);
-        visuals.window_stroke = Stroke::new(1.0_f32, self.border);
+        visuals.window_stroke = Stroke::NONE;
+        visuals.window_rounding = Rounding::same(16.0);
 
         visuals
     }
@@ -460,12 +512,14 @@ mod tests {
 
     #[test]
     fn test_theme_from_id_str() {
+        assert_eq!(ThemeMode::from_id_str("nocturnal"), ThemeMode::NocturnalCommand);
+        assert_eq!(ThemeMode::from_id_str("nocturnal_command"), ThemeMode::NocturnalCommand);
         assert_eq!(ThemeMode::from_id_str("catppuccin-mocha"), ThemeMode::CatppuccinMocha);
         assert_eq!(ThemeMode::from_id_str("latte"), ThemeMode::CatppuccinLatte);
         assert_eq!(ThemeMode::from_id_str("light"), ThemeMode::Light);
         assert_eq!(ThemeMode::from_id_str("dracula"), ThemeMode::Dracula);
         assert_eq!(ThemeMode::from_id_str("nord"), ThemeMode::Nord);
         assert_eq!(ThemeMode::from_id_str("tokyo-night"), ThemeMode::TokyoNight);
-        assert_eq!(ThemeMode::from_id_str("unknown"), ThemeMode::Dark);
+        assert_eq!(ThemeMode::from_id_str("unknown"), ThemeMode::NocturnalCommand);
     }
 }

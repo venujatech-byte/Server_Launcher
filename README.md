@@ -14,23 +14,32 @@ Available in a native GPU-accelerated **Rust Desktop application**, a lightweigh
 
 ## 📸 Screenshots & Themes
 
-Server Launcher comes out-of-the-box with 7 handcrafted color palettes:
+Server Launcher comes out-of-the-box with 8 handcrafted color palettes, spearheaded by the sleek **Nocturnal Command** design system:
+- **Nocturnal Command** 🌌 (Material 3 Dark / Nocturnal Obsidian — Default)
+- **Dark (Midnight)** 🌙 (Modern Slate Dark)
 - **Catppuccin Mocha** 🌿 (Pastel Dark)
 - **Catppuccin Latte** ☕ (Pastel Light)
-- **Dark (Midnight)** 🌙 (Modern Slate Dark - Default)
 - **Light Mode** ☀️ (Modern Slate Light)
 - **Dracula** 🧛 (Vibrant Dark)
 - **Nord** ❄️ (Arctic Frosty Dark)
-- **Tokyo Night** 🌌 (Neon Dark)
+- **Tokyo Night** 🌆 (Neon Dark)
+
+### 🌌 Nocturnal Command Design System
+Engineered for modern developer cockpits, server orchestrators, and technical tools:
+- **Obsidian Luminance Tiers**: Elevation expressed through calibrated dark surface luminance (`#13131a`, `#1b1b22`, `#1f1f26`) rather than blurry drop shadows.
+- **Electric Accents**: Electric Violet (`#c4c0ff`), Telemetry Cyan (`#70d5e4`), and Mint (`#97f6ca`) highlight active processes, ports, and metrics.
+- **Pill Primitives (`rounded-full`)**: Smooth pill action buttons, pill search bar, and Material 3 status chips (`● Running`, `○ Stopped`).
+- **Recessed Terminal Wells**: Deep obsidian containers (`#0a0a0f`) for monospace command previews (`$ <command>`) with live runtime status tags.
 
 ---
 
 ## ✨ Features at a Glance
 
 ### 🖥️ Native Process Management
-- **One-Click Lifecycle**: Start, stop, and restart individual servers or batch-control everything with **Start All** and **Stop All**.
+- **One-Click Lifecycle**: Start, stop, and restart individual servers or batch-control everything with **Start All** and **Stop All** pill buttons.
+- **📥 One-Click Configuration Import**: Instantly import configurations from any `servers.json` or config file using the `[📥 Import]` button next to `[+ Add Server]`. Supports JSON config files, server arrays, and individual definitions with auto-key generation and persistence.
 - **🚀 System Startup Autostart**: Seamless toggle in the top bar (`🚀 Boot: ON / OFF`) to automatically launch Server Launcher when your system boots/logs in (Linux XDG Autostart `~/.config/autostart` and Windows Startup).
-- **🚀 Per-Server Launch Autostart**: Configure individual servers with the `🚀 autostart` checkbox to start running immediately whenever Server Launcher is opened.
+- **🚀 Per-Server Launch Autostart**: Configure individual servers with the `🚀 Autostart` checkbox to start running immediately whenever Server Launcher is opened.
 - **Auto-Restart on Crash**: Per-server crash guard option that monitors exit codes and automatically restarts failed services after a short delay.
 - **Port-Aware Status Detection**: Monitors process sockets and marks services as `Running` once their configured TCP port is bound and listening.
 - **Pre-Stop Command Hooks**: Run graceful shutdown or data backup scripts before process termination (e.g., `firebase emulators:export ./data`).
@@ -249,7 +258,7 @@ All configurations are human-readable and automatically persisted to `servers.js
 ### Configuration Fields
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `theme` | `string` | Selected theme ID (`dark`, `catppuccin_mocha`, `catppuccin_latte`, `light`, `dracula`, `nord`, `tokyo_night`) |
+| `theme` | `string` | Selected theme ID (`nocturnal_command`, `dark`, `catppuccin_mocha`, `catppuccin_latte`, `light`, `dracula`, `nord`, `tokyo_night`) |
 | `name` | `string` | Display name of the service |
 | `group` | `string` | Category badge for grouping related microservices |
 | `cwd` | `string` | Working directory where the start/action commands execute |
@@ -267,7 +276,7 @@ All configurations are human-readable and automatically persisted to `servers.js
 
 | Keybinding | Action |
 | :--- | :--- |
-| `Ctrl + P` | Open Quick Launch Command Palette |
+| `Ctrl + P` / `Ctrl + K` | Open Quick Launch Command Palette & Instance Search |
 | `Ctrl + F` | Search & filter console logs / server overview |
 | `Enter` | Submit command in interactive command bar, terminal, or authentication modal |
 | `Escape` | Dismiss modals, sudo password prompt, command palette, or autocomplete suggestions |

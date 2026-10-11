@@ -1086,9 +1086,11 @@ impl LauncherApp {
     }
 
     fn handle_global_shortcuts(&mut self, ctx: &Context) {
-        // Ctrl+P: Quick Launch
+        // Ctrl+P / Ctrl+K: Quick Launch & Command Palette
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::P))
             || ctx.input_mut(|i| i.consume_key(Modifiers::CTRL, Key::P))
+            || ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::K))
+            || ctx.input_mut(|i| i.consume_key(Modifiers::CTRL, Key::K))
         {
             self.palette_modal.open = !self.palette_modal.open;
             self.palette_modal.query.clear();
@@ -1416,11 +1418,7 @@ impl LauncherApp {
             } else {
                 p.bg_card
             };
-            let local_stroke = if is_local_selected {
-                Stroke::NONE
-            } else {
-                Stroke::new(1.0_f32, p.border)
-            };
+            let local_stroke = Stroke::NONE;
 
             ui.painter().rect(local_rect, Rounding::same(8.0), local_bg, local_stroke);
             let local_icon_col = if is_local_selected { Color32::WHITE } else { p.text_primary };
@@ -1444,10 +1442,6 @@ impl LauncherApp {
             }
 
             ui.add_space(10.0);
-            // Subtle horizontal separator line
-            let (sep_rect, _) = ui.allocate_exact_size(egui::vec2(24.0, 1.0), egui::Sense::hover());
-            ui.painter().rect_filled(sep_rect, Rounding::ZERO, p.border.gamma_multiply(0.6));
-            ui.add_space(8.0);
 
             // 2. SSH Remote Hosts List (Scrollable)
             ScrollArea::vertical()
@@ -1489,11 +1483,7 @@ impl LauncherApp {
                             } else {
                                 p.bg_card
                             };
-                            let host_stroke = if is_selected {
-                                Stroke::NONE
-                            } else {
-                                Stroke::new(1.0_f32, p.border)
-                            };
+                            let host_stroke = Stroke::NONE;
 
                             ui.painter().rect(host_rect, Rounding::same(8.0), host_bg, host_stroke);
                             let host_icon_col = if is_selected { Color32::WHITE } else { p.text_secondary };
@@ -1541,7 +1531,7 @@ impl LauncherApp {
                         // Add SSH Host button tile
                         let (add_rect, add_resp) = ui.allocate_exact_size(egui::vec2(34.0, 34.0), egui::Sense::click());
                         let add_bg = if add_resp.hovered() { p.bg_card_active } else { Color32::TRANSPARENT };
-                        let add_stroke = Stroke::new(1.0_f32, if add_resp.hovered() { p.accent } else { p.border.gamma_multiply(0.6) });
+                        let add_stroke = Stroke::NONE;
                         ui.painter().rect(add_rect, Rounding::same(8.0), add_bg, add_stroke);
                         ui.painter().text(
                             add_rect.center(),
@@ -1559,7 +1549,7 @@ impl LauncherApp {
                         // Import SSH button tile
                         let (imp_rect, imp_resp) = ui.allocate_exact_size(egui::vec2(34.0, 34.0), egui::Sense::click());
                         let imp_bg = if imp_resp.hovered() { p.bg_card_active } else { Color32::TRANSPARENT };
-                        let imp_stroke = Stroke::new(1.0_f32, if imp_resp.hovered() { p.accent } else { p.border.gamma_multiply(0.6) });
+                        let imp_stroke = Stroke::NONE;
                         ui.painter().rect(imp_rect, Rounding::same(8.0), imp_bg, imp_stroke);
                         ui.painter().text(
                             imp_rect.center(),
@@ -2152,45 +2142,72 @@ impl LauncherApp {
 
 fn draw_status_dot(ui: &mut Ui, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
-    ui.painter().circle_filled(rect.center(), 5.5, color.gamma_multiply(0.25));
-    ui.painter().circle_filled(rect.center(), 4.0, color);
+    ui.painter().circle_filled(rect.center(), 6.0, color.gamma_multiply(0.25));
+    ui.painter().circle_filled(rect.center(), 3.5, color);
 }
 
+#[allow(dead_code)]
+fn render_m3_status_chip(ui: &mut Ui, label: &str, dot_color: Color32, container_color: Color32, text_color: Color32) {
+    Frame::none()
+        .fill(container_color)
+        .stroke(Stroke::NONE)
+        .rounding(Rounding::same(999.0))
+        .inner_margin(egui::Margin::symmetric(10.0, 3.5))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 5.0;
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(7.0, 7.0), egui::Sense::hover());
+                ui.painter().circle_filled(rect.center(), 3.5, dot_color);
+                ui.label(
+                    RichText::new(label)
+                        .size(11.0)
+                        .strong()
+                        .color(text_color),
+                );
+            });
+        });
+}
+
+#[allow(dead_code)]
 fn render_group_badge(ui: &mut Ui, text: &str) {
     let visuals = ui.visuals();
     let bg = visuals.faint_bg_color;
-    let stroke_col = visuals.widgets.inactive.bg_fill;
     let text_col = visuals.selection.bg_fill;
     Frame::none()
         .fill(bg)
-        .stroke(Stroke::new(1.0_f32, stroke_col))
-        .rounding(Rounding::same(12.0))
-        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+        .stroke(Stroke::NONE)
+        .rounding(Rounding::same(999.0))
+        .inner_margin(egui::Margin::symmetric(8.0, 2.5))
         .show(ui, |ui| {
             ui.label(
                 RichText::new(text)
-                    .size(11.0)
+                    .size(10.5)
                     .color(text_col)
                     .strong(),
             );
         });
 }
 
+#[allow(dead_code)]
 fn render_metric_pill(ui: &mut Ui, icon: &str, label: &str, text_color: Color32) {
     let bg_color = ui.visuals().widgets.inactive.bg_fill;
     render_metric_pill_custom(ui, icon, label, text_color, bg_color);
 }
 
+#[allow(dead_code)]
 fn render_metric_pill_custom(ui: &mut Ui, icon: &str, label: &str, text_color: Color32, bg_color: Color32) {
     Frame::none()
         .fill(bg_color)
-        .stroke(Stroke::new(1.0_f32, text_color.gamma_multiply(0.35)))
-        .rounding(Rounding::same(5.0))
-        .inner_margin(egui::Margin::symmetric(7.0, 3.0))
+        .stroke(Stroke::NONE)
+        .rounding(Rounding::same(999.0))
+        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(icon).size(11.0));
-                ui.label(RichText::new(label).size(11.0).color(text_color).strong());
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if !icon.is_empty() {
+                    ui.label(RichText::new(icon).size(10.5));
+                }
+                ui.label(RichText::new(label).size(11.0).monospace().color(text_color).strong());
             });
         });
 }
@@ -2374,9 +2391,11 @@ impl eframe::App for LauncherApp {
                         }
                     });
 
-                    // Right: Actions buttons
+                    // Right: Actions buttons in modern pill layout
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // + Add Server
+                        ui.spacing_mut().item_spacing.x = 8.0;
+
+                        // + Add Server (Primary Accent Pill)
                         let btn_add = egui::Button::new(
                             RichText::new("+ Add Server")
                                 .size(12.0)
@@ -2384,22 +2403,21 @@ impl eframe::App for LauncherApp {
                                 .color(p.accent_text),
                         )
                         .fill(p.accent)
-                        .rounding(Rounding::same(4.0))
-                        .min_size(egui::vec2(95.0, 26.0));
+                        .rounding(Rounding::same(999.0))
+                        .min_size(egui::vec2(98.0, 28.0));
                         if ui.add(btn_add).clicked() {
                             self.add_edit_modal.open_new();
                         }
 
-                        // 📥 Import
+                        // 📥 Import (Tonal Pill)
                         let btn_import = egui::Button::new(
                             RichText::new("📥 Import")
                                 .size(12.0)
                                 .color(p.text_primary),
                         )
                         .fill(p.bg_button)
-                        .stroke(Stroke::new(1.0_f32, p.border))
-                        .rounding(Rounding::same(4.0))
-                        .min_size(egui::vec2(80.0, 26.0));
+                        .rounding(Rounding::same(999.0))
+                        .min_size(egui::vec2(84.0, 28.0));
                         if ui.add(btn_import)
                             .on_hover_text("Import servers from a servers.json file")
                             .clicked()
@@ -2421,9 +2439,8 @@ impl eframe::App for LauncherApp {
                                 .color(boot_color),
                         )
                         .fill(p.bg_button)
-                        .stroke(Stroke::new(1.0_f32, if is_boot { p.success } else { p.border }))
-                        .rounding(Rounding::same(4.0))
-                        .min_size(egui::vec2(86.0, 26.0));
+                        .rounding(Rounding::same(999.0))
+                        .min_size(egui::vec2(88.0, 28.0));
                         if ui.add(btn_boot)
                             .on_hover_text(if is_boot {
                                 "App autostart is ON: Server Launcher runs on system login/boot. Click to turn OFF."
@@ -2446,7 +2463,7 @@ impl eframe::App for LauncherApp {
                                     .size(11.5)
                                     .color(p.text_primary),
                             )
-                            .width(148.0)
+                            .width(160.0)
                             .show_ui(ui, |ui| {
                                 for &thm in ThemeMode::all() {
                                     let label = format!("{} {}", thm.emoji(), thm.name());
@@ -2458,47 +2475,100 @@ impl eframe::App for LauncherApp {
                             self.persist_config();
                         }
 
-                        // Quick Launch (Ctrl+P)
+                        // Quick Launch (Ctrl+P / Ctrl+K)
                         let btn_pal = egui::Button::new(
-                            RichText::new("⚡ Quick Launch (Ctrl+P)")
-                                .size(12.0)
-                                .color(p.accent_light),
+                            RichText::new("⚡ Quick Launch Ctrl+P")
+                                .size(11.5)
+                                .color(p.accent),
                         )
                         .fill(p.bg_button)
-                        .stroke(Stroke::new(1.0_f32, p.border))
-                        .rounding(Rounding::same(4.0))
-                        .min_size(egui::vec2(165.0, 26.0));
+                        .rounding(Rounding::same(999.0))
+                        .min_size(egui::vec2(150.0, 28.0));
                         if ui.add(btn_pal).clicked() {
                             self.palette_modal.open = true;
                             self.palette_modal.query.clear();
                         }
 
-                        // Stop all
+                        // Stop all (M3 Danger Subdued Pill)
                         let btn_stop_all = egui::Button::new(
-                            RichText::new("Stop all")
-                                .size(12.0)
-                                .color(p.text_secondary),
+                            RichText::new("⏹ Stop All")
+                                .size(11.5)
+                                .strong()
+                                .color(p.danger),
                         )
-                        .fill(p.bg_button)
-                        .rounding(Rounding::same(4.0))
-                        .min_size(egui::vec2(75.0, 26.0));
+                        .fill(p.danger_subtle)
+                        .rounding(Rounding::same(999.0))
+                        .min_size(egui::vec2(84.0, 28.0));
                         if ui.add(btn_stop_all).clicked() {
                             self.stop_all();
                         }
 
-                        // Start all
+                        // Start all (M3 Success Subdued Pill)
                         let btn_start_all = egui::Button::new(
-                            RichText::new("Start all")
-                                .size(12.0)
+                            RichText::new("▶ Start All")
+                                .size(11.5)
                                 .strong()
-                                .color(Color32::WHITE),
+                                .color(p.success),
                         )
-                        .fill(p.success)
-                        .rounding(Rounding::same(4.0))
-                        .min_size(egui::vec2(75.0, 26.0));
+                        .fill(p.success_subtle)
+                        .rounding(Rounding::same(999.0))
+                        .min_size(egui::vec2(84.0, 28.0));
                         if ui.add(btn_start_all).clicked() {
                             self.start_all();
                         }
+
+                        // Search Pill Bar (with Ctrl+K hint chip)
+                        Frame::none()
+                            .fill(p.bg_input)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(999.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 4.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    ui.label(RichText::new("🔍").size(11.0).color(p.text_muted));
+                                    let s_resp = ui.add(
+                                        egui::TextEdit::singleline(&mut self.overview_search_query)
+                                            .hint_text(
+                                                RichText::new("Search instances, ports, PIDs...")
+                                                    .size(11.0)
+                                                    .color(p.text_muted),
+                                            )
+                                            .desired_width(170.0)
+                                            .frame(false),
+                                    );
+                                    Frame::none()
+                                        .fill(p.bg_card)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(4.0, 1.0))
+                                        .show(ui, |ui| {
+                                            ui.label(
+                                                RichText::new("Ctrl+K")
+                                                    .size(9.0)
+                                                    .color(p.text_muted)
+                                                    .monospace(),
+                                            );
+                                        });
+                                    if s_resp.changed() {
+                                        self.refresh_server_list();
+                                    }
+                                    if !self.overview_search_query.is_empty() {
+                                        if ui
+                                            .add(
+                                                egui::Button::new(
+                                                    RichText::new("✕").size(10.0).color(p.text_muted),
+                                                )
+                                                .frame(false),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.overview_search_query.clear();
+                                            self.refresh_server_list();
+                                        }
+                                    }
+                                });
+                            });
                     });
                 });
             });
@@ -2509,7 +2579,7 @@ impl eframe::App for LauncherApp {
         egui::SidePanel::left("machines_nav_bar")
             .resizable(false)
             .exact_width(52.0)
-            .show_separator_line(true)
+            .show_separator_line(false)
             .frame(
                 Frame::none()
                     .fill(p.bg_machines_nav)
@@ -2533,7 +2603,7 @@ impl eframe::App for LauncherApp {
             egui::SidePanel::left("left_sidebar")
                 .resizable(false)
                 .exact_width(380.0)
-                .show_separator_line(true)
+                .show_separator_line(false)
                 .frame(
                     Frame::none()
                         .fill(p.bg_sidebar)
@@ -2916,12 +2986,6 @@ impl LauncherApp {
                 } else {
                     p.text_secondary
                 };
-                let stroke = if is_active {
-                    Stroke::new(1.0_f32, p.accent)
-                } else {
-                    Stroke::new(1.0_f32, p.border)
-                };
-
                 let btn = egui::Button::new(
                     RichText::new(label)
                         .size(10.0)
@@ -2929,8 +2993,8 @@ impl LauncherApp {
                         .color(fg),
                 )
                 .fill(bg)
-                .stroke(stroke)
-                .rounding(Rounding::same(5.0))
+                .stroke(Stroke::NONE)
+                .rounding(Rounding::same(999.0))
                 .min_size(egui::vec2(btn_w, 24.0));
 
                 if ui.add(btn).clicked() {
@@ -2955,8 +3019,6 @@ impl LauncherApp {
             ui.set_max_width(ui.available_width());
             // 0. Top 5 Navigation Tabs Bar
             self.render_sidebar_tabs_bar(ui);
-            ui.add_space(6.0);
-            ui.separator();
             ui.add_space(6.0);
 
             match self.active_sidebar_tab {
@@ -5662,8 +5724,8 @@ impl LauncherApp {
 
                     let btn = egui::Button::new(RichText::new(&grp).size(11.0).color(text_color))
                         .fill(bg_color)
-                        .rounding(Rounding::same(4.0))
-                        .stroke(Stroke::new(1.0_f32, p.border));
+                        .rounding(Rounding::same(999.0))
+                        .stroke(Stroke::NONE);
 
                     if ui.add(btn).clicked() {
                         self.active_group_filter = grp.clone();
@@ -5671,8 +5733,6 @@ impl LauncherApp {
                 }
             });
 
-            ui.add_space(6.0);
-            ui.separator();
             ui.add_space(6.0);
 
             // 2. Scrollable list of Groups & Server Cards (NEVER shrinks, fills full height!)
@@ -5704,17 +5764,17 @@ impl LauncherApp {
 
                     for (group_name, indices) in groups {
                         ui.add_space(4.0);
-                        // Group Section Header
+                        // Group Section Header (Pill container)
                         Frame::none()
                             .fill(p.bg_subtle)
-                            .stroke(Stroke::new(1.0_f32, p.border_subtle))
-                            .rounding(Rounding::same(6.0))
-                            .inner_margin(egui::Margin::symmetric(10.0, 7.0))
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(999.0))
+                            .inner_margin(egui::Margin::symmetric(12.0, 6.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     let header_text = format!("🏷  {} ({})", group_name.to_uppercase(), indices.len());
-                                    let title_w = (ui.available_width() - 145.0).max(40.0);
+                                    let title_w = (ui.available_width() - 150.0).max(40.0);
                                     ui.allocate_ui_with_layout(
                                         egui::vec2(title_w, 20.0),
                                         egui::Layout::left_to_right(egui::Align::Center),
@@ -5733,20 +5793,25 @@ impl LauncherApp {
                                     );
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.spacing_mut().item_spacing.x = 6.0;
                                         let btn_stop_grp = egui::Button::new(
-                                            RichText::new("⏹ Stop").size(10.5).color(Color32::WHITE),
+                                            RichText::new("⏹ Stop").size(10.5).strong().color(Color32::from_rgb(0xff, 0xda, 0xd6)),
                                         )
-                                        .fill(p.danger)
-                                        .rounding(Rounding::same(4.0));
+                                        .fill(Color32::from_rgb(0x99, 0x1b, 0x1b))
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(999.0))
+                                        .min_size(egui::vec2(60.0, 22.0));
                                         if ui.add(btn_stop_grp).on_hover_text("Stop all servers in this group").clicked() {
                                             stop_grp = Some(group_name.clone());
                                         }
 
                                         let btn_start_grp = egui::Button::new(
-                                            RichText::new("▶ Start").size(10.5).color(Color32::WHITE),
+                                            RichText::new("▶ Start").size(10.5).strong().color(Color32::WHITE),
                                         )
-                                        .fill(p.success)
-                                        .rounding(Rounding::same(4.0));
+                                        .fill(Color32::from_rgb(0x05, 0x96, 0x69))
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(999.0))
+                                        .min_size(egui::vec2(60.0, 22.0));
                                         if ui.add(btn_start_grp).on_hover_text("Start all servers in this group").clicked() {
                                             start_grp = Some(group_name.clone());
                                         }
@@ -5756,267 +5821,406 @@ impl LauncherApp {
 
                         ui.add_space(6.0);
 
-                        // Server Cards for this group
+                        // Server Cards for this group (Nocturnal Command exact container view)
                         for idx in indices {
                             let s = &mut self.services[idx];
                             let key = s.config.key.clone();
                             let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
                             let is_selected_tab = self.active_tab == key;
-                            let stroke_col = if is_selected_tab { p.accent } else { p.border };
+                            let card_bg = if is_selected_tab {
+                                Color32::from_rgb(0x22, 0x24, 0x30)
+                            } else {
+                                Color32::from_rgb(0x18, 0x19, 0x22)
+                            };
 
                             Frame::none()
-                                .fill(p.bg_card)
-                                .stroke(Stroke::new(1.0_f32, stroke_col))
-                                .rounding(Rounding::same(8.0))
-                                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                                .fill(card_bg)
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(18.0))
+                                .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                                 .show(ui, |ui| {
                                     ui.set_width(ui.available_width());
-                                    // Row 1: Status Dot + Name (clickable to switch tab) on left, Status Text on right
-                                    let (st_text, st_col) = if s.restart_at.is_some() {
-                                        ("⟳ Restarting...", p.warning)
+
+                                    // Row 1: Header (Glowing dot + Server Title on Left, Status chip badge on Right)
+                                    let (dot_col, halo_col, chip_bg, chip_text, status_label) = if s.restart_at.is_some() {
+                                        (
+                                            Color32::from_rgb(0xfc, 0xd3, 0x4d),
+                                            Color32::from_rgb(0xfc, 0xd3, 0x4d).gamma_multiply(0.25),
+                                            Color32::from_rgb(0x35, 0x22, 0x05),
+                                            Color32::from_rgb(0xfc, 0xd3, 0x4d),
+                                            "Restarting",
+                                        )
                                     } else if is_running {
-                                        ("Running", p.success)
+                                        (
+                                            Color32::from_rgb(0x5e, 0xea, 0xd4),
+                                            Color32::from_rgb(0x5e, 0xea, 0xd4).gamma_multiply(0.28),
+                                            Color32::from_rgb(0x13, 0x27, 0x22),
+                                            Color32::from_rgb(0x5e, 0xea, 0xd4),
+                                            "Running",
+                                        )
                                     } else if s.state == ServiceState::Errored {
-                                        ("Errored", p.danger)
+                                        (
+                                            Color32::from_rgb(0xf8, 0x71, 0x71),
+                                            Color32::from_rgb(0xf8, 0x71, 0x71).gamma_multiply(0.25),
+                                            Color32::from_rgb(0x38, 0x14, 0x18),
+                                            Color32::from_rgb(0xf8, 0x71, 0x71),
+                                            "Errored",
+                                        )
                                     } else {
-                                        ("Stopped", p.text_muted)
+                                        (
+                                            Color32::from_rgb(0x64, 0x74, 0x8b),
+                                            Color32::from_rgb(0x64, 0x74, 0x8b).gamma_multiply(0.20),
+                                            Color32::from_rgb(0x20, 0x23, 0x2d),
+                                            Color32::from_rgb(0x94, 0xa3, 0xb8),
+                                            "Stopped",
+                                        )
                                     };
 
                                     ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 6.0;
-                                        let dot_color = if is_running {
-                                            p.success
-                                        } else {
-                                            p.text_muted
-                                        };
-                                        draw_status_dot(ui, dot_color);
+                                        ui.spacing_mut().item_spacing.x = 8.0;
 
-                                        let status_w = 75.0;
-                                        let name_w = (ui.available_width() - status_w - 6.0).max(40.0);
+                                        // Glowing dot
+                                        let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+                                        ui.painter().circle_filled(dot_rect.center(), 7.0, halo_col);
+                                        ui.painter().circle_filled(dot_rect.center(), 4.0, dot_col);
 
-                                        let name_resp = ui.allocate_ui_with_layout(
-                                            egui::vec2(name_w, 18.0),
-                                            egui::Layout::left_to_right(egui::Align::Center),
-                                            |ui| {
-                                                ui.set_max_width(name_w);
-                                                ui.add(
-                                                    egui::Label::new(
-                                                        RichText::new(&s.config.name)
-                                                            .strong()
-                                                            .size(13.0)
-                                                            .color(if is_selected_tab { p.accent } else { p.text_primary }),
-                                                    )
-                                                    .truncate()
-                                                    .sense(egui::Sense::click()),
-                                                )
-                                                .on_hover_text(&s.config.name)
-                                            },
-                                        ).inner;
+                                        // Title
+                                        let name_resp = ui.add(
+                                            egui::Label::new(
+                                                RichText::new(&s.config.name)
+                                                    .strong()
+                                                    .size(14.0)
+                                                    .color(Color32::from_rgb(0xf1, 0xf5, 0xf9)),
+                                            )
+                                            .sense(egui::Sense::click()),
+                                        )
+                                        .on_hover_text(&s.config.name);
 
                                         if name_resp.clicked() {
                                             to_switch_tab = Some(key.clone());
                                         }
 
+                                        // Status Chip (pill badge on the right, zero border)
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new(st_text).size(11.0).strong().color(st_col));
+                                            Frame::none()
+                                                .fill(chip_bg)
+                                                .stroke(Stroke::NONE)
+                                                .rounding(Rounding::same(999.0))
+                                                .inner_margin(egui::Margin::symmetric(10.0, 3.5))
+                                                .show(ui, |ui| {
+                                                    ui.label(
+                                                        RichText::new(status_label)
+                                                            .size(11.0)
+                                                            .strong()
+                                                            .color(chip_text),
+                                                    );
+                                                });
                                         });
                                     });
 
-                                    ui.add_space(3.0);
+                                    ui.add_space(8.0);
 
-                                    // Row 2: Subtitle / command
+                                    // Row 2: Recessed Command Box (full width, zero border)
                                     Frame::none()
-                                        .fill(p.bg_input)
-                                        .stroke(Stroke::new(1.0_f32, p.border_subtle))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(7.0, 3.0))
+                                        .fill(Color32::from_rgb(0x10, 0x11, 0x17))
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(8.0))
+                                        .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                                         .show(ui, |ui| {
-                                            ui.add(
-                                                egui::Label::new(
+                                            ui.set_width(ui.available_width());
+                                            ui.horizontal(|ui| {
+                                                ui.label(
                                                     RichText::new(&s.config.command)
                                                         .size(11.0)
                                                         .monospace()
-                                                        .color(p.text_muted),
-                                                )
-                                                .truncate(),
-                                            );
+                                                        .color(Color32::from_rgb(0x38, 0xbd, 0xf8)),
+                                                );
+                                                if s.config.port > 0 {
+                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                        ui.label(
+                                                            RichText::new(format!(":{}", s.config.port))
+                                                                .size(10.5)
+                                                                .monospace()
+                                                                .color(Color32::from_rgb(0x64, 0x74, 0x8b)),
+                                                        );
+                                                    });
+                                                }
+                                            });
                                         });
 
-                                    // Row 2.5: If running, display PID, CPU%, RAM MB, Uptime!
-                                    if is_running {
-                                        ui.add_space(4.0);
-                                        ui.horizontal_wrapped(|ui| {
-                                            ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-                                            if s.config.port > 0 {
-                                                let (port_text_col, port_bg_col) = if s.port_open {
-                                                    (Color32::from_rgb(96, 165, 250), Color32::from_rgb(18, 38, 56))
-                                                } else {
-                                                    (Color32::from_rgb(160, 170, 190), Color32::from_rgb(26, 30, 42))
-                                                };
-                                                render_metric_pill_custom(
-                                                    ui,
-                                                    "🔌",
-                                                    &format!(":{}", s.config.port),
-                                                    port_text_col,
-                                                    port_bg_col,
-                                                );
-                                            }
-                                            if let Some(pid) = s.pid {
-                                                render_metric_pill_custom(
-                                                    ui,
-                                                    "🆔",
-                                                    &format!("{}", pid),
-                                                    Color32::from_rgb(160, 170, 190),
-                                                    Color32::from_rgb(26, 30, 42),
-                                                );
-                                            }
-                                            render_metric_pill_custom(
-                                                ui,
-                                                "⚡",
-                                                &format!("{:.1}%", s.cpu_usage),
-                                                Color32::from_rgb(56, 189, 248),
-                                                Color32::from_rgb(18, 38, 56),
-                                            );
-                                            render_metric_pill_custom(
-                                                ui,
-                                                "💾",
-                                                &format!("{:.1} MB", s.memory_mb),
-                                                Color32::from_rgb(52, 211, 153),
-                                                Color32::from_rgb(18, 48, 40),
-                                            );
-                                            let uptime = s.uptime_formatted();
-                                            if !uptime.is_empty() {
-                                                render_metric_pill_custom(
-                                                    ui,
-                                                    "⏱",
-                                                    &uptime,
-                                                    Color32::from_rgb(251, 191, 36),
-                                                    Color32::from_rgb(45, 38, 20),
-                                                );
-                                            }
-                                        });
-                                    }
+                                    ui.add_space(7.0);
 
-                                    ui.add_space(6.0);
+                                    // Row 3: Micro Telemetry Pills (PID, CPU%, RAM MB, Uptime)
+                                    let pill_bg = Color32::from_rgb(0x23, 0x25, 0x30);
+                                    let pill_rounding = Rounding::same(6.0);
+                                    let pill_margin = egui::Margin::symmetric(8.0, 4.0);
 
-                                    // Row 3: Primary Server Controls (Start / Stop & Restart)
                                     ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+                                        ui.spacing_mut().item_spacing.x = 6.0;
+
+                                        if is_running {
+                                            if let Some(pid) = s.pid {
+                                                Frame::none()
+                                                    .fill(pill_bg)
+                                                    .stroke(Stroke::NONE)
+                                                    .rounding(pill_rounding)
+                                                    .inner_margin(pill_margin)
+                                                    .show(ui, |ui| {
+                                                        ui.horizontal(|ui| {
+                                                            ui.spacing_mut().item_spacing.x = 4.0;
+                                                            ui.label(RichText::new("🆔").size(10.0));
+                                                            ui.label(
+                                                                RichText::new(format!("{}", pid))
+                                                                    .size(11.0)
+                                                                    .monospace()
+                                                                    .color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                                            );
+                                                        });
+                                                    });
+                                            }
+
+                                            Frame::none()
+                                                .fill(pill_bg)
+                                                .stroke(Stroke::NONE)
+                                                .rounding(pill_rounding)
+                                                .inner_margin(pill_margin)
+                                                .show(ui, |ui| {
+                                                    ui.horizontal(|ui| {
+                                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                                        ui.label(RichText::new("⚡").size(10.5).color(Color32::from_rgb(0x38, 0xbd, 0xf8)));
+                                                        ui.label(
+                                                            RichText::new(format!("{:.1}%", s.cpu_usage))
+                                                                .size(11.0)
+                                                                .monospace()
+                                                                .strong()
+                                                                .color(Color32::from_rgb(0x38, 0xbd, 0xf8)),
+                                                        );
+                                                    });
+                                                });
+
+                                            Frame::none()
+                                                .fill(pill_bg)
+                                                .stroke(Stroke::NONE)
+                                                .rounding(pill_rounding)
+                                                .inner_margin(pill_margin)
+                                                .show(ui, |ui| {
+                                                    ui.horizontal(|ui| {
+                                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                                        ui.label(RichText::new("💾").size(10.0).color(Color32::from_rgb(0x4a, 0xde, 0x80)));
+                                                        ui.label(
+                                                            RichText::new(format!("{:.1} MB", s.memory_mb))
+                                                                .size(11.0)
+                                                                .monospace()
+                                                                .strong()
+                                                                .color(Color32::from_rgb(0x4a, 0xde, 0x80)),
+                                                        );
+                                                    });
+                                                });
+
+                                            let uptime = s.uptime_formatted();
+                                            let uptime_str = if uptime.is_empty() { "0s".to_string() } else { uptime };
+                                            Frame::none()
+                                                .fill(pill_bg)
+                                                .stroke(Stroke::NONE)
+                                                .rounding(pill_rounding)
+                                                .inner_margin(pill_margin)
+                                                .show(ui, |ui| {
+                                                    ui.horizontal(|ui| {
+                                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                                        ui.label(RichText::new("⏱").size(10.5).color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
+                                                        ui.label(
+                                                            RichText::new(uptime_str)
+                                                                .size(11.0)
+                                                                .monospace()
+                                                                .color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                                        );
+                                                    });
+                                                });
+                                        } else {
+                                            Frame::none()
+                                                .fill(pill_bg)
+                                                .stroke(Stroke::NONE)
+                                                .rounding(pill_rounding)
+                                                .inner_margin(pill_margin)
+                                                .show(ui, |ui| {
+                                                    ui.horizontal(|ui| {
+                                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                                        ui.label(RichText::new("⏹").size(9.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
+                                                        ui.label(RichText::new("Idle").size(11.0).monospace().color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
+                                                    });
+                                                });
+
+                                            if s.config.port > 0 {
+                                                Frame::none()
+                                                    .fill(pill_bg)
+                                                    .stroke(Stroke::NONE)
+                                                    .rounding(pill_rounding)
+                                                    .inner_margin(pill_margin)
+                                                    .show(ui, |ui| {
+                                                        ui.horizontal(|ui| {
+                                                            ui.spacing_mut().item_spacing.x = 4.0;
+                                                            ui.label(RichText::new("🖧").size(10.0).color(Color32::from_rgb(0x70, 0xd5, 0xe4)));
+                                                            ui.label(RichText::new(format!(":{}", s.config.port)).size(11.0).monospace().color(Color32::from_rgb(0x70, 0xd5, 0xe4)));
+                                                        });
+                                                    });
+                                            }
+
+                                            let folder_name = std::path::Path::new(&s.config.cwd)
+                                                .file_name()
+                                                .map(|n| n.to_string_lossy().to_string())
+                                                .unwrap_or_else(|| "dir".to_string());
+                                            Frame::none()
+                                                .fill(pill_bg)
+                                                .stroke(Stroke::NONE)
+                                                .rounding(pill_rounding)
+                                                .inner_margin(pill_margin)
+                                                .show(ui, |ui| {
+                                                    ui.horizontal(|ui| {
+                                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                                        ui.label(RichText::new("📁").size(10.0));
+                                                        ui.label(RichText::new(folder_name).size(10.5).monospace().color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
+                                                    });
+                                                });
+                                        }
+                                    });
+
+                                    ui.add_space(8.0);
+
+                                    // Row 4: Action Buttons (Start/Stop & Restart on left, circular tools on right)
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 8.0;
+
                                         if is_running {
                                             let btn_stop = egui::Button::new(
-                                                RichText::new("⏹ Stop").size(11.0).strong().color(Color32::WHITE),
+                                                RichText::new("⏹ Stop")
+                                                    .size(11.5)
+                                                    .strong()
+                                                    .color(Color32::from_rgb(0xfe, 0xf2, 0xf2)),
                                             )
-                                            .fill(Color32::from_rgb(239, 68, 68))
-                                            .rounding(Rounding::same(5.0))
-                                            .min_size(egui::vec2(58.0, 24.0));
+                                            .fill(Color32::from_rgb(0x99, 0x1b, 0x1b))
+                                            .stroke(Stroke::NONE)
+                                            .rounding(Rounding::same(999.0))
+                                            .min_size(egui::vec2(68.0, 28.0));
                                             if ui.add(btn_stop).on_hover_text("Stop this server").clicked() {
                                                 to_stop = Some(idx);
                                             }
 
                                             let btn_restart = egui::Button::new(
-                                                RichText::new("⟳ Restart").size(11.0).strong().color(Color32::WHITE),
+                                                RichText::new("⟳ Restart")
+                                                    .size(11.5)
+                                                    .strong()
+                                                    .color(Color32::from_rgb(0xec, 0xfe, 0xff)),
                                             )
-                                            .fill(Color32::from_rgb(245, 158, 11))
-                                            .rounding(Rounding::same(5.0))
-                                            .min_size(egui::vec2(68.0, 24.0));
+                                            .fill(Color32::from_rgb(0x0e, 0x74, 0x90))
+                                            .stroke(Stroke::NONE)
+                                            .rounding(Rounding::same(999.0))
+                                            .min_size(egui::vec2(78.0, 28.0));
                                             if ui.add(btn_restart).on_hover_text("Restart this server").clicked() {
                                                 to_restart = Some(idx);
                                             }
                                         } else {
                                             let btn_start = egui::Button::new(
-                                                RichText::new("▶ Start").size(11.0).strong().color(Color32::WHITE),
+                                                RichText::new("▶ Start")
+                                                    .size(11.5)
+                                                    .strong()
+                                                    .color(Color32::WHITE),
                                             )
-                                            .fill(Color32::from_rgb(16, 185, 129))
-                                            .rounding(Rounding::same(5.0))
-                                            .min_size(egui::vec2(64.0, 24.0));
+                                            .fill(Color32::from_rgb(0x05, 0x96, 0x69))
+                                            .stroke(Stroke::NONE)
+                                            .rounding(Rounding::same(999.0))
+                                            .min_size(egui::vec2(74.0, 28.0));
                                             if ui.add(btn_start).on_hover_text("Start this server").clicked() {
                                                 to_start = Some(idx);
                                             }
                                         }
+
+                                        // Right side circular action buttons
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            ui.spacing_mut().item_spacing.x = 6.0;
+
+                                            let circ_bg = Color32::from_rgb(0x27, 0x29, 0x36);
+                                            let circ_size = egui::vec2(28.0, 28.0);
+                                            let circ_rnd = Rounding::same(999.0);
+
+                                            let btn_del = egui::Button::new(
+                                                RichText::new("🗑").size(11.0).color(Color32::from_rgb(0xf8, 0x71, 0x71)),
+                                            )
+                                            .fill(circ_bg)
+                                            .stroke(Stroke::NONE)
+                                            .rounding(circ_rnd)
+                                            .min_size(circ_size);
+                                            if ui.add(btn_del).on_hover_text("Delete server").clicked() {
+                                                to_delete = Some(key.clone());
+                                            }
+
+                                            let btn_folder = egui::Button::new(
+                                                RichText::new("📁").size(11.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                            )
+                                            .fill(circ_bg)
+                                            .stroke(Stroke::NONE)
+                                            .rounding(circ_rnd)
+                                            .min_size(circ_size);
+                                            if ui.add(btn_folder).on_hover_text("Open working directory in file manager").clicked() {
+                                                crate::service::open_folder(&s.config.cwd);
+                                            }
+
+                                            let btn_edit = egui::Button::new(
+                                                RichText::new("✏").size(11.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                            )
+                                            .fill(circ_bg)
+                                            .stroke(Stroke::NONE)
+                                            .rounding(circ_rnd)
+                                            .min_size(circ_size);
+                                            if ui.add(btn_edit).on_hover_text("Edit server configuration").clicked() {
+                                                to_edit = Some(s.config.clone());
+                                            }
+
+                                            let btn_console = egui::Button::new(
+                                                RichText::new(">_").size(10.5).monospace().strong().color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                            )
+                                            .fill(circ_bg)
+                                            .stroke(Stroke::NONE)
+                                            .rounding(circ_rnd)
+                                            .min_size(circ_size);
+                                            if ui.add(btn_console).on_hover_text("Open in console / terminal window").clicked() {
+                                                s.open_console();
+                                            }
+
+                                            if is_running && s.config.port > 0 {
+                                                let btn_browser = egui::Button::new(
+                                                    RichText::new("↗").size(11.5).strong().color(Color32::from_rgb(0x38, 0xbd, 0xf8)),
+                                                )
+                                                .fill(circ_bg)
+                                                .stroke(Stroke::NONE)
+                                                .rounding(circ_rnd)
+                                                .min_size(circ_size);
+                                                if ui.add(btn_browser).on_hover_text(format!("Open http://localhost:{} in browser", s.config.port)).clicked() {
+                                                    ui.ctx().open_url(egui::OpenUrl::new_tab(format!("http://localhost:{}", s.config.port)));
+                                                }
+                                            }
+                                        });
                                     });
 
-                                    ui.add_space(4.0);
+                                    ui.add_space(8.0);
 
-                                    // Row 3.5: Additional Action Buttons (placed DOWN, not right)
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-
-                                        let btn_vscode = egui::Button::new(
-                                            RichText::new("💻").size(11.5).color(Color32::from_rgb(56, 189, 248)),
-                                        )
-                                        .fill(Color32::from_rgb(24, 38, 54))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 60, 80)))
-                                        .rounding(Rounding::same(4.0))
-                                        .min_size(egui::vec2(25.0, 22.0));
-                                        if ui.add(btn_vscode).on_hover_text("Open in VS Code (code .)").clicked() {
-                                            crate::service::open_in_vscode(&s.config.cwd);
-                                        }
-
-                                        let btn_folder = egui::Button::new(
-                                            RichText::new("📁").size(11.5).color(Color32::from_rgb(203, 213, 225)),
-                                        )
-                                        .fill(Color32::from_rgb(33, 38, 52))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(50, 56, 75)))
-                                        .rounding(Rounding::same(4.0))
-                                        .min_size(egui::vec2(25.0, 22.0));
-                                        if ui.add(btn_folder).on_hover_text("Open working directory in file manager").clicked() {
-                                            crate::service::open_folder(&s.config.cwd);
-                                        }
-
-                                        let btn_console = egui::Button::new(
-                                            RichText::new("🖥️").size(11.5).color(Color32::from_rgb(168, 85, 247)),
-                                        )
-                                        .fill(Color32::from_rgb(34, 30, 48))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(55, 45, 75)))
-                                        .rounding(Rounding::same(4.0))
-                                        .min_size(egui::vec2(25.0, 22.0));
-                                        if ui.add(btn_console).on_hover_text("Open in console / terminal window").clicked() {
-                                            s.open_console();
-                                        }
-
-                                        let btn_edit = egui::Button::new(
-                                            RichText::new("Edit").size(10.5).color(Color32::from_rgb(203, 213, 225)),
-                                        )
-                                        .fill(Color32::from_rgb(33, 38, 52))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(50, 56, 75)))
-                                        .rounding(Rounding::same(4.0))
-                                        .min_size(egui::vec2(34.0, 22.0));
-                                        if ui.add(btn_edit).on_hover_text("Edit server configuration").clicked() {
-                                            to_edit = Some(s.config.clone());
-                                        }
-
-                                        let btn_del = egui::Button::new(
-                                            RichText::new("Delete").size(10.5).color(Color32::from_rgb(248, 113, 113)),
-                                        )
-                                        .fill(Color32::from_rgb(45, 30, 35))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(70, 40, 48)))
-                                        .rounding(Rounding::same(4.0))
-                                        .min_size(egui::vec2(42.0, 22.0));
-                                        if ui.add(btn_del).on_hover_text("Delete server").clicked() {
-                                            to_delete = Some(key.clone());
-                                        }
-                                    });
-
-                                    ui.add_space(4.0);
-
-                                    // Row 4: Dedicated Autostart & Auto-restart Checkboxes Row
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 4.0);
-
-                                        let autostart_color = if s.config.autostart { p.accent } else { p.text_muted };
+                                    // Row 5: Checkboxes (autostart on left, auto-restart on right)
+                                    ui.horizontal(|ui| {
+                                        let cb_color = Color32::from_rgb(0x94, 0xa3, 0xb8);
                                         if ui.checkbox(
                                             &mut s.config.autostart,
-                                            RichText::new("🚀 autostart").size(11.0).color(autostart_color),
+                                            RichText::new("autostart").size(11.0).color(cb_color),
                                         ).on_hover_text("Automatically start this server when Server Launcher opens").changed() {
                                             to_save_config = true;
                                         }
 
-                                        if ui.checkbox(
-                                            &mut s.config.auto_restart,
-                                            RichText::new("⟳ auto-restart").size(11.0).color(p.text_muted),
-                                        ).on_hover_text("Auto-restart this server if it exits unexpectedly or crashes").changed() {
-                                            to_save_config = true;
-                                        }
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            if ui.checkbox(
+                                                &mut s.config.auto_restart,
+                                                RichText::new("auto-restart").size(11.0).color(cb_color),
+                                            ).on_hover_text("Auto-restart this server if it exits unexpectedly or crashes").changed() {
+                                                to_save_config = true;
+                                            }
+                                        });
                                     });
                                 });
 
@@ -6304,12 +6508,23 @@ impl LauncherApp {
                 }
 
                 let mut to_toggle: Option<(usize, u8)> = None; // 0=stop, 1=start, 2=restart
+                let mut to_edit: Option<crate::config::ServerConfig> = None;
+                let mut to_delete: Option<String> = None;
+                let mut to_toggle_autostart: Option<(usize, bool)> = None;
+                let mut to_toggle_autorestart: Option<(usize, bool)> = None;
 
                 for &idx in &managed_indices {
                     let s = &self.services[idx];
+                    let key = s.config.key.clone();
                     let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
+                    let is_selected_tab = self.active_tab == key;
+                    let card_bg = if is_selected_tab {
+                        Color32::from_rgb(0x22, 0x24, 0x30)
+                    } else {
+                        Color32::from_rgb(0x18, 0x19, 0x22)
+                    };
 
-                    let card_height = if is_running { 90.0 } else { 62.0 };
+                    let card_height = if is_running { 150.0 } else { 120.0 };
                     let current_pos = ui.cursor().min;
                     let approx_rect = egui::Rect::from_min_size(current_pos, egui::vec2(ui.available_width(), card_height));
                     if !ui.clip_rect().expand(120.0).intersects(approx_rect) {
@@ -6319,178 +6534,387 @@ impl LauncherApp {
                     }
 
                     Frame::none()
-                        .fill(p.bg_card)
-                        .stroke(Stroke::new(1.0_f32, p.border))
-                        .rounding(Rounding::same(6.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .fill(card_bg)
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(18.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                         .show(ui, |ui| {
-                            ui.vertical(|ui| {
-                                // Row 1: Status dot, Server Name, Group badge, and Action Buttons (right-aligned)
-                                ui.horizontal(|ui| {
-                                    let dot_color = if is_running {
-                                        p.success
-                                    } else {
-                                        p.text_muted
-                                    };
-                                    draw_status_dot(ui, dot_color);
+                            ui.set_width(ui.available_width());
 
-                                    ui.label(
-                                        RichText::new(&s.config.name)
-                                            .size(13.5)
-                                            .strong()
-                                            .color(p.text_primary),
-                                    );
-                                    render_group_badge(ui, &s.config.group);
+                            // Row 1: Header (Glowing dot + Server Title on Left, Status chip badge on Right)
+                            let (dot_col, halo_col, chip_bg, chip_text, status_label) = if s.restart_at.is_some() {
+                                (
+                                    Color32::from_rgb(0xfc, 0xd3, 0x4d),
+                                    Color32::from_rgb(0xfc, 0xd3, 0x4d).gamma_multiply(0.25),
+                                    Color32::from_rgb(0x35, 0x22, 0x05),
+                                    Color32::from_rgb(0xfc, 0xd3, 0x4d),
+                                    "Restarting",
+                                )
+                            } else if is_running {
+                                (
+                                    Color32::from_rgb(0x5e, 0xea, 0xd4),
+                                    Color32::from_rgb(0x5e, 0xea, 0xd4).gamma_multiply(0.28),
+                                    Color32::from_rgb(0x13, 0x27, 0x22),
+                                    Color32::from_rgb(0x5e, 0xea, 0xd4),
+                                    "Running",
+                                )
+                            } else if s.state == ServiceState::Errored {
+                                (
+                                    Color32::from_rgb(0xf8, 0x71, 0x71),
+                                    Color32::from_rgb(0xf8, 0x71, 0x71).gamma_multiply(0.25),
+                                    Color32::from_rgb(0x38, 0x14, 0x18),
+                                    Color32::from_rgb(0xf8, 0x71, 0x71),
+                                    "Errored",
+                                )
+                            } else {
+                                (
+                                    Color32::from_rgb(0x64, 0x74, 0x8b),
+                                    Color32::from_rgb(0x64, 0x74, 0x8b).gamma_multiply(0.20),
+                                    Color32::from_rgb(0x20, 0x23, 0x2d),
+                                    Color32::from_rgb(0x94, 0xa3, 0xb8),
+                                    "Stopped",
+                                )
+                            };
 
-                                    if s.config.port > 0 {
-                                        let (port_label, port_color) = if s.port_open {
-                                            (format!(":{}", s.config.port), p.info)
-                                        } else if is_running {
-                                            (format!(":{}", s.config.port), p.accent_light)
-                                        } else {
-                                            (format!(":{}", s.config.port), p.text_muted)
-                                        };
-                                        render_metric_pill(ui, "🔌", &port_label, port_color);
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+
+                                // Glowing dot
+                                let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+                                ui.painter().circle_filled(dot_rect.center(), 7.0, halo_col);
+                                ui.painter().circle_filled(dot_rect.center(), 4.0, dot_col);
+
+                                // Title
+                                ui.label(
+                                    RichText::new(&s.config.name)
+                                        .strong()
+                                        .size(14.0)
+                                        .color(Color32::from_rgb(0xf1, 0xf5, 0xf9)),
+                                );
+
+                                // Status Chip (pill badge on the right, zero border)
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    Frame::none()
+                                        .fill(chip_bg)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(999.0))
+                                        .inner_margin(egui::Margin::symmetric(10.0, 3.5))
+                                        .show(ui, |ui| {
+                                            ui.label(
+                                                RichText::new(status_label)
+                                                    .size(11.0)
+                                                    .strong()
+                                                    .color(chip_text),
+                                            );
+                                        });
+                                });
+                            });
+
+                            ui.add_space(8.0);
+
+                            // Row 2: Recessed Command Box (full width, zero border)
+                            Frame::none()
+                                .fill(Color32::from_rgb(0x10, 0x11, 0x17))
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(8.0))
+                                .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            RichText::new(&s.config.command)
+                                                .size(11.0)
+                                                .monospace()
+                                                .color(Color32::from_rgb(0x38, 0xbd, 0xf8)),
+                                        );
+                                        if s.config.port > 0 {
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.label(
+                                                    RichText::new(format!(":{}", s.config.port))
+                                                        .size(10.5)
+                                                        .monospace()
+                                                        .color(Color32::from_rgb(0x64, 0x74, 0x8b)),
+                                                );
+                                            });
+                                        }
+                                    });
+                                });
+
+                            ui.add_space(7.0);
+
+                            // Row 3: Micro Telemetry Pills (PID, CPU%, RAM MB, Uptime)
+                            let pill_bg = Color32::from_rgb(0x23, 0x25, 0x30);
+                            let pill_rounding = Rounding::same(6.0);
+                            let pill_margin = egui::Margin::symmetric(8.0, 4.0);
+
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+
+                                if is_running {
+                                    if let Some(pid) = s.pid {
+                                        Frame::none()
+                                            .fill(pill_bg)
+                                            .stroke(Stroke::NONE)
+                                            .rounding(pill_rounding)
+                                            .inner_margin(pill_margin)
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 4.0;
+                                                    ui.label(RichText::new("🆔").size(10.0));
+                                                    ui.label(
+                                                        RichText::new(format!("{}", pid))
+                                                            .size(11.0)
+                                                            .monospace()
+                                                            .color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                                    );
+                                                });
+                                            });
                                     }
 
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if is_running {
-                                            let btn_stop = egui::Button::new(
-                                                RichText::new("Stop").size(11.5).strong().color(Color32::WHITE),
-                                            )
-                                            .fill(p.danger)
-                                            .rounding(Rounding::same(5.0))
-                                            .min_size(egui::vec2(50.0, 24.0));
-                                            if ui.add(btn_stop).clicked() {
-                                                to_toggle = Some((idx, 0));
-                                            }
+                                    Frame::none()
+                                        .fill(pill_bg)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(pill_rounding)
+                                        .inner_margin(pill_margin)
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 4.0;
+                                                ui.label(RichText::new("⚡").size(10.5).color(Color32::from_rgb(0x38, 0xbd, 0xf8)));
+                                                ui.label(
+                                                    RichText::new(format!("{:.1}%", s.cpu_usage))
+                                                        .size(11.0)
+                                                        .monospace()
+                                                        .strong()
+                                                        .color(Color32::from_rgb(0x38, 0xbd, 0xf8)),
+                                                );
+                                            });
+                                        });
 
-                                            let btn_restart = egui::Button::new(
-                                                RichText::new("Restart").size(11.5).strong().color(Color32::WHITE),
-                                            )
-                                            .fill(p.warning)
-                                            .rounding(Rounding::same(5.0))
-                                            .min_size(egui::vec2(58.0, 24.0));
-                                            if ui.add(btn_restart).clicked() {
-                                                to_toggle = Some((idx, 2));
-                                            }
-                                        } else {
-                                            let btn_start = egui::Button::new(
-                                                RichText::new("Start").size(11.5).strong().color(Color32::WHITE),
-                                            )
-                                            .fill(p.success)
-                                            .rounding(Rounding::same(5.0))
-                                            .min_size(egui::vec2(54.0, 24.0));
-                                            if ui.add(btn_start).clicked() {
-                                                to_toggle = Some((idx, 1));
-                                            }
-                                        }
+                                    Frame::none()
+                                        .fill(pill_bg)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(pill_rounding)
+                                        .inner_margin(pill_margin)
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 4.0;
+                                                ui.label(RichText::new("💾").size(10.0).color(Color32::from_rgb(0x4a, 0xde, 0x80)));
+                                                ui.label(
+                                                    RichText::new(format!("{:.1} MB", s.memory_mb))
+                                                        .size(11.0)
+                                                        .monospace()
+                                                        .strong()
+                                                        .color(Color32::from_rgb(0x4a, 0xde, 0x80)),
+                                                );
+                                            });
+                                        });
 
-                                        let btn_folder = egui::Button::new(
-                                            RichText::new("📁").size(11.0).color(p.text_secondary),
-                                        )
-                                        .fill(p.bg_button)
-                                        .stroke(Stroke::new(1.0_f32, p.border))
-                                        .rounding(Rounding::same(5.0));
-                                        if ui.add(btn_folder).on_hover_text("Open working directory in file manager (xdg-open)").clicked() {
-                                            crate::service::open_folder(&s.config.cwd);
-                                        }
+                                    let uptime = s.uptime_formatted();
+                                    let uptime_str = if uptime.is_empty() { "0s".to_string() } else { uptime };
+                                    Frame::none()
+                                        .fill(pill_bg)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(pill_rounding)
+                                        .inner_margin(pill_margin)
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 4.0;
+                                                ui.label(RichText::new("⏱").size(10.5).color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
+                                                ui.label(
+                                                    RichText::new(uptime_str)
+                                                        .size(11.0)
+                                                        .monospace()
+                                                        .color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                                );
+                                            });
+                                        });
+                                } else {
+                                    Frame::none()
+                                        .fill(pill_bg)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(pill_rounding)
+                                        .inner_margin(pill_margin)
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 4.0;
+                                                ui.label(RichText::new("⏹").size(9.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
+                                                ui.label(RichText::new("Idle").size(11.0).monospace().color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
+                                            });
+                                        });
 
-                                        let btn_vscode = egui::Button::new(
-                                            RichText::new("💻").size(11.0).color(p.info),
-                                        )
-                                        .fill(p.bg_button)
-                                        .stroke(Stroke::new(1.0_f32, p.border))
-                                        .rounding(Rounding::same(5.0));
-                                        if ui.add(btn_vscode).on_hover_text("Open in VS Code (code .)").clicked() {
-                                            crate::service::open_in_vscode(&s.config.cwd);
-                                        }
+                                    if s.config.port > 0 {
+                                        Frame::none()
+                                            .fill(pill_bg)
+                                            .stroke(Stroke::NONE)
+                                            .rounding(pill_rounding)
+                                            .inner_margin(pill_margin)
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 4.0;
+                                                    ui.label(RichText::new("🖧").size(10.0).color(Color32::from_rgb(0x70, 0xd5, 0xe4)));
+                                                    ui.label(RichText::new(format!(":{}", s.config.port)).size(11.0).monospace().color(Color32::from_rgb(0x70, 0xd5, 0xe4)));
+                                                });
+                                            });
+                                    }
 
-                                        let btn_console = egui::Button::new(
-                                            RichText::new("🖥️").size(11.0).color(Color32::from_rgb(168, 85, 247)),
-                                        )
-                                        .fill(p.bg_button)
-                                        .stroke(Stroke::new(1.0_f32, p.border))
-                                        .rounding(Rounding::same(5.0));
-                                        if ui.add(btn_console).on_hover_text("Open in console / terminal window").clicked() {
-                                            s.open_console();
-                                        }
-
-                                        let st_text = if is_running { "Running" } else { "Stopped" };
-                                        let st_color = if is_running {
-                                            p.success
-                                        } else {
-                                            p.text_muted
-                                        };
-                                        ui.label(RichText::new(st_text).size(12.0).strong().color(st_color));
-                                    });
-                                });
-
-                                // Row 2: Command
-                                ui.add_space(3.0);
-                                ui.horizontal(|ui| {
-                                    ui.add_space(20.0);
-                                    ui.label(
-                                        RichText::new(&s.config.command)
-                                            .size(10.5)
-                                            .monospace()
-                                            .color(p.text_muted),
-                                    );
-                                });
-
-                                // Row 3: Live Resource & Runtime Metrics (when running)
-                                if is_running {
-                                    ui.add_space(4.0);
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.add_space(20.0);
-                                        if let Some(pid) = s.pid {
-                                            render_metric_pill(
-                                                ui,
-                                                "🆔",
-                                                &format!("PID {}", pid),
-                                                p.text_muted,
-                                            );
-                                        }
-                                        if s.config.port > 0 {
-                                            let port_color = if s.port_open { p.info } else { p.accent_light };
-                                            render_metric_pill(
-                                                ui,
-                                                "🔌",
-                                                &format!(":{}", s.config.port),
-                                                port_color,
-                                            );
-                                        }
-                                        render_metric_pill(
-                                            ui,
-                                            "⚡",
-                                            &format!("{:.1}%", s.cpu_usage),
-                                            p.info,
-                                        );
-                                        render_metric_pill(
-                                            ui,
-                                            "💾",
-                                            &format!("{:.1} MB", s.memory_mb),
-                                            p.success,
-                                        );
-                                        let uptime = s.uptime_formatted();
-                                        if !uptime.is_empty() {
-                                            render_metric_pill(
-                                                ui,
-                                                "⏱️",
-                                                &uptime,
-                                                p.warning,
-                                            );
-                                        }
-                                        if s.config.autostart {
-                                            render_metric_pill(
-                                                ui,
-                                                "🚀",
-                                                "Autostart",
-                                                p.accent_light,
-                                            );
-                                        }
-                                    });
+                                    let folder_name = std::path::Path::new(&s.config.cwd)
+                                        .file_name()
+                                        .map(|n| n.to_string_lossy().to_string())
+                                        .unwrap_or_else(|| "dir".to_string());
+                                    Frame::none()
+                                        .fill(pill_bg)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(pill_rounding)
+                                        .inner_margin(pill_margin)
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 4.0;
+                                                ui.label(RichText::new("📁").size(10.0));
+                                                ui.label(RichText::new(folder_name).size(10.5).monospace().color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
+                                            });
+                                        });
                                 }
+                            });
+
+                            ui.add_space(8.0);
+
+                            // Row 4: Action Buttons (Start/Stop & Restart on left, circular tools on right)
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+
+                                if is_running {
+                                    let btn_stop = egui::Button::new(
+                                        RichText::new("⏹ Stop")
+                                            .size(11.5)
+                                            .strong()
+                                            .color(Color32::from_rgb(0xfe, 0xf2, 0xf2)),
+                                    )
+                                    .fill(Color32::from_rgb(0x99, 0x1b, 0x1b))
+                                    .stroke(Stroke::NONE)
+                                    .rounding(Rounding::same(999.0))
+                                    .min_size(egui::vec2(68.0, 28.0));
+                                    if ui.add(btn_stop).on_hover_text("Stop this server").clicked() {
+                                        to_toggle = Some((idx, 0));
+                                    }
+
+                                    let btn_restart = egui::Button::new(
+                                        RichText::new("⟳ Restart")
+                                            .size(11.5)
+                                            .strong()
+                                            .color(Color32::from_rgb(0xec, 0xfe, 0xff)),
+                                    )
+                                    .fill(Color32::from_rgb(0x0e, 0x74, 0x90))
+                                    .stroke(Stroke::NONE)
+                                    .rounding(Rounding::same(999.0))
+                                    .min_size(egui::vec2(78.0, 28.0));
+                                    if ui.add(btn_restart).on_hover_text("Restart this server").clicked() {
+                                        to_toggle = Some((idx, 2));
+                                    }
+                                } else {
+                                    let btn_start = egui::Button::new(
+                                        RichText::new("▶ Start")
+                                            .size(11.5)
+                                            .strong()
+                                            .color(Color32::WHITE),
+                                    )
+                                    .fill(Color32::from_rgb(0x05, 0x96, 0x69))
+                                    .stroke(Stroke::NONE)
+                                    .rounding(Rounding::same(999.0))
+                                    .min_size(egui::vec2(74.0, 28.0));
+                                    if ui.add(btn_start).on_hover_text("Start this server").clicked() {
+                                        to_toggle = Some((idx, 1));
+                                    }
+                                }
+
+                                // Right side circular action buttons
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+
+                                    let circ_bg = Color32::from_rgb(0x27, 0x29, 0x36);
+                                    let circ_size = egui::vec2(28.0, 28.0);
+                                    let circ_rnd = Rounding::same(999.0);
+
+                                    let btn_del = egui::Button::new(
+                                        RichText::new("🗑").size(11.0).color(Color32::from_rgb(0xf8, 0x71, 0x71)),
+                                    )
+                                    .fill(circ_bg)
+                                    .stroke(Stroke::NONE)
+                                    .rounding(circ_rnd)
+                                    .min_size(circ_size);
+                                    if ui.add(btn_del).on_hover_text("Delete server").clicked() {
+                                        to_delete = Some(key.clone());
+                                    }
+
+                                    let btn_folder = egui::Button::new(
+                                        RichText::new("📁").size(11.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                    )
+                                    .fill(circ_bg)
+                                    .stroke(Stroke::NONE)
+                                    .rounding(circ_rnd)
+                                    .min_size(circ_size);
+                                    if ui.add(btn_folder).on_hover_text("Open working directory in file manager").clicked() {
+                                        crate::service::open_folder(&s.config.cwd);
+                                    }
+
+                                    let btn_edit = egui::Button::new(
+                                        RichText::new("✏").size(11.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                    )
+                                    .fill(circ_bg)
+                                    .stroke(Stroke::NONE)
+                                    .rounding(circ_rnd)
+                                    .min_size(circ_size);
+                                    if ui.add(btn_edit).on_hover_text("Edit server configuration").clicked() {
+                                        to_edit = Some(s.config.clone());
+                                    }
+
+                                    let btn_console = egui::Button::new(
+                                        RichText::new(">_").size(10.5).monospace().strong().color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                    )
+                                    .fill(circ_bg)
+                                    .stroke(Stroke::NONE)
+                                    .rounding(circ_rnd)
+                                    .min_size(circ_size);
+                                    if ui.add(btn_console).on_hover_text("Open in console / terminal window").clicked() {
+                                        s.open_console();
+                                    }
+
+                                    if is_running && s.config.port > 0 {
+                                        let btn_browser = egui::Button::new(
+                                            RichText::new("↗").size(11.5).strong().color(Color32::from_rgb(0x38, 0xbd, 0xf8)),
+                                        )
+                                        .fill(circ_bg)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(circ_rnd)
+                                        .min_size(circ_size);
+                                        if ui.add(btn_browser).on_hover_text(format!("Open http://localhost:{} in browser", s.config.port)).clicked() {
+                                            ui.ctx().open_url(egui::OpenUrl::new_tab(format!("http://localhost:{}", s.config.port)));
+                                        }
+                                    }
+                                });
+                            });
+
+                            ui.add_space(8.0);
+
+                            // Row 5: Checkboxes (autostart on left, auto-restart on right)
+                            ui.horizontal(|ui| {
+                                let cb_color = Color32::from_rgb(0x94, 0xa3, 0xb8);
+                                let mut autostart_val = s.config.autostart;
+                                if ui.checkbox(
+                                    &mut autostart_val,
+                                    RichText::new("autostart").size(11.0).color(cb_color),
+                                ).on_hover_text("Automatically start this server when Server Launcher opens").changed() {
+                                    to_toggle_autostart = Some((idx, autostart_val));
+                                }
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let mut autorestart_val = s.config.auto_restart;
+                                    if ui.checkbox(
+                                        &mut autorestart_val,
+                                        RichText::new("auto-restart").size(11.0).color(cb_color),
+                                    ).on_hover_text("Auto-restart this server if it exits unexpectedly or crashes").changed() {
+                                        to_toggle_autorestart = Some((idx, autorestart_val));
+                                    }
+                                });
                             });
                         });
 
@@ -6504,6 +6928,25 @@ impl LauncherApp {
                         2 => self.services[idx].restart(),
                         _ => {}
                     }
+                }
+                if let Some(cfg) = to_edit {
+                    self.add_edit_modal.open_edit(&cfg);
+                }
+                if let Some(k) = to_delete {
+                    if let Some(idx) = self.services.iter().position(|s| s.config.key == k) {
+                        let mut s = self.services.remove(idx);
+                        s.stop();
+                        self.persist_config();
+                        if self.active_tab == k { self.active_tab = "overview".to_string(); }
+                    }
+                }
+                if let Some((idx, val)) = to_toggle_autostart {
+                    self.services[idx].config.autostart = val;
+                    self.persist_config();
+                }
+                if let Some((idx, val)) = to_toggle_autorestart {
+                    self.services[idx].config.auto_restart = val;
+                    self.persist_config();
                 }
 
                 ui.add_space(16.0);

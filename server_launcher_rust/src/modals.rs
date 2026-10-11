@@ -188,6 +188,7 @@ impl AddEditModalState {
         self.error_msg = None;
     }
 
+    #[allow(dead_code)]
     pub fn open_import(&mut self, name: &str, port: u16, command: &str, cwd: &str) {
         self.open_new();
         self.name = name.to_string();

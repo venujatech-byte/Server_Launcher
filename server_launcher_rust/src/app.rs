@@ -4580,7 +4580,6 @@ impl LauncherApp {
 
                 let mut to_kill_pid: Option<(Option<u32>, u16, String, String, String)> = None;
                 let mut to_restart_pid: Option<(Option<u32>, u16, String, String)> = None;
-                let mut to_import: Option<(String, u16, String, String)> = None;
                 let mut to_start_stopped: Option<(u16, String, String)> = None;
                 let mut to_remove_stopped: Option<u16> = None;
                 let mut to_launch_external_terminal: Option<(String, Option<u32>, u16, String, String)> = None;
@@ -4773,25 +4772,6 @@ impl LauncherApp {
                                         );
 
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            // + Add Server button
-                                            let btn_add = egui::Button::new(
-                                                RichText::new("+ Add Server")
-                                                    .size(11.5)
-                                                    .strong()
-                                                    .color(p.accent_text),
-                                            )
-                                            .fill(p.accent)
-                                            .rounding(Rounding::same(5.0))
-                                            .min_size(egui::vec2(86.0, 24.0));
-                                            if ui.add(btn_add).clicked() {
-                                                to_import = Some((
-                                                    listener.name.clone(),
-                                                    listener.port,
-                                                    cmd_str.clone(),
-                                                    cwd_str.clone(),
-                                                ));
-                                            }
-
                                             // Stop button
                                             let btn_stop = egui::Button::new(
                                                 RichText::new("Stop").size(11.5).strong().color(Color32::WHITE),
@@ -5062,24 +5042,6 @@ impl LauncherApp {
                                                 to_remove_stopped = Some(*port);
                                             }
 
-                                            let btn_add = egui::Button::new(
-                                                RichText::new("+ Add Server")
-                                                    .size(11.5)
-                                                    .strong()
-                                                    .color(p.accent_text),
-                                            )
-                                            .fill(p.accent)
-                                            .rounding(Rounding::same(5.0))
-                                            .min_size(egui::vec2(86.0, 24.0));
-                                            if ui.add(btn_add).clicked() {
-                                                to_import = Some((
-                                                    name.clone(),
-                                                    *port,
-                                                    cmd.clone(),
-                                                    cwd.clone(),
-                                                ));
-                                            }
-
                                             let btn_start = egui::Button::new(
                                                 RichText::new("Start").size(11.5).strong().color(Color32::WHITE),
                                             )
@@ -5291,10 +5253,6 @@ impl LauncherApp {
 
                 if let Some(port) = to_remove_stopped {
                     self.stopped_external.remove(&port);
-                }
-
-                if let Some((name, port, cmd, cwd)) = to_import {
-                    self.add_edit_modal.open_import(&name, port, &cmd, &cwd);
                 }
             });
     }

@@ -246,28 +246,102 @@ pub struct ExternalTerminalSession {
     pub logs: Arc<Mutex<VecDeque<crate::service::LogEntry>>>,
 }
 
-fn render_window_control(
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum WindowButtonKind {
+    Minimize,
+    Maximize(bool),
+    Close,
+}
+
+fn render_window_button(
     ui: &mut egui::Ui,
-    glyph: &str,
-    font_size: f32,
-    icon_color: Color32,
-    hover_bg: Color32,
-    hover_fg: Color32,
-    tooltip: &str,
+    kind: WindowButtonKind,
+    palette: &crate::theme::ThemePalette,
 ) -> bool {
-    let prev_hover_bg = ui.style().visuals.widgets.hovered.bg_fill;
-    let prev_hover_fg = ui.style().visuals.widgets.hovered.fg_stroke;
-    ui.style_mut().visuals.widgets.hovered.bg_fill = hover_bg;
-    ui.style_mut().visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, hover_fg);
-    let btn = egui::Button::new(RichText::new(glyph).size(font_size).color(icon_color))
-        .fill(Color32::TRANSPARENT)
-        .stroke(Stroke::NONE)
-        .rounding(Rounding::same(6.0))
-        .min_size(egui::vec2(36.0, 26.0));
-    let resp = ui.add(btn).on_hover_text(tooltip);
-    ui.style_mut().visuals.widgets.hovered.bg_fill = prev_hover_bg;
-    ui.style_mut().visuals.widgets.hovered.fg_stroke = prev_hover_fg;
-    resp.clicked()
+    let size = egui::vec2(36.0, 24.0);
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    let hovered = resp.hovered();
+
+    let (bg_color, stroke_color) = match kind {
+        WindowButtonKind::Close => {
+            if hovered {
+                (palette.danger, Color32::WHITE)
+            } else {
+                (Color32::TRANSPARENT, palette.text_secondary)
+            }
+        }
+        _ => {
+            if hovered {
+                (
+                    if palette.is_dark {
+                        Color32::from_rgba_unmultiplied(255, 255, 255, 22)
+                    } else {
+                        Color32::from_rgba_unmultiplied(0, 0, 0, 18)
+                    },
+                    palette.text_primary,
+                )
+            } else {
+                (Color32::TRANSPARENT, palette.text_secondary)
+            }
+        }
+    };
+
+    if bg_color != Color32::TRANSPARENT {
+        ui.painter().rect_filled(rect, Rounding::same(4.0), bg_color);
+    }
+
+    let painter = ui.painter();
+    let center = rect.center();
+    let stroke = Stroke::new(1.2_f32, stroke_color);
+
+    match kind {
+        WindowButtonKind::Minimize => {
+            let y = center.y + 1.0;
+            painter.line_segment(
+                [egui::pos2(center.x - 5.0, y), egui::pos2(center.x + 5.0, y)],
+                stroke,
+            );
+        }
+        WindowButtonKind::Maximize(maximized) => {
+            if maximized {
+                // Restore icon: two overlapping squares
+                let back_top_left = egui::pos2(center.x - 2.5, center.y - 4.5);
+                let back_top_right = egui::pos2(center.x + 4.5, center.y - 4.5);
+                let back_bottom_right = egui::pos2(center.x + 4.5, center.y + 2.5);
+                painter.line_segment([back_top_left, back_top_right], stroke);
+                painter.line_segment([back_top_right, back_bottom_right], stroke);
+
+                let front_rect = egui::Rect::from_min_size(
+                    egui::pos2(center.x - 4.5, center.y - 2.5),
+                    egui::vec2(7.0, 7.0),
+                );
+                painter.rect_stroke(front_rect, Rounding::ZERO, stroke);
+            } else {
+                // Maximize icon: crisp square outline
+                let square = egui::Rect::from_center_size(center, egui::vec2(9.5, 9.5));
+                painter.rect_stroke(square, Rounding::ZERO, stroke);
+            }
+        }
+        WindowButtonKind::Close => {
+            let d = 4.5;
+            painter.line_segment(
+                [egui::pos2(center.x - d, center.y - d), egui::pos2(center.x + d, center.y + d)],
+                stroke,
+            );
+            painter.line_segment(
+                [egui::pos2(center.x + d, center.y - d), egui::pos2(center.x - d, center.y + d)],
+                stroke,
+            );
+        }
+    }
+
+    resp.on_hover_text(match kind {
+        WindowButtonKind::Minimize => "Minimize",
+        WindowButtonKind::Maximize(true) => "Restore",
+        WindowButtonKind::Maximize(false) => "Maximize",
+        WindowButtonKind::Close => "Close",
+    })
+    .clicked()
 }
 
 impl LauncherApp {
@@ -2395,52 +2469,23 @@ impl eframe::App for LauncherApp {
                             .color(p.text_muted),
                     );
 
-                    // Right window controls (matching screenshot media_1791731499892_604a17e9.png)
+                    // Right window controls: only Minimize, Maximize, and Close
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-
-                        let dim = if p.is_dark {
-                            Color32::from_rgba_unmultiplied(255, 255, 255, 20)
-                        } else {
-                            Color32::from_rgba_unmultiplied(0, 0, 0, 14)
-                        };
+                        ui.spacing_mut().item_spacing.x = 2.0;
 
                         // 1. Close (far right)
-                        if render_window_control(
-                            ui, "✕", 12.0, p.text_secondary, p.danger, Color32::WHITE, "Close",
-                        ) {
+                        if render_window_button(ui, WindowButtonKind::Close, &p) {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
 
-                        // 2. Maximize / Restore
-                        let max_glyph = if maximized { "⛶" } else { "❐" };
-                        if render_window_control(
-                            ui, max_glyph, 11.5, p.text_secondary, dim, p.text_primary,
-                            if maximized { "Restore" } else { "Maximize" },
-                        ) {
+                        // 2. Maximize / Restore (middle)
+                        if render_window_button(ui, WindowButtonKind::Maximize(maximized), &p) {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
                         }
 
-                        // 3. Minimize
-                        if render_window_control(
-                            ui, "―", 12.0, p.text_secondary, dim, p.text_primary, "Minimize",
-                        ) {
+                        // 3. Minimize (left)
+                        if render_window_button(ui, WindowButtonKind::Minimize, &p) {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                        }
-
-                        // 4. Kebab menu (⋮)
-                        if render_window_control(
-                            ui, "⋮", 14.0, p.text_secondary, dim, p.text_primary, "Menu & Settings",
-                        ) {
-                            self.settings_modal_open = !self.settings_modal_open;
-                        }
-
-                        // 5. Quick Launch Palette (🧩)
-                        if render_window_control(
-                            ui, "🧩", 12.0, p.text_muted, dim, p.text_primary, "Quick Launch Palette (Ctrl+P)",
-                        ) {
-                            self.palette_modal.open = !self.palette_modal.open;
-                            self.palette_modal.query.clear();
                         }
                     });
                 });

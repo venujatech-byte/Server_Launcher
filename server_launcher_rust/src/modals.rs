@@ -616,6 +616,44 @@ pub struct CommandPaletteState {
     pub selected_idx: usize,
 }
 
+fn render_modal_titlebar_controls(ui: &mut egui::Ui, palette: &ThemePalette) -> bool {
+    let mut close_clicked = false;
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+
+        // Vector-drawn Close button (no missing font glyph box)
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(24.0, 20.0), egui::Sense::click());
+        let hovered = resp.hovered();
+        let bg = if hovered { palette.danger } else { Color32::TRANSPARENT };
+        let stroke_color = if hovered { Color32::WHITE } else { palette.text_muted };
+        if bg != Color32::TRANSPARENT {
+            ui.painter().rect_filled(rect, Rounding::same(4.0), bg);
+        }
+        let d = 3.5;
+        let c = rect.center();
+        let stroke = Stroke::new(1.2_f32, stroke_color);
+        ui.painter().line_segment([egui::pos2(c.x - d, c.y - d), egui::pos2(c.x + d, c.y + d)], stroke);
+        ui.painter().line_segment([egui::pos2(c.x + d, c.y - d), egui::pos2(c.x - d, c.y + d)], stroke);
+        if resp.on_hover_text("Close").clicked() {
+            close_clicked = true;
+        }
+
+        // Vector-drawn square button
+        let (sq_rect, sq_resp) = ui.allocate_exact_size(egui::vec2(24.0, 20.0), egui::Sense::hover());
+        if sq_resp.hovered() {
+            ui.painter().rect_filled(
+                sq_rect,
+                Rounding::same(4.0),
+                if palette.is_dark { Color32::from_rgba_unmultiplied(255, 255, 255, 18) } else { Color32::from_rgba_unmultiplied(0, 0, 0, 14) },
+            );
+        }
+        let c = sq_rect.center();
+        let sq = egui::Rect::from_center_size(c, egui::vec2(8.0, 8.0));
+        ui.painter().rect_stroke(sq, Rounding::ZERO, Stroke::new(1.1_f32, palette.text_muted));
+    });
+    close_clicked
+}
+
 pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palette: &ThemePalette) -> ModalAction {
     if !state.open {
         return ModalAction::None;
@@ -694,25 +732,9 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     },
                 );
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add(
-                            egui::Button::new(RichText::new("✕").size(12.0).color(palette.text_muted))
-                                .fill(Color32::TRANSPARENT)
-                                .stroke(Stroke::NONE)
-                                .min_size(egui::vec2(20.0, 20.0)),
-                        )
-                        .clicked()
-                    {
-                        state.open = false;
-                    }
-                    ui.add(
-                        egui::Button::new(RichText::new("□").size(12.0).color(palette.text_muted))
-                            .fill(Color32::TRANSPARENT)
-                            .stroke(Stroke::NONE)
-                            .min_size(egui::vec2(20.0, 20.0)),
-                    );
-                });
+                if render_modal_titlebar_controls(ui, palette) {
+                    state.open = false;
+                }
             });
 
             ui.add_space(14.0);
@@ -1504,25 +1526,9 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                     },
                 );
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add(
-                            egui::Button::new(RichText::new("✕").size(12.0).color(palette.text_muted))
-                                .fill(Color32::TRANSPARENT)
-                                .stroke(Stroke::NONE)
-                                .min_size(egui::vec2(20.0, 20.0)),
-                        )
-                        .clicked()
-                    {
-                        state.open = false;
-                    }
-                    ui.add(
-                        egui::Button::new(RichText::new("□").size(12.0).color(palette.text_muted))
-                            .fill(Color32::TRANSPARENT)
-                            .stroke(Stroke::NONE)
-                            .min_size(egui::vec2(20.0, 20.0)),
-                    );
-                });
+                if render_modal_titlebar_controls(ui, palette) {
+                    state.open = false;
+                }
             });
 
             ui.add_space(14.0);

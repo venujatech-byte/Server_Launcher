@@ -279,3 +279,4 @@ All configurations are human-readable and automatically persisted to `servers.js
 ## 🛡️ License
 
 This project is licensed under the MIT License - feel free to use, modify, and distribute for personal and commercial projects.
+https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com&code_challenge=0bBreKkCAIa-9walOH8l95YGzz4bcCa41_OFZgv-d5Q&code_challenge_method=S256&prompt=consent&redirect_uri=http://localhost:42367/auth/callback&response_type=code&scope=https://www.googleapis.com/auth/cloud-platform+https://www.googleapis.com/auth/userinfo.email+https://www.googleapis.com/auth/userinfo.profile+https://www.googleapis.com/auth/cclog+https://www.googleapis.com/auth/experimentsandconfigs+https://www.googleapis.com/auth/aicode&state=xRpkguuLheemE4yqs2Rv1Q

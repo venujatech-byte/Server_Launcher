@@ -1,4 +1,4 @@
-use crate::config::{ConfigFile, CustomScript, SavedCommand, SshRemoteHost};
+use crate::config::{ConfigFile, CustomScript, SavedCommand, ServerConfig, SshRemoteHost};
 use crate::modals::{
     render_add_edit_modal, render_command_modal, render_command_palette,
     render_close_confirmation_modal, render_new_service_modal, render_script_modal,
@@ -232,6 +232,9 @@ pub struct LauncherApp {
     // Sudo popup for local system-level systemd operations
     pub sudo_popup: SudoPopupState,
     pub local_sudo_password: String, // remembered for the session
+
+    // Import status notification: (message, is_error, timestamp)
+    pub import_status_msg: Option<(String, bool, Instant)>,
 }
 
 pub struct ExternalTerminalSession {
@@ -442,6 +445,7 @@ impl LauncherApp {
             sensors_category_filter: "All".to_string(),
             sudo_popup: SudoPopupState::default(),
             local_sudo_password: String::new(),
+            import_status_msg: None,
         }
     }
 
@@ -486,6 +490,131 @@ impl LauncherApp {
             journal_refresh_interval: Some(self.journal_refresh_interval),
         };
         let _ = cfg.save_to_file(&self.config_path);
+    }
+
+    pub fn import_servers_from_file_dialog(&mut self) {
+        let file_opt = rfd::FileDialog::new()
+            .set_title("Import servers.json Configuration")
+            .add_filter("JSON Configuration (*.json)", &["json"])
+            .pick_file();
+
+        if let Some(path) = file_opt {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    match self.import_from_json_str(&content) {
+                        Ok((imported_count, updated_count)) => {
+                            self.persist_config();
+                            self.import_status_msg = Some((
+                                format!("✔ Imported {} new, {} updated server(s)", imported_count, updated_count),
+                                false,
+                                Instant::now(),
+                            ));
+                        }
+                        Err(err) => {
+                            self.import_status_msg = Some((
+                                format!("Import failed: {}", err),
+                                true,
+                                Instant::now(),
+                            ));
+                        }
+                    }
+                }
+                Err(err) => {
+                    self.import_status_msg = Some((
+                        format!("Failed to read file: {}", err),
+                        true,
+                        Instant::now(),
+                    ));
+                }
+            }
+        }
+    }
+
+    pub fn import_from_json_str(&mut self, content: &str) -> Result<(usize, usize), String> {
+        let trimmed = content.trim();
+        if trimmed.is_empty() {
+            return Err("File is empty".to_string());
+        }
+
+        let mut imported = 0;
+        let mut updated = 0;
+
+        let mut add_server = |srv_cfg: ServerConfig, services: &mut Vec<Service>| {
+            let key = if srv_cfg.key.trim().is_empty() {
+                srv_cfg.name.to_lowercase().replace(' ', "_")
+            } else {
+                srv_cfg.key.clone()
+            };
+            let mut final_cfg = srv_cfg;
+            final_cfg.key = key;
+
+            if let Some(existing) = services.iter_mut().find(|s| s.config.key == final_cfg.key) {
+                existing.config = final_cfg;
+                updated += 1;
+            } else {
+                services.push(Service::new(final_cfg));
+                imported += 1;
+            }
+        };
+
+        // 1. Try parsing full ConfigFile
+        if let Ok(cfg) = serde_json::from_str::<ConfigFile>(trimmed) {
+            if !cfg.servers.is_empty() || !cfg.ssh_hosts.is_empty() || !cfg.scripts.is_empty() || !cfg.saved_commands.is_empty() {
+                for s in cfg.servers {
+                    add_server(s, &mut self.services);
+                }
+                for h in cfg.ssh_hosts {
+                    if !self.ssh_hosts.iter().any(|existing| existing.id == h.id) {
+                        self.ssh_hosts.push(h);
+                    }
+                }
+                for sc in cfg.scripts {
+                    if !self.scripts.iter().any(|existing| existing.id == sc.id) {
+                        self.scripts.push(sc);
+                    }
+                }
+                for cmd in cfg.saved_commands {
+                    if !self.saved_commands.iter().any(|existing| existing.id == cmd.id) {
+                        self.saved_commands.push(cmd);
+                    }
+                }
+                return Ok((imported, updated));
+            }
+        }
+
+        // 2. Try parsing as Vec<ServerConfig> array
+        if let Ok(servers) = serde_json::from_str::<Vec<ServerConfig>>(trimmed) {
+            if !servers.is_empty() {
+                for s in servers {
+                    add_server(s, &mut self.services);
+                }
+                return Ok((imported, updated));
+            }
+        }
+
+        // 3. Try parsing generic JSON object with a "servers" array field
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            if let Some(servers_val) = val.get("servers") {
+                if let Ok(servers) = serde_json::from_value::<Vec<ServerConfig>>(servers_val.clone()) {
+                    if !servers.is_empty() {
+                        for s in servers {
+                            add_server(s, &mut self.services);
+                        }
+                        return Ok((imported, updated));
+                    }
+                }
+            }
+
+            // Also support single server object
+            if let Ok(single) = serde_json::from_value::<ServerConfig>(val) {
+                if !single.name.is_empty() || !single.command.is_empty() {
+                    add_server(single, &mut self.services);
+                    return Ok((imported, updated));
+                }
+            }
+        }
+
+        Err("Invalid servers JSON format. Expected a configuration containing a 'servers' list or an array of server objects.".to_string())
     }
 
     fn start_all(&mut self) {
@@ -2226,6 +2355,23 @@ impl eframe::App for LauncherApp {
                                 .size(11.5)
                                 .color(p.text_muted),
                         );
+
+                        if let Some((ref msg, is_err, time)) = self.import_status_msg {
+                            if time.elapsed() < Duration::from_secs(6) {
+                                ui.add_space(2.0);
+                                let color = if is_err { p.danger } else { Color32::from_rgb(16, 185, 129) };
+                                Frame::none()
+                                    .fill(p.bg_subtle)
+                                    .stroke(Stroke::new(1.0_f32, color))
+                                    .rounding(Rounding::same(4.0))
+                                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(msg).size(10.5).color(color));
+                                    });
+                            } else {
+                                self.import_status_msg = None;
+                            }
+                        }
                     });
 
                     // Right: Actions buttons
@@ -2242,6 +2388,23 @@ impl eframe::App for LauncherApp {
                         .min_size(egui::vec2(95.0, 26.0));
                         if ui.add(btn_add).clicked() {
                             self.add_edit_modal.open_new();
+                        }
+
+                        // 📥 Import
+                        let btn_import = egui::Button::new(
+                            RichText::new("📥 Import")
+                                .size(12.0)
+                                .color(p.text_primary),
+                        )
+                        .fill(p.bg_button)
+                        .stroke(Stroke::new(1.0_f32, p.border))
+                        .rounding(Rounding::same(4.0))
+                        .min_size(egui::vec2(80.0, 26.0));
+                        if ui.add(btn_import)
+                            .on_hover_text("Import servers from a servers.json file")
+                            .clicked()
+                        {
+                            self.import_servers_from_file_dialog();
                         }
 
                         // App Boot/Startup toggle button

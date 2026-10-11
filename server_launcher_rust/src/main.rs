@@ -76,7 +76,10 @@ fn main() -> eframe::Result<()> {
         .with_title("Server Launcher (Rust)")
         .with_inner_size([1200.0, 780.0])
         .with_min_inner_size([800.0, 500.0])
-        .with_transparent(false);
+        .with_transparent(false)
+        // Custom titlebar: native decorations on eframe are the legacy server-side
+        // style, so we draw our own modern GTK4/Adwaita-style headerbar instead.
+        .with_decorations(false);
 
     if let Some(icon) = load_app_icon() {
         viewport = viewport.with_icon(icon);

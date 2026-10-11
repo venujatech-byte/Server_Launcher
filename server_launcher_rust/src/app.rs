@@ -246,6 +246,30 @@ pub struct ExternalTerminalSession {
     pub logs: Arc<Mutex<VecDeque<crate::service::LogEntry>>>,
 }
 
+fn render_window_control(
+    ui: &mut egui::Ui,
+    glyph: &str,
+    font_size: f32,
+    icon_color: Color32,
+    hover_bg: Color32,
+    hover_fg: Color32,
+    tooltip: &str,
+) -> bool {
+    let prev_hover_bg = ui.style().visuals.widgets.hovered.bg_fill;
+    let prev_hover_fg = ui.style().visuals.widgets.hovered.fg_stroke;
+    ui.style_mut().visuals.widgets.hovered.bg_fill = hover_bg;
+    ui.style_mut().visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, hover_fg);
+    let btn = egui::Button::new(RichText::new(glyph).size(font_size).color(icon_color))
+        .fill(Color32::TRANSPARENT)
+        .stroke(Stroke::NONE)
+        .rounding(Rounding::same(6.0))
+        .min_size(egui::vec2(36.0, 26.0));
+    let resp = ui.add(btn).on_hover_text(tooltip);
+    ui.style_mut().visuals.widgets.hovered.bg_fill = prev_hover_bg;
+    ui.style_mut().visuals.widgets.hovered.fg_stroke = prev_hover_fg;
+    resp.clicked()
+}
+
 impl LauncherApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let config_path = ConfigFile::default_path();
@@ -2328,7 +2352,102 @@ impl eframe::App for LauncherApp {
         let p = self.theme.palette();
 
         // ═════════════════════════════════════════════════════════════════════
-        // TOP HEADER BAR (Pinned to Top, exact match to screenshot)
+        // 0. DEDICATED SLIM CUSTOM TITLEBAR (Height 28px)
+        // ═════════════════════════════════════════════════════════════════════
+        egui::TopBottomPanel::top("custom_titlebar")
+            .exact_height(28.0)
+            .frame(
+                Frame::none()
+                    .fill(p.bg_header)
+                    .inner_margin(egui::Margin {
+                        left: 12.0,
+                        right: 6.0,
+                        top: 2.0,
+                        bottom: 2.0,
+                    }),
+            )
+            .show(ctx, |ui| {
+                let maximized = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
+
+                // Entire titlebar area is draggable to move window; double-click toggles maximize
+                let titlebar_drag = ui.interact(
+                    ui.max_rect(),
+                    ui.id().with("custom_titlebar_drag"),
+                    egui::Sense::click_and_drag(),
+                );
+                if titlebar_drag.drag_started() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+                if titlebar_drag.double_clicked() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                }
+
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+
+                    // Left title: Green dot + SERVER LAUNCHER
+                    ui.label(RichText::new("●").size(8.0).color(p.success));
+                    ui.label(
+                        RichText::new("SERVER LAUNCHER")
+                            .size(10.5)
+                            .monospace()
+                            .strong()
+                            .color(p.text_muted),
+                    );
+
+                    // Right window controls (matching screenshot media_1791731499892_604a17e9.png)
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+
+                        let dim = if p.is_dark {
+                            Color32::from_rgba_unmultiplied(255, 255, 255, 20)
+                        } else {
+                            Color32::from_rgba_unmultiplied(0, 0, 0, 14)
+                        };
+
+                        // 1. Close (far right)
+                        if render_window_control(
+                            ui, "✕", 12.0, p.text_secondary, p.danger, Color32::WHITE, "Close",
+                        ) {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+
+                        // 2. Maximize / Restore
+                        let max_glyph = if maximized { "⛶" } else { "❐" };
+                        if render_window_control(
+                            ui, max_glyph, 11.5, p.text_secondary, dim, p.text_primary,
+                            if maximized { "Restore" } else { "Maximize" },
+                        ) {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                        }
+
+                        // 3. Minimize
+                        if render_window_control(
+                            ui, "―", 12.0, p.text_secondary, dim, p.text_primary, "Minimize",
+                        ) {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                        }
+
+                        // 4. Kebab menu (⋮)
+                        if render_window_control(
+                            ui, "⋮", 14.0, p.text_secondary, dim, p.text_primary, "Menu & Settings",
+                        ) {
+                            self.settings_modal_open = !self.settings_modal_open;
+                        }
+
+                        // 5. Quick Launch Palette (🧩)
+                        if render_window_control(
+                            ui, "🧩", 12.0, p.text_muted, dim, p.text_primary, "Quick Launch Palette (Ctrl+P)",
+                        ) {
+                            self.palette_modal.open = !self.palette_modal.open;
+                            self.palette_modal.query.clear();
+                        }
+                    });
+                });
+            });
+
+        // ═════════════════════════════════════════════════════════════════════
+        // TOP HEADER BAR (App Toolbar: Logo, search, action buttons)
         // ═════════════════════════════════════════════════════════════════════
         egui::TopBottomPanel::top("top_header")
             .frame(
@@ -2337,7 +2456,7 @@ impl eframe::App for LauncherApp {
                     .inner_margin(egui::Margin {
                         left: 18.0,
                         right: 18.0,
-                        top: 14.0,
+                        top: 8.0,
                         bottom: 12.0,
                     }),
             )
@@ -2472,7 +2591,8 @@ impl eframe::App for LauncherApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
 
-                        // ⚙ Settings Button (Pill icon button on the far right)
+
+                        // ⚙ Settings Button (Pill icon button)
                         let btn_settings = egui::Button::new(
                             RichText::new("⚙").size(14.0).color(p.text_secondary),
                         )
@@ -6818,7 +6938,7 @@ impl LauncherApp {
                 for s in &self.services {
                     let is_active = self.active_tab == s.config.key;
                     let bg = if is_active {
-                        p.bg_card
+                        p.terminal_bg
                     } else {
                         p.bg_sidebar
                     };
@@ -6846,8 +6966,13 @@ impl LauncherApp {
             });
 
             // Outer Frame for the tab content (FILLS 100% OF REMAINING SPACE!)
+            let content_bg = if self.active_tab == "overview" {
+                p.bg_main
+            } else {
+                p.terminal_bg
+            };
             Frame::none()
-                .fill(p.bg_main)
+                .fill(content_bg)
                 .stroke(Stroke::NONE)
                 .rounding(Rounding { nw: 0.0, ne: 6.0, sw: 6.0, se: 6.0 })
                 .inner_margin(12.0)

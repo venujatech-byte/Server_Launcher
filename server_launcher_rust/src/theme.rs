@@ -121,7 +121,7 @@ impl ThemeMode {
                 danger_subtle: Color32::from_rgb(0x99, 0x1b, 0x1b),   // stop button crimson #991b1b
                 info: Color32::from_rgb(0x38, 0xbd, 0xf8),           // command well cyan #38bdf8
                 info_subtle: Color32::from_rgb(0x0e, 0x74, 0x90),    // restart button teal #0e7490
-                terminal_bg: Color32::from_rgb(0x10, 0x11, 0x17),    // recessed well #101117
+                terminal_bg: Color32::from_rgb(0x06, 0x07, 0x0b),    // pure deep nocturnal black #06070b
                 terminal_border: Color32::TRANSPARENT,               // borderless
                 log_stdout: Color32::from_rgb(0xf1, 0xf5, 0xf9),
                 log_stderr: Color32::from_rgb(0xf8, 0x71, 0x71),
@@ -161,7 +161,7 @@ impl ThemeMode {
                 danger_subtle: Color32::from_rgb(48, 22, 22),
                 info: Color32::from_rgb(96, 165, 250),
                 info_subtle: Color32::from_rgb(20, 35, 55),
-                terminal_bg: Color32::from_rgb(10, 12, 17),
+                terminal_bg: Color32::from_rgb(6, 7, 10),
                 terminal_border: Color32::TRANSPARENT,
                 log_stdout: Color32::from_rgb(200, 205, 216),
                 log_stderr: Color32::from_rgb(235, 87, 87),

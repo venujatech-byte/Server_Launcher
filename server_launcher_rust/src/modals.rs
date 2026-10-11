@@ -3,7 +3,7 @@ use crate::config::{CustomAction, CustomLink, CustomScript, SavedCommand, Server
 use crate::scripts::ScriptModalState;
 use crate::systemd::NewServiceDefinition;
 use crate::theme::ThemePalette;
-use egui::{Color32, Context, Key, RichText, Rounding, Stroke, Window};
+use egui::{Color32, Context, Frame, Key, RichText, Rounding, Stroke, Window};
 use std::collections::HashMap;
 
 pub struct ServerTemplate {
@@ -315,6 +315,7 @@ impl AddEditModalState {
             .collect();
     }
 
+    #[allow(dead_code)]
     pub fn apply_json_snippet(&mut self, input: &str) -> Result<String, String> {
         let trimmed = input.trim();
         if trimmed.is_empty() {
@@ -637,8 +638,9 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
     let max_h = (screen.height() - 40.0).max(400.0);
 
     let mut is_open = state.open;
-    Window::new(window_title)
+    Window::new("add_server_modal_dialog")
         .open(&mut is_open)
+        .title_bar(false)
         .collapsible(false)
         .resizable(false)
         .min_width(modal_w)
@@ -646,8 +648,76 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .default_height(640.0)
         .max_height(max_h)
+        .frame(
+            Frame::none()
+                .fill(Color32::from_rgb(17, 19, 27))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                .rounding(Rounding::same(16.0))
+                .inner_margin(egui::Margin {
+                    left: 20.0,
+                    right: 20.0,
+                    top: 14.0,
+                    bottom: 16.0,
+                })
+                .shadow(egui::epaint::Shadow {
+                    offset: egui::vec2(0.0, 8.0),
+                    blur: 24.0,
+                    spread: 0.0,
+                    color: Color32::from_black_alpha(200),
+                }),
+        )
         .show(ctx, |ui| {
-            // Header
+            ui.set_max_width(ui.available_width());
+
+            // ── Custom Titlebar (matching screenshot media_1791738768235_27fc755a.png) ──
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(45, 212, 191)));
+                ui.label(
+                    RichText::new("SERVER LAUNCHER")
+                        .size(10.0)
+                        .monospace()
+                        .strong()
+                        .color(Color32::from_rgb(113, 118, 134)),
+                );
+
+                let center_w = (ui.available_width() - 50.0).max(100.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(center_w, 18.0),
+                    egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                    |ui| {
+                        ui.label(
+                            RichText::new(window_title)
+                                .size(12.0)
+                                .color(palette.text_secondary),
+                        );
+                    },
+                );
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new("✕").size(12.0).color(palette.text_muted))
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(Stroke::NONE)
+                                .min_size(egui::vec2(20.0, 20.0)),
+                        )
+                        .clicked()
+                    {
+                        state.open = false;
+                    }
+                    ui.add(
+                        egui::Button::new(RichText::new("□").size(12.0).color(palette.text_muted))
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(Stroke::NONE)
+                            .min_size(egui::vec2(20.0, 20.0)),
+                    );
+                });
+            });
+
+            ui.add_space(14.0);
+
+            // ── Modal Header: Title + servers.json badge ──
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.label(
@@ -656,30 +726,48 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                         } else {
                             "Add a new server"
                         })
-                        .size(16.0)
+                        .size(20.0)
                         .strong()
                         .color(palette.text_primary),
                     );
-                    ui.label(
-                        RichText::new("Saved to servers.json - no code changes needed.")
-                            .size(11.0)
-                            .color(palette.text_muted),
-                    );
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        ui.label(RichText::new("Saved to").size(11.0).color(palette.text_muted));
+                        egui::Frame::none()
+                            .fill(Color32::from_rgb(22, 25, 35))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
+                            .rounding(Rounding::same(3.0))
+                            .inner_margin(egui::Margin::symmetric(5.0, 1.0))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new("servers.json")
+                                        .size(10.5)
+                                        .monospace()
+                                        .color(Color32::from_rgb(180, 185, 200)),
+                                );
+                            });
+                        ui.label(RichText::new("— no code changes needed.").size(11.0).color(palette.text_muted));
+                    });
                 });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .button(RichText::new("✕").size(13.0).color(palette.text_secondary))
-                        .clicked()
-                    {
-                        state.open = false;
-                    }
+                    egui::Frame::none()
+                        .fill(Color32::from_rgb(14, 15, 22))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 50)))
+                        .rounding(Rounding::same(4.0))
+                        .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new("servers.json")
+                                    .size(10.5)
+                                    .monospace()
+                                    .color(Color32::from_rgb(110, 118, 138)),
+                            );
+                        });
                 });
             });
 
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
+            ui.add_space(12.0);
 
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
@@ -688,112 +776,24 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                 .show(ui, |ui| {
                     ui.set_max_width(ui.available_width());
 
-                    // Fast Paste JSON / MCP Config (Fast Autofill)
-                    egui::Frame::none()
-                        .fill(palette.bg_subtle)
-                        .stroke(Stroke::NONE)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                let toggle_icon = if state.paste_json_open { "▼" } else { "▶" };
-                                if ui
-                                    .button(
-                                        RichText::new(format!("{} 📋 Paste JSON / MCP Config (Fast Autofill)", toggle_icon))
-                                            .size(12.0)
-                                            .strong()
-                                            .color(palette.accent),
-                                    )
-                                    .clicked()
-                                {
-                                    state.paste_json_open = !state.paste_json_open;
-                                }
-                                if !state.paste_json_open {
-                                    ui.label(
-                                        RichText::new("Paste schema like { \"servers\": { \"stitch\": { ... } } }")
-                                            .size(10.5)
-                                            .color(palette.text_muted),
-                                    );
-                                }
-                            });
-
-                            if state.paste_json_open {
-                                ui.add_space(6.0);
-                                ui.label(
-                                    RichText::new(
-                                        "Paste raw JSON or MCP server configuration below to autofill all fields:",
-                                    )
-                                    .size(10.5)
-                                    .color(palette.text_muted),
-                                );
-                                ui.add_space(3.0);
-                                ui.add(
-                                    egui::TextEdit::multiline(&mut state.paste_json_input)
-                                        .hint_text("{\n  \"servers\": {\n    \"stitch\": {\n      \"type\": \"http\",\n      \"url\": \"https://stitch.googleapis.com/mcp\",\n      \"headers\": {\n        \"X-Goog-Api-Key\": \"...\"\n      }\n    }\n  }\n}")
-                                        .desired_rows(6)
-                                        .font(egui::TextStyle::Monospace)
-                                        .desired_width(ui.available_width()),
-                                );
-                                ui.add_space(6.0);
-                                ui.horizontal(|ui| {
-                                    let apply_json_btn = egui::Button::new(
-                                        RichText::new("✨ Parse & Autofill Form")
-                                            .size(11.0)
-                                            .strong()
-                                            .color(Color32::WHITE),
-                                    )
-                                    .fill(Color32::from_rgb(0x05, 0x96, 0x69))
-                                    .rounding(Rounding::same(6.0));
-
-                                    if ui.add(apply_json_btn).clicked() {
-                                        let input = state.paste_json_input.clone();
-                                        match state.apply_json_snippet(&input) {
-                                            Ok(msg) => {
-                                                state.paste_json_msg = Some((msg, false));
-                                            }
-                                            Err(err) => {
-                                                state.paste_json_msg = Some((err, true));
-                                            }
-                                        }
-                                    }
-
-                                    if ui
-                                        .button(RichText::new("Clear").size(11.0).color(palette.text_secondary))
-                                        .clicked()
-                                    {
-                                        state.paste_json_input.clear();
-                                        state.paste_json_msg = None;
-                                    }
-                                });
-
-                                if let Some((msg, is_err)) = &state.paste_json_msg {
-                                    ui.add_space(4.0);
-                                    let col = if *is_err {
-                                        palette.danger
-                                    } else {
-                                        Color32::from_rgb(0x5e, 0xea, 0xd4)
-                                    };
-                                    ui.label(RichText::new(msg).size(11.0).color(col));
-                                }
-                            }
-                        });
-
-                    ui.add_space(10.0);
-
                     // Template Picker (only for new servers)
                     if !state.is_edit {
                         egui::Frame::none()
-                            .fill(palette.bg_subtle)
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                            .fill(Color32::from_rgb(19, 21, 30))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 52)))
+                            .rounding(Rounding::same(10.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
-                                ui.label(
-                                    RichText::new("⚡ Pick a Template (Fast Setup)")
-                                        .size(12.5)
-                                        .strong()
-                                        .color(palette.accent),
-                                );
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("⚡").size(13.0).color(Color32::from_rgb(196, 192, 255)));
+                                    ui.label(
+                                        RichText::new("Pick a Template (Fast Setup)")
+                                            .size(12.5)
+                                            .strong()
+                                            .color(Color32::from_rgb(196, 192, 255)),
+                                    );
+                                });
+                                ui.add_space(2.0);
                                 ui.label(
                                     RichText::new(
                                         "Auto-populates command, port, actions, and links for popular stacks.",
@@ -801,7 +801,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                                     .size(10.5)
                                     .color(palette.text_muted),
                                 );
-                                ui.add_space(6.0);
+                                ui.add_space(8.0);
 
                                 ui.horizontal(|ui| {
                                     let mut template_names = vec!["-- Select a template --"];
@@ -810,9 +810,10 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                                     }
 
                                     let cur_name = template_names[state.selected_template_idx];
+                                    let combo_w = (ui.available_width() - 130.0).max(180.0);
                                     egui::ComboBox::from_id_salt("template_select")
                                         .selected_text(cur_name)
-                                        .width(220.0)
+                                        .width(combo_w)
                                         .show_ui(ui, |ui| {
                                             for (i, name) in template_names.iter().enumerate() {
                                                 ui.selectable_value(
@@ -825,12 +826,13 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
 
                                     let apply_btn = egui::Button::new(
                                         RichText::new("Apply Template")
-                                            .size(11.0)
+                                            .size(11.5)
                                             .strong()
-                                            .color(palette.accent_text),
+                                            .color(Color32::from_rgb(24, 25, 34)),
                                     )
-                                    .fill(palette.accent)
-                                    .rounding(Rounding::same(6.0));
+                                    .fill(Color32::from_rgb(196, 192, 255))
+                                    .rounding(Rounding::same(6.0))
+                                    .min_size(egui::vec2(110.0, 26.0));
 
                                     if ui.add(apply_btn).clicked() {
                                         state.apply_template(state.selected_template_idx);
@@ -838,169 +840,46 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                                 });
                             });
 
-                        ui.add_space(10.0);
-                    }
-
-                    // Server Type Selector
-                    ui.label(RichText::new("Server Type").size(12.0).strong());
-                    ui.horizontal(|ui| {
-                        let is_cli = state.server_type != "http";
-                        let is_http = state.server_type == "http";
-
-                        let cli_bg = if is_cli { palette.accent } else { palette.bg_button };
-                        let cli_fg = if is_cli { palette.accent_text } else { palette.text_secondary };
-                        let btn_cli = egui::Button::new(
-                            RichText::new("⚙ Process / CLI (Standard)").size(11.0).strong().color(cli_fg),
-                        )
-                        .fill(cli_bg)
-                        .rounding(Rounding::same(999.0));
-                        if ui.add(btn_cli).clicked() {
-                            state.server_type = "cli".to_string();
-                        }
-
-                        let http_bg = if is_http { palette.accent } else { palette.bg_button };
-                        let http_fg = if is_http { palette.accent_text } else { palette.text_secondary };
-                        let btn_http = egui::Button::new(
-                            RichText::new("🌐 HTTP / MCP Endpoint").size(11.0).strong().color(http_fg),
-                        )
-                        .fill(http_bg)
-                        .rounding(Rounding::same(999.0));
-                        if ui.add(btn_http).clicked() {
-                            state.server_type = "http".to_string();
-                            if state.group == "General" {
-                                state.group = "MCP".to_string();
-                            }
-                        }
-                    });
-                    ui.add_space(8.0);
-
-                    // HTTP / MCP Endpoint Settings Card
-                    if state.server_type == "http" || !state.url.is_empty() {
-                        egui::Frame::none()
-                            .fill(palette.bg_subtle)
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(10.0))
-                            .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                            .show(ui, |ui| {
-                                ui.label(
-                                    RichText::new("🌐 HTTP / MCP Endpoint Settings")
-                                        .size(12.5)
-                                        .strong()
-                                        .color(palette.accent),
-                                );
-                                ui.add_space(4.0);
-
-                                // Endpoint URL
-                                ui.label(RichText::new("Endpoint URL *").size(11.5).strong());
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut state.url)
-                                        .hint_text("https://stitch.googleapis.com/mcp")
-                                        .clip_text(true)
-                                        .desired_width(ui.available_width()),
-                                );
-                                ui.add_space(6.0);
-
-                                // Headers
-                                ui.label(
-                                    RichText::new("HTTP Headers (API Keys, Authorization)")
-                                        .size(11.5)
-                                        .strong(),
-                                );
-                                ui.label(
-                                    RichText::new("e.g. Header: X-Goog-Api-Key, Value: AQ.Ab8RN6...")
-                                        .size(10.5)
-                                        .color(palette.text_muted),
-                                );
-                                ui.add_space(2.0);
-
-                                let mut remove_header_idx = None;
-                                for (i, (k, v)) in state.headers.iter_mut().enumerate() {
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new("Header:").size(10.5).color(palette.text_muted));
-                                        ui.add(
-                                            egui::TextEdit::singleline(k)
-                                                .hint_text("Key")
-                                                .clip_text(true)
-                                                .desired_width(130.0),
-                                        );
-                                        ui.label(RichText::new("Val:").size(10.5).color(palette.text_muted));
-                                        let val_w = (ui.available_width() - 36.0).max(60.0);
-                                        ui.add_sized(
-                                            [val_w, 20.0],
-                                            egui::TextEdit::singleline(v)
-                                                .hint_text("Value")
-                                                .clip_text(true),
-                                        );
-                                        if ui
-                                            .button(RichText::new("✕").size(11.0).color(palette.danger))
-                                            .clicked()
-                                        {
-                                            remove_header_idx = Some(i);
-                                        }
-                                    });
-                                    ui.add_space(2.0);
-                                }
-                                if let Some(i) = remove_header_idx {
-                                    state.headers.remove(i);
-                                }
-
-                                ui.horizontal(|ui| {
-                                    if ui
-                                        .button(RichText::new("+ Add Header").size(11.0).color(palette.accent))
-                                        .clicked()
-                                    {
-                                        state.headers.push((String::new(), String::new()));
-                                    }
-
-                                    if ui
-                                        .button(
-                                            RichText::new("⚡ Auto-generate curl test command")
-                                                .size(11.0)
-                                                .color(Color32::from_rgb(0x5e, 0xea, 0xd4)),
-                                        )
-                                        .on_hover_text("Generate curl ping command with all headers and URL")
-                                        .clicked()
-                                    {
-                                        let mut h_args = String::new();
-                                        for (hk, hv) in &state.headers {
-                                            if !hk.trim().is_empty() {
-                                                h_args.push_str(&format!(" -H \"{}: {}\"", hk.trim(), hv.trim()));
-                                            }
-                                        }
-                                        state.command = format!("curl -i{} {}", h_args, state.url.trim());
-                                        if !state.actions.iter().any(|(l, _)| l == "Test Ping") {
-                                            state.actions.push(("Test Ping".to_string(), state.command.clone()));
-                                        }
-                                        if !state.links.iter().any(|(l, _)| l == "MCP Endpoint")
-                                            && !state.url.trim().is_empty()
-                                        {
-                                            state
-                                                .links
-                                                .push(("MCP Endpoint".to_string(), state.url.trim().to_string()));
-                                        }
-                                    }
-                                });
-                            });
-
-                        ui.add_space(10.0);
+                        ui.add_space(14.0);
                     }
 
                     // Server Name *
-                    ui.label(RichText::new("Server name *").size(12.0).strong());
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        ui.label(RichText::new("Server name").size(12.0).strong().color(palette.text_primary));
+                        ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
+                    });
                     ui.add(
                         egui::TextEdit::singleline(&mut state.name)
-                            .hint_text("e.g. Frontend App or Stitch")
+                            .hint_text("e.g. Frontend App")
                             .clip_text(true)
                             .desired_width(ui.available_width()),
                     );
                     ui.add_space(8.0);
 
                     // Unique Key (optional override)
-                    ui.label(
-                        RichText::new("Unique Key (optional override)")
-                            .size(11.0)
-                            .color(palette.text_muted),
-                    );
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Unique Key (optional override)")
+                                .size(11.0)
+                                .color(palette.text_muted),
+                        );
+                        let derived = if !state.key.trim().is_empty() {
+                            state.key.trim().to_string()
+                        } else {
+                            state.name.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect::<String>().trim_matches('_').to_string()
+                        };
+                        if !derived.is_empty() {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(
+                                    RichText::new(format!("ID: {}", derived))
+                                        .size(10.5)
+                                        .monospace()
+                                        .color(Color32::from_rgb(110, 118, 138)),
+                                );
+                            });
+                        }
+                    });
                     ui.add_enabled(
                         !state.is_edit,
                         egui::TextEdit::singleline(&mut state.key)
@@ -1012,9 +891,10 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
 
                     // Server Group
                     ui.label(
-                        RichText::new("Server group (Frontend / Backend / DB / MCP)")
+                        RichText::new("Server group (Frontend / Backend / DB)")
                             .size(12.0)
-                            .strong(),
+                            .strong()
+                            .color(palette.text_primary),
                     );
                     ui.label(
                         RichText::new("Tag servers for group start/stop. Pick preset or type custom:")
@@ -1026,14 +906,18 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                             .clip_text(true)
                             .desired_width(ui.available_width()),
                     );
-                    ui.add_space(3.0);
+                    ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        for preset in &["Frontend", "Backend", "DB", "MCP", "General"] {
+                        for preset in &["Frontend", "Backend", "DB", "General"] {
+                            let is_active = state.group == *preset;
                             let btn = egui::Button::new(
-                                RichText::new(*preset).size(10.5).color(palette.text_secondary),
+                                RichText::new(*preset)
+                                    .size(10.5)
+                                    .color(if is_active { Color32::from_rgb(196, 192, 255) } else { palette.text_secondary }),
                             )
-                            .fill(palette.bg_button)
-                            .rounding(Rounding::same(4.0));
+                            .fill(if is_active { Color32::from_rgb(34, 38, 56) } else { Color32::from_rgb(22, 24, 34) })
+                            .stroke(if is_active { Stroke::new(1.0_f32, Color32::from_rgb(196, 192, 255)) } else { Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 52)) })
+                            .rounding(Rounding::same(6.0));
                             if ui.add(btn).clicked() {
                                 state.group = preset.to_string();
                             }
@@ -1042,7 +926,11 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     ui.add_space(8.0);
 
                     // Working Directory *
-                    ui.label(RichText::new("Working directory (path) *").size(12.0).strong());
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        ui.label(RichText::new("Working directory (path)").size(12.0).strong().color(palette.text_primary));
+                        ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
+                    });
                     ui.horizontal(|ui| {
                         let browse_w = 75.0;
                         let input_w = (ui.available_width() - browse_w - ui.spacing().item_spacing.x).max(80.0);
@@ -1055,8 +943,9 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                         let browse_btn = egui::Button::new(
                             RichText::new("Browse").size(11.5).color(palette.text_secondary),
                         )
-                        .fill(palette.bg_button)
-                        .rounding(Rounding::same(4.0));
+                        .fill(Color32::from_rgb(26, 29, 40))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
+                        .rounding(Rounding::same(6.0));
                         if ui.add(browse_btn).clicked() {
                             if let Some(folder) = rfd::FileDialog::new().pick_folder() {
                                 state.cwd = folder.to_string_lossy().to_string();
@@ -1066,17 +955,25 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     ui.add_space(8.0);
 
                     // Start Command *
-                    ui.label(RichText::new("Start command *").size(12.0).strong());
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        ui.label(RichText::new("Start command").size(12.0).strong().color(palette.text_primary));
+                        ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
+                    });
                     ui.label(
                         RichText::new("e.g.  npm run dev   |   python app.py   |   node server.js")
                             .size(10.5)
                             .color(Color32::from_rgb(123, 131, 148)),
                     );
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.command)
-                            .clip_text(true)
-                            .desired_width(ui.available_width()),
-                    );
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("$").size(12.0).monospace().color(Color32::from_rgb(110, 118, 138)));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.command)
+                                .hint_text("e.g. npm run dev")
+                                .clip_text(true)
+                                .desired_width(ui.available_width()),
+                        );
+                    });
                     ui.add_space(8.0);
 
                     // Stop Command (optional)
@@ -1263,27 +1160,35 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     ui.add_space(12.0);
                 });
 
-            if let Some(err) = &state.error_msg {
-                ui.add_space(4.0);
-                ui.label(RichText::new(err).color(palette.danger));
-            }
-
             ui.add_space(8.0);
             ui.separator();
             ui.add_space(8.0);
 
-            // Bottom Buttons: Cancel & Save
+            // Bottom Buttons: Status & Cancel / Save
             ui.horizontal(|ui| {
+                if let Some(err) = &state.error_msg {
+                    ui.label(RichText::new("●").size(9.0).color(palette.danger));
+                    ui.label(RichText::new(err).size(11.0).color(palette.danger));
+                } else {
+                    ui.label(RichText::new("●").size(9.0).color(Color32::from_rgb(0, 210, 160)));
+                    ui.label(
+                        RichText::new("Ready to register instance")
+                            .size(11.0)
+                            .monospace()
+                            .color(Color32::from_rgb(120, 126, 142)),
+                    );
+                }
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_save = egui::Button::new(
                         RichText::new("Save")
                             .size(12.0)
                             .strong()
-                            .color(palette.accent_text),
+                            .color(Color32::from_rgb(24, 25, 34)),
                     )
-                    .fill(palette.accent)
-                    .rounding(Rounding::same(4.0))
-                    .min_size(egui::vec2(80.0, 28.0));
+                    .fill(Color32::from_rgb(196, 192, 255))
+                    .rounding(Rounding::same(8.0))
+                    .min_size(egui::vec2(85.0, 28.0));
 
                     if ui.add(btn_save).clicked() {
                         match state.to_server_config() {
@@ -1307,8 +1212,9 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                             .size(12.0)
                             .color(palette.text_secondary),
                     )
-                    .fill(palette.bg_button)
-                    .rounding(Rounding::same(4.0))
+                    .fill(Color32::from_rgb(26, 29, 40))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
+                    .rounding(Rounding::same(6.0))
                     .min_size(egui::vec2(80.0, 28.0));
 
                     if ui.add(btn_cancel).clicked() {
@@ -1482,6 +1388,8 @@ pub struct SshHostModalState {
     pub remote_cwd: String,
     pub test_result: Option<Result<String, String>>,
     pub is_testing: bool,
+    pub use_agent: bool,
+    pub strict_host_key: bool,
 }
 
 impl SshHostModalState {
@@ -1499,6 +1407,8 @@ impl SshHostModalState {
         self.remote_cwd = String::new();
         self.test_result = None;
         self.is_testing = false;
+        self.use_agent = true;
+        self.strict_host_key = false;
     }
 
     pub fn open_edit(&mut self, h: &crate::config::SshRemoteHost) {
@@ -1515,6 +1425,8 @@ impl SshHostModalState {
         self.remote_cwd = h.remote_cwd.clone();
         self.test_result = None;
         self.is_testing = false;
+        self.use_agent = true;
+        self.strict_host_key = false;
     }
 }
 
@@ -1532,24 +1444,176 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
     let title = if state.is_edit { "Edit SSH Remote PC" } else { "Add SSH Remote PC" };
 
     let screen = ctx.screen_rect();
-    let modal_w = 480.0_f32.min(screen.width() - 40.0).max(360.0);
-    let max_h = (screen.height() - 40.0).max(380.0);
+    let modal_w = 540.0_f32.min(screen.width() - 40.0).max(380.0);
+    let max_h = (screen.height() - 40.0).max(420.0);
 
     let mut is_open = state.open;
-    Window::new(title)
+    Window::new("add_ssh_host_modal_dialog")
         .open(&mut is_open)
+        .title_bar(false)
         .collapsible(false)
         .resizable(false)
         .min_width(modal_w)
         .max_width(modal_w)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .default_height(620.0)
         .max_height(max_h)
+        .frame(
+            Frame::none()
+                .fill(Color32::from_rgb(17, 19, 27))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                .rounding(Rounding::same(16.0))
+                .inner_margin(egui::Margin {
+                    left: 20.0,
+                    right: 20.0,
+                    top: 14.0,
+                    bottom: 16.0,
+                })
+                .shadow(egui::epaint::Shadow {
+                    offset: egui::vec2(0.0, 8.0),
+                    blur: 24.0,
+                    spread: 0.0,
+                    color: Color32::from_black_alpha(200),
+                }),
+        )
         .show(ctx, |ui| {
             ui.set_max_width(ui.available_width());
-            ui.add_space(6.0);
 
-            // Display Name
-            ui.label(RichText::new("Display Name:").size(12.0).strong().color(palette.text_primary));
+            // ── Custom Titlebar (matching Add Server modal & screenshot media_1791738768250_1c9fb24d.png) ──
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(45, 212, 191)));
+                ui.label(
+                    RichText::new("SERVER LAUNCHER")
+                        .size(10.0)
+                        .monospace()
+                        .strong()
+                        .color(Color32::from_rgb(113, 118, 134)),
+                );
+
+                let center_w = (ui.available_width() - 50.0).max(100.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(center_w, 18.0),
+                    egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                    |ui| {
+                        ui.label(
+                            RichText::new(title)
+                                .size(12.0)
+                                .color(palette.text_secondary),
+                        );
+                    },
+                );
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new("✕").size(12.0).color(palette.text_muted))
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(Stroke::NONE)
+                                .min_size(egui::vec2(20.0, 20.0)),
+                        )
+                        .clicked()
+                    {
+                        state.open = false;
+                    }
+                    ui.add(
+                        egui::Button::new(RichText::new("□").size(12.0).color(palette.text_muted))
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(Stroke::NONE)
+                            .min_size(egui::vec2(20.0, 20.0)),
+                    );
+                });
+            });
+
+            ui.add_space(14.0);
+
+            // ── Modal Header: Title + Saved To Subtitle + SSH v2 badge ──
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new(title).size(20.0).strong().color(palette.text_primary));
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        ui.label(RichText::new("Saved to").size(11.0).color(palette.text_muted));
+                        egui::Frame::none()
+                            .fill(Color32::from_rgb(22, 25, 35))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
+                            .rounding(Rounding::same(3.0))
+                            .inner_margin(egui::Margin::symmetric(5.0, 1.0))
+                            .show(ui, |ui| {
+                                ui.label(RichText::new("remote_hosts.json").size(10.5).monospace().color(Color32::from_rgb(180, 185, 200)));
+                            });
+                        ui.label(RichText::new("— encrypted vault credentials.").size(11.0).color(palette.text_muted));
+                    });
+                });
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    egui::Frame::none()
+                        .fill(Color32::from_rgb(19, 21, 30))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 52)))
+                        .rounding(Rounding::same(12.0))
+                        .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(196, 192, 255)));
+                                ui.label(RichText::new("SSH v2 (OpenSSH)").size(10.5).monospace().color(Color32::from_rgb(180, 185, 200)));
+                            });
+                        });
+                });
+            });
+
+            ui.add_space(12.0);
+
+            // ── Card: Automatic SSH Config Import Banner ──
+            egui::Frame::none()
+                .fill(Color32::from_rgb(19, 21, 30))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 52)))
+                .rounding(Rounding::same(8.0))
+                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        egui::Frame::none()
+                            .fill(Color32::from_rgb(26, 29, 42))
+                            .rounding(Rounding::same(6.0))
+                            .inner_margin(egui::Margin::same(6.0))
+                            .show(ui, |ui| {
+                                ui.label(RichText::new("⚡").size(13.0).color(Color32::from_rgb(196, 192, 255)));
+                            });
+                        ui.add_space(6.0);
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new("Automatic SSH config import available").size(12.0).strong().color(palette.text_primary));
+                            ui.label(RichText::new("Auto-detect hosts and identities defined in ~/.ssh/config").size(10.5).color(palette.text_muted));
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let scan_btn = egui::Button::new(RichText::new("Scan Hosts").size(11.0).color(palette.text_primary))
+                                .fill(Color32::from_rgb(26, 29, 40))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
+                                .rounding(Rounding::same(6.0));
+                            if ui.add(scan_btn).clicked() {
+                                let imported = crate::remote::import_from_ssh_config();
+                                if let Some(first) = imported.first() {
+                                    state.name = first.name.clone();
+                                    state.host = first.host.clone();
+                                    state.port_str = first.port.to_string();
+                                    state.user = first.user.clone();
+                                    state.key_path = first.key_path.clone();
+                                    state.test_result = Some(Ok(format!("Detected '{}' ({} hosts in ~/.ssh/config)", first.name, imported.len())));
+                                } else {
+                                    state.test_result = Some(Err("No hosts found in ~/.ssh/config".to_string()));
+                                }
+                            }
+                        });
+                    });
+                });
+
+            ui.add_space(10.0);
+
+            // Display Name *
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                ui.label(RichText::new("Display Name").size(12.0).strong().color(palette.text_primary));
+                ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
+            });
             ui.add(
                 egui::TextEdit::singleline(&mut state.name)
                     .hint_text("e.g. Dev Cloud Server, Staging VPS")
@@ -1561,7 +1625,11 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             // Host & Port row
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("Host / IP Address:").size(12.0).strong().color(palette.text_primary));
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        ui.label(RichText::new("Host / IP Address").size(12.0).strong().color(palette.text_primary));
+                        ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
+                    });
                     let host_w = (ui.available_width() - 95.0).max(80.0);
                     ui.add_sized(
                         [host_w, 20.0],
@@ -1571,7 +1639,11 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                     );
                 });
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("Port:").size(12.0).strong().color(palette.text_primary));
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        ui.label(RichText::new("Port").size(12.0).strong().color(palette.text_primary));
+                        ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
+                    });
                     ui.add(
                         egui::TextEdit::singleline(&mut state.port_str)
                             .hint_text("22")
@@ -1582,20 +1654,24 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             });
             ui.add_space(8.0);
 
-            // Username
-            ui.label(RichText::new("SSH Username:").size(12.0).strong().color(palette.text_primary));
+            // SSH Username *
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                ui.label(RichText::new("SSH Username").size(12.0).strong().color(palette.text_primary));
+                ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
+            });
             ui.add(
                 egui::TextEdit::singleline(&mut state.user)
-                    .hint_text("e.g. ubuntu, root, ec2-user")
+                    .hint_text("ubuntu")
                     .clip_text(true)
                     .desired_width(ui.available_width()),
             );
             ui.add_space(8.0);
 
-            // Private Key File
-            ui.label(RichText::new("SSH Private Key Path (optional if using agent/default):").size(12.0).strong().color(palette.text_primary));
+            // SSH Private Key Path (optional)
+            ui.label(RichText::new("SSH Private Key Path (optional if using agent/default)").size(12.0).strong().color(palette.text_primary));
             ui.horizontal(|ui| {
-                let browse_w = 75.0;
+                let browse_w = 85.0;
                 let input_w = (ui.available_width() - browse_w - ui.spacing().item_spacing.x).max(80.0);
                 ui.add_sized(
                     [input_w, 20.0],
@@ -1603,7 +1679,11 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                         .hint_text("e.g. ~/.ssh/id_ed25519 or /home/user/.ssh/id_rsa")
                         .clip_text(true),
                 );
-                if ui.button("Browse...").clicked() {
+                let browse_btn = egui::Button::new(RichText::new("📁 Browse...").size(11.0).color(palette.text_secondary))
+                    .fill(Color32::from_rgb(26, 29, 40))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
+                    .rounding(Rounding::same(6.0));
+                if ui.add(browse_btn).clicked() {
                     if let Some(path) = rfd::FileDialog::new().pick_file() {
                         state.key_path = path.to_string_lossy().to_string();
                     }
@@ -1611,9 +1691,9 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             });
             ui.add_space(8.0);
 
-            // SSH Password
+            // SSH Password (optional)
             ui.horizontal(|ui| {
-                ui.label(RichText::new("SSH Password (optional if using key/agent):").size(12.0).strong().color(palette.text_primary));
+                ui.label(RichText::new("SSH Password (optional if using key/agent)").size(12.0).strong().color(palette.text_primary));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let eye_label = if state.show_password { "👁 Hide" } else { "👁 Show" };
                     if ui.small_button(eye_label).clicked() {
@@ -1630,8 +1710,8 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             );
             ui.add_space(8.0);
 
-            // Default Remote Directory
-            ui.label(RichText::new("Default Remote Directory (optional):").size(12.0).strong().color(palette.text_primary));
+            // Default Remote Directory (optional)
+            ui.label(RichText::new("Default Remote Directory (optional)").size(12.0).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::singleline(&mut state.remote_cwd)
                     .hint_text("e.g. /var/www or /home/ubuntu/app")
@@ -1640,33 +1720,23 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             );
             ui.add_space(10.0);
 
-            // Test connection result banner
-            if let Some(res) = &state.test_result {
-                match res {
-                    Ok(msg) => {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("✓").size(13.0).color(palette.success));
-                            ui.label(RichText::new(msg).size(11.5).color(palette.success));
-                        });
-                    }
-                    Err(err) => {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("✗").size(13.0).color(palette.danger));
-                            ui.label(RichText::new(err).size(11.5).color(palette.danger));
-                        });
-                    }
-                }
-                ui.add_space(8.0);
-            }
+            // Checkboxes: Use local SSH agent authentication & Strict host key check
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut state.use_agent, RichText::new("Use local SSH agent authentication").size(11.5).color(palette.text_secondary));
+                ui.add_space(12.0);
+                ui.checkbox(&mut state.strict_host_key, RichText::new("Strict host key check").size(11.5).color(palette.text_secondary));
+            });
+            ui.add_space(10.0);
 
             ui.separator();
             ui.add_space(6.0);
 
+            // Footer
             ui.horizontal(|ui| {
                 // Test Connection button
-                let test_btn = egui::Button::new(RichText::new("⚡ Test Connection").size(11.5).color(palette.accent_light))
-                    .fill(palette.bg_button)
-                    .stroke(Stroke::NONE)
+                let test_btn = egui::Button::new(RichText::new("⚡ Test Connection").size(11.5).color(Color32::from_rgb(196, 192, 255)))
+                    .fill(Color32::from_rgb(26, 29, 42))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 50, 72)))
                     .rounding(Rounding::same(999.0));
                 if ui.add(test_btn).clicked() {
                     let port = state.port_str.trim().parse::<u16>().unwrap_or(22);
@@ -1683,6 +1753,23 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                     state.test_result = Some(crate::remote::test_ssh_connection(&host_obj));
                 }
 
+                ui.add_space(6.0);
+                if let Some(res) = &state.test_result {
+                    match res {
+                        Ok(msg) => {
+                            ui.label(RichText::new("●").size(9.0).color(palette.success));
+                            ui.label(RichText::new(msg).size(11.0).color(palette.success));
+                        }
+                        Err(err) => {
+                            ui.label(RichText::new("●").size(9.0).color(palette.danger));
+                            ui.label(RichText::new(err).size(11.0).color(palette.danger));
+                        }
+                    }
+                } else {
+                    ui.label(RichText::new("●").size(9.0).color(Color32::from_rgb(0, 210, 160)));
+                    ui.label(RichText::new("Ready to register").size(11.0).monospace().color(Color32::from_rgb(120, 126, 142)));
+                }
+
                 if state.is_edit {
                     if let Some(id_to_del) = state.editing_id.clone() {
                         let del_btn = egui::Button::new(RichText::new("Delete Host").size(11.5).color(palette.danger))
@@ -1695,10 +1782,10 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let save_btn = egui::Button::new(RichText::new("Save Host").size(12.0).strong().color(palette.accent_text))
-                        .fill(palette.accent)
-                        .rounding(Rounding::same(5.0))
-                        .min_size(egui::vec2(85.0, 28.0));
+                    let save_btn = egui::Button::new(RichText::new("Save Host").size(12.0).strong().color(Color32::from_rgb(24, 25, 34)))
+                        .fill(Color32::from_rgb(196, 192, 255))
+                        .rounding(Rounding::same(8.0))
+                        .min_size(egui::vec2(95.0, 28.0));
 
                     if ui.add(save_btn).clicked() && !state.host.trim().is_empty() {
                         let port = state.port_str.trim().parse::<u16>().unwrap_or(22);
@@ -1726,7 +1813,12 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                         state.open = false;
                     }
 
-                    if ui.button(RichText::new("Cancel").size(12.0).color(palette.text_secondary)).clicked() {
+                    let cancel_btn = egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
+                        .fill(Color32::from_rgb(26, 29, 40))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
+                        .rounding(Rounding::same(6.0))
+                        .min_size(egui::vec2(75.0, 28.0));
+                    if ui.add(cancel_btn).clicked() {
                         state.open = false;
                     }
                 });

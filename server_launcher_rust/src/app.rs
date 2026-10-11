@@ -1,4 +1,4 @@
-use crate::config::{ConfigFile, SshRemoteHost};
+use crate::config::{ConfigFile, CustomScript, SavedCommand, SshRemoteHost};
 use crate::modals::{
     render_add_edit_modal, render_command_palette, render_ssh_host_modal,
     render_close_confirmation_modal, CloseConfirmChoice,
@@ -44,7 +44,29 @@ pub struct SlashCommand {
     pub action: SlashAction,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarTab {
+    Servers,
+    Scripts,
+    Commands,
+    SystemMD,
+}
+
+impl SidebarTab {
+    pub fn label(&self) -> &'static str {
+        match self {
+            SidebarTab::Servers => "🖥️ Servers",
+            SidebarTab::Scripts => "📜 Scripts",
+            SidebarTab::Commands => "⚡ Commands",
+            SidebarTab::SystemMD => "⚙️ SystemMD",
+        }
+    }
+}
+
 pub struct LauncherApp {
+    pub active_sidebar_tab: SidebarTab,
+    pub scripts: Vec<CustomScript>,
+    pub saved_commands: Vec<SavedCommand>,
     config_path: PathBuf,
     services: Vec<Service>,
     active_tab: String, // "overview" or service.key
@@ -210,6 +232,8 @@ impl LauncherApp {
 
         let selected_machine = "local".to_string();
         let ssh_hosts = config_file.ssh_hosts;
+        let scripts = config_file.scripts;
+        let saved_commands = config_file.saved_commands;
         let ssh_host_modal = SshHostModalState::default();
         let remote_listeners = Arc::new(Mutex::new(HashMap::new()));
         let remote_scanning = Arc::new(Mutex::new(BTreeSet::new()));
@@ -224,6 +248,9 @@ impl LauncherApp {
             .unwrap_or_default();
 
         Self {
+            active_sidebar_tab: SidebarTab::Servers,
+            scripts,
+            saved_commands,
             config_path,
             services,
             active_tab: "overview".to_string(),
@@ -274,6 +301,8 @@ impl LauncherApp {
         let cfg = ConfigFile {
             servers: self.services.iter().map(|s| s.config.clone()).collect(),
             ssh_hosts: self.ssh_hosts.clone(),
+            scripts: self.scripts.clone(),
+            saved_commands: self.saved_commands.clone(),
             theme: Some(self.theme.id_str().to_string()),
             app_autostart: self.app_autostart,
         };

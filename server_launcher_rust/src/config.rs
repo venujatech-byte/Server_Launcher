@@ -75,11 +75,51 @@ fn default_ssh_user() -> String {
     "ubuntu".to_string()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CustomScript {
+    pub id: String,
+    pub name: String,
+    pub script: String,
+    #[serde(default = "default_script_shell")]
+    pub shell: String,
+    #[serde(default = "default_cwd")]
+    pub cwd: String,
+    #[serde(default)]
+    pub autostart: bool,
+    #[serde(default)]
+    pub host_id: Option<String>, // None for Local PC, Some(id) for SSH Host
+}
+
+fn default_script_shell() -> String {
+    "bash".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SavedCommand {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default = "default_command_category")]
+    pub category: String,
+    #[serde(default)]
+    pub host_id: Option<String>, // None for Local PC, Some(id) for SSH Host
+}
+
+fn default_command_category() -> String {
+    "General".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConfigFile {
     pub servers: Vec<ServerConfig>,
     #[serde(default)]
     pub ssh_hosts: Vec<SshRemoteHost>,
+    #[serde(default)]
+    pub scripts: Vec<CustomScript>,
+    #[serde(default)]
+    pub saved_commands: Vec<SavedCommand>,
     #[serde(default)]
     pub theme: Option<String>,
     #[serde(default)]

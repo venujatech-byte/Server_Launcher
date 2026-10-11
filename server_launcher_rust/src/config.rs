@@ -124,6 +124,8 @@ pub struct ConfigFile {
     pub theme: Option<String>,
     #[serde(default)]
     pub app_autostart: bool,
+    #[serde(default)]
+    pub journal_refresh_interval: Option<u32>,
 }
 
 impl ConfigFile {

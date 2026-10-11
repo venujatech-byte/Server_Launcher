@@ -28,7 +28,7 @@ use egui::{
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use sysinfo::System;
 
 #[derive(Clone, Debug)]
@@ -172,6 +172,8 @@ pub struct LauncherApp {
     pub service_journal_logs: String,
     pub service_search_query: String,
     pub service_action_msg: Option<String>,
+    pub journal_refresh_interval: u32,
+    pub last_journal_refresh: Instant,
 }
 
 pub struct ExternalTerminalSession {
@@ -360,6 +362,8 @@ impl LauncherApp {
             service_journal_logs: String::new(),
             service_search_query: String::new(),
             service_action_msg: None,
+            journal_refresh_interval: config_file.journal_refresh_interval.unwrap_or(0),
+            last_journal_refresh: Instant::now(),
         }
     }
 
@@ -371,6 +375,7 @@ impl LauncherApp {
             saved_commands: self.saved_commands.clone(),
             theme: Some(self.theme.id_str().to_string()),
             app_autostart: self.app_autostart,
+            journal_refresh_interval: Some(self.journal_refresh_interval),
         };
         let _ = cfg.save_to_file(&self.config_path);
     }
@@ -3697,6 +3702,7 @@ impl LauncherApp {
                         } else {
                             self.service_journal_logs = fetch_local_journal(&unit, user_mode, 100).unwrap_or_default();
                         }
+                        self.last_journal_refresh = Instant::now();
                     }
                 });
         });
@@ -3872,9 +3878,48 @@ impl LauncherApp {
                                 } else {
                                     self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100).unwrap_or_default();
                                 }
+                                self.last_journal_refresh = Instant::now();
+                            }
+
+                            // Refresh Interval Dropdown
+                            let prev_interval = self.journal_refresh_interval;
+                            let interval_label = match self.journal_refresh_interval {
+                                0 => "⏱ Auto: Off".to_string(),
+                                secs => format!("⏱ Auto: {}s", secs),
+                            };
+                            egui::ComboBox::from_id_salt("journal_refresh_interval_combo")
+                                .selected_text(RichText::new(interval_label).size(11.0).color(p.text_primary))
+                                .width(105.0)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut self.journal_refresh_interval, 0, "Off (Manual)");
+                                    ui.selectable_value(&mut self.journal_refresh_interval, 1, "Every 1s");
+                                    ui.selectable_value(&mut self.journal_refresh_interval, 2, "Every 2s");
+                                    ui.selectable_value(&mut self.journal_refresh_interval, 5, "Every 5s");
+                                    ui.selectable_value(&mut self.journal_refresh_interval, 10, "Every 10s");
+                                    ui.selectable_value(&mut self.journal_refresh_interval, 30, "Every 30s");
+                                    ui.selectable_value(&mut self.journal_refresh_interval, 60, "Every 60s");
+                                });
+                            if self.journal_refresh_interval != prev_interval {
+                                self.last_journal_refresh = Instant::now();
+                                self.persist_config();
                             }
                         });
                     });
+
+                    // Auto-refresh timer check
+                    if self.journal_refresh_interval > 0 {
+                        ui.ctx().request_repaint_after(Duration::from_millis(500));
+                        if self.last_journal_refresh.elapsed() >= Duration::from_secs(self.journal_refresh_interval as u64) {
+                            self.last_journal_refresh = Instant::now();
+                            if let Some(hid) = host_id {
+                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                    self.service_journal_logs = fetch_remote_journal(&host, &s.name, user_mode, 100).unwrap_or_default();
+                                }
+                            } else {
+                                self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100).unwrap_or_default();
+                            }
+                        }
+                    }
 
                     ui.add_space(4.0);
 

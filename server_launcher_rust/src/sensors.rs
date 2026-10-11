@@ -958,7 +958,26 @@ pub fn temp_color(temp: f32) -> Color32 {
 
 pub fn query_remote_sensors(host: &SshRemoteHost) -> Result<SystemSensorsSnapshot, String> {
     let script = r#"python3 -c '
-import os, glob, json
+import os, glob, json, time
+
+def read_cpu_stats():
+    cpus = {}
+    try:
+        with open("/proc/stat") as f:
+            for line in f:
+                if line.startswith("cpu"):
+                    p = line.split()
+                    name = p[0]
+                    vals = [float(x) for x in p[1:]]
+                    idle = vals[3] + (vals[4] if len(vals) > 4 else 0.0)
+                    total = sum(vals)
+                    cpus[name] = (total, idle)
+    except:
+        pass
+    return cpus
+
+t_start = time.time()
+c1 = read_cpu_stats()
 
 mem = {}
 try:
@@ -1178,9 +1197,58 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
             "manufacturer": mfg
         })
 
+networks = []
+try:
+    with open("/proc/net/dev") as f:
+        for line in f:
+            if ":" in line:
+                p = line.split(":")
+                ifname = p[0].strip()
+                if ifname == "lo":
+                    continue
+                fields = p[1].split()
+                if len(fields) >= 9:
+                    rx = int(fields[0])
+                    tx = int(fields[8])
+                    networks.append({"name": ifname, "rx_bytes": rx, "tx_bytes": tx})
+except:
+    pass
+
+t_elapsed = time.time() - t_start
+if t_elapsed < 0.12:
+    time.sleep(0.12 - t_elapsed)
+c2 = read_cpu_stats()
+
+cpu_usage = 0.0
+if "cpu" in c1 and "cpu" in c2:
+    td = c2["cpu"][0] - c1["cpu"][0]
+    id_d = c2["cpu"][1] - c1["cpu"][1]
+    if td > 0:
+        cpu_usage = max(0.0, min(100.0, round(100.0 * (1.0 - id_d / td), 1)))
+
+cpu_core_usages = []
+idx = 0
+while f"cpu{idx}" in c1 and f"cpu{idx}" in c2:
+    td = c2[f"cpu{idx}"][0] - c1[f"cpu{idx}"][0]
+    id_d = c2[f"cpu{idx}"][1] - c1[f"cpu{idx}"][1]
+    if td > 0:
+        cpu_core_usages.append(max(0.0, min(100.0, round(100.0 * (1.0 - id_d / td), 1))))
+    else:
+        cpu_core_usages.append(0.0)
+    idx += 1
+
+if cpu_usage == 0.0 and os.path.exists("/proc/loadavg"):
+    try:
+        lavg = float(open("/proc/loadavg").read().split()[0])
+        cpu_usage = max(0.0, min(100.0, round((lavg / max(cores, 1)) * 100.0, 1)))
+    except:
+        pass
+
 data = {
     "cpu_model": cpu_model,
     "cores": max(cores, 1),
+    "cpu_usage": cpu_usage,
+    "cpu_core_usages": cpu_core_usages,
     "cpu_freqs": cpu_freqs,
     "cpu_tdp": cpu_tdp,
     "cpu_power": cpu_power,
@@ -1191,6 +1259,7 @@ data = {
     "disks": disks,
     "temps": temps,
     "gpus": gpus,
+    "networks": networks,
     "power": {
         "ac_online": ac_online,
         "batteries": batteries
@@ -1213,6 +1282,17 @@ print(json.dumps(data))
 
     let cpu_brand = parsed["cpu_model"].as_str().unwrap_or("Remote CPU").to_string();
     let cpu_cores = parsed["cores"].as_u64().unwrap_or(1) as usize;
+    let cpu_global_usage = parsed["cpu_usage"].as_f64().unwrap_or(0.0) as f32;
+    let cpu_core_usages = if let Some(arr) = parsed["cpu_core_usages"].as_array() {
+        let usages: Vec<f32> = arr.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+        if usages.is_empty() {
+            vec![cpu_global_usage; cpu_cores]
+        } else {
+            usages
+        }
+    } else {
+        vec![cpu_global_usage; cpu_cores]
+    };
 
     let mut cpu_frequencies_mhz = Vec::new();
     if let Some(arr) = parsed["cpu_freqs"].as_array() {
@@ -1375,12 +1455,32 @@ print(json.dumps(data))
         }
     }
 
+    let mut networks = Vec::new();
+    let mut total_rx_bytes = 0u64;
+    let mut total_tx_bytes = 0u64;
+    if let Some(arr) = parsed["networks"].as_array() {
+        for n in arr {
+            let name = n["name"].as_str().unwrap_or("").to_string();
+            let rx = n["rx_bytes"].as_u64().unwrap_or(0);
+            let tx = n["tx_bytes"].as_u64().unwrap_or(0);
+            total_rx_bytes += rx;
+            total_tx_bytes += tx;
+            networks.push(NetInterfaceInfo {
+                name,
+                rx_bytes: rx,
+                tx_bytes: tx,
+                rx_rate_bps: 0.0,
+                tx_rate_bps: 0.0,
+            });
+        }
+    }
+
     Ok(SystemSensorsSnapshot {
         cpu_brand,
         cpu_cores_physical: cpu_cores,
         cpu_cores_logical: cpu_cores,
-        cpu_global_usage: 0.0,
-        cpu_core_usages: vec![0.0; cpu_cores],
+        cpu_global_usage,
+        cpu_core_usages,
         cpu_frequency_mhz,
         cpu_frequencies_mhz,
         cpu_power_watts,
@@ -1398,11 +1498,11 @@ print(json.dumps(data))
         power,
         disks,
         storage_temp,
-        networks: Vec::new(),
+        networks,
         total_rx_rate_bps: 0.0,
         total_tx_rate_bps: 0.0,
-        total_rx_bytes: 0,
-        total_tx_bytes: 0,
+        total_rx_bytes,
+        total_tx_bytes,
         temp_sensors,
         timestamp: Some(Instant::now()),
     })

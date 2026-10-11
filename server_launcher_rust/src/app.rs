@@ -2133,9 +2133,15 @@ impl LauncherApp {
                                         });
                                     });
 
-                                    // Row 2: PID and command
+                                    // Row 2: PID, CPU, RAM, and command
                                     if let Some(pid) = l.pid {
                                         let mut desc = format!("PID {}", pid);
+                                        if let Some(cpu) = l.cpu_pct {
+                                            desc.push_str(&format!(" • {:.1}% CPU", cpu));
+                                        }
+                                        if let Some(mem) = l.mem_mb {
+                                            desc.push_str(&format!(" • {:.1} MB", mem));
+                                        }
                                         if !l.cmd.is_empty() {
                                             desc.push_str(&format!(" • {}", l.cmd));
                                         }

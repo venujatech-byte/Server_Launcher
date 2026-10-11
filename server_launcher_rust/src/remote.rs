@@ -2,13 +2,17 @@ use crate::config::SshRemoteHost;
 use std::collections::BTreeSet;
 use std::process::Command;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct RemoteListener {
     pub proto: String,
     pub port: u16,
     pub name: String,
     pub pid: Option<u32>,
     pub cmd: String,
+    #[serde(default)]
+    pub cpu_pct: Option<f32>,
+    #[serde(default)]
+    pub mem_mb: Option<f32>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -273,7 +277,7 @@ pub fn build_ssh_command(host: &SshRemoteHost, remote_cmd: &str) -> Command {
 
 /// Fetch listening ports and processes on the remote PC
 pub fn fetch_remote_listeners(host: &SshRemoteHost) -> Result<Vec<RemoteListener>, String> {
-    // Run ss -tulpn or lsof or netstat on the remote host
+    // Run ss -tulpn or lsof or netstat on the remote host, plus ps for CPU & RAM metrics
     let remote_script = r#"
 if command -v ss >/dev/null 2>&1; then
     ss -tulpn -H 2>/dev/null
@@ -282,6 +286,8 @@ elif command -v netstat >/dev/null 2>&1; then
 else
     echo "NO_NET_TOOLS"
 fi
+echo "---PS_METRICS---"
+ps -eo pid,%cpu,rss --no-headers 2>/dev/null || true
 "#;
 
     let mut cmd = build_ssh_command(host, remote_script);
@@ -300,8 +306,37 @@ pub fn parse_remote_listeners_str(text: &str) -> Vec<RemoteListener> {
     let mut listeners = Vec::new();
     let mut seen_ports = BTreeSet::new();
 
+    let mut net_lines = Vec::new();
+    let mut ps_lines = Vec::new();
+    let mut in_ps = false;
+
     for line in text.lines() {
         let line = line.trim();
+        if line == "---PS_METRICS---" {
+            in_ps = true;
+            continue;
+        }
+        if in_ps {
+            ps_lines.push(line);
+        } else {
+            net_lines.push(line);
+        }
+    }
+
+    let mut metrics: std::collections::HashMap<u32, (f32, f32)> = std::collections::HashMap::new();
+    for line in ps_lines {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 3 {
+            if let Ok(pid) = parts[0].parse::<u32>() {
+                let cpu = parts[1].parse::<f32>().unwrap_or(0.0);
+                let rss_kb = parts[2].parse::<f32>().unwrap_or(0.0);
+                let mem_mb = (rss_kb / 1024.0 * 10.0).round() / 10.0;
+                metrics.insert(pid, (cpu, mem_mb));
+            }
+        }
+    }
+
+    for line in net_lines {
         if line.is_empty() || line.starts_with("Proto") || line.starts_with("Active") {
             continue;
         }
@@ -363,12 +398,19 @@ pub fn parse_remote_listeners_str(text: &str) -> Vec<RemoteListener> {
                     };
                 }
 
+                let (cpu_pct, mem_mb) = pid
+                    .and_then(|p| metrics.get(&p).copied())
+                    .map(|(c, m)| (Some(c), Some(m)))
+                    .unwrap_or((None, None));
+
                 listeners.push(RemoteListener {
                     proto,
                     port,
                     name: proc_name,
                     pid,
                     cmd: format!("Listening on :{}", port),
+                    cpu_pct,
+                    mem_mb,
                 });
             }
         }
@@ -612,6 +654,10 @@ Netid  State   Recv-Q  Send-Q   Local Address:Port   Peer Address:Port  Process
 tcp    LISTEN  0       128            0.0.0.0:22          0.0.0.0:*      users:(("sshd",pid=850,fd=3))
 tcp    LISTEN  0       511                  *:80                *:*      users:(("nginx",pid=1234,fd=6))
 tcp    LISTEN  0       128            0.0.0.0:3000        0.0.0.0:*      users:(("node",pid=5678,fd=10))
+---PS_METRICS---
+850  0.2  12480
+1234  1.8  48920
+5678  12.5  150400
 "#;
 
         let listeners = parse_remote_listeners_str(ss_output);
@@ -620,14 +666,18 @@ tcp    LISTEN  0       128            0.0.0.0:3000        0.0.0.0:*      users:(
         assert_eq!(listeners[0].port, 22);
         assert_eq!(listeners[0].name, "sshd");
         assert_eq!(listeners[0].pid, Some(850));
+        assert_eq!(listeners[0].cpu_pct, Some(0.2));
+        assert_eq!(listeners[0].mem_mb, Some(12.2)); // 12480 / 1024 = 12.1875 -> 12.2
 
         assert_eq!(listeners[1].port, 80);
         assert_eq!(listeners[1].name, "nginx");
         assert_eq!(listeners[1].pid, Some(1234));
+        assert_eq!(listeners[1].cpu_pct, Some(1.8));
 
         assert_eq!(listeners[2].port, 3000);
         assert_eq!(listeners[2].name, "node");
         assert_eq!(listeners[2].pid, Some(5678));
+        assert_eq!(listeners[2].cpu_pct, Some(12.5));
     }
 
     #[test]
@@ -656,6 +706,8 @@ tcp    LISTEN  0       128            0.0.0.0:3000        0.0.0.0:*      users:(
                 name: "sshd".to_string(),
                 pid: Some(100),
                 cmd: "".to_string(),
+                cpu_pct: None,
+                mem_mb: None,
             },
             RemoteListener {
                 proto: "TCP".to_string(),
@@ -663,6 +715,8 @@ tcp    LISTEN  0       128            0.0.0.0:3000        0.0.0.0:*      users:(
                 name: "nginx".to_string(),
                 pid: Some(200),
                 cmd: "".to_string(),
+                cpu_pct: None,
+                mem_mb: None,
             },
         ];
         let stop_all = build_remote_stop_all_cmd(&listeners, 22);

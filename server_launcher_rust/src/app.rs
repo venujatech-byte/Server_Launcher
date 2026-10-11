@@ -5009,14 +5009,34 @@ impl LauncherApp {
         let mut is_open = self.sudo_popup.open;
         let mut submit = false;
         let mut cancel = false;
-
-        egui::Window::new(RichText::new("🔐 Administrator Authentication").size(14.0).strong().color(palette.text_primary))
-            .open(&mut is_open)
+        let screen = ctx.screen_rect();
+        let window_id = egui::Id::new("sudo_auth_modal_dialog");
+        let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
+        egui::Window::new("Administrator Authentication")
+            .id(window_id)
+            .title_bar(false)
             .collapsible(false)
             .resizable(false)
-            .fixed_size([420.0, 220.0])
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .movable(false)
+            .current_pos(screen.center() + drag_offset)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .fixed_size([420.0, 240.0])
+            .frame(
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(17, 19, 27))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                    .rounding(Rounding::same(16.0))
+                    .shadow(egui::epaint::Shadow {
+                        offset: egui::vec2(0.0, 8.0),
+                        blur: 24.0,
+                        spread: 0.0,
+                        color: Color32::from_black_alpha(160),
+                    })
+                    .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
+            )
             .show(ctx, |ui| {
+                crate::modals::render_modal_titlebar(ui, "Administrator Authentication", &mut is_open);
+                ui.add_space(8.0);
                 ui.add_space(4.0);
 
                 if let Some(pending) = &self.sudo_popup.pending {
@@ -5137,21 +5157,36 @@ impl LauncherApp {
         let mut do_export = false;
         let mut close_requested = false;
 
-        egui::Window::new(
-            RichText::new("⚙ Settings & Preferences")
-                .size(15.0)
-                .strong()
-                .color(palette.text_primary),
-        )
-        .open(&mut is_open)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .min_width(modal_w)
-        .max_width(modal_w)
-        .default_height(480.0)
-        .max_height(max_h)
-        .show(ctx, |ui| {
+        let window_id = egui::Id::new("settings_modal_dialog");
+        let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
+        egui::Window::new("Settings & Preferences")
+            .id(window_id)
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            .movable(false)
+            .current_pos(screen.center() + drag_offset)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .min_width(modal_w)
+            .max_width(modal_w)
+            .default_height(480.0)
+            .max_height(max_h)
+            .frame(
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(17, 19, 27))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                    .rounding(Rounding::same(16.0))
+                    .shadow(egui::epaint::Shadow {
+                        offset: egui::vec2(0.0, 8.0),
+                        blur: 24.0,
+                        spread: 0.0,
+                        color: Color32::from_black_alpha(160),
+                    })
+                    .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
+            )
+            .show(ctx, |ui| {
+                crate::modals::render_modal_titlebar(ui, "Settings & Preferences", &mut is_open);
+                ui.add_space(8.0);
             ui.add_space(4.0);
 
             ScrollArea::vertical()

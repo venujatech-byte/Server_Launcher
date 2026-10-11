@@ -616,6 +616,92 @@ pub struct CommandPaletteState {
     pub selected_idx: usize,
 }
 
+pub fn render_modal_titlebar(
+    ui: &mut egui::Ui,
+    title: &str,
+    is_open: &mut bool,
+) {
+    let titlebar_height = 28.0;
+    let (rect, resp) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), titlebar_height),
+        egui::Sense::drag(),
+    );
+
+    // Draggable window support using layer offset
+    if resp.dragged() {
+        let delta = resp.drag_delta();
+        let layer_id = ui.layer_id();
+        let offset_id = layer_id.id.with("modal_drag_offset");
+        let current_offset = ui.data(|d| d.get_temp::<egui::Vec2>(offset_id)).unwrap_or_default();
+        let new_offset = current_offset + delta;
+        ui.data_mut(|d| d.insert_temp(offset_id, new_offset));
+        ui.ctx().request_repaint();
+    }
+
+    let painter = ui.painter();
+
+    // 1. Left side: glowing teal/green dot + "SERVER LAUNCHER"
+    let dot_center = egui::pos2(rect.min.x + 14.0, rect.center().y);
+    painter.circle_filled(dot_center, 3.5, Color32::from_rgb(0, 210, 160));
+    painter.text(
+        egui::pos2(rect.min.x + 24.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        "SERVER LAUNCHER",
+        egui::FontId::monospace(10.0),
+        Color32::from_rgb(113, 118, 134),
+    );
+
+    // 2. Center: Modal title
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        title,
+        egui::FontId::proportional(13.0),
+        Color32::from_rgb(220, 224, 235),
+    );
+
+    // 3. Right side: [] and X buttons
+    let btn_w = 28.0;
+    let btn_h = 22.0;
+    let close_rect = egui::Rect::from_min_size(
+        egui::pos2(rect.max.x - btn_w - 6.0, rect.center().y - btn_h / 2.0),
+        egui::vec2(btn_w, btn_h),
+    );
+    let square_rect = egui::Rect::from_min_size(
+        egui::pos2(close_rect.min.x - btn_w - 2.0, rect.center().y - btn_h / 2.0),
+        egui::vec2(btn_w, btn_h),
+    );
+
+    let square_resp = ui.interact(square_rect, ui.id().with("modal_square_btn"), egui::Sense::click());
+    if square_resp.hovered() {
+        painter.rect_filled(square_rect, Rounding::same(4.0), Color32::from_rgba_unmultiplied(255, 255, 255, 18));
+    }
+    let sq_center = square_rect.center();
+    let sq_icon_rect = egui::Rect::from_center_size(sq_center, egui::vec2(8.5, 8.5));
+    painter.rect_stroke(
+        sq_icon_rect,
+        Rounding::ZERO,
+        Stroke::new(1.1_f32, if square_resp.hovered() { Color32::from_rgb(220, 224, 235) } else { Color32::from_rgb(140, 146, 162) }),
+    );
+
+    let close_resp = ui.interact(close_rect, ui.id().with("modal_close_btn"), egui::Sense::click());
+    if close_resp.hovered() {
+        painter.rect_filled(close_rect, Rounding::same(4.0), Color32::from_rgb(220, 53, 69));
+    }
+    let cl_center = close_rect.center();
+    let d = 4.0;
+    let cl_stroke = Stroke::new(
+        1.2_f32,
+        if close_resp.hovered() { Color32::WHITE } else { Color32::from_rgb(140, 146, 162) },
+    );
+    painter.line_segment([egui::pos2(cl_center.x - d, cl_center.y - d), egui::pos2(cl_center.x + d, cl_center.y + d)], cl_stroke);
+    painter.line_segment([egui::pos2(cl_center.x + d, cl_center.y - d), egui::pos2(cl_center.x - d, cl_center.y + d)], cl_stroke);
+
+    if close_resp.clicked() {
+        *is_open = false;
+    }
+}
+
 pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palette: &ThemePalette) -> ModalAction {
     if !state.open {
         return ModalAction::None;
@@ -638,23 +724,37 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
     let max_h = (screen.height() - 40.0).max(400.0);
 
     let mut is_open = state.open;
-    Window::new(
-        RichText::new(window_title)
-            .size(15.0)
-            .strong()
-            .color(palette.text_primary),
-    )
-    .open(&mut is_open)
-    .collapsible(false)
-    .resizable(false)
-    .min_width(modal_w)
-    .max_width(modal_w)
-    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-    .default_height(640.0)
-    .max_height(max_h)
-    .show(ctx, |ui| {
-        ui.set_max_width(ui.available_width());
-        ui.add_space(4.0);
+    let window_id = egui::Id::new("add_edit_server_modal_window");
+    let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
+    Window::new(window_title)
+        .id(window_id)
+        .title_bar(false)
+        .collapsible(false)
+        .resizable(false)
+        .movable(false)
+        .current_pos(screen.center() + drag_offset)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .min_width(modal_w)
+        .max_width(modal_w)
+        .default_height(640.0)
+        .max_height(max_h)
+        .frame(
+            egui::Frame::none()
+                .fill(Color32::from_rgb(17, 19, 27))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                .rounding(Rounding::same(16.0))
+                .shadow(egui::epaint::Shadow {
+                    offset: egui::vec2(0.0, 8.0),
+                    blur: 24.0,
+                    spread: 0.0,
+                    color: Color32::from_black_alpha(160),
+                })
+                .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
+        )
+        .show(ctx, |ui| {
+            render_modal_titlebar(ui, window_title, &mut is_open);
+            ui.add_space(8.0);
+            ui.set_max_width(ui.available_width());
 
         // ── Subtitle + servers.json badge ──
         ui.horizontal(|ui| {
@@ -1373,23 +1473,37 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
     let max_h = (screen.height() - 40.0).max(420.0);
 
     let mut is_open = state.open;
-    Window::new(
-        RichText::new(title)
-            .size(15.0)
-            .strong()
-            .color(palette.text_primary),
-    )
-    .open(&mut is_open)
-    .collapsible(false)
-    .resizable(false)
-    .min_width(modal_w)
-    .max_width(modal_w)
-    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-    .default_height(620.0)
-    .max_height(max_h)
-    .show(ctx, |ui| {
-        ui.set_max_width(ui.available_width());
-        ui.add_space(4.0);
+    let window_id = egui::Id::new("add_edit_ssh_host_modal_window");
+    let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
+    Window::new(title)
+        .id(window_id)
+        .title_bar(false)
+        .collapsible(false)
+        .resizable(false)
+        .movable(false)
+        .current_pos(screen.center() + drag_offset)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .min_width(modal_w)
+        .max_width(modal_w)
+        .default_height(620.0)
+        .max_height(max_h)
+        .frame(
+            egui::Frame::none()
+                .fill(Color32::from_rgb(17, 19, 27))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                .rounding(Rounding::same(16.0))
+                .shadow(egui::epaint::Shadow {
+                    offset: egui::vec2(0.0, 8.0),
+                    blur: 24.0,
+                    spread: 0.0,
+                    color: Color32::from_black_alpha(160),
+                })
+                .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
+        )
+        .show(ctx, |ui| {
+            render_modal_titlebar(ui, title, &mut is_open);
+            ui.add_space(8.0);
+            ui.set_max_width(ui.available_width());
 
         // ── Subtitle row: Saved to remote_hosts.json ──
         ui.horizontal(|ui| {
@@ -1718,15 +1832,35 @@ pub fn render_close_confirmation_modal(
     let screen = ctx.screen_rect();
     let modal_w = 460.0_f32.min(screen.width() - 40.0).max(320.0);
 
+    let window_id = egui::Id::new("exit_confirmation_modal_dialog");
+    let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
     Window::new("Exit Confirmation")
-        .open(&mut is_open)
+        .id(window_id)
+        .title_bar(false)
         .collapsible(false)
         .resizable(false)
+        .movable(false)
+        .current_pos(screen.center() + drag_offset)
+        .pivot(egui::Align2::CENTER_CENTER)
         .min_width(modal_w)
         .max_width(modal_w)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .default_height(280.0)
+        .frame(
+            egui::Frame::none()
+                .fill(Color32::from_rgb(17, 19, 27))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                .rounding(Rounding::same(16.0))
+                .shadow(egui::epaint::Shadow {
+                    offset: egui::vec2(0.0, 8.0),
+                    blur: 24.0,
+                    spread: 0.0,
+                    color: Color32::from_black_alpha(160),
+                })
+                .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
+        )
         .show(ctx, |ui| {
+            render_modal_titlebar(ui, "Exit Confirmation", &mut is_open);
+            ui.add_space(8.0);
             ui.vertical(|ui| {
                 // Header with warning icon
                 ui.horizontal(|ui| {
@@ -1865,16 +1999,36 @@ pub fn render_script_modal(
     let max_h = (screen.height() - 40.0).max(400.0);
 
     let mut is_open = state.open;
-    Window::new(RichText::new(title).size(15.0).strong().color(palette.text_primary))
-        .open(&mut is_open)
+    let window_id = egui::Id::new("script_modal_dialog");
+    let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
+    Window::new(title)
+        .id(window_id)
+        .title_bar(false)
         .collapsible(false)
         .resizable(false)
+        .movable(false)
+        .current_pos(screen.center() + drag_offset)
+        .pivot(egui::Align2::CENTER_CENTER)
         .min_width(modal_w)
         .max_width(modal_w)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .default_height(480.0)
         .max_height(max_h)
+        .frame(
+            egui::Frame::none()
+                .fill(Color32::from_rgb(17, 19, 27))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                .rounding(Rounding::same(16.0))
+                .shadow(egui::epaint::Shadow {
+                    offset: egui::vec2(0.0, 8.0),
+                    blur: 24.0,
+                    spread: 0.0,
+                    color: Color32::from_black_alpha(160),
+                })
+                .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
+        )
         .show(ctx, |ui| {
+            render_modal_titlebar(ui, title, &mut is_open);
+            ui.add_space(8.0);
             ui.add_space(4.0);
 
             // Error display if any
@@ -2021,16 +2175,36 @@ pub fn render_command_modal(
     let max_h = (screen.height() - 40.0).max(340.0);
 
     let mut is_open = state.open;
-    Window::new(RichText::new(title).size(15.0).strong().color(palette.text_primary))
-        .open(&mut is_open)
+    let window_id = egui::Id::new("command_modal_dialog");
+    let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
+    Window::new(title)
+        .id(window_id)
+        .title_bar(false)
         .collapsible(false)
         .resizable(false)
+        .movable(false)
+        .current_pos(screen.center() + drag_offset)
+        .pivot(egui::Align2::CENTER_CENTER)
         .min_width(modal_w)
         .max_width(modal_w)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .default_height(320.0)
         .max_height(max_h)
+        .frame(
+            egui::Frame::none()
+                .fill(Color32::from_rgb(17, 19, 27))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                .rounding(Rounding::same(16.0))
+                .shadow(egui::epaint::Shadow {
+                    offset: egui::vec2(0.0, 8.0),
+                    blur: 24.0,
+                    spread: 0.0,
+                    color: Color32::from_black_alpha(160),
+                })
+                .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
+        )
         .show(ctx, |ui| {
+            render_modal_titlebar(ui, title, &mut is_open);
+            ui.add_space(8.0);
             ui.add_space(4.0);
 
             if let Some(err) = &state.error {
@@ -2173,16 +2347,36 @@ pub fn render_new_service_modal(
     let max_h = (screen.height() - 40.0).max(400.0);
     let mut is_open = state.open;
 
-    Window::new(RichText::new("⚙ Create New SystemMD Service").size(15.0).strong().color(palette.text_primary))
-        .open(&mut is_open)
+    let window_id = egui::Id::new("new_systemd_service_modal_dialog");
+    let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
+    Window::new("Create New SystemMD Service")
+        .id(window_id)
+        .title_bar(false)
         .collapsible(false)
         .resizable(false)
+        .movable(false)
+        .current_pos(screen.center() + drag_offset)
+        .pivot(egui::Align2::CENTER_CENTER)
         .min_width(modal_w)
         .max_width(modal_w)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .default_height(480.0)
         .max_height(max_h)
+        .frame(
+            egui::Frame::none()
+                .fill(Color32::from_rgb(17, 19, 27))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                .rounding(Rounding::same(16.0))
+                .shadow(egui::epaint::Shadow {
+                    offset: egui::vec2(0.0, 8.0),
+                    blur: 24.0,
+                    spread: 0.0,
+                    color: Color32::from_black_alpha(160),
+                })
+                .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
+        )
         .show(ctx, |ui| {
+            render_modal_titlebar(ui, "Create New SystemMD Service", &mut is_open);
+            ui.add_space(8.0);
             ui.add_space(4.0);
 
             if let Some(err) = &state.error {

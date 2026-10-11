@@ -430,20 +430,18 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
     };
 
     let screen = ctx.screen_rect();
-    let max_w = (screen.width() - 40.0).max(400.0);
+    let modal_w = 560.0_f32.min(screen.width() - 40.0).max(380.0);
     let max_h = (screen.height() - 40.0).max(400.0);
 
     let mut is_open = state.open;
     Window::new(window_title)
         .open(&mut is_open)
         .collapsible(false)
-        .resizable(true)
+        .resizable(false)
+        .min_width(modal_w)
+        .max_width(modal_w)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .default_width(560.0)
         .default_height(640.0)
-        .min_width(380.0)
-        .max_width(max_w)
-        .min_height(320.0)
         .max_height(max_h)
         .show(ctx, |ui| {
             // Header
@@ -932,14 +930,20 @@ pub fn render_command_palette(
         return action;
     }
 
+    let screen = ctx.screen_rect();
+    let modal_w = 540.0_f32.min(screen.width() - 40.0).max(360.0);
+    let max_h = (screen.height() - 100.0).max(300.0);
+
     let mut is_open = state.open;
     Window::new("⚡ Quick Launch (Ctrl+P)")
         .open(&mut is_open)
         .collapsible(false)
-        .resizable(true)
+        .resizable(false)
+        .min_width(modal_w)
+        .max_width(modal_w)
         .anchor(egui::Align2::CENTER_TOP, [0.0, 70.0])
-        .default_width(540.0)
         .default_height(400.0)
+        .max_height(max_h)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
@@ -1089,18 +1093,17 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
     let title = if state.is_edit { "Edit SSH Remote PC" } else { "Add SSH Remote PC" };
 
     let screen = ctx.screen_rect();
-    let max_w = (screen.width() - 40.0).max(380.0);
+    let modal_w = 480.0_f32.min(screen.width() - 40.0).max(360.0);
     let max_h = (screen.height() - 40.0).max(380.0);
 
     let mut is_open = state.open;
     Window::new(title)
         .open(&mut is_open)
         .collapsible(false)
-        .resizable(true)
+        .resizable(false)
+        .min_width(modal_w)
+        .max_width(modal_w)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .default_width(480.0)
-        .min_width(360.0)
-        .max_width(max_w)
         .max_height(max_h)
         .show(ctx, |ui| {
             ui.set_max_width(ui.available_width());
@@ -1321,12 +1324,16 @@ pub fn render_close_confirmation_modal(
     let mut choice = CloseConfirmChoice::None;
     let mut is_open = *open;
 
+    let screen = ctx.screen_rect();
+    let modal_w = 460.0_f32.min(screen.width() - 40.0).max(320.0);
+
     Window::new("Exit Confirmation")
         .open(&mut is_open)
         .collapsible(false)
         .resizable(false)
+        .min_width(modal_w)
+        .max_width(modal_w)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .default_width(460.0)
         .default_height(280.0)
         .show(ctx, |ui| {
             ui.vertical(|ui| {
@@ -1456,13 +1463,20 @@ pub fn render_script_modal(
     let mut result = None;
     let title = if state.is_edit { "✏ Edit Custom Script" } else { "📜 New Custom Script" };
 
+    let screen = ctx.screen_rect();
+    let modal_w = 540.0_f32.min(screen.width() - 40.0).max(360.0);
+    let max_h = (screen.height() - 40.0).max(400.0);
+
     let mut is_open = state.open;
     Window::new(RichText::new(title).size(15.0).strong().color(palette.text_primary))
         .open(&mut is_open)
         .collapsible(false)
-        .resizable(true)
-        .default_size([540.0, 480.0])
+        .resizable(false)
+        .min_width(modal_w)
+        .max_width(modal_w)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .default_height(480.0)
+        .max_height(max_h)
         .show(ctx, |ui| {
             ui.add_space(4.0);
 
@@ -1539,7 +1553,7 @@ pub fn render_script_modal(
                         .font(egui::TextStyle::Monospace)
                         .desired_rows(10)
                         .desired_width(ui.available_width())
-                        .min_size(egui::vec2(ui.available_width(), text_height)),
+                        .min_size(egui::vec2(0.0, text_height)),
                 );
             });
 
@@ -1605,13 +1619,20 @@ pub fn render_command_modal(
     let mut result = None;
     let title = if state.is_edit { "✏ Edit Saved Command" } else { "⚡ Save Custom Command" };
 
+    let screen = ctx.screen_rect();
+    let modal_w = 480.0_f32.min(screen.width() - 40.0).max(340.0);
+    let max_h = (screen.height() - 40.0).max(340.0);
+
     let mut is_open = state.open;
     Window::new(RichText::new(title).size(15.0).strong().color(palette.text_primary))
         .open(&mut is_open)
         .collapsible(false)
         .resizable(false)
-        .default_size([460.0, 320.0])
+        .min_width(modal_w)
+        .max_width(modal_w)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .default_height(320.0)
+        .max_height(max_h)
         .show(ctx, |ui| {
             ui.add_space(4.0);
 
@@ -1750,14 +1771,20 @@ pub fn render_new_service_modal(
     }
 
     let mut result = None;
+    let screen = ctx.screen_rect();
+    let modal_w = 540.0_f32.min(screen.width() - 40.0).max(360.0);
+    let max_h = (screen.height() - 40.0).max(400.0);
     let mut is_open = state.open;
 
     Window::new(RichText::new("⚙ Create New SystemMD Service").size(15.0).strong().color(palette.text_primary))
         .open(&mut is_open)
         .collapsible(false)
-        .resizable(true)
-        .default_size([540.0, 480.0])
+        .resizable(false)
+        .min_width(modal_w)
+        .max_width(modal_w)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .default_height(480.0)
+        .max_height(max_h)
         .show(ctx, |ui| {
             ui.add_space(4.0);
 

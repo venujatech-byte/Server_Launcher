@@ -2,7 +2,8 @@ use crate::config::{SavedCommand, SshRemoteHost};
 use crate::remote::build_ssh_command;
 use crate::service::{LogEntry, LogKind};
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -23,11 +24,16 @@ pub struct TerminalSession {
     pub status: Arc<Mutex<TerminalCommandStatus>>,
     pub running_child: Option<Arc<Mutex<Option<Child>>>>,
     pub running_pid: Option<u32>,
+    pub stdin_writer: Option<Arc<Mutex<std::process::ChildStdin>>>,
+    pub cwd: PathBuf,
+    pub prev_cwd: Option<PathBuf>,
     pub auto_scroll: bool,
+    pub request_focus: bool,
 }
 
 impl Default for TerminalSession {
     fn default() -> Self {
+        let initial_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         Self {
             logs: Arc::new(Mutex::new(VecDeque::new())),
             input_text: String::new(),
@@ -36,7 +42,11 @@ impl Default for TerminalSession {
             status: Arc::new(Mutex::new(TerminalCommandStatus::Idle)),
             running_child: None,
             running_pid: None,
+            stdin_writer: None,
+            cwd: initial_cwd,
+            prev_cwd: None,
             auto_scroll: true,
+            request_focus: true,
         }
     }
 }
@@ -48,12 +58,49 @@ impl TerminalSession {
         }
     }
 
+    pub fn is_running(&self) -> bool {
+        if let Ok(st) = self.status.lock() {
+            matches!(*st, TerminalCommandStatus::Running(_))
+        } else {
+            false
+        }
+    }
+
+    pub fn send_stdin(&mut self, text: &str) -> bool {
+        if let Some(stdin_arc) = &self.stdin_writer {
+            if let Ok(mut writer) = stdin_arc.lock() {
+                let _ = writeln!(writer, "{}", text);
+                let _ = writer.flush();
+                if let Ok(mut l) = self.logs.lock() {
+                    l.push_back(LogEntry::new(text.to_string(), LogKind::Stdin));
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn cancel_line(&mut self) {
+        let prompt = self.get_prompt_str(None);
+        if let Ok(mut l) = self.logs.lock() {
+            l.push_back(LogEntry::new(format!("{}{} ^C", prompt, self.input_text), LogKind::Stdin));
+        }
+        self.input_text.clear();
+        self.history_idx = None;
+    }
+
     pub fn interrupt(&mut self) {
         if let Some(pid) = self.running_pid {
             #[cfg(unix)]
             unsafe {
                 libc::kill(pid as i32, libc::SIGINT);
                 libc::kill(pid as i32, libc::SIGTERM);
+            }
+        }
+        if let Some(stdin_arc) = &self.stdin_writer {
+            if let Ok(mut sin) = stdin_arc.lock() {
+                let _ = sin.write_all(b"\x03\n");
+                let _ = sin.flush();
             }
         }
         if let Some(child_arc) = &self.running_child {
@@ -65,19 +112,151 @@ impl TerminalSession {
         }
         if let Ok(mut st) = self.status.lock() {
             if matches!(*st, TerminalCommandStatus::Running(_)) {
-                *st = TerminalCommandStatus::Failed("Interrupted by user".to_string());
+                *st = TerminalCommandStatus::Failed("Interrupted (SIGINT)".to_string());
             }
         }
         if let Ok(mut l) = self.logs.lock() {
-            l.push_back(LogEntry::new("⏹ Process interrupted (SIGINT)".to_string(), LogKind::Warning));
+            l.push_back(LogEntry::new("^C".to_string(), LogKind::Warning));
         }
         self.running_child = None;
         self.running_pid = None;
+        self.stdin_writer = None;
     }
 
-    pub fn execute_local(&mut self, cmd_str: &str, cwd: &str) {
+    pub fn get_prompt_str(&self, host: Option<&SshRemoteHost>) -> String {
+        if let Some(h) = host {
+            format!("{}@{}:~$ ", h.user, h.host)
+        } else {
+            let username = std::env::var("USER")
+                .or_else(|_| std::env::var("USERNAME"))
+                .unwrap_or_else(|_| "user".to_string());
+
+            let hostname = match std::fs::read_to_string("/etc/hostname") {
+                Ok(h) => h.trim().to_string(),
+                Err(_) => "local".to_string(),
+            };
+
+            let home_dir = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok().map(PathBuf::from);
+            let display_path = if let Some(home) = home_dir {
+                if let Ok(rel) = self.cwd.strip_prefix(&home) {
+                    let rel_str = rel.display().to_string();
+                    if rel_str.is_empty() {
+                        "~".to_string()
+                    } else {
+                        format!("~/{}", rel_str)
+                    }
+                } else {
+                    self.cwd.display().to_string()
+                }
+            } else {
+                self.cwd.display().to_string()
+            };
+
+            format!("{}@{}:{}$ ", username, hostname, display_path)
+        }
+    }
+
+    pub fn autocomplete_path(&mut self) {
+        if self.input_text.is_empty() {
+            return;
+        }
+        let words: Vec<String> = self.input_text.split_whitespace().map(|s| s.to_string()).collect();
+        let last_token: String = if self.input_text.ends_with(' ') {
+            String::new()
+        } else {
+            words.last().cloned().unwrap_or_default()
+        };
+
+        let target_dir = if last_token.contains('/') {
+            let (dir_part, _) = last_token.rsplit_once('/').unwrap();
+            if dir_part.is_empty() {
+                PathBuf::from("/")
+            } else if dir_part.starts_with('~') {
+                if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+                    PathBuf::from(home).join(dir_part[1..].trim_start_matches('/'))
+                } else {
+                    self.cwd.join(dir_part)
+                }
+            } else {
+                self.cwd.join(dir_part)
+            }
+        } else {
+            self.cwd.clone()
+        };
+
+        let prefix = if last_token.contains('/') {
+            last_token.rsplit_once('/').unwrap().1.to_string()
+        } else {
+            last_token.clone()
+        };
+
+        if let Ok(entries) = std::fs::read_dir(&target_dir) {
+            let mut matches = Vec::new();
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with(&prefix) {
+                    let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                    matches.push((name, is_dir));
+                }
+            }
+
+            if matches.len() == 1 {
+                let (matched_name, is_dir) = &matches[0];
+                let suffix = if *is_dir { "/" } else { " " };
+                let completed = if last_token.contains('/') {
+                    let (dir_part, _) = last_token.rsplit_once('/').unwrap();
+                    format!("{}/{}{}", dir_part, matched_name, suffix)
+                } else {
+                    format!("{}{}", matched_name, suffix)
+                };
+
+                if last_token.is_empty() {
+                    self.input_text.push_str(&completed);
+                } else {
+                    let prefix_len = self.input_text.len() - last_token.len();
+                    self.input_text.truncate(prefix_len);
+                    self.input_text.push_str(&completed);
+                }
+            } else if matches.len() > 1 {
+                let first = &matches[0].0;
+                let mut common_len = first.len();
+                for (m, _) in &matches[1..] {
+                    common_len = common_len.min(m.len());
+                    while !m.starts_with(&first[..common_len]) {
+                        common_len -= 1;
+                    }
+                }
+                if common_len > prefix.len() {
+                    let common_str = &first[..common_len];
+                    let prefix_len = self.input_text.len() - last_token.len();
+                    self.input_text.truncate(prefix_len);
+                    if last_token.contains('/') {
+                        let (dir_part, _) = last_token.rsplit_once('/').unwrap();
+                        self.input_text.push_str(&format!("{}/{}", dir_part, common_str));
+                    } else {
+                        self.input_text.push_str(common_str);
+                    }
+                } else {
+                    let candidate_names: Vec<String> = matches
+                        .iter()
+                        .map(|(m, is_dir)| if *is_dir { format!("{}/", m) } else { m.clone() })
+                        .collect();
+                    if let Ok(mut l) = self.logs.lock() {
+                        l.push_back(LogEntry::new(candidate_names.join("   "), LogKind::Launcher));
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn execute_local(&mut self, cmd_str: &str, cwd_override: &str) {
         let trimmed = cmd_str.trim();
         if trimmed.is_empty() {
+            let prompt = self.get_prompt_str(None);
+            if let Ok(mut l) = self.logs.lock() {
+                l.push_back(LogEntry::new(prompt, LogKind::Stdin));
+            }
+            self.input_text.clear();
             return;
         }
 
@@ -88,21 +267,151 @@ impl TerminalSession {
         self.history_idx = None;
         self.input_text.clear();
 
-        // Log command prompt
+        let prompt = self.get_prompt_str(None);
         {
             let mut l = self.logs.lock().unwrap();
-            l.push_back(LogEntry::new(format!("$ {}", trimmed), LogKind::Stdin));
+            l.push_back(LogEntry::new(format!("{}{}", prompt, trimmed), LogKind::Stdin));
+        }
+
+        // Built-in: clear / cls
+        if trimmed == "clear" || trimmed == "cls" {
+            self.clear();
+            if let Ok(mut st) = self.status.lock() {
+                *st = TerminalCommandStatus::Idle;
+            }
+            return;
+        }
+
+        // Built-in: pwd
+        if trimmed == "pwd" {
+            if let Ok(mut l) = self.logs.lock() {
+                l.push_back(LogEntry::new(self.cwd.display().to_string(), LogKind::Stdout));
+            }
+            if let Ok(mut st) = self.status.lock() {
+                *st = TerminalCommandStatus::Idle;
+            }
+            return;
+        }
+
+        // Built-in: history
+        if trimmed == "history" {
+            if let Ok(mut l) = self.logs.lock() {
+                for (i, h) in self.history.iter().enumerate() {
+                    l.push_back(LogEntry::new(format!("{:4}  {}", i + 1, h), LogKind::Stdout));
+                }
+            }
+            if let Ok(mut st) = self.status.lock() {
+                *st = TerminalCommandStatus::Idle;
+            }
+            return;
+        }
+
+        // Built-in: help
+        if trimmed == "help" {
+            if let Ok(mut l) = self.logs.lock() {
+                l.push_back(LogEntry::new("--- Terminal Commands & Shortcuts ---".to_string(), LogKind::Launcher));
+                l.push_back(LogEntry::new("  cd <path>    Change current directory (supports ~, .., -)".to_string(), LogKind::Stdout));
+                l.push_back(LogEntry::new("  pwd          Print current working directory".to_string(), LogKind::Stdout));
+                l.push_back(LogEntry::new("  clear / cls  Clear terminal output".to_string(), LogKind::Stdout));
+                l.push_back(LogEntry::new("  history      Show command history".to_string(), LogKind::Stdout));
+                l.push_back(LogEntry::new("  Ctrl + C     Interrupt running command (SIGINT) or clear line".to_string(), LogKind::Stdout));
+                l.push_back(LogEntry::new("  Ctrl + L     Clear terminal screen".to_string(), LogKind::Stdout));
+                l.push_back(LogEntry::new("  Up / Down    Navigate command history".to_string(), LogKind::Stdout));
+                l.push_back(LogEntry::new("  Tab          Auto-complete paths and files".to_string(), LogKind::Stdout));
+            }
+            if let Ok(mut st) = self.status.lock() {
+                *st = TerminalCommandStatus::Idle;
+            }
+            return;
+        }
+
+        // Built-in: cd
+        if trimmed == "cd" || trimmed.starts_with("cd ") {
+            let target_str = if trimmed == "cd" {
+                "~"
+            } else {
+                trimmed["cd ".len()..].trim()
+            };
+
+            let target_path = if target_str == "-" {
+                if let Some(prev) = &self.prev_cwd {
+                    prev.clone()
+                } else {
+                    if let Ok(mut l) = self.logs.lock() {
+                        l.push_back(LogEntry::new("bash: cd: OLDPWD not set".to_string(), LogKind::Stderr));
+                    }
+                    return;
+                }
+            } else if target_str.starts_with('~') {
+                let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_else(|_| "/".to_string());
+                if target_str == "~" {
+                    PathBuf::from(home)
+                } else {
+                    PathBuf::from(home).join(target_str[1..].trim_start_matches('/'))
+                }
+            } else {
+                let p = PathBuf::from(target_str);
+                if p.is_absolute() {
+                    p
+                } else {
+                    self.cwd.join(p)
+                }
+            };
+
+            match std::fs::canonicalize(&target_path) {
+                Ok(canonical) => {
+                    if canonical.is_dir() {
+                        self.prev_cwd = Some(self.cwd.clone());
+                        self.cwd = canonical;
+                        if let Ok(mut st) = self.status.lock() {
+                            *st = TerminalCommandStatus::Idle;
+                        }
+                    } else {
+                        if let Ok(mut l) = self.logs.lock() {
+                            l.push_back(LogEntry::new(format!("bash: cd: {}: Not a directory", target_str), LogKind::Stderr));
+                        }
+                        if let Ok(mut st) = self.status.lock() {
+                            *st = TerminalCommandStatus::Failed("Not a directory".to_string());
+                        }
+                    }
+                }
+                Err(_) => {
+                    if let Ok(mut l) = self.logs.lock() {
+                        l.push_back(LogEntry::new(format!("bash: cd: {}: No such file or directory", target_str), LogKind::Stderr));
+                    }
+                    if let Ok(mut st) = self.status.lock() {
+                        *st = TerminalCommandStatus::Failed("No such file or directory".to_string());
+                    }
+                }
+            }
+            return;
         }
 
         if let Ok(mut st) = self.status.lock() {
             *st = TerminalCommandStatus::Running(trimmed.to_string());
         }
 
-        let mut command = Command::new("bash");
-        command.arg("-c").arg(trimmed);
-        if !cwd.trim().is_empty() {
-            command.current_dir(cwd.trim());
-        }
+        #[cfg(target_os = "windows")]
+        let mut command = {
+            let mut c = Command::new("cmd");
+            c.arg("/C").arg(trimmed);
+            c
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let mut command = {
+            let mut c = Command::new("bash");
+            c.arg("-c").arg(trimmed);
+            c
+        };
+
+        let run_dir = if !cwd_override.trim().is_empty() {
+            PathBuf::from(cwd_override.trim())
+        } else {
+            self.cwd.clone()
+        };
+        command.current_dir(run_dir);
+        command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
 
@@ -115,6 +424,14 @@ impl TerminalSession {
                 self.running_pid = Some(pid);
                 let child_arc = Arc::new(Mutex::new(Some(child)));
                 self.running_child = Some(Arc::clone(&child_arc));
+
+                let stdin = {
+                    let mut lock = child_arc.lock().unwrap();
+                    lock.as_mut().and_then(|c| c.stdin.take())
+                };
+                if let Some(sin) = stdin {
+                    self.stdin_writer = Some(Arc::new(Mutex::new(sin)));
+                }
 
                 let stdout = {
                     let mut lock = child_arc.lock().unwrap();
@@ -194,6 +511,19 @@ impl TerminalSession {
     pub fn execute_remote(&mut self, host: &SshRemoteHost, cmd_str: &str) {
         let trimmed = cmd_str.trim();
         if trimmed.is_empty() {
+            let prompt = self.get_prompt_str(Some(host));
+            if let Ok(mut l) = self.logs.lock() {
+                l.push_back(LogEntry::new(prompt, LogKind::Stdin));
+            }
+            self.input_text.clear();
+            return;
+        }
+
+        if trimmed == "clear" || trimmed == "cls" {
+            self.clear();
+            if let Ok(mut st) = self.status.lock() {
+                *st = TerminalCommandStatus::Idle;
+            }
             return;
         }
 
@@ -205,9 +535,10 @@ impl TerminalSession {
         self.input_text.clear();
 
         // Log prompt
+        let prompt = self.get_prompt_str(Some(host));
         {
             let mut l = self.logs.lock().unwrap();
-            l.push_back(LogEntry::new(format!("{}@{}:$ {}", host.user, host.host, trimmed), LogKind::Stdin));
+            l.push_back(LogEntry::new(format!("{}{}", prompt, trimmed), LogKind::Stdin));
         }
 
         if let Ok(mut st) = self.status.lock() {
@@ -215,6 +546,7 @@ impl TerminalSession {
         }
 
         let mut command = build_ssh_command(host, trimmed);
+        command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
 
@@ -227,6 +559,14 @@ impl TerminalSession {
                 self.running_pid = Some(pid);
                 let child_arc = Arc::new(Mutex::new(Some(child)));
                 self.running_child = Some(Arc::clone(&child_arc));
+
+                let stdin = {
+                    let mut lock = child_arc.lock().unwrap();
+                    lock.as_mut().and_then(|c| c.stdin.take())
+                };
+                if let Some(sin) = stdin {
+                    self.stdin_writer = Some(Arc::new(Mutex::new(sin)));
+                }
 
                 let stdout = {
                     let mut lock = child_arc.lock().unwrap();
@@ -304,6 +644,34 @@ impl TerminalSession {
     }
 }
 
+pub fn open_system_terminal(cwd: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .arg("/C")
+            .arg("start")
+            .arg("cmd.exe")
+            .current_dir(cwd)
+            .spawn()
+            .map_err(|e| format!("Failed to launch cmd.exe: {}", e))?;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let terms = ["x-terminal-emulator", "gnome-terminal", "konsole", "alacritty", "kitty", "terminator", "xfce4-terminal", "xterm"];
+        for t in terms {
+            if Command::new("which").arg(t).output().map(|o| o.status.success()).unwrap_or(false) {
+                let res = Command::new(t).current_dir(cwd).spawn();
+                if res.is_ok() {
+                    return Ok(());
+                }
+            }
+        }
+        Err("No supported external terminal found (gnome-terminal, alacritty, kitty, xterm)".to_string())
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CommandModalState {
     pub open: bool,
@@ -353,9 +721,46 @@ mod tests {
         assert!(term.history.is_empty());
         assert!(term.input_text.is_empty());
         assert_eq!(*term.status.lock().unwrap(), TerminalCommandStatus::Idle);
+        assert!(!term.is_running());
+        assert!(term.cwd.exists());
 
         term.clear();
         assert!(term.logs.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_terminal_builtins_clear_pwd() {
+        let mut term = TerminalSession::default();
+        term.execute_local("echo hello", "");
+        assert_eq!(term.history.len(), 1);
+
+        term.execute_local("clear", "");
+        assert!(term.logs.lock().unwrap().is_empty());
+
+        term.execute_local("pwd", "");
+        let logs = term.logs.lock().unwrap();
+        assert!(logs.iter().any(|l| l.text.contains(&term.cwd.display().to_string())));
+    }
+
+    #[test]
+    fn test_terminal_cd_navigation() {
+        let mut term = TerminalSession::default();
+        let original_cwd = term.cwd.clone();
+
+        term.execute_local("cd ..", "");
+        assert_ne!(term.cwd, original_cwd);
+        assert!(term.cwd.is_dir());
+
+        term.execute_local("cd -", "");
+        assert_eq!(term.cwd, original_cwd);
+    }
+
+    #[test]
+    fn test_terminal_prompt_str() {
+        let term = TerminalSession::default();
+        let prompt = term.get_prompt_str(None);
+        assert!(prompt.ends_with("$ "));
+        assert!(prompt.contains('@'));
     }
 
     #[test]

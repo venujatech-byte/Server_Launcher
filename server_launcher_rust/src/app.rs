@@ -2444,6 +2444,13 @@ impl LauncherApp {
 
                 if ui.add(btn).clicked() {
                     self.active_sidebar_tab = tab;
+                    if tab == SidebarTab::Commands {
+                        if self.selected_machine == "local" {
+                            self.local_terminal.request_focus = true;
+                        } else {
+                            self.remote_terminals.entry(self.selected_machine.clone()).or_default().request_focus = true;
+                        }
+                    }
                 }
             }
         });
@@ -3050,9 +3057,11 @@ impl LauncherApp {
                             if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
                                 let term = self.remote_terminals.entry(hid.to_string()).or_default();
                                 term.execute_remote(&host, &cmd_str);
+                                term.request_focus = true;
                             }
                         } else {
                             self.local_terminal.execute_local(&cmd_str, "");
+                            self.local_terminal.request_focus = true;
                         }
                     }
 
@@ -3072,29 +3081,52 @@ impl LauncherApp {
         let p = self.theme.palette();
         let host_opt = host_id.and_then(|hid| self.ssh_hosts.iter().find(|h| h.id == hid).cloned());
 
-        let (title, is_running, status_text) = if let Some(h) = &host_opt {
-            let term = self.remote_terminals.entry(h.id.clone()).or_default();
-            let is_run = term.status.lock().ok().map(|st| matches!(*st, TerminalCommandStatus::Running(_))).unwrap_or(false);
-            let stat_msg = term.status.lock().ok().map(|st| match &*st {
-                TerminalCommandStatus::Idle => "Idle".to_string(),
-                TerminalCommandStatus::Running(c) => format!("Running: {}", c),
-                TerminalCommandStatus::Success(code) => format!("Exit code {}", code),
-                TerminalCommandStatus::Failed(err) => format!("Failed: {}", err),
-            }).unwrap_or_default();
-            (format!("🌐 Remote SSH Terminal ({}@{}:{})", h.user, h.host, h.port), is_run, stat_msg)
+        let term = if let Some(h) = &host_opt {
+            self.remote_terminals.entry(h.id.clone()).or_default()
         } else {
-            let is_run = self.local_terminal.status.lock().ok().map(|st| matches!(*st, TerminalCommandStatus::Running(_))).unwrap_or(false);
-            let stat_msg = self.local_terminal.status.lock().ok().map(|st| match &*st {
-                TerminalCommandStatus::Idle => "Idle".to_string(),
-                TerminalCommandStatus::Running(c) => format!("Running: {}", c),
-                TerminalCommandStatus::Success(code) => format!("Exit code {}", code),
-                TerminalCommandStatus::Failed(err) => format!("Failed: {}", err),
-            }).unwrap_or_default();
-            ("💻 Local Interactive Terminal (bash)".to_string(), is_run, stat_msg)
+            &mut self.local_terminal
         };
 
+        let is_running = term.is_running();
+        let stat_msg = term.status.lock().ok().map(|st| match &*st {
+            TerminalCommandStatus::Idle => "● Ready".to_string(),
+            TerminalCommandStatus::Running(c) => format!("▶ Running: {}", c),
+            TerminalCommandStatus::Success(code) => format!("✓ Exit code {}", code),
+            TerminalCommandStatus::Failed(err) => format!("✘ Failed: {}", err),
+        }).unwrap_or_default();
+
+        let title = if let Some(h) = &host_opt {
+            format!("🌐 Remote SSH Terminal ({}@{}:{})", h.user, h.host, h.port)
+        } else {
+            "💻 Local Interactive Terminal".to_string()
+        };
+
+        let cwd_display = if host_opt.is_none() {
+            let home_dir = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok().map(std::path::PathBuf::from);
+            if let Some(home) = home_dir {
+                if let Ok(rel) = term.cwd.strip_prefix(&home) {
+                    let rel_str = rel.display().to_string();
+                    if rel_str.is_empty() {
+                        "~".to_string()
+                    } else {
+                        format!("~/{}", rel_str)
+                    }
+                } else {
+                    term.cwd.display().to_string()
+                }
+            } else {
+                term.cwd.display().to_string()
+            }
+        } else {
+            "~".to_string()
+        };
+
+        let prompt_str = term.get_prompt_str(host_opt.as_ref());
+
         ui.vertical(|ui| {
+            // ═════════════════════════════════════════════════════════════════
             // Header Bar
+            // ═════════════════════════════════════════════════════════════════
             Frame::none()
                 .fill(p.bg_card)
                 .stroke(Stroke::new(1.0_f32, p.border))
@@ -3104,37 +3136,45 @@ impl LauncherApp {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("⚡").size(20.0));
                         ui.vertical(|ui| {
-                            ui.label(RichText::new(&title).size(14.0).strong().color(p.text_primary));
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(&title).size(13.5).strong().color(p.text_primary));
+                                ui.label(
+                                    RichText::new(format!("📂 {}", cwd_display))
+                                        .size(11.0)
+                                        .color(Color32::from_rgb(147, 197, 253))
+                                        .monospace(),
+                                );
+                            });
                             ui.label(
-                                RichText::new(&status_text)
+                                RichText::new(&stat_msg)
                                     .size(11.0)
                                     .color(if is_running { Color32::from_rgb(16, 185, 129) } else { p.text_muted }),
                             );
                         });
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let btn_clear = egui::Button::new(RichText::new("🧹 Clear").size(11.0).color(p.text_secondary))
+                            let btn_clear = egui::Button::new(RichText::new("🧹 Clear (Ctrl+L)").size(11.0).color(p.text_secondary))
                                 .fill(p.bg_button);
                             if ui.add(btn_clear).clicked() {
-                                if let Some(h) = &host_opt {
-                                    self.remote_terminals.entry(h.id.clone()).or_default().clear();
-                                } else {
-                                    self.local_terminal.clear();
-                                }
+                                term.clear();
+                                term.request_focus = true;
                             }
 
                             if is_running {
                                 let btn_stop = egui::Button::new(
-                                    RichText::new("⏹ Interrupt (SIGINT)").size(11.0).strong().color(Color32::WHITE),
+                                    RichText::new("⏹ Interrupt (Ctrl+C)").size(11.0).strong().color(Color32::WHITE),
                                 )
                                 .fill(p.danger)
                                 .rounding(Rounding::same(4.0));
                                 if ui.add(btn_stop).clicked() {
-                                    if let Some(h) = &host_opt {
-                                        self.remote_terminals.entry(h.id.clone()).or_default().interrupt();
-                                    } else {
-                                        self.local_terminal.interrupt();
-                                    }
+                                    term.interrupt();
+                                    term.request_focus = true;
+                                }
+                            } else if host_opt.is_none() {
+                                let btn_ext = egui::Button::new(RichText::new("💻 Native Terminal").size(11.0).color(p.text_secondary))
+                                    .fill(p.bg_button);
+                                if ui.add(btn_ext).on_hover_text("Open native system terminal window in current directory").clicked() {
+                                    let _ = crate::commands::open_system_terminal(&term.cwd);
                                 }
                             }
                         });
@@ -3143,30 +3183,35 @@ impl LauncherApp {
 
             ui.add_space(8.0);
 
-            // Log Console Output Area
-            let logs_clone = if let Some(h) = &host_opt {
-                self.remote_terminals.entry(h.id.clone()).or_default().logs.clone()
-            } else {
-                self.local_terminal.logs.clone()
-            };
+            // ═════════════════════════════════════════════════════════════════
+            // Integrated Dark Terminal Window (Output + Prompt at bottom)
+            // ═════════════════════════════════════════════════════════════════
+            let total_h = ui.available_height().max(200.0);
+            let logs_clone = term.logs.clone();
+            let mut should_focus = false;
 
-            let term_h = (ui.available_height() - 48.0).max(180.0);
             Frame::none()
                 .fill(Color32::from_rgb(12, 14, 20))
                 .stroke(Stroke::new(1.0_f32, Color32::from_rgb(32, 36, 48)))
                 .rounding(Rounding::same(6.0))
                 .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                 .show(ui, |ui| {
-                    ui.set_height(term_h);
-                    ScrollArea::vertical()
+                    ui.set_height(total_h);
+                    let prompt_bar_h = 36.0;
+                    let scroll_h = (total_h - prompt_bar_h - 16.0).max(80.0);
+
+                    // 1. Scrollable Output Log Area
+                    let scroll_resp = ScrollArea::vertical()
                         .id_salt("cmd_terminal_scroll")
                         .stick_to_bottom(true)
                         .auto_shrink([false, false])
+                        .max_height(scroll_h)
                         .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
                             if let Ok(l) = logs_clone.lock() {
                                 if l.is_empty() {
                                     ui.label(
-                                        RichText::new("Terminal ready. Type a command below or click '▶ Run' on any saved command.")
+                                        RichText::new("Terminal ready. Type a command below or press Tab for auto-completion.")
                                             .size(11.5)
                                             .color(Color32::from_rgb(100, 110, 130)),
                                     );
@@ -3183,7 +3228,7 @@ impl LauncherApp {
                                             ui.label(
                                                 RichText::new(&entry.timestamp)
                                                     .size(10.5)
-                                                    .color(Color32::from_rgb(90, 100, 120))
+                                                    .color(Color32::from_rgb(80, 90, 110))
                                                     .monospace(),
                                             );
                                             ui.label(
@@ -3197,80 +3242,164 @@ impl LauncherApp {
                                 }
                             }
                         });
-                });
 
-            ui.add_space(8.0);
+                    // Clicking anywhere in the terminal scroll area focuses the input prompt
+                    if scroll_resp.inner_rect.contains(ui.input(|i| i.pointer.interact_pos()).unwrap_or_default())
+                        && ui.input(|i| i.pointer.primary_clicked())
+                    {
+                        should_focus = true;
+                    }
 
-            // Interactive Prompt Input Box
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("$ ").size(14.0).strong().color(p.accent));
+                    ui.add_space(4.0);
+                    ui.separator();
+                    ui.add_space(2.0);
 
-                let mut to_execute = None;
-                let term: &mut TerminalSession = if let Some(h) = &host_opt {
-                    self.remote_terminals.entry(h.id.clone()).or_default()
-                } else {
-                    &mut self.local_terminal
-                };
+                    // 2. Integrated Interactive Terminal Prompt Row
+                    ui.horizontal(|ui| {
+                        let prompt_label = if is_running {
+                            "▶ stdin > ".to_string()
+                        } else {
+                            prompt_str.clone()
+                        };
 
-                let resp = ui.add(
-                    egui::TextEdit::singleline(&mut term.input_text)
-                        .hint_text("Enter command and press Enter...")
-                        .desired_width(ui.available_width() - 85.0),
-                );
+                        let prompt_color = if is_running {
+                            Color32::from_rgb(16, 185, 129)
+                        } else {
+                            p.accent
+                        };
 
-                if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                    to_execute = Some(term.input_text.clone());
-                }
+                        ui.label(
+                            RichText::new(&prompt_label)
+                                .size(12.5)
+                                .strong()
+                                .monospace()
+                                .color(prompt_color),
+                        );
 
-                // Up / Down arrow history
-                if resp.has_focus() {
-                    if ui.input(|i| i.key_pressed(Key::ArrowUp)) {
-                        if !term.history.is_empty() {
-                            let next_idx = match term.history_idx {
-                                None => term.history.len().saturating_sub(1),
-                                Some(i) => i.saturating_sub(1),
-                            };
+                        let hint = if is_running {
+                            "Send input to running process (or Ctrl+C to interrupt)..."
+                        } else {
+                            "Type command (Tab to complete, Enter to run)..."
+                        };
 
-                            if let Some(cmd) = term.history.get(next_idx).cloned() {
-                                term.input_text = cmd;
-                                term.history_idx = Some(next_idx);
-                            }
+                        let text_edit = egui::TextEdit::singleline(&mut term.input_text)
+                            .frame(false)
+                            .font(egui::TextStyle::Monospace)
+                            .text_color(Color32::from_rgb(230, 235, 245))
+                            .hint_text(hint)
+                            .desired_width(ui.available_width() - 80.0);
+
+                        let resp = ui.add(text_edit);
+
+                        if term.request_focus || should_focus {
+                            resp.request_focus();
+                            term.request_focus = false;
                         }
-                    } else if ui.input(|i| i.key_pressed(Key::ArrowDown)) {
-                        if let Some(i) = term.history_idx {
-                            if i + 1 < term.history.len() {
-                                let next_idx = i + 1;
-                                if let Some(cmd) = term.history.get(next_idx).cloned() {
-                                    term.input_text = cmd;
-                                    term.history_idx = Some(next_idx);
-                                }
+
+                        // Enter submission (keeps focus!)
+                        let enter_hit = (resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)))
+                            || (resp.has_focus() && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Enter)));
+
+                        let mut to_execute = None;
+                        if enter_hit {
+                            resp.request_focus();
+                            let cmd = term.input_text.clone();
+                            term.input_text.clear();
+                            to_execute = Some(cmd);
+                        }
+
+                        // Ctrl + C (SIGINT or cancel line)
+                        let ctrl_c = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::C))
+                            || ui.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, Key::C));
+                        if ctrl_c {
+                            if is_running {
+                                term.interrupt();
                             } else {
-                                term.input_text.clear();
-                                term.history_idx = None;
+                                term.cancel_line();
+                            }
+                            resp.request_focus();
+                        }
+
+                        // Ctrl + L (Clear screen)
+                        let ctrl_l = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::L))
+                            || ui.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, Key::L));
+                        if ctrl_l {
+                            term.clear();
+                            resp.request_focus();
+                        }
+
+                        // Tab (Auto-completion for files and paths)
+                        let tab_hit = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Tab));
+                        if tab_hit && !is_running {
+                            term.autocomplete_path();
+                            resp.request_focus();
+                        }
+
+                        // Up / Down arrow history
+                        if resp.has_focus() {
+                            if ui.input(|i| i.key_pressed(Key::ArrowUp)) {
+                                if !term.history.is_empty() {
+                                    let next_idx = match term.history_idx {
+                                        None => term.history.len().saturating_sub(1),
+                                        Some(i) => i.saturating_sub(1),
+                                    };
+                                    if let Some(cmd) = term.history.get(next_idx).cloned() {
+                                        term.input_text = cmd;
+                                        term.history_idx = Some(next_idx);
+                                    }
+                                }
+                            } else if ui.input(|i| i.key_pressed(Key::ArrowDown)) {
+                                if let Some(i) = term.history_idx {
+                                    if i + 1 < term.history.len() {
+                                        let next_idx = i + 1;
+                                        if let Some(cmd) = term.history.get(next_idx).cloned() {
+                                            term.input_text = cmd;
+                                            term.history_idx = Some(next_idx);
+                                        }
+                                    } else {
+                                        term.input_text.clear();
+                                        term.history_idx = None;
+                                    }
+                                }
                             }
                         }
-                    }
-                }
 
-                let btn_run = egui::Button::new(
-                    RichText::new("▶ Run").size(11.5).strong().color(Color32::WHITE),
-                )
-                .fill(p.accent)
-                .rounding(Rounding::same(4.0))
-                .min_size(egui::vec2(60.0, 24.0));
+                        // Inline Action Button
+                        if is_running {
+                            let btn_stop = egui::Button::new(
+                                RichText::new("⏹ Stop").size(11.0).strong().color(Color32::WHITE),
+                            )
+                            .fill(p.danger)
+                            .rounding(Rounding::same(4.0));
+                            if ui.add(btn_stop).on_hover_text("Interrupt running process (Ctrl+C)").clicked() {
+                                term.interrupt();
+                                resp.request_focus();
+                            }
+                        } else {
+                            let btn_run = egui::Button::new(
+                                RichText::new("▶ Run").size(11.0).strong().color(Color32::WHITE),
+                            )
+                            .fill(p.accent)
+                            .rounding(Rounding::same(4.0));
+                            if ui.add(btn_run).on_hover_text("Run command (Enter)").clicked() {
+                                to_execute = Some(term.input_text.clone());
+                                term.input_text.clear();
+                                resp.request_focus();
+                            }
+                        }
 
-                if ui.add(btn_run).clicked() {
-                    to_execute = Some(term.input_text.clone());
-                }
-
-                if let Some(cmd) = to_execute {
-                    if let Some(h) = &host_opt {
-                        term.execute_remote(h, &cmd);
-                    } else {
-                        term.execute_local(&cmd, "");
-                    }
-                }
-            });
+                        // Execution dispatch
+                        if let Some(cmd) = to_execute {
+                            if is_running {
+                                term.send_stdin(&cmd);
+                            } else if let Some(h) = &host_opt {
+                                term.execute_remote(h, &cmd);
+                            } else {
+                                term.execute_local(&cmd, "");
+                            }
+                        }
+                    });
+                });
         });
     }
 

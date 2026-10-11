@@ -2508,6 +2508,200 @@ pub fn render_new_service_modal(
     result
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct RemoteStartServerModalState {
+    pub open: bool,
+    pub host_id: String,
+    pub host_name: String,
+    pub name: String,
+    pub port: String,
+    pub command: String,
+    pub cwd: String,
+    pub error: Option<String>,
+}
+
+impl RemoteStartServerModalState {
+    pub fn open_for_host(&mut self, host: &crate::config::SshRemoteHost) {
+        self.open = true;
+        self.host_id = host.id.clone();
+        self.host_name = host.name.clone();
+        self.name.clear();
+        self.port.clear();
+        self.command.clear();
+        self.cwd = host.remote_cwd.clone();
+        self.error = None;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RemoteStartServerRequest {
+    pub host_id: String,
+    pub name: String,
+    pub port: Option<u16>,
+    pub command: String,
+    pub cwd: String,
+}
+
+pub fn render_remote_start_server_modal(
+    ctx: &Context,
+    state: &mut RemoteStartServerModalState,
+    palette: &ThemePalette,
+) -> Option<RemoteStartServerRequest> {
+    if !state.open {
+        return None;
+    }
+
+    let mut result = None;
+    let screen = ctx.screen_rect();
+    let modal_w = 480.0_f32.min(screen.width() - 40.0).max(360.0);
+    let mut is_open = state.open;
+
+    let window_id = egui::Id::new("remote_start_server_modal_dialog");
+    let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
+    Window::new("Start Remote Server")
+        .id(window_id)
+        .title_bar(false)
+        .collapsible(false)
+        .resizable(false)
+        .movable(false)
+        .current_pos(screen.center() + drag_offset)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .min_width(modal_w)
+        .max_width(modal_w)
+        .frame(
+            egui::Frame::none()
+                .fill(Color32::from_rgb(17, 19, 27))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                .rounding(Rounding::same(16.0))
+                .shadow(egui::epaint::Shadow {
+                    offset: egui::vec2(0.0, 8.0),
+                    blur: 24.0,
+                    spread: 0.0,
+                    color: Color32::from_black_alpha(160),
+                })
+                .inner_margin(egui::Margin {
+                    left: 20.0,
+                    right: 20.0,
+                    top: 14.0,
+                    bottom: 18.0,
+                }),
+        )
+        .show(ctx, |ui| {
+            render_modal_titlebar(ui, "Start Remote Server", &mut is_open);
+            ui.add_space(10.0);
+
+            // Subtitle: Target host info
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Target Host:").size(11.0).color(palette.text_muted));
+                egui::Frame::none()
+                    .fill(palette.accent_subtle)
+                    .rounding(Rounding::same(999.0))
+                    .inner_margin(egui::Margin::symmetric(8.0, 2.0))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(&state.host_name).size(11.0).strong().color(palette.accent));
+                    });
+            });
+            ui.add_space(8.0);
+
+            if let Some(ref err) = state.error {
+                egui::Frame::none()
+                    .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 40))
+                    .rounding(Rounding::same(8.0))
+                    .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(format!("⚠️ {}", err)).size(11.0).color(Color32::from_rgb(252, 165, 165)));
+                    });
+                ui.add_space(8.0);
+            }
+
+            // Server Name
+            ui.label(RichText::new("Server / Service Name:").size(11.5).strong().color(palette.text_primary));
+            ui.add(
+                egui::TextEdit::singleline(&mut state.name)
+                    .hint_text("e.g. web-app, node-backend, nginx")
+                    .desired_width(ui.available_width()),
+            );
+            ui.add_space(8.0);
+
+            // Port (optional)
+            ui.label(RichText::new("Port (optional):").size(11.5).strong().color(palette.text_primary));
+            ui.add(
+                egui::TextEdit::singleline(&mut state.port)
+                    .hint_text("e.g. 8080 or 3000")
+                    .desired_width(ui.available_width()),
+            );
+            ui.add_space(8.0);
+
+            // Command
+            ui.label(RichText::new("Launch Command:").size(11.5).strong().color(palette.text_primary));
+            ui.add(
+                egui::TextEdit::singleline(&mut state.command)
+                    .hint_text("e.g. python3 -m http.server 8080 or npm run dev")
+                    .desired_width(ui.available_width()),
+            );
+            ui.add_space(8.0);
+
+            // Working directory
+            ui.label(RichText::new("Working Directory:").size(11.5).strong().color(palette.text_primary));
+            ui.add(
+                egui::TextEdit::singleline(&mut state.cwd)
+                    .hint_text("e.g. /var/www or ~/projects/app")
+                    .desired_width(ui.available_width()),
+            );
+            ui.add_space(14.0);
+
+            // Buttons
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new("Cancel").color(palette.text_secondary)).clicked() {
+                    state.open = false;
+                }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let btn_start = egui::Button::new(
+                        RichText::new("▶ Start Server").size(12.0).strong().color(Color32::WHITE),
+                    )
+                    .fill(Color32::from_rgb(0x05, 0x96, 0x69))
+                    .rounding(Rounding::same(999.0))
+                    .min_size(egui::vec2(120.0, 28.0));
+
+                    if ui.add(btn_start).clicked() {
+                        let cmd_trimmed = state.command.trim();
+                        if cmd_trimmed.is_empty() {
+                            state.error = Some("Launch Command cannot be empty".to_string());
+                        } else {
+                            let name = if state.name.trim().is_empty() {
+                                if let Ok(p) = state.port.trim().parse::<u16>() {
+                                    format!("port_{}", p)
+                                } else {
+                                    cmd_trimmed.split_whitespace().next().unwrap_or("remote_server").to_string()
+                                }
+                            } else {
+                                state.name.trim().to_string()
+                            };
+
+                            let parsed_port = state.port.trim().parse::<u16>().ok();
+
+                            result = Some(RemoteStartServerRequest {
+                                host_id: state.host_id.clone(),
+                                name,
+                                port: parsed_port,
+                                command: cmd_trimmed.to_string(),
+                                cwd: state.cwd.trim().to_string(),
+                            });
+                            state.open = false;
+                        }
+                    }
+                });
+            });
+        });
+
+    if !is_open {
+        state.open = false;
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

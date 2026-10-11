@@ -2,8 +2,9 @@ use crate::config::{ConfigFile, CustomScript, SavedCommand, ServerConfig, SshRem
 use crate::modals::{
     render_add_edit_modal, render_command_modal, render_command_palette,
     render_close_confirmation_modal, render_new_service_modal, render_script_modal,
-    render_ssh_host_modal, AddEditModalState, CloseConfirmChoice, CommandPaletteState,
-    ModalAction, NewServiceModalState, PaletteAction, SshHostModalState,
+    render_ssh_host_modal, render_remote_start_server_modal, AddEditModalState, CloseConfirmChoice,
+    CommandPaletteState, ModalAction, NewServiceModalState, PaletteAction,
+    RemoteStartServerModalState, SshHostModalState,
 };
 use crate::scripts::{
     execute_local_script, execute_remote_script, ScriptExecution, ScriptModalState, ScriptRunStatus,
@@ -15,8 +16,11 @@ use crate::systemd::{
     SystemdService,
 };
 use crate::remote::{
-    build_ssh_command, fetch_remote_listeners, import_from_ssh_config,
-    launch_external_ssh_terminal, test_ssh_connection, RemoteListener,
+    build_remote_restart_all_cmd, build_remote_restart_cmd, build_remote_start_cmd,
+    build_remote_stop_all_cmd, build_remote_stop_cmd, build_ssh_command,
+    clean_service_name, fetch_remote_listeners, guess_remote_start_cmd,
+    import_from_ssh_config, launch_external_ssh_terminal, test_ssh_connection,
+    RemoteListener, RemoteStoppedServer,
 };
 use crate::scanner::{get_lan_ip, SystemPortScanner};
 use crate::service::{LogKind, Service, ServiceState};
@@ -175,6 +179,8 @@ pub struct LauncherApp {
     remote_terminal_inputs: HashMap<String, String>,
     remote_connection_status: Arc<Mutex<HashMap<String, Result<String, String>>>>,
     remote_connecting: Arc<Mutex<BTreeSet<String>>>,
+    pub remote_stopped_servers: Arc<Mutex<HashMap<String, Vec<RemoteStoppedServer>>>>,
+    pub remote_start_server_modal: RemoteStartServerModalState,
     pub theme: ThemeMode,
     pub last_applied_palette: Option<crate::theme::ThemePalette>,
     pub app_autostart: bool,
@@ -498,6 +504,8 @@ impl LauncherApp {
             remote_terminal_inputs,
             remote_connection_status,
             remote_connecting,
+            remote_stopped_servers: Arc::new(Mutex::new(HashMap::new())),
+            remote_start_server_modal: RemoteStartServerModalState::default(),
             theme,
             last_applied_palette: None,
             app_autostart,
@@ -1598,6 +1606,24 @@ impl LauncherApp {
         });
     }
 
+    fn schedule_remote_scan(&self, host: &SshRemoteHost, delay_ms: u64, ctx: egui::Context) {
+        let host_clone = host.clone();
+        let listeners_arc = self.remote_listeners.clone();
+        let scanning_arc = self.remote_scanning.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+            if let Ok(listeners) = crate::remote::fetch_remote_listeners(&host_clone) {
+                if let Ok(mut map) = listeners_arc.lock() {
+                    map.insert(host_clone.id.clone(), listeners);
+                }
+            }
+            if let Ok(mut scanning) = scanning_arc.lock() {
+                scanning.remove(&host_clone.id);
+            }
+            ctx.request_repaint();
+        });
+    }
+
     fn clear_remote_terminal_logs(&self, host_id: &str) {
         if let Ok(map) = self.remote_terminal_logs.lock() {
             if let Some(logs) = map.get(host_id) {
@@ -1925,7 +1951,18 @@ impl LauncherApp {
             map.get(&host.id).cloned().unwrap_or_default()
         };
 
+        // Sync stopped servers: prune any that are now active in listeners
+        let stopped = {
+            let mut map = self.remote_stopped_servers.lock().unwrap();
+            let list = map.entry(host.id.clone()).or_default();
+            list.retain(|s| !listeners.iter().any(|l| l.port == s.port));
+            list.clone()
+        };
+
+        let mut dismiss_port: Option<u16> = None;
+
         ui.vertical(|ui| {
+            // Header with title, counts, and action toolbar
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new("REMOTE SERVERS")
@@ -1933,11 +1970,55 @@ impl LauncherApp {
                         .strong()
                         .color(Color32::from_rgb(148, 163, 184)),
                 );
+                let count_desc = if stopped.is_empty() {
+                    format!("({})", listeners.len())
+                } else {
+                    format!("({} active, {} stopped)", listeners.len(), stopped.len())
+                };
                 ui.label(
-                    RichText::new(format!("({})", listeners.len()))
+                    RichText::new(count_desc)
                         .size(11.0)
                         .color(Color32::from_rgb(100, 110, 130)),
                 );
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+
+                    // + Start Server button (accent pill)
+                    let btn_add = egui::Button::new(
+                        RichText::new("+ Start Server").size(10.5).strong().color(Color32::WHITE),
+                    )
+                    .fill(Color32::from_rgb(0x05, 0x96, 0x69))
+                    .rounding(Rounding::same(999.0));
+                    if ui.add(btn_add).on_hover_text("Start a new server or process on remote host").clicked() {
+                        self.remote_start_server_modal.open_for_host(host);
+                    }
+
+                    // Stop All & Restart All
+                    if !listeners.is_empty() {
+                        let btn_stop_all = egui::Button::new(
+                            RichText::new("⏹ Stop All").size(10.0).color(Color32::from_rgb(254, 202, 202)),
+                        )
+                        .fill(Color32::from_rgb(0x7f, 0x1d, 0x1d))
+                        .rounding(Rounding::same(999.0));
+                        if ui.add(btn_stop_all).on_hover_text("Stop all non-SSH remote servers").clicked() {
+                            let stop_cmd = build_remote_stop_all_cmd(&listeners, host.port);
+                            self.run_remote_ssh_command(host, &stop_cmd, Some(ui.ctx().clone()));
+                            self.schedule_remote_scan(host, 1500, ui.ctx().clone());
+                        }
+
+                        let btn_restart_all = egui::Button::new(
+                            RichText::new("⟳ Restart All").size(10.0).color(Color32::from_rgb(207, 250, 254)),
+                        )
+                        .fill(Color32::from_rgb(0x15, 0x5e, 0x75))
+                        .rounding(Rounding::same(999.0));
+                        if ui.add(btn_restart_all).on_hover_text("Restart all non-SSH remote servers").clicked() {
+                            let restart_cmd = build_remote_restart_all_cmd(&listeners, host.port);
+                            self.run_remote_ssh_command(host, &restart_cmd, Some(ui.ctx().clone()));
+                            self.schedule_remote_scan(host, 2000, ui.ctx().clone());
+                        }
+                    }
+                });
             });
             ui.add_space(4.0);
 
@@ -1966,7 +2047,24 @@ impl LauncherApp {
                 .cloned()
                 .collect();
 
-            if listeners.is_empty() {
+            let visible_stopped: Vec<_> = stopped
+                .iter()
+                .filter(|s| {
+                    if q.is_empty() {
+                        true
+                    } else {
+                        s.name.to_lowercase().contains(&q)
+                            || s.port.to_string().contains(&q)
+                            || s.proto.to_lowercase().contains(&q)
+                            || s.cmd.to_lowercase().contains(&q)
+                            || s.start_cmd.to_lowercase().contains(&q)
+                            || s.last_pid.map(|p| p.to_string().contains(&q)).unwrap_or(false)
+                    }
+                })
+                .cloned()
+                .collect();
+
+            if listeners.is_empty() && stopped.is_empty() {
                 Frame::none()
                     .fill(p.bg_card)
                     .stroke(Stroke::NONE)
@@ -1977,10 +2075,10 @@ impl LauncherApp {
                         if is_scanning {
                             ui.label(RichText::new("Scanning remote listening ports (ss -tulpn)...").size(11.0).color(Color32::from_rgb(250, 204, 21)));
                         } else {
-                            ui.label(RichText::new("No active listening ports detected on remote PC. Click 'Scan Ports' above.").size(11.0).color(Color32::from_rgb(120, 128, 145)));
+                            ui.label(RichText::new("No active listening ports detected on remote PC. Click 'Scan Ports' or '+ Start Server'.").size(11.0).color(Color32::from_rgb(120, 128, 145)));
                         }
                     });
-            } else if visible_listeners.is_empty() {
+            } else if visible_listeners.is_empty() && visible_stopped.is_empty() {
                 ui.label(RichText::new(format!("No servers matching \"{}\"", q)).size(11.0).color(Color32::from_rgb(120, 128, 145)));
             } else {
                 ScrollArea::vertical()
@@ -1989,6 +2087,8 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.set_max_width(ui.available_width());
+
+                        // 1. ACTIVE RUNNING SERVERS
                         for l in &visible_listeners {
                             Frame::none()
                                 .fill(p.bg_card)
@@ -1998,7 +2098,7 @@ impl LauncherApp {
                                 .show(ui, |ui| {
                                     ui.set_width(ui.available_width());
                                     ui.set_max_width(ui.available_width());
-                                    // Row 1: Port badge + Proto + Name
+                                    // Row 1: Port badge + Proto + Name + Running Chip
                                     ui.horizontal(|ui| {
                                         ui.label(
                                             RichText::new(format!(":{}", l.port))
@@ -2011,7 +2111,7 @@ impl LauncherApp {
                                                 .size(10.5)
                                                 .color(Color32::from_rgb(130, 138, 155)),
                                         );
-                                        let name_w = (ui.available_width() - 4.0).max(40.0);
+                                        let name_w = (ui.available_width() - 75.0).max(40.0);
                                         ui.add_sized(
                                             [name_w, 16.0],
                                             egui::Label::new(
@@ -2022,6 +2122,15 @@ impl LauncherApp {
                                             )
                                             .truncate(),
                                         );
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            Frame::none()
+                                                .fill(Color32::from_rgba_unmultiplied(16, 185, 129, 30))
+                                                .rounding(Rounding::same(999.0))
+                                                .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                                .show(ui, |ui| {
+                                                    ui.label(RichText::new("● Running").size(9.5).color(Color32::from_rgb(52, 211, 153)));
+                                                });
+                                        });
                                     });
 
                                     // Row 2: PID and command
@@ -2042,37 +2151,81 @@ impl LauncherApp {
 
                                     ui.add_space(4.0);
 
-                                    // Row 3: Action Buttons
+                                    // Row 3: Action Buttons (Stop, Restart, Kill, Curl, Info)
                                     ui.horizontal(|ui| {
-                                        let kill_btn = egui::Button::new(
-                                            RichText::new("🛑 Kill").size(10.0).color(Color32::WHITE),
+                                        ui.spacing_mut().item_spacing.x = 5.0;
+
+                                        // Stop Button
+                                        let stop_btn = egui::Button::new(
+                                            RichText::new("⏹ Stop").size(10.0).strong().color(Color32::from_rgb(0xfe, 0xf2, 0xf2)),
                                         )
-                                        .fill(Color32::from_rgb(239, 68, 68))
-                                        .rounding(Rounding::same(3.0));
-                                        if ui.add(kill_btn).on_hover_text("Kill this remote process via SSH").clicked() {
+                                        .fill(Color32::from_rgb(0x99, 0x1b, 0x1b))
+                                        .rounding(Rounding::same(999.0));
+                                        if ui.add(stop_btn).on_hover_text("Stop this remote server gracefully").clicked() {
+                                            let stop_cmd = build_remote_stop_cmd(&l.name, l.port, l.pid);
+                                            let start_cmd = guess_remote_start_cmd(&l.name, l.port);
+                                            if let Ok(mut map) = self.remote_stopped_servers.lock() {
+                                                let list = map.entry(host.id.clone()).or_default();
+                                                if !list.iter().any(|s| s.port == l.port) {
+                                                    list.push(RemoteStoppedServer {
+                                                        name: l.name.clone(),
+                                                        port: l.port,
+                                                        proto: l.proto.clone(),
+                                                        last_pid: l.pid,
+                                                        cmd: l.cmd.clone(),
+                                                        start_cmd,
+                                                    });
+                                                }
+                                            }
+                                            self.run_remote_ssh_command(host, &stop_cmd, Some(ui.ctx().clone()));
+                                            self.schedule_remote_scan(host, 1500, ui.ctx().clone());
+                                        }
+
+                                        // Restart Button
+                                        let restart_btn = egui::Button::new(
+                                            RichText::new("⟳ Restart").size(10.0).strong().color(Color32::from_rgb(0xec, 0xfe, 0xff)),
+                                        )
+                                        .fill(Color32::from_rgb(0x0e, 0x74, 0x90))
+                                        .rounding(Rounding::same(999.0));
+                                        if ui.add(restart_btn).on_hover_text("Restart this remote server").clicked() {
+                                            let restart_cmd = build_remote_restart_cmd(&l.name, l.port, l.pid);
+                                            self.run_remote_ssh_command(host, &restart_cmd, Some(ui.ctx().clone()));
+                                            self.schedule_remote_scan(host, 2000, ui.ctx().clone());
+                                        }
+
+                                        // Force Kill Button
+                                        let kill_btn = egui::Button::new(
+                                            RichText::new("🛑 Kill").size(10.0).color(Color32::from_rgb(254, 202, 202)),
+                                        )
+                                        .fill(Color32::from_rgb(45, 20, 25))
+                                        .rounding(Rounding::same(999.0));
+                                        if ui.add(kill_btn).on_hover_text("Force kill this process (-9) via SSH").clicked() {
                                             let kill_cmd = if let Some(pid) = l.pid {
                                                 format!("kill -9 {}", pid)
                                             } else {
                                                 format!("fuser -k -n tcp {} 2>/dev/null || true", l.port)
                                             };
                                             self.run_remote_ssh_command(host, &kill_cmd, Some(ui.ctx().clone()));
+                                            self.schedule_remote_scan(host, 1500, ui.ctx().clone());
                                         }
 
+                                        // Curl Button
                                         let test_btn = egui::Button::new(
                                             RichText::new("🌐 Curl").size(10.0).color(Color32::from_rgb(56, 189, 248)),
                                         )
                                         .fill(Color32::from_rgb(24, 32, 48))
-                                        .rounding(Rounding::same(3.0));
+                                        .rounding(Rounding::same(999.0));
                                         if ui.add(test_btn).on_hover_text("Test HTTP response on remote host (curl -I)").clicked() {
                                             let curl_cmd = format!("curl -I -s --connect-timeout 2 http://localhost:{} | head -n 5", l.port);
                                             self.run_remote_ssh_command(host, &curl_cmd, Some(ui.ctx().clone()));
                                         }
 
+                                        // Info Button
                                         let ps_btn = egui::Button::new(
                                             RichText::new("🔍 Info").size(10.0).color(Color32::from_rgb(250, 204, 21)),
                                         )
                                         .fill(Color32::from_rgb(34, 30, 20))
-                                        .rounding(Rounding::same(3.0));
+                                        .rounding(Rounding::same(999.0));
                                         if ui.add(ps_btn).on_hover_text("Inspect process details on remote host").clicked() {
                                             let ps_cmd = if let Some(pid) = l.pid {
                                                 format!("ps -u -p {} 2>/dev/null", pid)
@@ -2085,9 +2238,134 @@ impl LauncherApp {
                                 });
                             ui.add_space(4.0);
                         }
+
+                        // 2. STOPPED SERVERS
+                        for s in &visible_stopped {
+                            Frame::none()
+                                .fill(p.bg_card)
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(12.0))
+                                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.set_max_width(ui.available_width());
+
+                                    // Row 1: Port badge (muted) + Proto + Name + Stopped Chip
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            RichText::new(format!(":{}", s.port))
+                                                .size(12.5)
+                                                .strong()
+                                                .color(Color32::from_rgb(148, 163, 184)),
+                                        );
+                                        ui.label(
+                                            RichText::new(format!("[{}]", s.proto))
+                                                .size(10.5)
+                                                .color(Color32::from_rgb(100, 110, 130)),
+                                        );
+                                        let name_w = (ui.available_width() - 75.0).max(40.0);
+                                        ui.add_sized(
+                                            [name_w, 16.0],
+                                            egui::Label::new(
+                                                RichText::new(&s.name)
+                                                    .size(12.0)
+                                                    .strong()
+                                                    .color(Color32::from_rgb(180, 185, 195)),
+                                            )
+                                            .truncate(),
+                                        );
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            Frame::none()
+                                                .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 30))
+                                                .rounding(Rounding::same(999.0))
+                                                .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                                .show(ui, |ui| {
+                                                    ui.label(RichText::new("○ Stopped").size(9.5).color(Color32::from_rgb(248, 113, 113)));
+                                                });
+                                        });
+                                    });
+
+                                    // Row 2: Stopped details
+                                    let desc = if let Some(last_pid) = s.last_pid {
+                                        format!("Last PID {} • Offline", last_pid)
+                                    } else {
+                                        "Offline".to_string()
+                                    };
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(desc)
+                                                .size(10.0)
+                                                .color(Color32::from_rgb(100, 110, 130)),
+                                        )
+                                        .truncate(),
+                                    );
+
+                                    ui.add_space(4.0);
+
+                                    // Row 3: Action Buttons (Start, Restart, Dismiss, Info)
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 5.0;
+
+                                        // Start Button
+                                        let start_btn = egui::Button::new(
+                                            RichText::new("▶ Start").size(10.0).strong().color(Color32::WHITE),
+                                        )
+                                        .fill(Color32::from_rgb(0x05, 0x96, 0x69))
+                                        .rounding(Rounding::same(999.0));
+                                        if ui.add(start_btn).on_hover_text("Start this remote server").clicked() {
+                                            let start_cmd = build_remote_start_cmd(&s.name, s.port, if s.start_cmd.is_empty() { None } else { Some(&s.start_cmd) });
+                                            self.run_remote_ssh_command(host, &start_cmd, Some(ui.ctx().clone()));
+                                            self.schedule_remote_scan(host, 1500, ui.ctx().clone());
+                                        }
+
+                                        // Restart Button
+                                        let restart_btn = egui::Button::new(
+                                            RichText::new("⟳ Restart").size(10.0).strong().color(Color32::from_rgb(0xec, 0xfe, 0xff)),
+                                        )
+                                        .fill(Color32::from_rgb(0x0e, 0x74, 0x90))
+                                        .rounding(Rounding::same(999.0));
+                                        if ui.add(restart_btn).on_hover_text("Attempt to restart this remote server").clicked() {
+                                            let start_cmd = build_remote_start_cmd(&s.name, s.port, if s.start_cmd.is_empty() { None } else { Some(&s.start_cmd) });
+                                            self.run_remote_ssh_command(host, &start_cmd, Some(ui.ctx().clone()));
+                                            self.schedule_remote_scan(host, 1500, ui.ctx().clone());
+                                        }
+
+                                        // Dismiss Button
+                                        let dismiss_btn = egui::Button::new(
+                                            RichText::new("✕ Dismiss").size(10.0).color(Color32::from_rgb(148, 163, 184)),
+                                        )
+                                        .fill(Color32::from_rgb(28, 30, 40))
+                                        .rounding(Rounding::same(999.0));
+                                        if ui.add(dismiss_btn).on_hover_text("Dismiss from stopped servers list").clicked() {
+                                            dismiss_port = Some(s.port);
+                                        }
+
+                                        // Info Button
+                                        let info_btn = egui::Button::new(
+                                            RichText::new("🔍 Info").size(10.0).color(Color32::from_rgb(250, 204, 21)),
+                                        )
+                                        .fill(Color32::from_rgb(34, 30, 20))
+                                        .rounding(Rounding::same(999.0));
+                                        if ui.add(info_btn).on_hover_text("Inspect status on remote host").clicked() {
+                                            let info_cmd = format!("lsof -i :{} 2>/dev/null || systemctl status {} 2>/dev/null", s.port, clean_service_name(&s.name));
+                                            self.run_remote_ssh_command(host, &info_cmd, Some(ui.ctx().clone()));
+                                        }
+                                    });
+                                });
+                            ui.add_space(4.0);
+                        }
                     });
             }
         });
+
+        // Apply any dismissals from stopped list
+        if let Some(port) = dismiss_port {
+            if let Ok(mut map) = self.remote_stopped_servers.lock() {
+                if let Some(list) = map.get_mut(&host.id) {
+                    list.retain(|s| s.port != port);
+                }
+            }
+        }
     }
 
     fn render_remote_servers_right_panel(&mut self, ui: &mut Ui, host: &SshRemoteHost) {
@@ -2711,6 +2989,58 @@ impl eframe::App for LauncherApp {
                             if ui.add(btn_scan).clicked() {
                                 self.trigger_remote_scan(host);
                             }
+
+                            // Remote Server Controls: + Start Server, Stop All, Restart All
+                            let btn_add_server = egui::Button::new(
+                                RichText::new("+ Start Server")
+                                    .size(11.5)
+                                    .strong()
+                                    .color(Color32::WHITE),
+                            )
+                            .fill(Color32::from_rgb(0x05, 0x96, 0x69))
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(999.0))
+                            .min_size(egui::vec2(105.0, 28.0));
+                            if ui.add(btn_add_server).on_hover_text("Start a new server or process on remote host").clicked() {
+                                self.remote_start_server_modal.open_for_host(host);
+                            }
+
+                            let listeners_for_all = {
+                                let map = self.remote_listeners.lock().unwrap();
+                                map.get(&host.id).cloned().unwrap_or_default()
+                            };
+
+                            if !listeners_for_all.is_empty() {
+                                let btn_stop_all = egui::Button::new(
+                                    RichText::new("⏹ Stop All")
+                                        .size(11.5)
+                                        .color(Color32::from_rgb(254, 202, 202)),
+                                )
+                                .fill(Color32::from_rgb(0x7f, 0x1d, 0x1d))
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(999.0))
+                                .min_size(egui::vec2(80.0, 28.0));
+                                if ui.add(btn_stop_all).on_hover_text("Stop all non-SSH remote servers").clicked() {
+                                    let stop_cmd = build_remote_stop_all_cmd(&listeners_for_all, host.port);
+                                    self.run_remote_ssh_command(host, &stop_cmd, Some(ui.ctx().clone()));
+                                    self.schedule_remote_scan(host, 1500, ui.ctx().clone());
+                                }
+
+                                let btn_restart_all = egui::Button::new(
+                                    RichText::new("⟳ Restart All")
+                                        .size(11.5)
+                                        .color(Color32::from_rgb(207, 250, 254)),
+                                )
+                                .fill(Color32::from_rgb(0x15, 0x5e, 0x75))
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(999.0))
+                                .min_size(egui::vec2(92.0, 28.0));
+                                if ui.add(btn_restart_all).on_hover_text("Restart all non-SSH remote servers").clicked() {
+                                    let restart_cmd = build_remote_restart_all_cmd(&listeners_for_all, host.port);
+                                    self.run_remote_ssh_command(host, &restart_cmd, Some(ui.ctx().clone()));
+                                    self.schedule_remote_scan(host, 2000, ui.ctx().clone());
+                                }
+                            }
                         } else {
                             // LOCAL PC CONTROLS (+ Add Server, Quick Launch, Stop All, Start All, Search)
                             // + Add Server (Primary Accent Pill)
@@ -3128,6 +3458,33 @@ impl eframe::App for LauncherApp {
                         }
                     }
                 }
+            }
+        }
+
+        if let Some(req) = render_remote_start_server_modal(ctx, &mut self.remote_start_server_modal, &p) {
+            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == req.host_id).cloned() {
+                let full_cmd = if !req.cwd.is_empty() {
+                    format!("cd \"{}\" 2>/dev/null || true; nohup {} >/dev/null 2>&1 & echo '[launcher] Started {}: {}'", req.cwd, req.command, req.name, req.command)
+                } else {
+                    format!("nohup {} >/dev/null 2>&1 & echo '[launcher] Started {}: {}'", req.command, req.name, req.command)
+                };
+                if let Some(port) = req.port {
+                    if let Ok(mut map) = self.remote_stopped_servers.lock() {
+                        let list = map.entry(host.id.clone()).or_default();
+                        if !list.iter().any(|s| s.port == port) {
+                            list.push(RemoteStoppedServer {
+                                name: req.name.clone(),
+                                port,
+                                proto: "TCP".to_string(),
+                                last_pid: None,
+                                cmd: req.command.clone(),
+                                start_cmd: req.command.clone(),
+                            });
+                        }
+                    }
+                }
+                self.run_remote_ssh_command(&host, &full_cmd, Some(ctx.clone()));
+                self.schedule_remote_scan(&host, 1500, ctx.clone());
             }
         }
 

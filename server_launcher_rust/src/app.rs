@@ -75,6 +75,39 @@ impl SidebarTab {
     }
 }
 
+/// Represents a local systemd action that requires sudo.
+#[derive(Clone, Debug)]
+pub enum PendingSudoAction {
+    /// control_local_service(unit, action, user_mode)
+    ServiceAction { unit: String, action: &'static str, user_mode: bool },
+    /// create_local_service(def)
+    CreateService { def: crate::systemd::NewServiceDefinition },
+}
+
+/// State for the sudo-password popup dialog.
+#[derive(Clone, Debug)]
+pub struct SudoPopupState {
+    pub open: bool,
+    pub pending: Option<PendingSudoAction>,
+    pub password_input: String,
+    pub remember_password: bool,
+    pub error: Option<String>,
+    pub just_opened: bool,
+}
+
+impl Default for SudoPopupState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            pending: None,
+            password_input: String::new(),
+            remember_password: true,
+            error: None,
+            just_opened: false,
+        }
+    }
+}
+
 pub struct LauncherApp {
     pub active_sidebar_tab: SidebarTab,
     pub scripts: Vec<CustomScript>,
@@ -195,6 +228,10 @@ pub struct LauncherApp {
     pub remote_sensors_errors: Arc<Mutex<HashMap<String, String>>>,
     pub sensors_search_query: String,
     pub sensors_category_filter: String,
+
+    // Sudo popup for local system-level systemd operations
+    pub sudo_popup: SudoPopupState,
+    pub local_sudo_password: String, // remembered for the session
 }
 
 pub struct ExternalTerminalSession {
@@ -403,6 +440,8 @@ impl LauncherApp {
             remote_sensors_errors: Arc::new(Mutex::new(HashMap::new())),
             sensors_search_query: String::new(),
             sensors_category_filter: "All".to_string(),
+            sudo_popup: SudoPopupState::default(),
+            local_sudo_password: String::new(),
         }
     }
 
@@ -1151,14 +1190,18 @@ impl LauncherApp {
         }
     }
 
-    fn run_remote_ssh_command(&self, host: &SshRemoteHost, cmd_str: &str) {
+    fn run_remote_ssh_command(&self, host: &SshRemoteHost, cmd_str: &str, ctx: Option<egui::Context>) {
         let logs = self.get_remote_logs(&host.id);
         let prompt = format!("{}> {}", host.user, cmd_str);
         crate::service::push_log_line(&prompt, &logs, 1000, crate::service::LogKind::Stdin);
+        if let Some(ref c) = ctx {
+            c.request_repaint();
+        }
 
         let host_clone = host.clone();
         let cmd_owned = cmd_str.to_string();
         let logs_clone = logs.clone();
+        let ctx_clone = ctx.clone();
 
         std::thread::spawn(move || {
             let mut c = build_ssh_command(&host_clone, &cmd_owned);
@@ -1174,6 +1217,9 @@ impl LauncherApp {
                         crate::service::spawn_stream_reader(stderr, logs_clone.clone(), 1000, crate::service::LogKind::Stderr);
                     }
                     let _ = child.wait();
+                    if let Some(c) = ctx_clone {
+                        c.request_repaint();
+                    }
                 }
                 Err(e) => {
                     crate::service::push_log_line(
@@ -1182,6 +1228,9 @@ impl LauncherApp {
                         1000,
                         crate::service::LogKind::Error,
                     );
+                    if let Some(c) = ctx_clone {
+                        c.request_repaint();
+                    }
                 }
             }
         });
@@ -1791,7 +1840,7 @@ impl LauncherApp {
                                             } else {
                                                 format!("fuser -k -n tcp {} 2>/dev/null || true", l.port)
                                             };
-                                            self.run_remote_ssh_command(host, &kill_cmd);
+                                            self.run_remote_ssh_command(host, &kill_cmd, Some(ui.ctx().clone()));
                                         }
 
                                         let test_btn = egui::Button::new(
@@ -1801,7 +1850,7 @@ impl LauncherApp {
                                         .rounding(Rounding::same(3.0));
                                         if ui.add(test_btn).on_hover_text("Test HTTP response on remote host (curl -I)").clicked() {
                                             let curl_cmd = format!("curl -I -s --connect-timeout 2 http://localhost:{} | head -n 5", l.port);
-                                            self.run_remote_ssh_command(host, &curl_cmd);
+                                            self.run_remote_ssh_command(host, &curl_cmd, Some(ui.ctx().clone()));
                                         }
 
                                         let ps_btn = egui::Button::new(
@@ -1815,7 +1864,7 @@ impl LauncherApp {
                                             } else {
                                                 format!("lsof -i :{} 2>/dev/null", l.port)
                                             };
-                                            self.run_remote_ssh_command(host, &ps_cmd);
+                                            self.run_remote_ssh_command(host, &ps_cmd, Some(ui.ctx().clone()));
                                         }
                                     });
                                 });
@@ -1866,7 +1915,7 @@ impl LauncherApp {
                         .fill(Color32::from_rgb(28, 30, 44))
                         .rounding(Rounding::same(3.0));
                         if ui.add(btn).on_hover_text(qtip).clicked() {
-                            self.run_remote_ssh_command(host, qcmd);
+                            self.run_remote_ssh_command(host, qcmd, Some(ui.ctx().clone()));
                         }
                     }
                 });
@@ -1960,7 +2009,7 @@ impl LauncherApp {
                         };
 
                         if let (Some(cmd), true) = (cmd_to_run, execute) {
-                            self.run_remote_ssh_command(host, &cmd);
+                            self.run_remote_ssh_command(host, &cmd, Some(ui.ctx().clone()));
                         }
                     });
                 });
@@ -2539,19 +2588,45 @@ impl eframe::App for LauncherApp {
                     });
                 }
             } else {
-                match create_local_service(&service_def) {
-                    Ok(msg) => {
-                        self.service_action_msg = Some(msg);
-                        if let Ok(services) = list_local_services(service_def.is_user) {
-                            self.local_services = services;
+                if !service_def.is_user && self.local_sudo_password.is_empty() {
+                    self.sudo_popup.open = true;
+                    self.sudo_popup.pending = Some(PendingSudoAction::CreateService { def: service_def });
+                    self.sudo_popup.password_input.clear();
+                    self.sudo_popup.error = None;
+                    self.sudo_popup.remember_password = true;
+                    self.sudo_popup.just_opened = true;
+                } else {
+                    let pass_opt = if !service_def.is_user && !self.local_sudo_password.is_empty() {
+                        Some(self.local_sudo_password.as_str())
+                    } else {
+                        None
+                    };
+                    match create_local_service(&service_def, pass_opt) {
+                        Ok(msg) => {
+                            self.service_action_msg = Some(msg);
+                            if let Ok(services) = list_local_services(service_def.is_user) {
+                                self.local_services = services;
+                            }
                         }
-                    }
-                    Err(err) => {
-                        self.service_action_msg = Some(format!("Error: {}", err));
+                        Err(err) => {
+                            if !service_def.is_user && (err.contains("Sudo password needed") || err.contains("authentication") || err.contains("Incorrect sudo password")) {
+                                self.local_sudo_password.clear();
+                                self.sudo_popup.open = true;
+                                self.sudo_popup.pending = Some(PendingSudoAction::CreateService { def: service_def });
+                                self.sudo_popup.password_input.clear();
+                                self.sudo_popup.error = Some(err);
+                                self.sudo_popup.remember_password = true;
+                                self.sudo_popup.just_opened = true;
+                            } else {
+                                self.service_action_msg = Some(format!("Error: {}", err));
+                            }
+                        }
                     }
                 }
             }
         }
+
+        self.render_sudo_popup(ctx, &p);
 
         let is_scanning = self.scanner.is_scanning.lock().map(|s| *s).unwrap_or(false);
         let has_remote_bg_work = {
@@ -3772,6 +3847,16 @@ impl LauncherApp {
                     }
                 }
 
+                if host_id.is_none() && !self.local_sudo_password.is_empty() {
+                    ui.add_space(4.0);
+                    if ui.button(RichText::new("🔑 Sudo [✕]").size(10.0).color(Color32::from_rgb(16, 185, 129)))
+                        .on_hover_text("Sudo password cached for this session. Click to clear/forget.")
+                        .clicked()
+                    {
+                        self.local_sudo_password.clear();
+                    }
+                }
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_ref = egui::Button::new(RichText::new("🔄").size(11.0).color(p.text_secondary))
                         .fill(p.bg_button);
@@ -3885,7 +3970,7 @@ impl LauncherApp {
                             Stroke::new(1.0_f32, p.border)
                         };
 
-                        Frame::none()
+                        let card_resp = Frame::none()
                             .fill(if is_selected { p.bg_card } else { p.bg_sidebar })
                             .stroke(card_border)
                             .rounding(Rounding::same(6.0))
@@ -3908,23 +3993,18 @@ impl LauncherApp {
                                     let name_w = (ui.available_width() - status_w - 6.0).max(40.0);
 
                                     let title = RichText::new(&s.name).size(12.0).strong().color(if is_selected { p.accent_light } else { p.text_primary });
-                                    let name_resp = ui.allocate_ui_with_layout(
+                                    ui.allocate_ui_with_layout(
                                         egui::vec2(name_w, 16.0),
                                         egui::Layout::left_to_right(egui::Align::Center),
                                         |ui| {
                                             ui.set_max_width(name_w);
                                             ui.add(
                                                 egui::Label::new(title)
-                                                    .truncate()
-                                                    .sense(egui::Sense::click()),
+                                                    .truncate(),
                                             )
-                                            .on_hover_text(&s.name)
+                                            .on_hover_text(&s.name);
                                         },
-                                    ).inner;
-
-                                    if name_resp.clicked() {
-                                        selected = Some(s.name.clone());
-                                    }
+                                    );
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         let sub_color = if is_active {
@@ -3960,6 +4040,18 @@ impl LauncherApp {
                                 }
                             });
 
+                        let whole_card_click = ui.interact(
+                            card_resp.response.rect,
+                            card_resp.response.id.with("whole_card_click"),
+                            egui::Sense::click(),
+                        );
+                        if whole_card_click.clicked() {
+                            selected = Some(s.name.clone());
+                        }
+                        if whole_card_click.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+
                         ui.add_space(5.0);
                     }
 
@@ -3970,7 +4062,12 @@ impl LauncherApp {
                         if let Some(host) = &host_opt {
                             self.trigger_remote_journal_fetch(host, &unit, user_mode);
                         } else {
-                            self.service_journal_logs = fetch_local_journal(&unit, user_mode, 100).unwrap_or_default();
+                            let pass_opt = if !user_mode && !self.local_sudo_password.is_empty() {
+                                Some(self.local_sudo_password.as_str())
+                            } else {
+                                None
+                            };
+                            self.service_journal_logs = fetch_local_journal(&unit, user_mode, 100, pass_opt).unwrap_or_default();
                         }
                         self.last_journal_refresh = Instant::now();
                     }
@@ -4123,15 +4220,54 @@ impl LauncherApp {
                                 if let Some(host) = &host_opt {
                                     self.trigger_remote_service_action(host, &s.name, act, user_mode);
                                 } else {
-                                    let res = control_local_service(&s.name, act, user_mode);
-                                    match res {
-                                        Ok(msg) => self.service_action_msg = Some(msg),
-                                        Err(e) => self.service_action_msg = Some(format!("Error: {}", e)),
+                                    if !user_mode && self.local_sudo_password.is_empty() {
+                                        self.sudo_popup.open = true;
+                                        self.sudo_popup.pending = Some(PendingSudoAction::ServiceAction {
+                                            unit: s.name.clone(),
+                                            action: act,
+                                            user_mode: false,
+                                        });
+                                        self.sudo_popup.password_input.clear();
+                                        self.sudo_popup.error = None;
+                                        self.sudo_popup.remember_password = true;
+                                        self.sudo_popup.just_opened = true;
+                                    } else {
+                                        let pass_opt = if !user_mode && !self.local_sudo_password.is_empty() {
+                                            Some(self.local_sudo_password.as_str())
+                                        } else {
+                                            None
+                                        };
+                                        let res = control_local_service(&s.name, act, user_mode, pass_opt);
+                                        match res {
+                                            Ok(msg) => self.service_action_msg = Some(msg),
+                                            Err(e) => {
+                                                if !user_mode && (e.contains("Sudo password needed") || e.contains("authentication") || e.contains("Incorrect sudo password")) {
+                                                    self.local_sudo_password.clear();
+                                                    self.sudo_popup.open = true;
+                                                    self.sudo_popup.pending = Some(PendingSudoAction::ServiceAction {
+                                                        unit: s.name.clone(),
+                                                        action: act,
+                                                        user_mode: false,
+                                                    });
+                                                    self.sudo_popup.password_input.clear();
+                                                    self.sudo_popup.error = Some(e);
+                                                    self.sudo_popup.remember_password = true;
+                                                    self.sudo_popup.just_opened = true;
+                                                } else {
+                                                    self.service_action_msg = Some(format!("Error: {}", e));
+                                                }
+                                            }
+                                        }
+                                        if let Ok(services) = list_local_services(user_mode) {
+                                            self.local_services = services;
+                                        }
+                                        let pass_for_journal = if !user_mode && !self.local_sudo_password.is_empty() {
+                                            Some(self.local_sudo_password.as_str())
+                                        } else {
+                                            None
+                                        };
+                                        self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100, pass_for_journal).unwrap_or_default();
                                     }
-                                    if let Ok(services) = list_local_services(user_mode) {
-                                        self.local_services = services;
-                                    }
-                                    self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100).unwrap_or_default();
                                 }
                             }
                         });
@@ -4170,7 +4306,12 @@ impl LauncherApp {
                                 if let Some(host) = &host_opt {
                                     self.trigger_remote_journal_fetch(host, &s.name, user_mode);
                                 } else {
-                                    self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100).unwrap_or_default();
+                                    let pass_for_journal = if !user_mode && !self.local_sudo_password.is_empty() {
+                                        Some(self.local_sudo_password.as_str())
+                                    } else {
+                                        None
+                                    };
+                                    self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100, pass_for_journal).unwrap_or_default();
                                 }
                                 self.last_journal_refresh = Instant::now();
                             }
@@ -4208,7 +4349,12 @@ impl LauncherApp {
                             if let Some(host) = &host_opt {
                                 self.trigger_remote_journal_fetch(host, &s.name, user_mode);
                             } else {
-                                self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100).unwrap_or_default();
+                                let pass_for_journal = if !user_mode && !self.local_sudo_password.is_empty() {
+                                    Some(self.local_sudo_password.as_str())
+                                } else {
+                                    None
+                                };
+                                self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100, pass_for_journal).unwrap_or_default();
                             }
                         }
                     }
@@ -4265,6 +4411,185 @@ impl LauncherApp {
                             .color(p.text_muted),
                     );
                 });
+            }
+        }
+    }
+
+    fn execute_pending_sudo_action(&mut self, action: PendingSudoAction, from_popup: bool) {
+        let pass = if from_popup {
+            self.sudo_popup.password_input.clone()
+        } else {
+            self.local_sudo_password.clone()
+        };
+
+        match action {
+            PendingSudoAction::ServiceAction { unit, action: act, user_mode } => {
+                let res = control_local_service(&unit, act, user_mode, Some(&pass));
+                match res {
+                    Ok(msg) => {
+                        if from_popup && self.sudo_popup.remember_password {
+                            self.local_sudo_password = pass;
+                        }
+                        self.sudo_popup.open = false;
+                        self.sudo_popup.pending = None;
+                        self.sudo_popup.password_input.clear();
+                        self.sudo_popup.error = None;
+                        self.service_action_msg = Some(msg);
+                        if let Ok(services) = list_local_services(user_mode) {
+                            self.local_services = services;
+                        }
+                        let pass_opt = if !self.local_sudo_password.is_empty() {
+                            Some(self.local_sudo_password.as_str())
+                        } else {
+                            None
+                        };
+                        self.service_journal_logs = fetch_local_journal(&unit, user_mode, 100, pass_opt).unwrap_or_default();
+                    }
+                    Err(e) => {
+                        self.local_sudo_password.clear();
+                        self.sudo_popup.open = true;
+                        self.sudo_popup.pending = Some(PendingSudoAction::ServiceAction { unit, action: act, user_mode });
+                        self.sudo_popup.error = Some(e);
+                        self.sudo_popup.just_opened = true;
+                    }
+                }
+            }
+            PendingSudoAction::CreateService { def } => {
+                let res = create_local_service(&def, Some(&pass));
+                match res {
+                    Ok(msg) => {
+                        if from_popup && self.sudo_popup.remember_password {
+                            self.local_sudo_password = pass;
+                        }
+                        self.sudo_popup.open = false;
+                        self.sudo_popup.pending = None;
+                        self.sudo_popup.password_input.clear();
+                        self.sudo_popup.error = None;
+                        self.service_action_msg = Some(msg);
+                        if let Ok(services) = list_local_services(def.is_user) {
+                            self.local_services = services;
+                        }
+                    }
+                    Err(e) => {
+                        self.local_sudo_password.clear();
+                        self.sudo_popup.open = true;
+                        self.sudo_popup.pending = Some(PendingSudoAction::CreateService { def });
+                        self.sudo_popup.error = Some(e);
+                        self.sudo_popup.just_opened = true;
+                    }
+                }
+            }
+        }
+    }
+
+    fn render_sudo_popup(&mut self, ctx: &Context, palette: &crate::theme::ThemePalette) {
+        if !self.sudo_popup.open {
+            return;
+        }
+
+        let mut is_open = self.sudo_popup.open;
+        let mut submit = false;
+        let mut cancel = false;
+
+        egui::Window::new(RichText::new("🔐 Administrator Authentication").size(14.0).strong().color(palette.text_primary))
+            .open(&mut is_open)
+            .collapsible(false)
+            .resizable(false)
+            .fixed_size([420.0, 220.0])
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.add_space(4.0);
+
+                if let Some(pending) = &self.sudo_popup.pending {
+                    match pending {
+                        PendingSudoAction::ServiceAction { unit, action, .. } => {
+                            let act_color = match *action {
+                                "start" => Color32::from_rgb(16, 185, 129),
+                                "stop" => palette.danger,
+                                _ => palette.accent,
+                            };
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new("Action:").size(12.0).color(palette.text_secondary));
+                                ui.label(RichText::new(action.to_uppercase()).size(12.0).strong().color(act_color));
+                                ui.label(RichText::new("on system service").size(12.0).color(palette.text_secondary));
+                                ui.label(RichText::new(unit).size(12.0).strong().color(palette.text_primary));
+                            });
+                        }
+                        PendingSudoAction::CreateService { def } => {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new("Create system service:").size(12.0).color(palette.text_secondary));
+                                ui.label(RichText::new(&def.name).size(12.0).strong().color(palette.text_primary));
+                            });
+                        }
+                    }
+                }
+
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("System-level services require root privileges (sudo). Enter password to proceed:")
+                        .size(11.0)
+                        .color(palette.text_muted),
+                );
+
+                ui.add_space(6.0);
+
+                if let Some(err) = &self.sudo_popup.error {
+                    Frame::none()
+                        .fill(palette.bg_subtle)
+                        .stroke(Stroke::new(1.0_f32, palette.danger))
+                        .rounding(Rounding::same(4.0))
+                        .inner_margin(egui::Margin::symmetric(8.0, 5.0))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(err).size(11.0).color(palette.danger));
+                        });
+                    ui.add_space(6.0);
+                }
+
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Password:").size(12.0).strong().color(palette.text_primary));
+                    let edit = egui::TextEdit::singleline(&mut self.sudo_popup.password_input)
+                        .password(true)
+                        .desired_width(260.0);
+                    let resp = ui.add(edit);
+                    if self.sudo_popup.just_opened {
+                        resp.request_focus();
+                        self.sudo_popup.just_opened = false;
+                    }
+                    if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        submit = true;
+                    }
+                });
+
+                ui.add_space(6.0);
+                ui.checkbox(&mut self.sudo_popup.remember_password, "Remember for this session");
+
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.add(
+                        egui::Button::new(RichText::new("Cancel").size(11.5).color(palette.text_secondary))
+                            .fill(palette.bg_button)
+                            .rounding(Rounding::same(4.0)),
+                    ).clicked() {
+                        cancel = true;
+                    }
+
+                    let btn_auth = egui::Button::new(RichText::new("✔ Authenticate").size(11.5).strong().color(Color32::WHITE))
+                        .fill(palette.accent)
+                        .rounding(Rounding::same(4.0));
+                    if ui.add(btn_auth).clicked() {
+                        submit = true;
+                    }
+                });
+            });
+
+        if cancel || !is_open {
+            self.sudo_popup.open = false;
+            self.sudo_popup.pending = None;
+            self.sudo_popup.error = None;
+            self.sudo_popup.password_input.clear();
+        } else if submit {
+            if let Some(pending) = self.sudo_popup.pending.clone() {
+                self.execute_pending_sudo_action(pending, true);
             }
         }
     }

@@ -52,6 +52,24 @@ Server Launcher comes out-of-the-box with 7 handcrafted color palettes:
 - **External Terminal Launcher**: One-click opening of desktop terminals (`gnome-terminal`, `alacritty`, `kitty`, `konsole`, `xterm`, `cmd.exe`, `powershell`) initialized in the server's working directory.
 - **Built-in Slash Commands**: Type `/start`, `/stop`, `/restart`, `/status`, `/clear`, or run custom action buttons from the interactive command bar.
 
+### ⚙️ SystemD Services Manager & Sudo Authentication
+- **Local & Remote SystemD Control**: Inspect all units across User (`--user`) and System scopes with live state badges (`Active`, `Inactive`, `Failed`).
+- **Interactive Lifecycle Actions**: Start, stop, restart, enable, disable, and reload daemon (`systemctl daemon-reload`) directly from the GUI.
+- **🔐 Secure Sudo Password Popup**: When controlling or creating local system-level services requiring root privileges, a password modal automatically prompts for authentication.
+- **Session Sudo Caching**: Optionally remember sudo credentials for the current session, with an inline badge `🔑 Sudo [✕]` to clear or forget them at any time.
+- **Built-in Unit Creator**: GUI modal to define, install, and immediately enable new systemd service units (`.service`) into user config or `/etc/systemd/system/`.
+- **Integrated Journalctl Log Stream**: View the last 100 journal log lines per unit with configurable auto-refresh rates (Off, 1s, 2s, 5s, 10s, 30s, 60s) and automatic root fallback.
+
+### 🌡️ Hardware Telemetry & Power Sensors
+- **Comprehensive Hardware Metrics**: Live monitoring of CPU frequency/speed, CPU package power, GPU utilization, GPU core clock, GPU power draw, and VRAM.
+- **Battery & Power Supply Analytics**: Real-time battery percentage, charging state, instantaneous power draw/discharge wattage, voltage, and battery health.
+- **Component Temperatures & Fans**: Categorized sensor breakdown for CPU cores, GPU dies, NVMe storage drives, motherboard thermal zones, and cooling fan RPMs.
+- **Remote Telemetry via SSH**: Fetch hardware sensor snapshots from remote servers with asynchronous, non-blocking polling.
+
+### 📜 Custom Scripts & ⚡ Saved Commands
+- **Script Runner**: Manage and trigger automation scripts with live execution output tracking across local and remote SSH machines.
+- **Quick Command Vault**: Store frequently used developer shell commands categorized by tags with one-click terminal execution.
+
 ### 🎨 Customization & Developer Experience
 - **Instant Click Responsiveness**: Fully responsive cards with context menu reordering (`▲ Move Up` / `▼ Move Down`) and zero drag-interception or missed clicks.
 - **Quick Launch Command Palette (`Ctrl+P`)**: Fuzzy-search commands, toggle servers, jump to tabs, or switch themes via keyboard.
@@ -75,6 +93,10 @@ Server_Launcher/
 │       ├── app.rs                 # Primary GUI layouts, panels, and viewports
 │       ├── theme.rs               # 7-palette theme engine & visuals
 │       ├── service.rs             # Subprocess lifecycle, log pipes & metrics
+│       ├── systemd.rs             # SystemD unit controller, journalctl & unit creation
+│       ├── sensors.rs             # Hardware sensors collector (CPU/GPU power, battery, temps)
+│       ├── scripts.rs             # Custom script manager & execution runner
+│       ├── commands.rs            # Saved command vault & integrated terminal sessions
 │       ├── scanner.rs             # Local port scanner & sysinfo monitor
 │       ├── remote.rs              # Remote SSH connector & port inspector
 │       ├── modals.rs              # Add/edit dialogs, SSH modal, Command Palette
@@ -247,8 +269,8 @@ All configurations are human-readable and automatically persisted to `servers.js
 | :--- | :--- |
 | `Ctrl + P` | Open Quick Launch Command Palette |
 | `Ctrl + F` | Search & filter console logs / server overview |
-| `Enter` | Submit command in interactive command bar or inline terminal |
-| `Escape` | Dismiss modals, command palette, or autocomplete suggestions |
+| `Enter` | Submit command in interactive command bar, terminal, or authentication modal |
+| `Escape` | Dismiss modals, sudo password prompt, command palette, or autocomplete suggestions |
 | `⠿ Drag` | Drag card up or down to reorder server list |
 | `/` | Trigger slash command autocomplete in server log views |
 

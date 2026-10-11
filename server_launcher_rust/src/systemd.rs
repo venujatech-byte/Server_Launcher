@@ -134,10 +134,13 @@ pub fn list_remote_services(host: &SshRemoteHost, user_mode: bool) -> Result<Vec
     }
 }
 
-pub fn control_local_service(unit: &str, action: &str, user_mode: bool) -> Result<String, String> {
+pub fn control_local_service(unit: &str, action: &str, user_mode: bool, sudo_password: Option<&str>) -> Result<String, String> {
     if user_mode {
         let mut cmd = Command::new("systemctl");
-        cmd.arg("--user").arg(action).arg(unit);
+        cmd.arg("--user").arg(action);
+        if action != "daemon-reload" && !unit.is_empty() {
+            cmd.arg(unit);
+        }
         match cmd.output() {
             Ok(out) => {
                 if out.status.success() {
@@ -151,31 +154,90 @@ pub fn control_local_service(unit: &str, action: &str, user_mode: bool) -> Resul
         }
     } else {
         // System-level services require root privileges.
-        // Try pkexec (GUI/polkit prompt) first if on graphical Linux desktop, or systemctl fallback
-        let out = Command::new("pkexec")
-            .arg("systemctl")
-            .arg(action)
-            .arg(unit)
-            .output();
+        let pass = sudo_password.unwrap_or("").trim();
+        if !pass.is_empty() {
+            let mut cmd = Command::new("sudo");
+            cmd.arg("-S").arg("-p").arg("").arg("systemctl").arg(action);
+            if action != "daemon-reload" && !unit.is_empty() {
+                cmd.arg(unit);
+            }
+            cmd.stdin(std::process::Stdio::piped())
+               .stdout(std::process::Stdio::piped())
+               .stderr(std::process::Stdio::piped());
 
-        match out {
-            Ok(o) if o.status.success() => Ok(format!("Successfully ran {} on {}", action, unit)),
-            _ => {
-                let mut cmd = Command::new("systemctl");
-                cmd.arg(action).arg(unit);
-                match cmd.output() {
-                    Ok(o) if o.status.success() => Ok(format!("Successfully ran {} on {}", action, unit)),
-                    Ok(o) => {
-                        let err = String::from_utf8_lossy(&o.stderr);
-                        let msg = err.trim().to_string();
-                        if msg.contains("Interactive authentication required") {
-                            Err(format!("{}. System-level units require root (sudo). Run via root terminal or configure polkit/sudoers.", msg))
-                        } else {
-                            Err(msg)
-                        }
+            match cmd.spawn() {
+                Ok(mut child) => {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        use std::io::Write;
+                        let _ = writeln!(stdin, "{}", pass);
                     }
-                    Err(e) => Err(format!("Failed to execute systemctl {}: {}", action, e)),
+                    match child.wait_with_output() {
+                        Ok(out) => {
+                            if out.status.success() {
+                                Ok(format!("Successfully ran {} on {}", action, unit))
+                            } else {
+                                let err = String::from_utf8_lossy(&out.stderr);
+                                let trimmed = err.trim();
+                                if trimmed.to_lowercase().contains("incorrect password")
+                                    || trimmed.to_lowercase().contains("authentication failure")
+                                    || trimmed.to_lowercase().contains("try again")
+                                {
+                                    Err("Incorrect sudo password. Please try again.".to_string())
+                                } else if !trimmed.is_empty() {
+                                    Err(trimmed.to_string())
+                                } else {
+                                    Err(format!("systemctl {} failed with exit code {}", action, out.status.code().unwrap_or(-1)))
+                                }
+                            }
+                        }
+                        Err(e) => Err(format!("Failed to wait for sudo: {}", e)),
+                    }
                 }
+                Err(e) => Err(format!("Failed to spawn sudo: {}", e)),
+            }
+        } else {
+            // Password not provided: try sudo -n first, then pkexec, then systemctl directly
+            let mut sudo_n = Command::new("sudo");
+            sudo_n.arg("-n").arg("systemctl").arg(action);
+            if action != "daemon-reload" && !unit.is_empty() {
+                sudo_n.arg(unit);
+            }
+            if let Ok(o) = sudo_n.output() {
+                if o.status.success() {
+                    return Ok(format!("Successfully ran {} on {}", action, unit));
+                }
+            }
+
+            let mut pk = Command::new("pkexec");
+            pk.arg("systemctl").arg(action);
+            if action != "daemon-reload" && !unit.is_empty() {
+                pk.arg(unit);
+            }
+            if let Ok(o) = pk.output() {
+                if o.status.success() {
+                    return Ok(format!("Successfully ran {} on {}", action, unit));
+                }
+            }
+
+            let mut plain = Command::new("systemctl");
+            plain.arg(action);
+            if action != "daemon-reload" && !unit.is_empty() {
+                plain.arg(unit);
+            }
+            match plain.output() {
+                Ok(o) if o.status.success() => Ok(format!("Successfully ran {} on {}", action, unit)),
+                Ok(o) => {
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    let msg = err.trim().to_string();
+                    if msg.contains("Interactive authentication required") {
+                        Err("Interactive authentication required. Sudo password needed.".to_string())
+                    } else if !msg.is_empty() {
+                        Err(msg)
+                    } else {
+                        Err("Sudo password needed.".to_string())
+                    }
+                }
+                Err(e) => Err(format!("Failed to execute systemctl {}: {}", action, e)),
             }
         }
     }
@@ -231,14 +293,49 @@ pub fn control_remote_service(host: &SshRemoteHost, unit: &str, action: &str, us
     }
 }
 
-pub fn fetch_local_journal(unit: &str, user_mode: bool, lines: usize) -> Result<String, String> {
+pub fn fetch_local_journal(unit: &str, user_mode: bool, lines: usize, sudo_password: Option<&str>) -> Result<String, String> {
     let mut cmd = Command::new("journalctl");
     if user_mode {
         cmd.arg("--user");
     }
     cmd.arg("-u").arg(unit).arg("-n").arg(lines.to_string()).arg("--no-pager");
 
-    match cmd.output() {
+    let normal_res = cmd.output();
+    let stdout_str = match &normal_res {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).to_string(),
+        _ => String::new(),
+    };
+
+    if !stdout_str.trim().is_empty() {
+        return Ok(stdout_str);
+    }
+
+    // If it's a system service and sudo_password is provided, try sudo journalctl
+    if !user_mode {
+        if let Some(pass) = sudo_password.map(|p| p.trim()).filter(|p| !p.is_empty()) {
+            let mut sudo_cmd = Command::new("sudo");
+            sudo_cmd.arg("-S").arg("-p").arg("").arg("journalctl").arg("-u").arg(unit).arg("-n").arg(lines.to_string()).arg("--no-pager");
+            sudo_cmd.stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped());
+            if let Ok(mut child) = sudo_cmd.spawn() {
+                if let Some(mut stdin) = child.stdin.take() {
+                    use std::io::Write;
+                    let _ = writeln!(stdin, "{}", pass);
+                }
+                if let Ok(out) = child.wait_with_output() {
+                    if out.status.success() {
+                        let out_str = String::from_utf8_lossy(&out.stdout).to_string();
+                        if !out_str.trim().is_empty() {
+                            return Ok(out_str);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    match normal_res {
         Ok(out) => Ok(String::from_utf8_lossy(&out.stdout).to_string()),
         Err(e) => Err(format!("journalctl error: {}", e)),
     }
@@ -352,7 +449,7 @@ impl NewServiceDefinition {
     }
 }
 
-pub fn create_local_service(def: &NewServiceDefinition) -> Result<String, String> {
+pub fn create_local_service(def: &NewServiceDefinition, sudo_password: Option<&str>) -> Result<String, String> {
     let service_content = def.generate_service_content();
     let unit_name = if def.name.ends_with(".service") {
         def.name.clone()
@@ -360,38 +457,89 @@ pub fn create_local_service(def: &NewServiceDefinition) -> Result<String, String
         format!("{}.service", def.name.trim())
     };
 
-    let target_dir: PathBuf = if def.is_user {
+    if def.is_user {
         let home = std::env::var("HOME").map_err(|_| "HOME directory not found".to_string())?;
-        PathBuf::from(home).join(".config").join("systemd").join("user")
+        let target_dir = PathBuf::from(home).join(".config").join("systemd").join("user");
+        fs::create_dir_all(&target_dir).map_err(|e| format!("Failed to create dir {:?}: {}", target_dir, e))?;
+        let target_file = target_dir.join(&unit_name);
+        fs::write(&target_file, &service_content).map_err(|e| format!("Failed to write service file {:?}: {}", target_file, e))?;
+
+        // daemon-reload
+        let mut reload_cmd = Command::new("systemctl");
+        reload_cmd.arg("--user").arg("daemon-reload");
+        let _ = reload_cmd.output();
+
+        // enable --now
+        let mut enable_cmd = Command::new("systemctl");
+        enable_cmd.arg("--user").arg("enable").arg("--now").arg(&unit_name);
+        let out = enable_cmd.output().map_err(|e| format!("Failed to enable unit: {}", e))?;
+
+        if out.status.success() {
+            Ok(format!("Created and started service {} at {:?}", unit_name, target_file))
+        } else {
+            let err = String::from_utf8_lossy(&out.stderr);
+            Ok(format!("Created service at {:?}. (Note: enable returned {})", target_file, err.trim()))
+        }
     } else {
-        PathBuf::from("/etc/systemd/system")
-    };
+        // System service requires root (sudo)
+        let pass = sudo_password.unwrap_or("").trim();
+        let temp_dir = std::env::temp_dir();
+        let temp_path = temp_dir.join(format!("sl_sys_{}_{}.service", unit_name, std::process::id()));
+        fs::write(&temp_path, &service_content).map_err(|e| format!("Failed to write temp service file {:?}: {}", temp_path, e))?;
 
-    fs::create_dir_all(&target_dir).map_err(|e| format!("Failed to create dir {:?}: {}", target_dir, e))?;
-    let target_file = target_dir.join(&unit_name);
-    fs::write(&target_file, service_content).map_err(|e| format!("Failed to write service file {:?}: {}", target_file, e))?;
+        let target_file = format!("/etc/systemd/system/{}", unit_name);
+        let temp_file_str = temp_path.to_string_lossy().to_string();
 
-    // daemon-reload
-    let mut reload_cmd = Command::new("systemctl");
-    if def.is_user {
-        reload_cmd.arg("--user");
-    }
-    reload_cmd.arg("daemon-reload");
-    let _ = reload_cmd.output();
+        let run_sudo = |sh_cmd: &str| -> Result<(), String> {
+            let mut cmd = Command::new("sudo");
+            if !pass.is_empty() {
+                cmd.arg("-S").arg("-p").arg("");
+            } else {
+                cmd.arg("-n");
+            }
+            cmd.arg("sh").arg("-c").arg(sh_cmd);
+            cmd.stdin(std::process::Stdio::piped())
+               .stdout(std::process::Stdio::piped())
+               .stderr(std::process::Stdio::piped());
 
-    // enable --now
-    let mut enable_cmd = Command::new("systemctl");
-    if def.is_user {
-        enable_cmd.arg("--user");
-    }
-    enable_cmd.arg("enable").arg("--now").arg(&unit_name);
-    let out = enable_cmd.output().map_err(|e| format!("Failed to enable unit: {}", e))?;
+            let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn sudo: {}", e))?;
+            if !pass.is_empty() {
+                if let Some(mut stdin) = child.stdin.take() {
+                    use std::io::Write;
+                    let _ = writeln!(stdin, "{}", pass);
+                }
+            }
+            let out = child.wait_with_output().map_err(|e| format!("Failed waiting for sudo: {}", e))?;
+            if out.status.success() {
+                Ok(())
+            } else {
+                let err = String::from_utf8_lossy(&out.stderr);
+                let trimmed = err.trim();
+                if trimmed.to_lowercase().contains("incorrect password")
+                    || trimmed.to_lowercase().contains("authentication failure")
+                    || trimmed.to_lowercase().contains("try again")
+                {
+                    Err("Incorrect sudo password. Please try again.".to_string())
+                } else if !trimmed.is_empty() {
+                    Err(trimmed.to_string())
+                } else {
+                    Err(format!("Sudo command failed with exit code {}", out.status.code().unwrap_or(-1)))
+                }
+            }
+        };
 
-    if out.status.success() {
-        Ok(format!("Created and started service {} at {:?}", unit_name, target_file))
-    } else {
-        let err = String::from_utf8_lossy(&out.stderr);
-        Ok(format!("Created service at {:?}. (Note: enable returned {})", target_file, err.trim()))
+        let copy_cmd = format!(
+            "cp '{}' '{}' && chmod 644 '{}' && systemctl daemon-reload && systemctl enable --now '{}'",
+            temp_file_str, target_file, target_file, unit_name
+        );
+
+        let res = run_sudo(&copy_cmd);
+        let _ = fs::remove_file(&temp_path);
+
+        match res {
+            Ok(()) => Ok(format!("Created and started system service {} at {}", unit_name, target_file)),
+            Err(e) => Err(e),
+        }
     }
 }
 

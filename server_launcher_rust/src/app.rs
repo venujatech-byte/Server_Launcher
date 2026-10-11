@@ -1,8 +1,18 @@
 use crate::config::{ConfigFile, CustomScript, SavedCommand, SshRemoteHost};
 use crate::modals::{
-    render_add_edit_modal, render_command_palette, render_ssh_host_modal,
-    render_close_confirmation_modal, CloseConfirmChoice,
-    AddEditModalState, CommandPaletteState, ModalAction, PaletteAction, SshHostModalState,
+    render_add_edit_modal, render_command_modal, render_command_palette,
+    render_close_confirmation_modal, render_new_service_modal, render_script_modal,
+    render_ssh_host_modal, AddEditModalState, CloseConfirmChoice, CommandPaletteState,
+    ModalAction, NewServiceModalState, PaletteAction, SshHostModalState,
+};
+use crate::scripts::{
+    execute_local_script, execute_remote_script, ScriptExecution, ScriptModalState, ScriptRunStatus,
+};
+use crate::commands::{CommandModalState, TerminalCommandStatus, TerminalSession};
+use crate::systemd::{
+    control_local_service, control_remote_service, create_local_service, create_remote_service,
+    fetch_local_journal, fetch_remote_journal, list_local_services, list_remote_services,
+    SystemdService,
 };
 use crate::remote::{
     build_ssh_command, fetch_remote_listeners, import_from_ssh_config,
@@ -137,6 +147,31 @@ pub struct LauncherApp {
     remote_search_query: HashMap<String, String>,
     // Close confirmation dialog state
     close_confirm_open: bool,
+
+    // Scripts State
+    pub script_executions: HashMap<String, ScriptExecution>,
+    pub script_modal: ScriptModalState,
+    pub selected_script_id: Option<String>,
+    pub script_search_query: String,
+
+    // Commands State
+    pub command_modal: CommandModalState,
+    pub local_terminal: TerminalSession,
+    pub remote_terminals: HashMap<String, TerminalSession>,
+    pub saved_command_search: String,
+    pub saved_command_category: String,
+
+    // SystemMD State
+    pub systemd_modal: NewServiceModalState,
+    pub local_services: Vec<SystemdService>,
+    pub local_services_user: bool,
+    pub local_services_loaded: bool,
+    pub remote_services: HashMap<String, Vec<SystemdService>>,
+    pub remote_services_user: HashMap<String, bool>,
+    pub selected_service: Option<String>,
+    pub service_journal_logs: String,
+    pub service_search_query: String,
+    pub service_action_msg: Option<String>,
 }
 
 pub struct ExternalTerminalSession {
@@ -247,6 +282,15 @@ impl LauncherApp {
             .map(ThemeMode::from_id_str)
             .unwrap_or_default();
 
+        let mut script_executions = HashMap::new();
+        for sc in &scripts {
+            if sc.autostart && sc.host_id.is_none() {
+                let mut exec = ScriptExecution::new(sc.id.clone());
+                execute_local_script(sc, &mut exec);
+                script_executions.insert(sc.id.clone(), exec);
+            }
+        }
+
         Self {
             active_sidebar_tab: SidebarTab::Servers,
             scripts,
@@ -294,6 +338,28 @@ impl LauncherApp {
             proc_info_cache: HashMap::new(),
             remote_search_query: HashMap::new(),
             close_confirm_open: false,
+
+            script_executions,
+            script_modal: ScriptModalState::default(),
+            selected_script_id: None,
+            script_search_query: String::new(),
+
+            command_modal: CommandModalState::default(),
+            local_terminal: TerminalSession::default(),
+            remote_terminals: HashMap::new(),
+            saved_command_search: String::new(),
+            saved_command_category: "All".to_string(),
+
+            systemd_modal: NewServiceModalState::default(),
+            local_services: Vec::new(),
+            local_services_user: true,
+            local_services_loaded: false,
+            remote_services: HashMap::new(),
+            remote_services_user: HashMap::new(),
+            selected_service: None,
+            service_journal_logs: String::new(),
+            service_search_query: String::new(),
+            service_action_msg: None,
         }
     }
 
@@ -1329,8 +1395,38 @@ impl LauncherApp {
                     });
                 });
 
+            ui.add_space(8.0);
+            self.render_sidebar_tabs_bar(ui);
             ui.add_space(10.0);
 
+            // Trigger autostart scripts for this SSH host if connected
+            if let Some(Ok(_)) = &status {
+                for sc in &self.scripts {
+                    if sc.autostart && sc.host_id.as_deref() == Some(&host.id) {
+                        if !self.script_executions.contains_key(&sc.id) {
+                            let mut exec = ScriptExecution::new(sc.id.clone());
+                            execute_remote_script(&host, sc, &mut exec);
+                            self.script_executions.insert(sc.id.clone(), exec);
+                        }
+                    }
+                }
+            }
+
+            match self.active_sidebar_tab {
+                SidebarTab::Servers => self.render_remote_servers_tab(ui, &host),
+                SidebarTab::Scripts => self.render_remote_scripts_tab(ui, &host),
+                SidebarTab::Commands => self.render_remote_commands_tab(ui, &host),
+                SidebarTab::SystemMD => self.render_remote_systemd_tab(ui, &host),
+            }
+        });
+    }
+
+    fn render_remote_servers_tab(&mut self, ui: &mut Ui, host: &SshRemoteHost) {
+        let is_scanning = {
+            let map = self.remote_scanning.lock().unwrap();
+            map.contains(&host.id)
+        };
+        ui.vertical(|ui| {
             // Two sections:
             // Top section: Remote Listening Processes & Ports
             // Bottom section: Interactive SSH Terminal
@@ -2126,6 +2222,55 @@ impl eframe::App for LauncherApp {
             _ => {}
         }
 
+        if let Some(script) = render_script_modal(ctx, &mut self.script_modal, &p) {
+            if let Some(existing) = self.scripts.iter_mut().find(|s| s.id == script.id) {
+                *existing = script.clone();
+            } else {
+                self.scripts.push(script.clone());
+            }
+            self.persist_config();
+        }
+
+        if let Some(cmd) = render_command_modal(ctx, &mut self.command_modal, &p) {
+            if let Some(existing) = self.saved_commands.iter_mut().find(|c| c.id == cmd.id) {
+                *existing = cmd.clone();
+            } else {
+                self.saved_commands.push(cmd.clone());
+            }
+            self.persist_config();
+        }
+
+        if let Some(service_def) = render_new_service_modal(ctx, &mut self.systemd_modal, &p) {
+            let is_remote = self.selected_machine != "local";
+            if is_remote {
+                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == self.selected_machine).cloned() {
+                    match create_remote_service(&host, &service_def) {
+                        Ok(msg) => {
+                            self.service_action_msg = Some(msg);
+                            if let Ok(services) = list_remote_services(&host, service_def.is_user) {
+                                self.remote_services.insert(host.id.clone(), services);
+                            }
+                        }
+                        Err(err) => {
+                            self.service_action_msg = Some(format!("Error: {}", err));
+                        }
+                    }
+                }
+            } else {
+                match create_local_service(&service_def) {
+                    Ok(msg) => {
+                        self.service_action_msg = Some(msg);
+                        if let Ok(services) = list_local_services(service_def.is_user) {
+                            self.local_services = services;
+                        }
+                    }
+                    Err(err) => {
+                        self.service_action_msg = Some(format!("Error: {}", err));
+                    }
+                }
+            }
+        }
+
         let is_scanning = self.scanner.is_scanning.lock().map(|s| *s).unwrap_or(false);
         if self.close_confirm_open {
             // Keep repainting while confirmation dialog is open
@@ -2210,9 +2355,1367 @@ impl LauncherApp {
     }
 
     // ═════════════════════════════════════════════════════════════════════════
+    // TOP NAVIGATION TABS BAR (Servers, Scripts, Commands, SystemMD)
+    // ═════════════════════════════════════════════════════════════════════════
+    fn render_sidebar_tabs_bar(&mut self, ui: &mut Ui) {
+        let p = self.theme.palette();
+        ui.horizontal(|ui| {
+            let tabs = [
+                (SidebarTab::Servers, SidebarTab::Servers.label()),
+                (SidebarTab::Scripts, SidebarTab::Scripts.label()),
+                (SidebarTab::Commands, SidebarTab::Commands.label()),
+                (SidebarTab::SystemMD, SidebarTab::SystemMD.label()),
+            ];
+
+            let avail_w = ui.available_width();
+            let btn_w = ((avail_w - 12.0) / 4.0).max(52.0);
+
+            for (tab, label) in tabs {
+                let is_active = self.active_sidebar_tab == tab;
+                let bg = if is_active {
+                    p.accent
+                } else {
+                    p.bg_button
+                };
+                let fg = if is_active {
+                    p.accent_text
+                } else {
+                    p.text_secondary
+                };
+                let stroke = if is_active {
+                    Stroke::new(1.0_f32, p.accent)
+                } else {
+                    Stroke::new(1.0_f32, p.border)
+                };
+
+                let btn = egui::Button::new(
+                    RichText::new(label)
+                        .size(11.0)
+                        .strong()
+                        .color(fg),
+                )
+                .fill(bg)
+                .stroke(stroke)
+                .rounding(Rounding::same(5.0))
+                .min_size(egui::vec2(btn_w, 26.0));
+
+                if ui.add(btn).clicked() {
+                    self.active_sidebar_tab = tab;
+                }
+            }
+        });
+    }
+
+    fn render_left_panel(&mut self, ui: &mut Ui) {
+        ui.vertical(|ui| {
+            // 0. Top 4 Navigation Tabs Bar
+            self.render_sidebar_tabs_bar(ui);
+            ui.add_space(8.0);
+
+            match self.active_sidebar_tab {
+                SidebarTab::Servers => self.render_servers_left_panel(ui),
+                SidebarTab::Scripts => self.render_scripts_left_panel(ui, None),
+                SidebarTab::Commands => self.render_commands_left_panel(ui, None),
+                SidebarTab::SystemMD => self.render_systemd_left_panel(ui, None),
+            }
+        });
+    }
+
+    fn render_right_panel(&mut self, ui: &mut Ui) {
+        match self.active_sidebar_tab {
+            SidebarTab::Servers => self.render_servers_right_panel(ui),
+            SidebarTab::Scripts => self.render_scripts_right_panel(ui, None),
+            SidebarTab::Commands => self.render_commands_right_panel(ui, None),
+            SidebarTab::SystemMD => self.render_systemd_right_panel(ui, None),
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // SCRIPTS TAB: Left Sidebar (List & Create) + Right Console Output
+    // ═════════════════════════════════════════════════════════════════════════
+    fn render_scripts_left_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
+        let p = self.theme.palette();
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("CUSTOM SCRIPTS").size(12.0).strong().color(p.text_muted));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let btn_new = egui::Button::new(
+                        RichText::new("+ New Script").size(11.0).strong().color(Color32::WHITE),
+                    )
+                    .fill(p.accent)
+                    .rounding(Rounding::same(4.0));
+                    if ui.add(btn_new).clicked() {
+                        self.script_modal.open_create(host_id.map(|s| s.to_string()));
+                    }
+                });
+            });
+
+            ui.add_space(6.0);
+
+            // Search filter
+            ui.add(
+                egui::TextEdit::singleline(&mut self.script_search_query)
+                    .hint_text("🔍 Filter scripts...")
+                    .desired_width(ui.available_width()),
+            );
+
+            ui.add_space(8.0);
+
+            let q = self.script_search_query.trim().to_lowercase();
+            let machine_scripts: Vec<CustomScript> = self
+                .scripts
+                .iter()
+                .filter(|s| {
+                    s.host_id.as_deref() == host_id
+                        && (q.is_empty() || s.name.to_lowercase().contains(&q) || s.script.to_lowercase().contains(&q))
+                })
+                .cloned()
+                .collect();
+
+            if machine_scripts.is_empty() {
+                ui.add_space(20.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(RichText::new("No scripts found").size(12.0).color(p.text_muted));
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Click '+ New Script' to create one.").size(11.0).color(p.text_muted));
+                });
+                return;
+            }
+
+            ScrollArea::vertical()
+                .id_salt("scripts_left_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let mut to_run = None;
+                    let mut to_stop = None;
+                    let mut to_edit = None;
+                    let mut to_delete = None;
+
+                    for s in &machine_scripts {
+                        let is_selected = self.selected_script_id.as_deref() == Some(&s.id);
+                        let is_running = self
+                            .script_executions
+                            .get(&s.id)
+                            .and_then(|e| e.status.lock().ok())
+                            .map(|st| matches!(*st, ScriptRunStatus::Running))
+                            .unwrap_or(false);
+
+                        let card_border = if is_selected {
+                            Stroke::new(1.5_f32, p.accent)
+                        } else {
+                            Stroke::new(1.0_f32, p.border)
+                        };
+
+                        Frame::none()
+                            .fill(if is_selected { p.bg_card } else { p.bg_sidebar })
+                            .stroke(card_border)
+                            .rounding(Rounding::same(6.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    let status_text = if is_running {
+                                        RichText::new("●").size(12.0).color(Color32::from_rgb(16, 185, 129))
+                                    } else {
+                                        RichText::new("○").size(12.0).color(p.text_muted)
+                                    };
+                                    ui.label(status_text);
+
+                                    let title = RichText::new(&s.name).size(12.5).strong().color(p.text_primary);
+                                    if ui.selectable_label(is_selected, title).clicked() {
+                                        self.selected_script_id = Some(s.id.clone());
+                                    }
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(
+                                            RichText::new(format!("[{}]", s.shell))
+                                                .size(10.5)
+                                                .color(p.text_muted),
+                                        );
+                                    });
+                                });
+
+                                if s.autostart || !s.cwd.is_empty() {
+                                    ui.add_space(2.0);
+                                    ui.horizontal(|ui| {
+                                        if s.autostart {
+                                            ui.label(
+                                                RichText::new("⚡ Startup")
+                                                    .size(10.0)
+                                                    .color(Color32::from_rgb(250, 204, 21)),
+                                            );
+                                        }
+                                        if !s.cwd.is_empty() {
+                                            ui.label(
+                                                RichText::new(format!("cwd: {}", s.cwd))
+                                                    .size(10.0)
+                                                    .color(p.text_muted),
+                                            );
+                                        }
+                                    });
+                                }
+
+                                ui.add_space(4.0);
+
+                                ui.horizontal(|ui| {
+                                    if is_running {
+                                        let btn_stop = egui::Button::new(
+                                            RichText::new("⏹ Stop").size(10.5).color(Color32::WHITE),
+                                        )
+                                        .fill(p.danger)
+                                        .rounding(Rounding::same(4.0));
+                                        if ui.add(btn_stop).clicked() {
+                                            to_stop = Some(s.id.clone());
+                                        }
+                                    } else {
+                                        let btn_run = egui::Button::new(
+                                            RichText::new("▶ Run").size(10.5).color(Color32::WHITE),
+                                        )
+                                        .fill(Color32::from_rgb(16, 185, 129))
+                                        .rounding(Rounding::same(4.0));
+                                        if ui.add(btn_run).clicked() {
+                                            to_run = Some(s.clone());
+                                        }
+                                    }
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let btn_del = egui::Button::new(
+                                            RichText::new("🗑").size(10.5).color(p.text_muted),
+                                        )
+                                        .fill(Color32::TRANSPARENT);
+                                        if ui.add(btn_del).on_hover_text("Delete Script").clicked() {
+                                            to_delete = Some(s.id.clone());
+                                        }
+
+                                        let btn_edit = egui::Button::new(
+                                            RichText::new("✏").size(10.5).color(p.text_muted),
+                                        )
+                                        .fill(Color32::TRANSPARENT);
+                                        if ui.add(btn_edit).on_hover_text("Edit Script").clicked() {
+                                            to_edit = Some(s.clone());
+                                        }
+                                    });
+                                });
+                            });
+
+                        ui.add_space(6.0);
+                    }
+
+                    if let Some(s) = to_run {
+                        self.selected_script_id = Some(s.id.clone());
+                        let mut exec = self
+                            .script_executions
+                            .remove(&s.id)
+                            .unwrap_or_else(|| ScriptExecution::new(s.id.clone()));
+
+                        if let Some(hid) = host_id {
+                            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                execute_remote_script(&host, &s, &mut exec);
+                            }
+                        } else {
+                            execute_local_script(&s, &mut exec);
+                        }
+                        self.script_executions.insert(s.id.clone(), exec);
+                    }
+
+                    if let Some(id) = to_stop {
+                        if let Some(exec) = self.script_executions.get_mut(&id) {
+                            exec.stop();
+                        }
+                    }
+
+                    if let Some(s) = to_edit {
+                        self.script_modal.open_edit(&s);
+                    }
+
+                    if let Some(id) = to_delete {
+                        self.scripts.retain(|s| s.id != id);
+                        self.script_executions.remove(&id);
+                        if self.selected_script_id.as_deref() == Some(&id) {
+                            self.selected_script_id = None;
+                        }
+                        self.persist_config();
+                    }
+                });
+        });
+    }
+
+    fn render_scripts_right_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
+        let p = self.theme.palette();
+        let selected_id = self.selected_script_id.clone().or_else(|| {
+            self.scripts
+                .iter()
+                .find(|s| s.host_id.as_deref() == host_id)
+                .map(|s| s.id.clone())
+        });
+
+        let script = selected_id.as_ref().and_then(|id| {
+            self.scripts.iter().find(|s| &s.id == id).cloned()
+        });
+
+        match script {
+            Some(s) => {
+                let is_running = self
+                    .script_executions
+                    .get(&s.id)
+                    .and_then(|e| e.status.lock().ok())
+                    .map(|st| matches!(*st, ScriptRunStatus::Running))
+                    .unwrap_or(false);
+
+                ui.vertical(|ui| {
+                    // Header Bar
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .stroke(Stroke::new(1.0_f32, p.border))
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("📜").size(20.0));
+                                ui.vertical(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(&s.name).size(15.0).strong().color(p.text_primary));
+                                        ui.label(
+                                            RichText::new(format!("({})", s.shell))
+                                                .size(11.0)
+                                                .color(p.text_muted),
+                                        );
+                                        if s.autostart {
+                                            ui.label(
+                                                RichText::new("⚡ Runs at Startup")
+                                                    .size(10.5)
+                                                    .color(Color32::from_rgb(250, 204, 21)),
+                                            );
+                                        }
+                                    });
+                                    if !s.cwd.is_empty() {
+                                        ui.label(
+                                            RichText::new(format!("CWD: {}", s.cwd))
+                                                .size(10.5)
+                                                .color(p.text_muted),
+                                        );
+                                    }
+                                });
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let btn_edit = egui::Button::new(RichText::new("✏ Edit").size(11.0).color(p.text_secondary))
+                                        .fill(p.bg_button);
+                                    if ui.add(btn_edit).clicked() {
+                                        self.script_modal.open_edit(&s);
+                                    }
+
+                                    let btn_clear = egui::Button::new(RichText::new("🧹 Clear Logs").size(11.0).color(p.text_secondary))
+                                        .fill(p.bg_button);
+                                    if ui.add(btn_clear).clicked() {
+                                        if let Some(exec) = self.script_executions.get_mut(&s.id) {
+                                            if let Ok(mut l) = exec.logs.lock() {
+                                                l.clear();
+                                            }
+                                        }
+                                    }
+
+                                    if is_running {
+                                        let btn_stop = egui::Button::new(
+                                            RichText::new("⏹ Stop Script").size(11.5).strong().color(Color32::WHITE),
+                                        )
+                                        .fill(p.danger)
+                                        .rounding(Rounding::same(4.0));
+                                        if ui.add(btn_stop).clicked() {
+                                            if let Some(exec) = self.script_executions.get_mut(&s.id) {
+                                                exec.stop();
+                                            }
+                                        }
+                                    } else {
+                                        let btn_run = egui::Button::new(
+                                            RichText::new("▶ Run Script").size(11.5).strong().color(Color32::WHITE),
+                                        )
+                                        .fill(Color32::from_rgb(16, 185, 129))
+                                        .rounding(Rounding::same(4.0));
+                                        if ui.add(btn_run).clicked() {
+                                            let mut exec = self
+                                                .script_executions
+                                                .remove(&s.id)
+                                                .unwrap_or_else(|| ScriptExecution::new(s.id.clone()));
+
+                                            if let Some(hid) = host_id {
+                                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                                    execute_remote_script(&host, &s, &mut exec);
+                                                }
+                                            } else {
+                                                execute_local_script(&s, &mut exec);
+                                            }
+                                            self.script_executions.insert(s.id.clone(), exec);
+                                        }
+                                    }
+                                });
+                            });
+                        });
+
+                    ui.add_space(8.0);
+
+                    // Console Output Area
+                    let logs = self
+                        .script_executions
+                        .get(&s.id)
+                        .map(|e| e.logs.clone());
+
+                    Frame::none()
+                        .fill(Color32::from_rgb(12, 14, 20))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(32, 36, 48)))
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                        .show(ui, |ui| {
+                            ScrollArea::vertical()
+                                .id_salt("script_console_scroll")
+                                .stick_to_bottom(true)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    if let Some(logs_arc) = logs {
+                                        if let Ok(l) = logs_arc.lock() {
+                                            if l.is_empty() {
+                                                ui.label(
+                                                    RichText::new("Script ready. Click '▶ Run Script' to execute.")
+                                                        .size(11.5)
+                                                        .color(Color32::from_rgb(100, 110, 130)),
+                                                );
+                                            } else {
+                                                for entry in l.iter() {
+                                                    let color = match entry.kind {
+                                                        LogKind::Launcher => Color32::from_rgb(96, 165, 250),
+                                                        LogKind::Stdout => Color32::from_rgb(220, 225, 235),
+                                                        LogKind::Stderr | LogKind::Error => Color32::from_rgb(248, 113, 113),
+                                                        LogKind::Warning => Color32::from_rgb(250, 204, 21),
+                                                        LogKind::Stdin => Color32::from_rgb(52, 211, 153),
+                                                    };
+                                                    ui.horizontal(|ui| {
+                                                        ui.label(
+                                                            RichText::new(&entry.timestamp)
+                                                                .size(10.5)
+                                                                .color(Color32::from_rgb(90, 100, 120))
+                                                                .monospace(),
+                                                        );
+                                                        ui.label(
+                                                            RichText::new(&entry.text)
+                                                                .size(11.5)
+                                                                .color(color)
+                                                                .monospace(),
+                                                        );
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        ui.label(
+                                            RichText::new("Script ready. Click '▶ Run Script' to execute.")
+                                                .size(11.5)
+                                                .color(Color32::from_rgb(100, 110, 130)),
+                                        );
+                                    }
+                                });
+                        });
+                });
+            }
+            None => {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(40.0);
+                    ui.label(RichText::new("📜 Custom Scripts").size(16.0).strong().color(p.text_primary));
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new("Select a script from the left or click '+ New Script' to create one.\nScripts can execute any command or interpreter and can run automatically on launch.")
+                            .size(12.0)
+                            .color(p.text_muted),
+                    );
+                });
+            }
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // COMMANDS TAB: Saved Snippets Library & Interactive Terminal
+    // ═════════════════════════════════════════════════════════════════════════
+    fn render_commands_left_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
+        let p = self.theme.palette();
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("SAVED COMMANDS").size(12.0).strong().color(p.text_muted));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let btn_new = egui::Button::new(
+                        RichText::new("+ Save Command").size(11.0).strong().color(Color32::WHITE),
+                    )
+                    .fill(p.accent)
+                    .rounding(Rounding::same(4.0));
+                    if ui.add(btn_new).clicked() {
+                        self.command_modal.open_create(host_id.map(|s| s.to_string()));
+                    }
+                });
+            });
+
+            ui.add_space(6.0);
+
+            // Category Filter Pills
+            let mut categories = vec!["All".to_string()];
+            let mut unique_cats = BTreeSet::new();
+            for c in &self.saved_commands {
+                if c.host_id.as_deref() == host_id {
+                    unique_cats.insert(c.category.clone());
+                }
+            }
+            categories.extend(unique_cats);
+
+            ui.horizontal_wrapped(|ui| {
+                for cat in categories {
+                    let is_active = self.saved_command_category == cat;
+                    let bg = if is_active { p.accent } else { p.bg_button };
+                    let fg = if is_active { p.accent_text } else { p.text_secondary };
+                    let btn = egui::Button::new(RichText::new(&cat).size(10.5).color(fg))
+                        .fill(bg)
+                        .rounding(Rounding::same(4.0));
+                    if ui.add(btn).clicked() {
+                        self.saved_command_category = cat;
+                    }
+                }
+            });
+
+            ui.add_space(6.0);
+
+            // Search filter
+            ui.add(
+                egui::TextEdit::singleline(&mut self.saved_command_search)
+                    .hint_text("🔍 Filter commands...")
+                    .desired_width(ui.available_width()),
+            );
+
+            ui.add_space(8.0);
+
+            let q = self.saved_command_search.trim().to_lowercase();
+            let cat_filter = &self.saved_command_category;
+            let commands: Vec<SavedCommand> = self
+                .saved_commands
+                .iter()
+                .filter(|c| {
+                    c.host_id.as_deref() == host_id
+                        && (cat_filter == "All" || &c.category == cat_filter)
+                        && (q.is_empty()
+                            || c.name.to_lowercase().contains(&q)
+                            || c.command.to_lowercase().contains(&q)
+                            || c.description.to_lowercase().contains(&q))
+                })
+                .cloned()
+                .collect();
+
+            if commands.is_empty() {
+                ui.add_space(20.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(RichText::new("No saved commands found").size(12.0).color(p.text_muted));
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Click '+ Save Command' to add snippets.").size(11.0).color(p.text_muted));
+                });
+                return;
+            }
+
+            ScrollArea::vertical()
+                .id_salt("saved_commands_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let mut to_run_cmd = None;
+                    let mut to_edit = None;
+                    let mut to_delete = None;
+
+                    for c in &commands {
+                        Frame::none()
+                            .fill(p.bg_sidebar)
+                            .stroke(Stroke::new(1.0_f32, p.border))
+                            .rounding(Rounding::same(6.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(&c.name).size(12.5).strong().color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(
+                                            RichText::new(format!("[{}]", c.category))
+                                                .size(10.5)
+                                                .color(p.text_muted),
+                                        );
+                                    });
+                                });
+
+                                ui.add_space(2.0);
+                                ui.label(
+                                    RichText::new(&c.command)
+                                        .size(11.0)
+                                        .monospace()
+                                        .color(Color32::from_rgb(165, 180, 252)),
+                                );
+
+                                if !c.description.is_empty() {
+                                    ui.add_space(2.0);
+                                    ui.label(
+                                        RichText::new(&c.description)
+                                            .size(10.5)
+                                            .color(p.text_muted),
+                                    );
+                                }
+
+                                ui.add_space(4.0);
+
+                                ui.horizontal(|ui| {
+                                    let btn_run = egui::Button::new(
+                                        RichText::new("▶ Run").size(10.5).color(Color32::WHITE),
+                                    )
+                                    .fill(Color32::from_rgb(16, 185, 129))
+                                    .rounding(Rounding::same(4.0));
+                                    if ui.add(btn_run).on_hover_text("Execute this command in terminal").clicked() {
+                                        to_run_cmd = Some(c.command.clone());
+                                    }
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let btn_del = egui::Button::new(RichText::new("🗑").size(10.5).color(p.text_muted))
+                                            .fill(Color32::TRANSPARENT);
+                                        if ui.add(btn_del).on_hover_text("Delete Command").clicked() {
+                                            to_delete = Some(c.id.clone());
+                                        }
+
+                                        let btn_edit = egui::Button::new(RichText::new("✏").size(10.5).color(p.text_muted))
+                                            .fill(Color32::TRANSPARENT);
+                                        if ui.add(btn_edit).on_hover_text("Edit Command").clicked() {
+                                            to_edit = Some(c.clone());
+                                        }
+
+                                        let btn_copy = egui::Button::new(RichText::new("📋").size(10.5).color(p.text_muted))
+                                            .fill(Color32::TRANSPARENT);
+                                        if ui.add(btn_copy).on_hover_text("Copy to Clipboard").clicked() {
+                                            ui.output_mut(|o| o.copied_text = c.command.clone());
+                                        }
+                                    });
+                                });
+                            });
+
+                        ui.add_space(6.0);
+                    }
+
+                    if let Some(cmd_str) = to_run_cmd {
+                        if let Some(hid) = host_id {
+                            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                let term = self.remote_terminals.entry(hid.to_string()).or_default();
+                                term.execute_remote(&host, &cmd_str);
+                            }
+                        } else {
+                            self.local_terminal.execute_local(&cmd_str, "");
+                        }
+                    }
+
+                    if let Some(c) = to_edit {
+                        self.command_modal.open_edit(&c);
+                    }
+
+                    if let Some(id) = to_delete {
+                        self.saved_commands.retain(|c| c.id != id);
+                        self.persist_config();
+                    }
+                });
+        });
+    }
+
+    fn render_commands_right_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
+        let p = self.theme.palette();
+        let host_opt = host_id.and_then(|hid| self.ssh_hosts.iter().find(|h| h.id == hid).cloned());
+
+        let (title, is_running, status_text) = if let Some(h) = &host_opt {
+            let term = self.remote_terminals.entry(h.id.clone()).or_default();
+            let is_run = term.status.lock().ok().map(|st| matches!(*st, TerminalCommandStatus::Running(_))).unwrap_or(false);
+            let stat_msg = term.status.lock().ok().map(|st| match &*st {
+                TerminalCommandStatus::Idle => "Idle".to_string(),
+                TerminalCommandStatus::Running(c) => format!("Running: {}", c),
+                TerminalCommandStatus::Success(code) => format!("Exit code {}", code),
+                TerminalCommandStatus::Failed(err) => format!("Failed: {}", err),
+            }).unwrap_or_default();
+            (format!("🌐 Remote SSH Terminal ({}@{}:{})", h.user, h.host, h.port), is_run, stat_msg)
+        } else {
+            let is_run = self.local_terminal.status.lock().ok().map(|st| matches!(*st, TerminalCommandStatus::Running(_))).unwrap_or(false);
+            let stat_msg = self.local_terminal.status.lock().ok().map(|st| match &*st {
+                TerminalCommandStatus::Idle => "Idle".to_string(),
+                TerminalCommandStatus::Running(c) => format!("Running: {}", c),
+                TerminalCommandStatus::Success(code) => format!("Exit code {}", code),
+                TerminalCommandStatus::Failed(err) => format!("Failed: {}", err),
+            }).unwrap_or_default();
+            ("💻 Local Interactive Terminal (bash)".to_string(), is_run, stat_msg)
+        };
+
+        ui.vertical(|ui| {
+            // Header Bar
+            Frame::none()
+                .fill(p.bg_card)
+                .stroke(Stroke::new(1.0_f32, p.border))
+                .rounding(Rounding::same(6.0))
+                .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("⚡").size(20.0));
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(&title).size(14.0).strong().color(p.text_primary));
+                            ui.label(
+                                RichText::new(&status_text)
+                                    .size(11.0)
+                                    .color(if is_running { Color32::from_rgb(16, 185, 129) } else { p.text_muted }),
+                            );
+                        });
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let btn_clear = egui::Button::new(RichText::new("🧹 Clear").size(11.0).color(p.text_secondary))
+                                .fill(p.bg_button);
+                            if ui.add(btn_clear).clicked() {
+                                if let Some(h) = &host_opt {
+                                    self.remote_terminals.entry(h.id.clone()).or_default().clear();
+                                } else {
+                                    self.local_terminal.clear();
+                                }
+                            }
+
+                            if is_running {
+                                let btn_stop = egui::Button::new(
+                                    RichText::new("⏹ Interrupt (SIGINT)").size(11.0).strong().color(Color32::WHITE),
+                                )
+                                .fill(p.danger)
+                                .rounding(Rounding::same(4.0));
+                                if ui.add(btn_stop).clicked() {
+                                    if let Some(h) = &host_opt {
+                                        self.remote_terminals.entry(h.id.clone()).or_default().interrupt();
+                                    } else {
+                                        self.local_terminal.interrupt();
+                                    }
+                                }
+                            }
+                        });
+                    });
+                });
+
+            ui.add_space(8.0);
+
+            // Log Console Output Area
+            let logs_clone = if let Some(h) = &host_opt {
+                self.remote_terminals.entry(h.id.clone()).or_default().logs.clone()
+            } else {
+                self.local_terminal.logs.clone()
+            };
+
+            let term_h = (ui.available_height() - 48.0).max(180.0);
+            Frame::none()
+                .fill(Color32::from_rgb(12, 14, 20))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(32, 36, 48)))
+                .rounding(Rounding::same(6.0))
+                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                .show(ui, |ui| {
+                    ui.set_height(term_h);
+                    ScrollArea::vertical()
+                        .id_salt("cmd_terminal_scroll")
+                        .stick_to_bottom(true)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            if let Ok(l) = logs_clone.lock() {
+                                if l.is_empty() {
+                                    ui.label(
+                                        RichText::new("Terminal ready. Type a command below or click '▶ Run' on any saved command.")
+                                            .size(11.5)
+                                            .color(Color32::from_rgb(100, 110, 130)),
+                                    );
+                                } else {
+                                    for entry in l.iter() {
+                                        let color = match entry.kind {
+                                            LogKind::Stdin => Color32::from_rgb(52, 211, 153),
+                                            LogKind::Launcher => Color32::from_rgb(96, 165, 250),
+                                            LogKind::Stdout => Color32::from_rgb(220, 225, 235),
+                                            LogKind::Stderr | LogKind::Error => Color32::from_rgb(248, 113, 113),
+                                            LogKind::Warning => Color32::from_rgb(250, 204, 21),
+                                        };
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                RichText::new(&entry.timestamp)
+                                                    .size(10.5)
+                                                    .color(Color32::from_rgb(90, 100, 120))
+                                                    .monospace(),
+                                            );
+                                            ui.label(
+                                                RichText::new(&entry.text)
+                                                    .size(11.5)
+                                                    .color(color)
+                                                    .monospace(),
+                                            );
+                                        });
+                                    }
+                                }
+                            }
+                        });
+                });
+
+            ui.add_space(8.0);
+
+            // Interactive Prompt Input Box
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("$ ").size(14.0).strong().color(p.accent));
+
+                let mut to_execute = None;
+                let term: &mut TerminalSession = if let Some(h) = &host_opt {
+                    self.remote_terminals.entry(h.id.clone()).or_default()
+                } else {
+                    &mut self.local_terminal
+                };
+
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut term.input_text)
+                        .hint_text("Enter command and press Enter...")
+                        .desired_width(ui.available_width() - 85.0),
+                );
+
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                    to_execute = Some(term.input_text.clone());
+                }
+
+                // Up / Down arrow history
+                if resp.has_focus() {
+                    if ui.input(|i| i.key_pressed(Key::ArrowUp)) {
+                        if !term.history.is_empty() {
+                            let next_idx = match term.history_idx {
+                                None => term.history.len().saturating_sub(1),
+                                Some(i) => i.saturating_sub(1),
+                            };
+
+                            if let Some(cmd) = term.history.get(next_idx).cloned() {
+                                term.input_text = cmd;
+                                term.history_idx = Some(next_idx);
+                            }
+                        }
+                    } else if ui.input(|i| i.key_pressed(Key::ArrowDown)) {
+                        if let Some(i) = term.history_idx {
+                            if i + 1 < term.history.len() {
+                                let next_idx = i + 1;
+                                if let Some(cmd) = term.history.get(next_idx).cloned() {
+                                    term.input_text = cmd;
+                                    term.history_idx = Some(next_idx);
+                                }
+                            } else {
+                                term.input_text.clear();
+                                term.history_idx = None;
+                            }
+                        }
+                    }
+                }
+
+                let btn_run = egui::Button::new(
+                    RichText::new("▶ Run").size(11.5).strong().color(Color32::WHITE),
+                )
+                .fill(p.accent)
+                .rounding(Rounding::same(4.0))
+                .min_size(egui::vec2(60.0, 24.0));
+
+                if ui.add(btn_run).clicked() {
+                    to_execute = Some(term.input_text.clone());
+                }
+
+                if let Some(cmd) = to_execute {
+                    if let Some(h) = &host_opt {
+                        term.execute_remote(h, &cmd);
+                    } else {
+                        term.execute_local(&cmd, "");
+                    }
+                }
+            });
+        });
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // SYSTEMD TAB: Services List, Controller, and Journalctl Viewer
+    // ═════════════════════════════════════════════════════════════════════════
+    fn render_systemd_left_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
+        let p = self.theme.palette();
+        let user_mode = if let Some(hid) = host_id {
+            *self.remote_services_user.entry(hid.to_string()).or_insert(true)
+        } else {
+            self.local_services_user
+        };
+
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("SYSTEMD SERVICES").size(12.0).strong().color(p.text_muted));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let btn_new = egui::Button::new(
+                        RichText::new("+ New Service").size(11.0).strong().color(Color32::WHITE),
+                    )
+                    .fill(p.accent)
+                    .rounding(Rounding::same(4.0));
+                    if ui.add(btn_new).clicked() {
+                        self.systemd_modal.open();
+                    }
+                });
+            });
+
+            ui.add_space(6.0);
+
+            // Scope & Refresh Row
+            ui.horizontal(|ui| {
+                let user_btn = egui::Button::new(
+                    RichText::new("User (--user)")
+                        .size(10.5)
+                        .color(if user_mode { p.accent_text } else { p.text_secondary }),
+                )
+                .fill(if user_mode { p.accent } else { p.bg_button })
+                .rounding(Rounding::same(4.0));
+                if ui.add(user_btn).clicked() {
+                    if let Some(hid) = host_id {
+                        self.remote_services_user.insert(hid.to_string(), true);
+                        if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                            if let Ok(s) = list_remote_services(&host, true) {
+                                self.remote_services.insert(hid.to_string(), s);
+                            }
+                        }
+                    } else {
+                        self.local_services_user = true;
+                        if let Ok(s) = list_local_services(true) {
+                            self.local_services = s;
+                        }
+                    }
+                }
+
+                let sys_btn = egui::Button::new(
+                    RichText::new("System")
+                        .size(10.5)
+                        .color(if !user_mode { p.accent_text } else { p.text_secondary }),
+                )
+                .fill(if !user_mode { p.accent } else { p.bg_button })
+                .rounding(Rounding::same(4.0));
+                if ui.add(sys_btn).clicked() {
+                    if let Some(hid) = host_id {
+                        self.remote_services_user.insert(hid.to_string(), false);
+                        if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                            if let Ok(s) = list_remote_services(&host, false) {
+                                self.remote_services.insert(hid.to_string(), s);
+                            }
+                        }
+                    } else {
+                        self.local_services_user = false;
+                        if let Ok(s) = list_local_services(false) {
+                            self.local_services = s;
+                        }
+                    }
+                }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let btn_ref = egui::Button::new(RichText::new("🔄").size(11.0).color(p.text_secondary))
+                        .fill(p.bg_button);
+                    if ui.add(btn_ref).on_hover_text("Refresh systemd services list").clicked() {
+                        if let Some(hid) = host_id {
+                            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                if let Ok(s) = list_remote_services(&host, user_mode) {
+                                    self.remote_services.insert(hid.to_string(), s);
+                                }
+                            }
+                        } else {
+                            if let Ok(s) = list_local_services(user_mode) {
+                                self.local_services = s;
+                            }
+                        }
+                    }
+                });
+            });
+
+            ui.add_space(6.0);
+
+            // Auto-load services on first open
+            if host_id.is_none() && !self.local_services_loaded {
+                self.local_services_loaded = true;
+                if let Ok(s) = list_local_services(self.local_services_user) {
+                    self.local_services = s;
+                }
+            } else if let Some(hid) = host_id {
+                if !self.remote_services.contains_key(hid) {
+                    if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                        if let Ok(s) = list_remote_services(&host, user_mode) {
+                            self.remote_services.insert(hid.to_string(), s);
+                        }
+                    }
+                }
+            }
+
+            // Search filter
+            ui.add(
+                egui::TextEdit::singleline(&mut self.service_search_query)
+                    .hint_text("🔍 Filter services...")
+                    .desired_width(ui.available_width()),
+            );
+
+            ui.add_space(8.0);
+
+            let q = self.service_search_query.trim().to_lowercase();
+            let services_list: Vec<SystemdService> = if let Some(hid) = host_id {
+                self.remote_services.get(hid).cloned().unwrap_or_default()
+            } else {
+                self.local_services.clone()
+            };
+
+            let filtered_services: Vec<SystemdService> = services_list
+                .into_iter()
+                .filter(|s| {
+                    q.is_empty()
+                        || s.name.to_lowercase().contains(&q)
+                        || s.description.to_lowercase().contains(&q)
+                        || s.sub_state.to_lowercase().contains(&q)
+                })
+                .collect();
+
+            if filtered_services.is_empty() {
+                ui.add_space(20.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(RichText::new("No systemd services found").size(12.0).color(p.text_muted));
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Click '🔄' to scan or switch scope.").size(11.0).color(p.text_muted));
+                });
+                return;
+            }
+
+            ScrollArea::vertical()
+                .id_salt("systemd_services_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let mut selected = None;
+
+                    for s in &filtered_services {
+                        let is_active = s.is_active();
+                        let is_failed = s.is_failed();
+                        let is_selected = self.selected_service.as_deref() == Some(&s.name);
+
+                        let card_border = if is_selected {
+                            Stroke::new(1.5_f32, p.accent)
+                        } else {
+                            Stroke::new(1.0_f32, p.border)
+                        };
+
+                        Frame::none()
+                            .fill(if is_selected { p.bg_card } else { p.bg_sidebar })
+                            .stroke(card_border)
+                            .rounding(Rounding::same(6.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    let status_dot = if is_active {
+                                        RichText::new("●").size(12.0).color(Color32::from_rgb(16, 185, 129))
+                                    } else if is_failed {
+                                        RichText::new("✘").size(12.0).color(p.danger)
+                                    } else {
+                                        RichText::new("○").size(12.0).color(p.text_muted)
+                                    };
+                                    ui.label(status_dot);
+
+                                    let title = RichText::new(&s.name).size(12.0).strong().color(p.text_primary);
+                                    if ui.selectable_label(is_selected, title).clicked() {
+                                        selected = Some(s.name.clone());
+                                    }
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let sub_color = if is_active {
+                                            Color32::from_rgb(16, 185, 129)
+                                        } else if is_failed {
+                                            p.danger
+                                        } else {
+                                            p.text_muted
+                                        };
+                                        ui.label(RichText::new(&s.sub_state).size(10.5).color(sub_color));
+                                    });
+                                });
+
+                                if !s.description.is_empty() {
+                                    ui.add_space(2.0);
+                                    ui.label(
+                                        RichText::new(&s.description)
+                                            .size(10.5)
+                                            .color(p.text_muted),
+                                    );
+                                }
+                            });
+
+                        ui.add_space(5.0);
+                    }
+
+                    if let Some(unit) = selected {
+                        self.selected_service = Some(unit.clone());
+                        self.service_action_msg = None;
+                        // Fetch journalctl
+                        if let Some(hid) = host_id {
+                            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                self.service_journal_logs = fetch_remote_journal(&host, &unit, user_mode, 100).unwrap_or_default();
+                            }
+                        } else {
+                            self.service_journal_logs = fetch_local_journal(&unit, user_mode, 100).unwrap_or_default();
+                        }
+                    }
+                });
+        });
+    }
+
+    fn render_systemd_right_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
+        let p = self.theme.palette();
+        let user_mode = if let Some(hid) = host_id {
+            *self.remote_services_user.entry(hid.to_string()).or_insert(true)
+        } else {
+            self.local_services_user
+        };
+
+        let services_list: Vec<SystemdService> = if let Some(hid) = host_id {
+            self.remote_services.get(hid).cloned().unwrap_or_default()
+        } else {
+            self.local_services.clone()
+        };
+
+        let selected_unit = self.selected_service.clone();
+        let service_opt = selected_unit.as_ref().and_then(|u| services_list.iter().find(|s| &s.name == u).cloned());
+
+        match service_opt {
+            Some(s) => {
+                let is_active = s.is_active();
+                let is_failed = s.is_failed();
+
+                ui.vertical(|ui| {
+                    // Header Bar
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .stroke(Stroke::new(1.0_f32, p.border))
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("⚙").size(22.0));
+                                ui.vertical(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(&s.name).size(15.0).strong().color(p.text_primary));
+                                        let status_tag = if is_active {
+                                            RichText::new("● Active (Running)").size(11.0).strong().color(Color32::from_rgb(16, 185, 129))
+                                        } else if is_failed {
+                                            RichText::new("✘ Failed").size(11.0).strong().color(p.danger)
+                                        } else {
+                                            RichText::new("○ Inactive").size(11.0).color(p.text_muted)
+                                        };
+                                        ui.label(status_tag);
+                                    });
+
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "Load: {} | Sub: {} | Scope: {}",
+                                            s.load_state,
+                                            s.sub_state,
+                                            if user_mode { "User (--user)" } else { "System" }
+                                        ))
+                                        .size(11.0)
+                                        .color(p.text_muted),
+                                    );
+
+                                    if !s.description.is_empty() {
+                                        ui.label(RichText::new(&s.description).size(11.0).color(p.text_secondary));
+                                    }
+                                });
+                            });
+
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.add_space(6.0);
+
+                            // Control buttons row
+                            let mut action_to_run = None;
+                            ui.horizontal_wrapped(|ui| {
+                                let btn_start = egui::Button::new(RichText::new("▶ Start").size(11.0).strong().color(Color32::WHITE))
+                                    .fill(Color32::from_rgb(16, 185, 129))
+                                    .rounding(Rounding::same(4.0));
+                                if ui.add(btn_start).clicked() {
+                                    action_to_run = Some("start");
+                                }
+
+                                let btn_stop = egui::Button::new(RichText::new("⏹ Stop").size(11.0).strong().color(Color32::WHITE))
+                                    .fill(p.danger)
+                                    .rounding(Rounding::same(4.0));
+                                if ui.add(btn_stop).clicked() {
+                                    action_to_run = Some("stop");
+                                }
+
+                                let btn_restart = egui::Button::new(RichText::new("🔄 Restart").size(11.0).color(p.text_primary))
+                                    .fill(p.bg_button)
+                                    .stroke(Stroke::new(1.0_f32, p.border))
+                                    .rounding(Rounding::same(4.0));
+                                if ui.add(btn_restart).clicked() {
+                                    action_to_run = Some("restart");
+                                }
+
+                                let btn_enable = egui::Button::new(RichText::new("✅ Enable").size(11.0).color(p.text_primary))
+                                    .fill(p.bg_button)
+                                    .stroke(Stroke::new(1.0_f32, p.border))
+                                    .rounding(Rounding::same(4.0));
+                                if ui.add(btn_enable).clicked() {
+                                    action_to_run = Some("enable");
+                                }
+
+                                let btn_disable = egui::Button::new(RichText::new("❌ Disable").size(11.0).color(p.text_primary))
+                                    .fill(p.bg_button)
+                                    .stroke(Stroke::new(1.0_f32, p.border))
+                                    .rounding(Rounding::same(4.0));
+                                if ui.add(btn_disable).clicked() {
+                                    action_to_run = Some("disable");
+                                }
+
+                                let btn_reload = egui::Button::new(RichText::new("🔄 Reload Daemon").size(11.0).color(p.text_secondary))
+                                    .fill(p.bg_button)
+                                    .rounding(Rounding::same(4.0));
+                                if ui.add(btn_reload).clicked() {
+                                    action_to_run = Some("daemon-reload");
+                                }
+                            });
+
+                            if let Some(act) = action_to_run {
+                                if let Some(hid) = host_id {
+                                    if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                        let res = control_remote_service(&host, &s.name, act, user_mode);
+                                        match res {
+                                            Ok(msg) => self.service_action_msg = Some(msg),
+                                            Err(e) => self.service_action_msg = Some(format!("Error: {}", e)),
+                                        }
+                                        if let Ok(services) = list_remote_services(&host, user_mode) {
+                                            self.remote_services.insert(hid.to_string(), services);
+                                        }
+                                        self.service_journal_logs = fetch_remote_journal(&host, &s.name, user_mode, 100).unwrap_or_default();
+                                    }
+                                } else {
+                                    let res = control_local_service(&s.name, act, user_mode);
+                                    match res {
+                                        Ok(msg) => self.service_action_msg = Some(msg),
+                                        Err(e) => self.service_action_msg = Some(format!("Error: {}", e)),
+                                    }
+                                    if let Ok(services) = list_local_services(user_mode) {
+                                        self.local_services = services;
+                                    }
+                                    self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100).unwrap_or_default();
+                                }
+                            }
+                        });
+
+                    if let Some(msg) = &self.service_action_msg {
+                        ui.add_space(6.0);
+                        Frame::none()
+                            .fill(p.bg_subtle)
+                            .stroke(Stroke::new(1.0_f32, p.accent))
+                            .rounding(Rounding::same(4.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                            .show(ui, |ui| {
+                                ui.label(RichText::new(msg).size(11.0).color(p.accent));
+                            });
+                    }
+
+                    ui.add_space(8.0);
+
+                    // Journalctl Logs Viewer
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Service Logs (journalctl -n 100)").size(12.0).strong().color(p.text_muted));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let btn_ref_log = egui::Button::new(RichText::new("🔄 Refresh Logs").size(11.0).color(p.text_secondary))
+                                .fill(p.bg_button);
+                            if ui.add(btn_ref_log).clicked() {
+                                if let Some(hid) = host_id {
+                                    if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                        self.service_journal_logs = fetch_remote_journal(&host, &s.name, user_mode, 100).unwrap_or_default();
+                                    }
+                                } else {
+                                    self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100).unwrap_or_default();
+                                }
+                            }
+                        });
+                    });
+
+                    ui.add_space(4.0);
+
+                    let log_h = (ui.available_height() - 20.0).max(180.0);
+                    Frame::none()
+                        .fill(Color32::from_rgb(12, 14, 20))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(32, 36, 48)))
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                        .show(ui, |ui| {
+                            ui.set_height(log_h);
+                            ScrollArea::vertical()
+                                .id_salt("journalctl_scroll")
+                                .stick_to_bottom(true)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    if self.service_journal_logs.trim().is_empty() {
+                                        ui.label(RichText::new("No journal logs recorded for this service.").size(11.5).color(Color32::from_rgb(100, 110, 130)));
+                                    } else {
+                                        ui.label(
+                                            RichText::new(&self.service_journal_logs)
+                                                .size(11.0)
+                                                .monospace()
+                                                .color(Color32::from_rgb(220, 225, 235)),
+                                        );
+                                    }
+                                });
+                        });
+                });
+            }
+            None => {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(40.0);
+                    ui.label(RichText::new("⚙ SystemMD Services").size(16.0).strong().color(p.text_primary));
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new("Select a systemd unit from the left panel to control (start/stop/restart) and view journalctl logs,\nor click '+ New Service' to create and enable a new systemd unit.")
+                            .size(12.0)
+                            .color(p.text_muted),
+                    );
+                });
+            }
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // REMOTE SSH TABS DISPATCH
+    // ═════════════════════════════════════════════════════════════════════════
+    fn render_remote_scripts_tab(&mut self, ui: &mut Ui, host: &SshRemoteHost) {
+        ui.horizontal(|ui| {
+            let left_w = 330.0;
+            let right_w = (ui.available_width() - left_w - 12.0).max(300.0);
+            ui.allocate_ui(egui::vec2(left_w, ui.available_height()), |ui| {
+                self.render_scripts_left_panel(ui, Some(&host.id));
+            });
+            ui.separator();
+            ui.allocate_ui(egui::vec2(right_w, ui.available_height()), |ui| {
+                self.render_scripts_right_panel(ui, Some(&host.id));
+            });
+        });
+    }
+
+    fn render_remote_commands_tab(&mut self, ui: &mut Ui, host: &SshRemoteHost) {
+        ui.horizontal(|ui| {
+            let left_w = 330.0;
+            let right_w = (ui.available_width() - left_w - 12.0).max(300.0);
+            ui.allocate_ui(egui::vec2(left_w, ui.available_height()), |ui| {
+                self.render_commands_left_panel(ui, Some(&host.id));
+            });
+            ui.separator();
+            ui.allocate_ui(egui::vec2(right_w, ui.available_height()), |ui| {
+                self.render_commands_right_panel(ui, Some(&host.id));
+            });
+        });
+    }
+
+    fn render_remote_systemd_tab(&mut self, ui: &mut Ui, host: &SshRemoteHost) {
+        ui.horizontal(|ui| {
+            let left_w = 330.0;
+            let right_w = (ui.available_width() - left_w - 12.0).max(300.0);
+            ui.allocate_ui(egui::vec2(left_w, ui.available_height()), |ui| {
+                self.render_systemd_left_panel(ui, Some(&host.id));
+            });
+            ui.separator();
+            ui.allocate_ui(egui::vec2(right_w, ui.available_height()), |ui| {
+                self.render_systemd_right_panel(ui, Some(&host.id));
+            });
+        });
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
     // LEFT SIDEBAR: Group Filter + Server Cards (Expands full height)
     // ═════════════════════════════════════════════════════════════════════════
-    fn render_left_panel(&mut self, ui: &mut Ui) {
+    fn render_servers_left_panel(&mut self, ui: &mut Ui) {
         let p = self.theme.palette();
         ui.vertical(|ui| {
             // 1. Group Filter Pills Bar
@@ -2608,7 +4111,7 @@ impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     // RIGHT PANEL: Notebook Tabs Bar + Overview / Server Log View
     // ═════════════════════════════════════════════════════════════════════════
-    fn render_right_panel(&mut self, ui: &mut Ui) {
+    fn render_servers_right_panel(&mut self, ui: &mut Ui) {
         let p = self.theme.palette();
         ui.vertical(|ui| {
             // Notebook Tabs Strip (matching screenshot)

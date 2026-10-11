@@ -1,4 +1,7 @@
-use crate::config::{CustomAction, CustomLink, ServerConfig};
+use crate::commands::CommandModalState;
+use crate::config::{CustomAction, CustomLink, CustomScript, SavedCommand, ServerConfig};
+use crate::scripts::ScriptModalState;
+use crate::systemd::NewServiceDefinition;
 use crate::theme::ThemePalette;
 use egui::{Color32, Context, Key, RichText, Rounding, Stroke, Window};
 use std::collections::HashMap;
@@ -1436,4 +1439,454 @@ pub fn render_close_confirmation_modal(
 
     choice
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SCRIPT MODAL (Create / Edit Custom Script)
+// ═════════════════════════════════════════════════════════════════════════════
+pub fn render_script_modal(
+    ctx: &Context,
+    state: &mut ScriptModalState,
+    palette: &ThemePalette,
+) -> Option<CustomScript> {
+    if !state.open {
+        return None;
+    }
+
+    let mut result = None;
+    let title = if state.is_edit { "✏ Edit Custom Script" } else { "📜 New Custom Script" };
+
+    let mut is_open = state.open;
+    Window::new(RichText::new(title).size(15.0).strong().color(palette.text_primary))
+        .open(&mut is_open)
+        .collapsible(false)
+        .resizable(true)
+        .default_size([540.0, 480.0])
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.add_space(4.0);
+
+            // Error display if any
+            if let Some(err) = &state.error {
+                ui.label(RichText::new(err).size(11.5).color(palette.danger));
+                ui.add_space(4.0);
+            }
+
+            // Script Name
+            ui.label(RichText::new("Script Name:").size(12.0).strong().color(palette.text_primary));
+            ui.add(
+                egui::TextEdit::singleline(&mut state.name)
+                    .hint_text("e.g. Health Check, DB Backup, Build & Clean")
+                    .desired_width(ui.available_width()),
+            );
+            ui.add_space(8.0);
+
+            // Shell & CWD row
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Shell / Interpreter:").size(12.0).strong().color(palette.text_primary));
+                    egui::ComboBox::from_id_salt("script_shell_combo")
+                        .selected_text(&state.shell)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut state.shell, "bash".to_string(), "bash");
+                            ui.selectable_value(&mut state.shell, "sh".to_string(), "sh");
+                            ui.selectable_value(&mut state.shell, "python3".to_string(), "python3");
+                            ui.selectable_value(&mut state.shell, "zsh".to_string(), "zsh");
+                        });
+                });
+
+                ui.add_space(12.0);
+
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Working Directory (optional):").size(12.0).strong().color(palette.text_primary));
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.cwd)
+                                .hint_text("Default (current / home)")
+                                .desired_width(ui.available_width() - 80.0),
+                        );
+                        if ui.button("Browse...").clicked() {
+                            if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                                state.cwd = path.to_string_lossy().to_string();
+                            }
+                        }
+                    });
+                });
+            });
+            ui.add_space(8.0);
+
+            // Startup Autostart Toggle
+            ui.checkbox(
+                &mut state.autostart,
+                RichText::new("⚡ Run automatically at startup / connection")
+                    .size(12.0)
+                    .color(palette.accent)
+                    .strong(),
+            );
+            ui.label(
+                RichText::new("If enabled, this script will be triggered immediately when the launcher launches or connects to this host.")
+                    .size(11.0)
+                    .color(palette.text_muted),
+            );
+            ui.add_space(10.0);
+
+            // Script Body
+            ui.label(RichText::new("Script Content:").size(12.0).strong().color(palette.text_primary));
+            let text_height = (ui.available_height() - 50.0).max(160.0);
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::multiline(&mut state.script_body)
+                        .font(egui::TextStyle::Monospace)
+                        .desired_rows(10)
+                        .desired_width(ui.available_width())
+                        .min_size(egui::vec2(ui.available_width(), text_height)),
+                );
+            });
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            // Action Buttons
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new("Cancel").color(palette.text_secondary)).clicked() {
+                    state.open = false;
+                }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let btn_save = egui::Button::new(
+                        RichText::new("💾 Save Script").size(12.0).strong().color(Color32::WHITE),
+                    )
+                    .fill(palette.accent)
+                    .rounding(Rounding::same(5.0))
+                    .min_size(egui::vec2(100.0, 28.0));
+
+                    if ui.add(btn_save).clicked() {
+                        if state.name.trim().is_empty() {
+                            state.error = Some("Script name cannot be empty".to_string());
+                        } else if state.script_body.trim().is_empty() {
+                            state.error = Some("Script body cannot be empty".to_string());
+                        } else {
+                            result = Some(CustomScript {
+                                id: state.id.clone(),
+                                name: state.name.trim().to_string(),
+                                script: state.script_body.clone(),
+                                shell: state.shell.trim().to_string(),
+                                cwd: state.cwd.trim().to_string(),
+                                autostart: state.autostart,
+                                host_id: state.host_id.clone(),
+                            });
+                            state.open = false;
+                        }
+                    }
+                });
+            });
+        });
+
+    if !is_open {
+        state.open = false;
+    }
+
+    result
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SAVED COMMAND MODAL (Create / Edit Custom Command)
+// ═════════════════════════════════════════════════════════════════════════════
+pub fn render_command_modal(
+    ctx: &Context,
+    state: &mut CommandModalState,
+    palette: &ThemePalette,
+) -> Option<SavedCommand> {
+    if !state.open {
+        return None;
+    }
+
+    let mut result = None;
+    let title = if state.is_edit { "✏ Edit Saved Command" } else { "⚡ Save Custom Command" };
+
+    let mut is_open = state.open;
+    Window::new(RichText::new(title).size(15.0).strong().color(palette.text_primary))
+        .open(&mut is_open)
+        .collapsible(false)
+        .resizable(false)
+        .default_size([460.0, 320.0])
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.add_space(4.0);
+
+            if let Some(err) = &state.error {
+                ui.label(RichText::new(err).size(11.5).color(palette.danger));
+                ui.add_space(4.0);
+            }
+
+            // Command Name
+            ui.label(RichText::new("Name / Label:").size(12.0).strong().color(palette.text_primary));
+            ui.add(
+                egui::TextEdit::singleline(&mut state.name)
+                    .hint_text("e.g. Git Status & Log, Prune Docker, Disk Free")
+                    .desired_width(ui.available_width()),
+            );
+            ui.add_space(8.0);
+
+            // Category & Host
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Category:").size(12.0).strong().color(palette.text_primary));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.category)
+                            .hint_text("e.g. Git, Docker, System, Deploy")
+                            .desired_width(200.0),
+                    );
+                });
+
+                ui.add_space(10.0);
+
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Scope:").size(12.0).strong().color(palette.text_primary));
+                    let scope_str = if let Some(h) = &state.host_id {
+                        format!("Host: {}", h)
+                    } else {
+                        "Local PC".to_string()
+                    };
+                    ui.label(RichText::new(scope_str).size(12.0).color(palette.text_muted));
+                });
+            });
+            ui.add_space(8.0);
+
+            // Command String
+            ui.label(RichText::new("Command to Execute:").size(12.0).strong().color(palette.text_primary));
+            ui.add(
+                egui::TextEdit::multiline(&mut state.command)
+                    .font(egui::TextStyle::Monospace)
+                    .desired_rows(3)
+                    .desired_width(ui.available_width()),
+            );
+            ui.add_space(8.0);
+
+            // Description
+            ui.label(RichText::new("Description (optional):").size(12.0).color(palette.text_muted));
+            ui.add(
+                egui::TextEdit::singleline(&mut state.description)
+                    .hint_text("Short note on what this command does")
+                    .desired_width(ui.available_width()),
+            );
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            // Action Buttons
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new("Cancel").color(palette.text_secondary)).clicked() {
+                    state.open = false;
+                }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let btn_save = egui::Button::new(
+                        RichText::new("💾 Save Command").size(12.0).strong().color(Color32::WHITE),
+                    )
+                    .fill(palette.accent)
+                    .rounding(Rounding::same(5.0))
+                    .min_size(egui::vec2(100.0, 28.0));
+
+                    if ui.add(btn_save).clicked() {
+                        if state.name.trim().is_empty() {
+                            state.error = Some("Command name cannot be empty".to_string());
+                        } else if state.command.trim().is_empty() {
+                            state.error = Some("Command string cannot be empty".to_string());
+                        } else {
+                            result = Some(SavedCommand {
+                                id: state.id.clone(),
+                                name: state.name.trim().to_string(),
+                                command: state.command.trim().to_string(),
+                                description: state.description.trim().to_string(),
+                                category: if state.category.trim().is_empty() {
+                                    "General".to_string()
+                                } else {
+                                    state.category.trim().to_string()
+                                },
+                                host_id: state.host_id.clone(),
+                            });
+                            state.open = false;
+                        }
+                    }
+                });
+            });
+        });
+
+    if !is_open {
+        state.open = false;
+    }
+
+    result
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SYSTEMD SERVICE CREATION MODAL
+// ═════════════════════════════════════════════════════════════════════════════
+#[derive(Debug, Clone, Default)]
+pub struct NewServiceModalState {
+    pub open: bool,
+    pub def: NewServiceDefinition,
+    pub error: Option<String>,
+}
+
+impl NewServiceModalState {
+    pub fn open(&mut self) {
+        self.open = true;
+        self.def = NewServiceDefinition::default();
+        self.error = None;
+    }
+}
+
+pub fn render_new_service_modal(
+    ctx: &Context,
+    state: &mut NewServiceModalState,
+    palette: &ThemePalette,
+) -> Option<NewServiceDefinition> {
+    if !state.open {
+        return None;
+    }
+
+    let mut result = None;
+    let mut is_open = state.open;
+
+    Window::new(RichText::new("⚙ Create New SystemMD Service").size(15.0).strong().color(palette.text_primary))
+        .open(&mut is_open)
+        .collapsible(false)
+        .resizable(true)
+        .default_size([540.0, 480.0])
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.add_space(4.0);
+
+            if let Some(err) = &state.error {
+                ui.label(RichText::new(err).size(11.5).color(palette.danger));
+                ui.add_space(4.0);
+            }
+
+            // Unit Name & Scope
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Service Unit Name:").size(12.0).strong().color(palette.text_primary));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.def.name)
+                            .hint_text("e.g. my-app.service")
+                            .desired_width(280.0),
+                    );
+                });
+
+                ui.add_space(10.0);
+
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Scope:").size(12.0).strong().color(palette.text_primary));
+                    ui.checkbox(&mut state.def.is_user, "User Service (--user)");
+                });
+            });
+            ui.add_space(8.0);
+
+            // Description
+            ui.label(RichText::new("Description:").size(12.0).strong().color(palette.text_primary));
+            ui.add(
+                egui::TextEdit::singleline(&mut state.def.description)
+                    .hint_text("e.g. My Background Web Service")
+                    .desired_width(ui.available_width()),
+            );
+            ui.add_space(8.0);
+
+            // ExecStart
+            ui.label(RichText::new("ExecStart (Executable & Arguments):").size(12.0).strong().color(palette.text_primary));
+            ui.add(
+                egui::TextEdit::singleline(&mut state.def.exec_start)
+                    .hint_text("e.g. /usr/bin/python3 /home/user/app/server.py")
+                    .desired_width(ui.available_width()),
+            );
+            ui.add_space(8.0);
+
+            // Working Directory & Restart
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Working Directory:").size(12.0).strong().color(palette.text_primary));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.def.working_dir)
+                            .hint_text("e.g. /home/user/app")
+                            .desired_width(ui.available_width() - 140.0),
+                    );
+                });
+
+                ui.add_space(10.0);
+
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Restart Policy:").size(12.0).strong().color(palette.text_primary));
+                    egui::ComboBox::from_id_salt("service_restart_combo")
+                        .selected_text(&state.def.restart)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut state.def.restart, "always".to_string(), "always");
+                            ui.selectable_value(&mut state.def.restart, "on-failure".to_string(), "on-failure");
+                            ui.selectable_value(&mut state.def.restart, "no".to_string(), "no");
+                        });
+                });
+            });
+            ui.add_space(8.0);
+
+            // Environment
+            ui.label(RichText::new("Environment Variables (e.g. PORT=8080 NODE_ENV=production):").size(12.0).color(palette.text_muted));
+            ui.add(
+                egui::TextEdit::singleline(&mut state.def.environment)
+                    .hint_text("PORT=8080")
+                    .desired_width(ui.available_width()),
+            );
+
+            ui.add_space(8.0);
+
+            // Generated Preview
+            ui.collapsing("🔍 Preview Generated Unit File", |ui| {
+                let preview = state.def.generate_service_content();
+                ui.add(
+                    egui::TextEdit::multiline(&mut preview.as_str())
+                        .font(egui::TextStyle::Monospace)
+                        .desired_rows(6)
+                        .desired_width(ui.available_width()),
+                );
+            });
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(6.0);
+
+            // Action Buttons
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new("Cancel").color(palette.text_secondary)).clicked() {
+                    state.open = false;
+                }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let btn_create = egui::Button::new(
+                        RichText::new("🚀 Create & Enable Service").size(12.0).strong().color(Color32::WHITE),
+                    )
+                    .fill(palette.accent)
+                    .rounding(Rounding::same(5.0))
+                    .min_size(egui::vec2(150.0, 28.0));
+
+                    if ui.add(btn_create).clicked() {
+                        if state.def.name.trim().is_empty() {
+                            state.error = Some("Service name cannot be empty".to_string());
+                        } else if state.def.exec_start.trim().is_empty() {
+                            state.error = Some("ExecStart cannot be empty".to_string());
+                        } else {
+                            result = Some(state.def.clone());
+                            state.open = false;
+                        }
+                    }
+                });
+            });
+        });
+
+    if !is_open {
+        state.open = false;
+    }
+
+    result
+}
+
 

@@ -7359,6 +7359,17 @@ impl LauncherApp {
                                                 crate::service::open_folder(&s.config.cwd);
                                             }
 
+                                            let btn_vscode = egui::Button::new(
+                                                RichText::new("💻").size(11.0).color(Color32::from_rgb(0x60, 0xa5, 0xfa)),
+                                            )
+                                            .fill(circ_bg)
+                                            .stroke(Stroke::NONE)
+                                            .rounding(circ_rnd)
+                                            .min_size(circ_size);
+                                            if ui.add(btn_vscode).on_hover_text("Open working directory in VS Code (code .)").clicked() {
+                                                crate::service::open_in_vscode(&s.config.cwd);
+                                            }
+
                                             let btn_edit = egui::Button::new(
                                                 RichText::new("✏").size(11.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
                                             )
@@ -8126,6 +8137,17 @@ impl LauncherApp {
                                     .min_size(circ_size);
                                     if ui.add(btn_folder).on_hover_text("Open working directory in file manager").clicked() {
                                         crate::service::open_folder(&s.config.cwd);
+                                    }
+
+                                    let btn_vscode = egui::Button::new(
+                                        RichText::new("💻").size(11.0).color(Color32::from_rgb(0x60, 0xa5, 0xfa)),
+                                    )
+                                    .fill(circ_bg)
+                                    .stroke(Stroke::NONE)
+                                    .rounding(circ_rnd)
+                                    .min_size(circ_size);
+                                    if ui.add(btn_vscode).on_hover_text("Open working directory in VS Code (code .)").clicked() {
+                                        crate::service::open_in_vscode(&s.config.cwd);
                                     }
 
                                     let btn_edit = egui::Button::new(

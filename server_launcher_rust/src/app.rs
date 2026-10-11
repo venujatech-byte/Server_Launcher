@@ -1421,7 +1421,9 @@ impl LauncherApp {
                     ui.set_max_width(left_w);
                     // 1. Navigation Tabs on top of left panel
                     self.render_sidebar_tabs_bar(ui);
-                    ui.add_space(8.0);
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.add_space(6.0);
 
                     // 2. Left panel content for active tab
                     match self.active_sidebar_tab {
@@ -2475,7 +2477,9 @@ impl LauncherApp {
             ui.set_max_width(ui.available_width());
             // 0. Top 4 Navigation Tabs Bar
             self.render_sidebar_tabs_bar(ui);
-            ui.add_space(8.0);
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(6.0);
 
             match self.active_sidebar_tab {
                 SidebarTab::Servers => self.render_servers_left_panel(ui),
@@ -3961,7 +3965,9 @@ impl LauncherApp {
                 }
             });
 
-            ui.add_space(10.0);
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(6.0);
 
             // 2. Scrollable list of Groups & Server Cards (NEVER shrinks, fills full height!)
             ScrollArea::vertical()

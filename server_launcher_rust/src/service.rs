@@ -1342,6 +1342,7 @@ mod tests {
             links: Vec::new(),
             stop_command: String::new(),
             own_console: false,
+            ..Default::default()
         };
         let s = Service::new(cfg);
         assert!(!s.is_active());
@@ -1369,6 +1370,7 @@ mod tests {
             links: Vec::new(),
             stop_command: String::new(),
             own_console: false,
+            ..Default::default()
         };
         let mut s = Service::new(cfg);
         assert_eq!(s.state, ServiceState::Stopped);

@@ -36,9 +36,13 @@ Engineered for modern developer cockpits, server orchestrators, and technical to
 ## ✨ Features at a Glance
 
 ### 🖥️ Native Process Management
-- **One-Click Lifecycle**: Start, stop, and restart individual servers or batch-control everything with **Start All** and **Stop All** pill buttons.
-- **📥 One-Click Configuration Import**: Instantly import configurations from any `servers.json` or config file using the `[📥 Import]` button next to `[+ Add Server]`. Supports JSON config files, server arrays, and individual definitions with auto-key generation and persistence.
-- **🚀 System Startup Autostart**: Seamless toggle in the top bar (`🚀 Boot: ON / OFF`) to automatically launch Server Launcher when your system boots/logs in (Linux XDG Autostart `~/.config/autostart` and Windows Startup).
+- **⚙️ Settings & Preferences Modal (`Ctrl+,`)**: Centralized preferences window accessible via the top-bar `⚙` icon button or `Ctrl+,`:
+  - **🎨 Theme Picker & Quick Pills**: Choose from all 8 themes with live preview and instant switching.
+  - **🚀 System Startup Autostart**: Toggle launch on system boot/login with status chip pills (`● ENABLED` / `○ DISABLED`).
+  - **📦 Server Configuration Management**: One-click `📥 Import servers.json` and `📤 Export servers.json` file dialogs for effortless backup and restore.
+  - **⌨ Keyboard Shortcuts Guide**: Instant cheatsheet for `Ctrl+P`/`Ctrl+K`, `Ctrl+,`, `Ctrl+A`, `Ctrl+X`, and `Ctrl+F`.
+  - **ℹ️ System Diagnostics**: Quick overview of host IP, managed instance count, and active config path.
+- **✨ Streamlined Borderless Top Bar**: Minimalist, spacious header layout eliminating overcrowding: includes instance search pill bar, batch controls (`▶ Start All`, `⏹ Stop All`), Quick Launch (`⚡ Quick Launch Ctrl+P`), `+ Add Server`, and `⚙` Settings.
 - **🚀 Per-Server Launch Autostart**: Configure individual servers with the `🚀 Autostart` checkbox to start running immediately whenever Server Launcher is opened.
 - **Auto-Restart on Crash**: Per-server crash guard option that monitors exit codes and automatically restarts failed services after a short delay.
 - **Port-Aware Status Detection**: Monitors process sockets and marks services as `Running` once their configured TCP port is bound and listening.

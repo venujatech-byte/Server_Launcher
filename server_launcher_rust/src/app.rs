@@ -214,6 +214,7 @@ pub struct LauncherApp {
     pub remote_service_action_msg: Arc<Mutex<Option<String>>>,
     pub service_search_query: String,
     pub service_action_msg: Option<String>,
+    pub service_enabled_cache: HashMap<String, (bool, Instant)>,
     pub journal_refresh_interval: u32,
     pub last_journal_refresh: Instant,
 
@@ -235,6 +236,9 @@ pub struct LauncherApp {
 
     // Import status notification: (message, is_error, timestamp)
     pub import_status_msg: Option<(String, bool, Instant)>,
+
+    // Settings window open state
+    pub settings_modal_open: bool,
 }
 
 pub struct ExternalTerminalSession {
@@ -430,6 +434,7 @@ impl LauncherApp {
             remote_service_action_msg: Arc::new(Mutex::new(None)),
             service_search_query: String::new(),
             service_action_msg: None,
+            service_enabled_cache: HashMap::new(),
             journal_refresh_interval: config_file.journal_refresh_interval.unwrap_or(0),
             last_journal_refresh: Instant::now(),
 
@@ -446,6 +451,7 @@ impl LauncherApp {
             sudo_popup: SudoPopupState::default(),
             local_sudo_password: String::new(),
             import_status_msg: None,
+            settings_modal_open: false,
         }
     }
 
@@ -530,6 +536,46 @@ impl LauncherApp {
         }
     }
 
+    pub fn export_servers_to_file_dialog(&mut self) {
+        let file_opt = rfd::FileDialog::new()
+            .set_title("Export servers.json Configuration")
+            .set_file_name("servers.json")
+            .add_filter("JSON Configuration (*.json)", &["json"])
+            .save_file();
+
+        if let Some(path) = file_opt {
+            let servers: Vec<_> = self.services.iter().map(|s| s.config.clone()).collect();
+            match serde_json::to_string_pretty(&servers) {
+                Ok(json_str) => {
+                    match std::fs::write(&path, json_str) {
+                        Ok(_) => {
+                            let fname = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "servers.json".to_string());
+                            self.import_status_msg = Some((
+                                format!("✔ Exported {} server(s) to {}", servers.len(), fname),
+                                false,
+                                Instant::now(),
+                            ));
+                        }
+                        Err(e) => {
+                            self.import_status_msg = Some((
+                                format!("Export error: {}", e),
+                                true,
+                                Instant::now(),
+                            ));
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.import_status_msg = Some((
+                        format!("Serialization error: {}", e),
+                        true,
+                        Instant::now(),
+                    ));
+                }
+            }
+        }
+    }
+
     pub fn import_from_json_str(&mut self, content: &str) -> Result<(usize, usize), String> {
         let trimmed = content.trim();
         if trimmed.is_empty() {
@@ -539,7 +585,12 @@ impl LauncherApp {
         let mut imported = 0;
         let mut updated = 0;
 
-        let mut add_server = |srv_cfg: ServerConfig, services: &mut Vec<Service>| {
+        fn add_server(
+            srv_cfg: ServerConfig,
+            services: &mut Vec<Service>,
+            imported: &mut usize,
+            updated: &mut usize,
+        ) {
             let key = if srv_cfg.key.trim().is_empty() {
                 srv_cfg.name.to_lowercase().replace(' ', "_")
             } else {
@@ -550,18 +601,18 @@ impl LauncherApp {
 
             if let Some(existing) = services.iter_mut().find(|s| s.config.key == final_cfg.key) {
                 existing.config = final_cfg;
-                updated += 1;
+                *updated += 1;
             } else {
                 services.push(Service::new(final_cfg));
-                imported += 1;
+                *imported += 1;
             }
-        };
+        }
 
         // 1. Try parsing full ConfigFile
         if let Ok(cfg) = serde_json::from_str::<ConfigFile>(trimmed) {
             if !cfg.servers.is_empty() || !cfg.ssh_hosts.is_empty() || !cfg.scripts.is_empty() || !cfg.saved_commands.is_empty() {
                 for s in cfg.servers {
-                    add_server(s, &mut self.services);
+                    add_server(s, &mut self.services, &mut imported, &mut updated);
                 }
                 for h in cfg.ssh_hosts {
                     if !self.ssh_hosts.iter().any(|existing| existing.id == h.id) {
@@ -586,31 +637,64 @@ impl LauncherApp {
         if let Ok(servers) = serde_json::from_str::<Vec<ServerConfig>>(trimmed) {
             if !servers.is_empty() {
                 for s in servers {
-                    add_server(s, &mut self.services);
+                    add_server(s, &mut self.services, &mut imported, &mut updated);
                 }
                 return Ok((imported, updated));
             }
         }
 
-        // 3. Try parsing generic JSON object with a "servers" array field
+        // 3. Try parsing generic JSON object with a "servers" or "mcpServers" field, or direct map
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
             if let Some(servers_val) = val.get("servers") {
                 if let Ok(servers) = serde_json::from_value::<Vec<ServerConfig>>(servers_val.clone()) {
                     if !servers.is_empty() {
                         for s in servers {
-                            add_server(s, &mut self.services);
+                            add_server(s, &mut self.services, &mut imported, &mut updated);
                         }
+                        return Ok((imported, updated));
+                    }
+                } else if let Some(map) = servers_val.as_object() {
+                    for (key, srv_val) in map {
+                        if let Some(srv_cfg) = crate::config::parse_server_json_value(key, srv_val) {
+                            add_server(srv_cfg, &mut self.services, &mut imported, &mut updated);
+                        }
+                    }
+                    if imported > 0 || updated > 0 {
                         return Ok((imported, updated));
                     }
                 }
             }
 
-            // Also support single server object
-            if let Ok(single) = serde_json::from_value::<ServerConfig>(val) {
-                if !single.name.is_empty() || !single.command.is_empty() {
-                    add_server(single, &mut self.services);
+            // MCP servers format (Claude Desktop / Gemini CLI / Cursor configs)
+            if let Some(mcp_map) = val.get("mcpServers").and_then(|v| v.as_object()) {
+                for (key, srv_val) in mcp_map {
+                    if let Some(srv_cfg) = crate::config::parse_server_json_value(key, srv_val) {
+                        add_server(srv_cfg, &mut self.services, &mut imported, &mut updated);
+                    }
+                }
+                if imported > 0 || updated > 0 {
                     return Ok((imported, updated));
                 }
+            }
+
+            // Dictionary format: { "stitch": { "type": "http", ... } }
+            if let Some(map) = val.as_object() {
+                let mut map_imported = false;
+                for (key, srv_val) in map {
+                    if let Some(srv_cfg) = crate::config::parse_server_json_value(key, srv_val) {
+                        add_server(srv_cfg, &mut self.services, &mut imported, &mut updated);
+                        map_imported = true;
+                    }
+                }
+                if map_imported && (imported > 0 || updated > 0) {
+                    return Ok((imported, updated));
+                }
+            }
+
+            // Single server object
+            if let Some(single) = crate::config::parse_server_json_value("imported", &val) {
+                add_server(single, &mut self.services, &mut imported, &mut updated);
+                return Ok((imported, updated));
             }
         }
 
@@ -897,8 +981,8 @@ impl LauncherApp {
         let p = self.theme.palette();
         Frame::none()
             .fill(p.terminal_bg)
-            .stroke(Stroke::new(1.0_f32, p.terminal_border))
-            .rounding(Rounding::same(6.0))
+            .stroke(Stroke::NONE)
+            .rounding(Rounding::same(12.0))
             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -1122,6 +1206,13 @@ impl LauncherApp {
         {
             self.stop_all();
         }
+
+        // Ctrl+,: Settings
+        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Comma))
+            || ctx.input_mut(|i| i.consume_key(Modifiers::CTRL, Key::Comma))
+        {
+            self.settings_modal_open = !self.settings_modal_open;
+        }
     }
 
     fn ensure_remote_connected(&self, host: &SshRemoteHost) {
@@ -1306,6 +1397,46 @@ impl LauncherApp {
         });
     }
 
+    fn get_or_query_service_enabled(&mut self, unit: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) -> bool {
+        let host_id_str = host_opt.map(|h| h.id.as_str()).unwrap_or("local");
+        let cache_key = format!("{}:{}:{}", host_id_str, unit, if user_mode { "user" } else { "system" });
+        if let Some((is_enabled, time)) = self.service_enabled_cache.get(&cache_key) {
+            if time.elapsed() < Duration::from_secs(6) {
+                return *is_enabled;
+            }
+        }
+
+        let is_enabled = if let Some(host) = host_opt {
+            let cmd_str = if user_mode {
+                format!("uid=$(id -u); export XDG_RUNTIME_DIR=/run/user/$uid; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; systemctl --user is-enabled {} 2>/dev/null", unit)
+            } else {
+                format!("systemctl is-enabled {} 2>/dev/null", unit)
+            };
+            let mut cmd = crate::remote::build_ssh_command(host, &cmd_str);
+            if let Ok(out) = cmd.output() {
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_lowercase();
+                s.contains("enabled")
+            } else {
+                false
+            }
+        } else {
+            let mut cmd = std::process::Command::new("systemctl");
+            if user_mode {
+                cmd.arg("--user");
+            }
+            cmd.arg("is-enabled").arg(unit);
+            if let Ok(out) = cmd.output() {
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_lowercase();
+                s.contains("enabled")
+            } else {
+                false
+            }
+        };
+
+        self.service_enabled_cache.insert(cache_key, (is_enabled, Instant::now()));
+        is_enabled
+    }
+
     fn get_remote_logs(&self, host_id: &str) -> Arc<Mutex<VecDeque<crate::service::LogEntry>>> {
         let mut map = self.remote_terminal_logs.lock().unwrap();
         if let Some(logs) = map.get(host_id) {
@@ -1387,14 +1518,6 @@ impl LauncherApp {
 
         ui.vertical_centered(|ui| {
             ui.add_space(4.0);
-
-            // Top: App Icon / Logo
-            if let Some(tex) = &self.icon_texture {
-                ui.image((tex.id(), egui::vec2(26.0, 26.0)));
-            } else {
-                ui.label(RichText::new("🚀").size(20.0));
-            }
-            ui.add_space(10.0);
 
             // 1. This PC (Local) Tile
             let is_local_selected = self.selected_machine == "local";
@@ -1612,10 +1735,6 @@ impl LauncherApp {
             let map = self.remote_connection_status.lock().unwrap();
             map.get(&host.id).cloned()
         };
-        let is_connecting = {
-            let map = self.remote_connecting.lock().unwrap();
-            map.contains(&host.id)
-        };
         let is_scanning = {
             let map = self.remote_scanning.lock().unwrap();
             map.contains(&host.id)
@@ -1633,128 +1752,6 @@ impl LauncherApp {
         }
 
         ui.vertical(|ui| {
-            // Dashboard Header Bar
-            Frame::none()
-                .fill(Color32::from_rgb(20, 23, 31))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 43, 58)))
-                .rounding(Rounding::same(8.0))
-                .inner_margin(egui::Margin::symmetric(16.0, 12.0))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("🌐").size(24.0));
-                        ui.add_space(4.0);
-                        ui.vertical(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    RichText::new(&host.name)
-                                        .size(18.0)
-                                        .strong()
-                                        .color(Color32::from_rgb(235, 238, 245)),
-                                );
-                                ui.add_space(8.0);
-                                if is_connecting {
-                                    ui.label(
-                                        RichText::new("○ Connecting...")
-                                            .size(11.0)
-                                            .color(Color32::from_rgb(250, 204, 21)),
-                                    );
-                                } else if let Some(Ok(info)) = &status {
-                                    ui.label(
-                                        RichText::new(format!("● Online ({})", info))
-                                            .size(11.0)
-                                            .strong()
-                                            .color(Color32::from_rgb(0, 210, 160)),
-                                    );
-                                } else if let Some(Err(err)) = &status {
-                                    ui.label(
-                                        RichText::new(format!("● Connection Error: {}", err))
-                                            .size(11.0)
-                                            .color(Color32::from_rgb(239, 68, 68)),
-                                    );
-                                } else {
-                                    ui.label(
-                                        RichText::new("○ Idle")
-                                            .size(11.0)
-                                            .color(Color32::from_rgb(130, 138, 155)),
-                                    );
-                                }
-                            });
-
-                            let target_desc = format!(
-                                "ssh://{}@{}:{} {}",
-                                host.user,
-                                host.host,
-                                host.port,
-                                if !host.remote_cwd.is_empty() {
-                                    format!("(cwd: {})", host.remote_cwd)
-                                } else {
-                                    String::new()
-                                }
-                            );
-                            ui.label(
-                                RichText::new(target_desc)
-                                    .size(11.0)
-                                    .color(Color32::from_rgb(120, 128, 145)),
-                            );
-                        });
-
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let btn_edit = egui::Button::new(
-                                RichText::new("⚙ Edit")
-                                    .size(11.5)
-                                    .color(Color32::from_rgb(200, 205, 215)),
-                            )
-                            .fill(Color32::from_rgb(32, 36, 48))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(50, 56, 75)))
-                            .rounding(Rounding::same(4.0));
-                            if ui.add(btn_edit).clicked() {
-                                self.ssh_host_modal.open_edit(&host);
-                            }
-
-                            let btn_reconnect = egui::Button::new(
-                                RichText::new("🔄 Reconnect")
-                                    .size(11.5)
-                                    .color(Color32::from_rgb(200, 205, 215)),
-                            )
-                            .fill(Color32::from_rgb(32, 36, 48))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(50, 56, 75)))
-                            .rounding(Rounding::same(4.0));
-                            if ui.add(btn_reconnect).clicked() {
-                                self.test_remote_host(&host);
-                                self.trigger_remote_scan(&host);
-                            }
-
-                            let btn_ext = egui::Button::new(
-                                RichText::new("↗ External Terminal")
-                                    .size(11.5)
-                                    .strong()
-                                    .color(Color32::from_rgb(96, 165, 250)),
-                            )
-                            .fill(Color32::from_rgb(20, 30, 48))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(59, 130, 246)))
-                            .rounding(Rounding::same(4.0));
-                            if ui.add(btn_ext).on_hover_text("Open desktop terminal connected via SSH").clicked() {
-                                let _ = launch_external_ssh_terminal(&host);
-                            }
-
-                            let scan_label = if is_scanning { "Scanning..." } else { "Scan Ports" };
-                            let btn_scan = egui::Button::new(
-                                RichText::new(scan_label)
-                                    .size(11.5)
-                                    .color(Color32::from_rgb(162, 155, 254)),
-                            )
-                            .fill(Color32::from_rgb(34, 30, 52))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(108, 92, 231)))
-                            .rounding(Rounding::same(4.0));
-                            if ui.add(btn_scan).clicked() {
-                                self.trigger_remote_scan(&host);
-                            }
-                        });
-                    });
-                });
-
-            ui.add_space(8.0);
-
             // Trigger autostart scripts for this SSH host if connected
             if let Some(Ok(_)) = &status {
                 for sc in &self.scripts {
@@ -1785,8 +1782,6 @@ impl LauncherApp {
                     ui.set_min_height(total_h);
                     // 1. Navigation Tabs on top of left panel
                     self.render_sidebar_tabs_bar(ui);
-                    ui.add_space(6.0);
-                    ui.separator();
                     ui.add_space(6.0);
 
                     // 2. Left panel content for active tab
@@ -1820,6 +1815,7 @@ impl LauncherApp {
     }
 
     fn render_remote_servers_left_panel(&mut self, ui: &mut Ui, host: &SshRemoteHost) {
+        let p = self.theme.palette();
         let is_scanning = {
             let map = self.remote_scanning.lock().unwrap();
             map.contains(&host.id)
@@ -1872,9 +1868,9 @@ impl LauncherApp {
 
             if listeners.is_empty() {
                 Frame::none()
-                    .fill(Color32::from_rgb(15, 17, 23))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(35, 40, 54)))
-                    .rounding(Rounding::same(6.0))
+                    .fill(p.bg_card)
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
@@ -1895,9 +1891,9 @@ impl LauncherApp {
                         ui.set_max_width(ui.available_width());
                         for l in &visible_listeners {
                             Frame::none()
-                                .fill(Color32::from_rgb(15, 17, 23))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(35, 40, 54)))
-                                .rounding(Rounding::same(6.0))
+                                .fill(p.bg_card)
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(12.0))
                                 .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                                 .show(ui, |ui| {
                                     ui.set_width(ui.available_width());
@@ -1995,6 +1991,7 @@ impl LauncherApp {
     }
 
     fn render_remote_servers_right_panel(&mut self, ui: &mut Ui, host: &SshRemoteHost) {
+        let p = self.theme.palette();
         ui.vertical(|ui| {
             // Interactive SSH Shell Terminal
             ui.horizontal(|ui| {
@@ -2049,9 +2046,9 @@ impl LauncherApp {
             let term_logs = self.get_remote_logs(&host.id);
 
             Frame::none()
-                .fill(Color32::from_rgb(10, 12, 17))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(35, 40, 54)))
-                .rounding(Rounding::same(6.0))
+                .fill(p.terminal_bg)
+                .stroke(Stroke::NONE)
+                .rounding(Rounding::same(14.0))
                 .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
@@ -2335,7 +2332,13 @@ impl eframe::App for LauncherApp {
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    // Left: App Icon + Server Launcher title & status line
+                    let remote_host_opt = if self.selected_machine != "local" {
+                        self.ssh_hosts.iter().find(|h| h.id == self.selected_machine).cloned()
+                    } else {
+                        None
+                    };
+
+                    // Left: App Icon + Server Launcher / Host title & status line
                     if let Some(texture) = &self.icon_texture {
                         ui.add(
                             egui::Image::from_texture(texture)
@@ -2343,232 +2346,310 @@ impl eframe::App for LauncherApp {
                         );
                         ui.add_space(6.0);
                     }
-                    ui.vertical(|ui| {
-                        ui.label(
-                            RichText::new("Server Launcher")
-                                .size(20.0)
-                                .strong()
-                                .color(p.text_primary),
-                        );
-                        ui.add_space(2.0);
-                        let subtitle = if self.selected_machine == "local" {
-                            format!(
-                                "this pc: {}    servers: {}",
-                                self.lan_ip,
-                                self.services.len()
-                            )
-                        } else if let Some(h) = self.ssh_hosts.iter().find(|h| h.id == self.selected_machine) {
-                            format!(
-                                "ssh remote: {} ({}:{})",
-                                h.name,
-                                h.host,
-                                h.port
-                            )
-                        } else {
-                            format!("this pc: {}", self.lan_ip)
+
+                    if let Some(ref host) = remote_host_opt {
+                        let (status, is_connecting) = {
+                            let s = self.remote_connection_status.lock().unwrap().get(&host.id).cloned();
+                            let c = self.remote_connecting.lock().unwrap().contains(&host.id);
+                            (s, c)
                         };
-                        ui.label(
-                            RichText::new(subtitle)
+
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(&host.name)
+                                        .size(19.0)
+                                        .strong()
+                                        .color(p.text_primary),
+                                );
+                                ui.add_space(6.0);
+                                if is_connecting {
+                                    Frame::none()
+                                        .fill(p.warning_subtle)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(999.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 2.5))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new("○ Connecting...").size(10.5).color(p.warning));
+                                        });
+                                } else if let Some(Ok(ref info)) = status {
+                                    Frame::none()
+                                        .fill(p.success_subtle)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(999.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 2.5))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new(format!("● Online ({})", info)).size(10.5).strong().color(p.success));
+                                        });
+                                } else if let Some(Err(ref err)) = status {
+                                    Frame::none()
+                                        .fill(p.danger_subtle)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(999.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 2.5))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new(format!("● Error: {}", err)).size(10.5).color(p.danger));
+                                        });
+                                } else {
+                                    Frame::none()
+                                        .fill(p.bg_subtle)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(999.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 2.5))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new("○ Idle").size(10.5).color(p.text_muted));
+                                        });
+                                }
+                            });
+                            ui.add_space(2.0);
+                            let target_desc = format!(
+                                "ssh://{}@{}:{} {}",
+                                host.user,
+                                host.host,
+                                host.port,
+                                if !host.remote_cwd.is_empty() {
+                                    format!("(cwd: {})", host.remote_cwd)
+                                } else {
+                                    String::new()
+                                }
+                            );
+                            ui.label(
+                                RichText::new(target_desc)
+                                    .size(11.0)
+                                    .color(p.text_muted),
+                            );
+                        });
+                    } else {
+                        ui.vertical(|ui| {
+                            ui.label(
+                                RichText::new("Server Launcher")
+                                    .size(20.0)
+                                    .strong()
+                                    .color(p.text_primary),
+                            );
+                            ui.add_space(2.0);
+                            ui.label(
+                                RichText::new(format!(
+                                    "this pc: {}    servers: {}",
+                                    self.lan_ip,
+                                    self.services.len()
+                                ))
                                 .size(11.5)
                                 .color(p.text_muted),
-                        );
+                            );
 
-                        if let Some((ref msg, is_err, time)) = self.import_status_msg {
-                            if time.elapsed() < Duration::from_secs(6) {
-                                ui.add_space(2.0);
-                                let color = if is_err { p.danger } else { Color32::from_rgb(16, 185, 129) };
-                                Frame::none()
-                                    .fill(p.bg_subtle)
-                                    .stroke(Stroke::new(1.0_f32, color))
-                                    .rounding(Rounding::same(4.0))
-                                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                    .show(ui, |ui| {
-                                        ui.label(RichText::new(msg).size(10.5).color(color));
-                                    });
-                            } else {
-                                self.import_status_msg = None;
+                            if let Some((ref msg, is_err, time)) = self.import_status_msg {
+                                if time.elapsed() < Duration::from_secs(6) {
+                                    ui.add_space(2.0);
+                                    let color = if is_err { p.danger } else { Color32::from_rgb(16, 185, 129) };
+                                    Frame::none()
+                                        .fill(p.bg_subtle)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(999.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 2.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new(msg).size(10.5).color(color));
+                                        });
+                                } else {
+                                    self.import_status_msg = None;
+                                }
                             }
-                        }
-                    });
+                        });
+                    }
 
                     // Right: Actions buttons in modern pill layout
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
 
-                        // + Add Server (Primary Accent Pill)
-                        let btn_add = egui::Button::new(
-                            RichText::new("+ Add Server")
-                                .size(12.0)
-                                .strong()
-                                .color(p.accent_text),
-                        )
-                        .fill(p.accent)
-                        .rounding(Rounding::same(999.0))
-                        .min_size(egui::vec2(98.0, 28.0));
-                        if ui.add(btn_add).clicked() {
-                            self.add_edit_modal.open_new();
-                        }
-
-                        // 📥 Import (Tonal Pill)
-                        let btn_import = egui::Button::new(
-                            RichText::new("📥 Import")
-                                .size(12.0)
-                                .color(p.text_primary),
+                        // ⚙ Settings Button (Pill icon button on the far right)
+                        let btn_settings = egui::Button::new(
+                            RichText::new("⚙").size(14.0).color(p.text_secondary),
                         )
                         .fill(p.bg_button)
+                        .stroke(Stroke::NONE)
                         .rounding(Rounding::same(999.0))
-                        .min_size(egui::vec2(84.0, 28.0));
-                        if ui.add(btn_import)
-                            .on_hover_text("Import servers from a servers.json file")
-                            .clicked()
-                        {
-                            self.import_servers_from_file_dialog();
+                        .min_size(egui::vec2(34.0, 28.0));
+                        if ui.add(btn_settings).on_hover_text("Settings & Preferences (Ctrl+,)").clicked() {
+                            self.settings_modal_open = true;
                         }
 
-                        // App Boot/Startup toggle button
-                        let is_boot = crate::autostart::is_app_autostart_enabled();
-                        let (boot_label, boot_color) = if is_boot {
-                            ("🚀 Boot: ON", p.success)
-                        } else {
-                            ("🚀 Boot: OFF", p.text_muted)
-                        };
-                        let btn_boot = egui::Button::new(
-                            RichText::new(boot_label)
-                                .size(11.5)
-                                .strong()
-                                .color(boot_color),
-                        )
-                        .fill(p.bg_button)
-                        .rounding(Rounding::same(999.0))
-                        .min_size(egui::vec2(88.0, 28.0));
-                        if ui.add(btn_boot)
-                            .on_hover_text(if is_boot {
-                                "App autostart is ON: Server Launcher runs on system login/boot. Click to turn OFF."
-                            } else {
-                                "App autostart is OFF. Click to make Server Launcher run on system login/boot."
-                            })
-                            .clicked()
-                        {
-                            let new_state = !is_boot;
-                            let _ = crate::autostart::set_app_autostart(new_state);
-                            self.app_autostart = new_state;
-                            self.persist_config();
-                        }
+                        if let Some(ref host) = remote_host_opt {
+                            // REMOTE SSH PC CONTROLS (Moved up here)
+                            let is_scanning = {
+                                let map = self.remote_scanning.lock().unwrap();
+                                map.contains(&host.id)
+                            };
 
-                        // Theme Selector
-                        let prev_theme = self.theme;
-                        egui::ComboBox::from_id_salt("top_theme_picker")
-                            .selected_text(
-                                RichText::new(format!("{} {}", self.theme.emoji(), self.theme.name()))
+                            let btn_edit = egui::Button::new(
+                                RichText::new("⚙ Edit")
                                     .size(11.5)
-                                    .color(p.text_primary),
+                                    .color(p.text_secondary),
                             )
-                            .width(160.0)
-                            .show_ui(ui, |ui| {
-                                for &thm in ThemeMode::all() {
-                                    let label = format!("{} {}", thm.emoji(), thm.name());
-                                    ui.selectable_value(&mut self.theme, thm, RichText::new(label).size(11.5));
-                                }
-                            });
-                        if self.theme != prev_theme {
-                            ctx.set_visuals(self.theme.palette().egui_visuals());
-                            self.persist_config();
-                        }
-
-                        // Quick Launch (Ctrl+P / Ctrl+K)
-                        let btn_pal = egui::Button::new(
-                            RichText::new("⚡ Quick Launch Ctrl+P")
-                                .size(11.5)
-                                .color(p.accent),
-                        )
-                        .fill(p.bg_button)
-                        .rounding(Rounding::same(999.0))
-                        .min_size(egui::vec2(150.0, 28.0));
-                        if ui.add(btn_pal).clicked() {
-                            self.palette_modal.open = true;
-                            self.palette_modal.query.clear();
-                        }
-
-                        // Stop all (M3 Danger Subdued Pill)
-                        let btn_stop_all = egui::Button::new(
-                            RichText::new("⏹ Stop All")
-                                .size(11.5)
-                                .strong()
-                                .color(p.danger),
-                        )
-                        .fill(p.danger_subtle)
-                        .rounding(Rounding::same(999.0))
-                        .min_size(egui::vec2(84.0, 28.0));
-                        if ui.add(btn_stop_all).clicked() {
-                            self.stop_all();
-                        }
-
-                        // Start all (M3 Success Subdued Pill)
-                        let btn_start_all = egui::Button::new(
-                            RichText::new("▶ Start All")
-                                .size(11.5)
-                                .strong()
-                                .color(p.success),
-                        )
-                        .fill(p.success_subtle)
-                        .rounding(Rounding::same(999.0))
-                        .min_size(egui::vec2(84.0, 28.0));
-                        if ui.add(btn_start_all).clicked() {
-                            self.start_all();
-                        }
-
-                        // Search Pill Bar (with Ctrl+K hint chip)
-                        Frame::none()
-                            .fill(p.bg_input)
+                            .fill(p.bg_button)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
-                            .inner_margin(egui::Margin::symmetric(10.0, 4.0))
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 6.0;
-                                    ui.label(RichText::new("🔍").size(11.0).color(p.text_muted));
-                                    let s_resp = ui.add(
-                                        egui::TextEdit::singleline(&mut self.overview_search_query)
-                                            .hint_text(
-                                                RichText::new("Search instances, ports, PIDs...")
-                                                    .size(11.0)
-                                                    .color(p.text_muted),
-                                            )
-                                            .desired_width(170.0)
-                                            .frame(false),
-                                    );
-                                    Frame::none()
-                                        .fill(p.bg_card)
-                                        .stroke(Stroke::NONE)
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(4.0, 1.0))
-                                        .show(ui, |ui| {
-                                            ui.label(
-                                                RichText::new("Ctrl+K")
-                                                    .size(9.0)
-                                                    .color(p.text_muted)
-                                                    .monospace(),
-                                            );
-                                        });
-                                    if s_resp.changed() {
-                                        self.refresh_server_list();
-                                    }
-                                    if !self.overview_search_query.is_empty() {
-                                        if ui
-                                            .add(
-                                                egui::Button::new(
-                                                    RichText::new("✕").size(10.0).color(p.text_muted),
+                            .min_size(egui::vec2(68.0, 28.0));
+                            if ui.add(btn_edit).clicked() {
+                                self.ssh_host_modal.open_edit(host);
+                            }
+
+                            let btn_reconnect = egui::Button::new(
+                                RichText::new("🔄 Reconnect")
+                                    .size(11.5)
+                                    .color(p.text_secondary),
+                            )
+                            .fill(p.bg_button)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(999.0))
+                            .min_size(egui::vec2(96.0, 28.0));
+                            if ui.add(btn_reconnect).clicked() {
+                                self.test_remote_host(host);
+                                self.trigger_remote_scan(host);
+                            }
+
+                            let btn_ext = egui::Button::new(
+                                RichText::new("↗ External Terminal")
+                                    .size(11.5)
+                                    .strong()
+                                    .color(p.info),
+                            )
+                            .fill(p.info_subtle)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(999.0))
+                            .min_size(egui::vec2(140.0, 28.0));
+                            if ui.add(btn_ext).on_hover_text("Open desktop terminal connected via SSH").clicked() {
+                                let _ = launch_external_ssh_terminal(host);
+                            }
+
+                            let scan_label = if is_scanning { "Scanning..." } else { "Scan Ports" };
+                            let btn_scan = egui::Button::new(
+                                RichText::new(scan_label)
+                                    .size(11.5)
+                                    .strong()
+                                    .color(p.accent),
+                            )
+                            .fill(p.bg_button)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(999.0))
+                            .min_size(egui::vec2(90.0, 28.0));
+                            if ui.add(btn_scan).clicked() {
+                                self.trigger_remote_scan(host);
+                            }
+                        } else {
+                            // LOCAL PC CONTROLS (+ Add Server, Quick Launch, Stop All, Start All, Search)
+                            // + Add Server (Primary Accent Pill)
+                            let btn_add = egui::Button::new(
+                                RichText::new("+ Add Server")
+                                    .size(12.0)
+                                    .strong()
+                                    .color(p.accent_text),
+                            )
+                            .fill(p.accent)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(999.0))
+                            .min_size(egui::vec2(98.0, 28.0));
+                            if ui.add(btn_add).clicked() {
+                                self.add_edit_modal.open_new();
+                            }
+
+                            // Quick Launch (Ctrl+P / Ctrl+K)
+                            let btn_pal = egui::Button::new(
+                                RichText::new("⚡ Quick Launch Ctrl+P")
+                                    .size(11.5)
+                                    .color(p.accent),
+                            )
+                            .fill(p.bg_button)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(999.0))
+                            .min_size(egui::vec2(145.0, 28.0));
+                            if ui.add(btn_pal).clicked() {
+                                self.palette_modal.open = true;
+                                self.palette_modal.query.clear();
+                            }
+
+                            // Stop all (M3 Danger Subdued Pill)
+                            let btn_stop_all = egui::Button::new(
+                                RichText::new("⏹ Stop All")
+                                    .size(11.5)
+                                    .strong()
+                                    .color(p.danger),
+                            )
+                            .fill(p.danger_subtle)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(999.0))
+                            .min_size(egui::vec2(84.0, 28.0));
+                            if ui.add(btn_stop_all).clicked() {
+                                self.stop_all();
+                            }
+
+                            // Start all (M3 Success Subdued Pill)
+                            let btn_start_all = egui::Button::new(
+                                RichText::new("▶ Start All")
+                                    .size(11.5)
+                                    .strong()
+                                    .color(p.success),
+                            )
+                            .fill(p.success_subtle)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(999.0))
+                            .min_size(egui::vec2(84.0, 28.0));
+                            if ui.add(btn_start_all).clicked() {
+                                self.start_all();
+                            }
+
+                            // Search Pill Bar (with Ctrl+K hint chip)
+                            Frame::none()
+                                .fill(p.bg_input)
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(999.0))
+                                .inner_margin(egui::Margin::symmetric(10.0, 4.0))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 6.0;
+                                        ui.label(RichText::new("🔍").size(11.0).color(p.text_muted));
+                                        let s_resp = ui.add(
+                                            egui::TextEdit::singleline(&mut self.overview_search_query)
+                                                .hint_text(
+                                                    RichText::new("Search instances, ports...")
+                                                        .size(11.0)
+                                                        .color(p.text_muted),
                                                 )
+                                                .desired_width(150.0)
                                                 .frame(false),
-                                            )
-                                            .clicked()
-                                        {
-                                            self.overview_search_query.clear();
+                                        );
+                                        Frame::none()
+                                            .fill(p.bg_card)
+                                            .stroke(Stroke::NONE)
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(4.0, 1.0))
+                                            .show(ui, |ui| {
+                                                ui.label(
+                                                    RichText::new("Ctrl+K")
+                                                        .size(9.0)
+                                                        .color(p.text_muted)
+                                                        .monospace(),
+                                                );
+                                            });
+                                        if s_resp.changed() {
                                             self.refresh_server_list();
                                         }
-                                    }
+                                        if !self.overview_search_query.is_empty() {
+                                            if ui
+                                                .add(
+                                                    egui::Button::new(
+                                                        RichText::new("✕").size(10.0).color(p.text_muted),
+                                                    )
+                                                    .frame(false),
+                                                )
+                                                .clicked()
+                                            {
+                                                self.overview_search_query.clear();
+                                                self.refresh_server_list();
+                                            }
+                                        }
+                                    });
                                 });
-                            });
+                        }
                     });
                 });
             });
@@ -2598,15 +2679,18 @@ impl eframe::App for LauncherApp {
 
         if self.selected_machine == "local" {
             // ═════════════════════════════════════════════════════════════════
-            // LEFT SIDEBAR: Full Window Height (~380px width)
+            // LEFT SIDEBAR: Full Window Height (380px width)
             // ═════════════════════════════════════════════════════════════════
-            egui::SidePanel::left("left_sidebar")
+            egui::SidePanel::left("local_main_sidebar")
                 .resizable(false)
                 .exact_width(380.0)
+                .default_width(380.0)
+                .width_range(380.0..=380.0)
                 .show_separator_line(false)
                 .frame(
                     Frame::none()
                         .fill(p.bg_sidebar)
+                        .stroke(Stroke::NONE)
                         .inner_margin(egui::Margin {
                             left: 14.0,
                             right: 12.0,
@@ -2628,14 +2712,16 @@ impl eframe::App for LauncherApp {
                 .frame(
                     Frame::none()
                         .fill(p.bg_main)
+                        .stroke(Stroke::NONE)
                         .inner_margin(egui::Margin {
-                            left: 6.0,
-                            right: 18.0,
+                            left: 8.0,
+                            right: 16.0,
                             top: 8.0,
                             bottom: 14.0,
                         }),
                 )
                 .show(ctx, |ui| {
+                    ui.set_width(ui.available_width());
                     self.render_right_panel(ui);
                 });
         } else {
@@ -2860,6 +2946,7 @@ impl eframe::App for LauncherApp {
         }
 
         self.render_sudo_popup(ctx, &p);
+        self.render_settings_modal(ctx, &p);
 
         let is_scanning = self.scanner.is_scanning.lock().map(|s| *s).unwrap_or(false);
         let has_remote_bg_work = {
@@ -2960,55 +3047,63 @@ impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     fn render_sidebar_tabs_bar(&mut self, ui: &mut Ui) {
         let p = self.theme.palette();
-        let avail_w = ui.available_width().max(60.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 3.0;
-            ui.spacing_mut().button_padding = egui::vec2(4.0, 4.0);
-            let tabs = [
-                (SidebarTab::Servers, SidebarTab::Servers.label()),
-                (SidebarTab::Scripts, SidebarTab::Scripts.label()),
-                (SidebarTab::Commands, SidebarTab::Commands.label()),
-                (SidebarTab::SystemMD, SidebarTab::SystemMD.label()),
-                (SidebarTab::Sensors, SidebarTab::Sensors.label()),
-            ];
+        Frame::none()
+            .fill(p.bg_card)
+            .stroke(Stroke::NONE)
+            .rounding(Rounding::same(999.0))
+            .inner_margin(egui::Margin::symmetric(4.0, 3.5))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                let avail_w = ui.available_width().max(60.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 3.0;
+                    ui.spacing_mut().button_padding = egui::vec2(3.0, 4.0);
+                    let tabs = [
+                        (SidebarTab::Servers, SidebarTab::Servers.label()),
+                        (SidebarTab::Scripts, SidebarTab::Scripts.label()),
+                        (SidebarTab::Commands, SidebarTab::Commands.label()),
+                        (SidebarTab::SystemMD, SidebarTab::SystemMD.label()),
+                        (SidebarTab::Sensors, SidebarTab::Sensors.label()),
+                    ];
 
-            let btn_w = ((avail_w - 14.0) / 5.0).max(10.0);
+                    let btn_w = ((avail_w - 20.0) / 5.0).max(10.0);
 
-            for (tab, label) in tabs {
-                let is_active = self.active_sidebar_tab == tab;
-                let bg = if is_active {
-                    p.accent
-                } else {
-                    p.bg_button
-                };
-                let fg = if is_active {
-                    p.accent_text
-                } else {
-                    p.text_secondary
-                };
-                let btn = egui::Button::new(
-                    RichText::new(label)
-                        .size(10.0)
-                        .strong()
-                        .color(fg),
-                )
-                .fill(bg)
-                .stroke(Stroke::NONE)
-                .rounding(Rounding::same(999.0))
-                .min_size(egui::vec2(btn_w, 24.0));
-
-                if ui.add(btn).clicked() {
-                    self.active_sidebar_tab = tab;
-                    if tab == SidebarTab::Commands {
-                        if self.selected_machine == "local" {
-                            self.local_terminal.request_focus = true;
+                    for (tab, label) in tabs {
+                        let is_active = self.active_sidebar_tab == tab;
+                        let bg = if is_active {
+                            p.accent
                         } else {
-                            self.remote_terminals.entry(self.selected_machine.clone()).or_default().request_focus = true;
+                            p.bg_button
+                        };
+                        let fg = if is_active {
+                            p.accent_text
+                        } else {
+                            p.text_secondary
+                        };
+                        let btn = egui::Button::new(
+                            RichText::new(label)
+                                .size(10.0)
+                                .strong()
+                                .color(fg),
+                        )
+                        .fill(bg)
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(999.0))
+                        .min_size(egui::vec2(btn_w, 24.0));
+
+                        if ui.add(btn).clicked() {
+                            self.active_sidebar_tab = tab;
+                            if tab == SidebarTab::Commands {
+                                if self.selected_machine == "local" {
+                                    self.local_terminal.request_focus = true;
+                                } else {
+                                    self.remote_terminals.entry(self.selected_machine.clone()).or_default().request_focus = true;
+                                }
+                            }
                         }
                     }
-                }
-            }
-        });
+                });
+            });
     }
 
     fn render_left_panel(&mut self, ui: &mut Ui) {
@@ -3115,16 +3210,10 @@ impl LauncherApp {
                             .map(|st| matches!(*st, ScriptRunStatus::Running))
                             .unwrap_or(false);
 
-                        let card_border = if is_selected {
-                            Stroke::new(1.5_f32, p.accent)
-                        } else {
-                            Stroke::new(1.0_f32, p.border)
-                        };
-
                         Frame::none()
                             .fill(if is_selected { p.bg_card } else { p.bg_sidebar })
-                            .stroke(card_border)
-                            .rounding(Rounding::same(6.0))
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(12.0))
                             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
@@ -3294,8 +3383,8 @@ impl LauncherApp {
                     // Header Bar
                     Frame::none()
                         .fill(p.bg_card)
-                        .stroke(Stroke::new(1.0_f32, p.border))
-                        .rounding(Rounding::same(6.0))
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(14.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -3388,9 +3477,9 @@ impl LauncherApp {
                         .map(|e| e.logs.clone());
 
                     Frame::none()
-                        .fill(Color32::from_rgb(12, 14, 20))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(32, 36, 48)))
-                        .rounding(Rounding::same(6.0))
+                        .fill(p.terminal_bg)
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(14.0))
                         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                         .show(ui, |ui| {
                             ScrollArea::vertical()
@@ -3555,9 +3644,9 @@ impl LauncherApp {
 
                     for c in &commands {
                         Frame::none()
-                            .fill(p.bg_sidebar)
-                            .stroke(Stroke::new(1.0_f32, p.border))
-                            .rounding(Rounding::same(6.0))
+                            .fill(p.bg_card)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(12.0))
                             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
@@ -3720,8 +3809,8 @@ impl LauncherApp {
             // ═════════════════════════════════════════════════════════════════
             Frame::none()
                 .fill(p.bg_card)
-                .stroke(Stroke::new(1.0_f32, p.border))
-                .rounding(Rounding::same(6.0))
+                .stroke(Stroke::NONE)
+                .rounding(Rounding::same(14.0))
                 .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
@@ -3782,9 +3871,9 @@ impl LauncherApp {
             let mut should_focus = false;
 
             Frame::none()
-                .fill(Color32::from_rgb(12, 14, 20))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(32, 36, 48)))
-                .rounding(Rounding::same(6.0))
+                .fill(p.terminal_bg)
+                .stroke(Stroke::NONE)
+                .rounding(Rounding::same(14.0))
                 .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                 .show(ui, |ui| {
                     ui.set_height(total_h);
@@ -4189,16 +4278,10 @@ impl LauncherApp {
                         let is_failed = s.is_failed();
                         let is_selected = self.selected_service.as_deref() == Some(&s.name);
 
-                        let card_border = if is_selected {
-                            Stroke::new(1.5_f32, p.accent)
-                        } else {
-                            Stroke::new(1.0_f32, p.border)
-                        };
-
                         let card_resp = Frame::none()
                             .fill(if is_selected { p.bg_card } else { p.bg_sidebar })
-                            .stroke(card_border)
-                            .rounding(Rounding::same(6.0))
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(12.0))
                             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
@@ -4346,8 +4429,8 @@ impl LauncherApp {
                     // Header Bar
                     Frame::none()
                         .fill(p.bg_card)
-                        .stroke(Stroke::new(1.0_f32, p.border))
-                        .rounding(Rounding::same(6.0))
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(14.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -4386,55 +4469,72 @@ impl LauncherApp {
                             ui.separator();
                             ui.add_space(6.0);
 
-                            // Control buttons row
+                            // Control buttons row:
+                            // - if running: only show stop; if stopped: only show start
+                            // - if disabled: only show enable; if enabled: only show disable
+                            let is_enabled = self.get_or_query_service_enabled(&s.name, user_mode, host_opt.as_ref());
                             let mut action_to_run = None;
                             ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
                                 if is_action_in_flight {
                                     ui.spinner();
                                     ui.add_space(4.0);
                                     ui.label(RichText::new("Executing remote action...").size(11.0).color(p.accent));
                                 } else {
-                                    let btn_start = egui::Button::new(RichText::new("▶ Start").size(11.0).strong().color(Color32::WHITE))
-                                        .fill(Color32::from_rgb(16, 185, 129))
-                                        .rounding(Rounding::same(4.0));
-                                    if ui.add(btn_start).clicked() {
-                                        action_to_run = Some("start");
-                                    }
-
-                                    let btn_stop = egui::Button::new(RichText::new("⏹ Stop").size(11.0).strong().color(Color32::WHITE))
-                                        .fill(p.danger)
-                                        .rounding(Rounding::same(4.0));
-                                    if ui.add(btn_stop).clicked() {
-                                        action_to_run = Some("stop");
+                                    if is_active {
+                                        let btn_stop = egui::Button::new(RichText::new("⏹ Stop").size(11.0).strong().color(Color32::WHITE))
+                                            .fill(p.danger)
+                                            .stroke(Stroke::NONE)
+                                            .rounding(Rounding::same(999.0))
+                                            .min_size(egui::vec2(76.0, 26.0));
+                                        if ui.add(btn_stop).clicked() {
+                                            action_to_run = Some("stop");
+                                        }
+                                    } else {
+                                        let btn_start = egui::Button::new(RichText::new("▶ Start").size(11.0).strong().color(Color32::WHITE))
+                                            .fill(Color32::from_rgb(16, 185, 129))
+                                            .stroke(Stroke::NONE)
+                                            .rounding(Rounding::same(999.0))
+                                            .min_size(egui::vec2(76.0, 26.0));
+                                        if ui.add(btn_start).clicked() {
+                                            action_to_run = Some("start");
+                                        }
                                     }
 
                                     let btn_restart = egui::Button::new(RichText::new("🔄 Restart").size(11.0).color(p.text_primary))
                                         .fill(p.bg_button)
-                                        .stroke(Stroke::new(1.0_f32, p.border))
-                                        .rounding(Rounding::same(4.0));
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(999.0))
+                                        .min_size(egui::vec2(86.0, 26.0));
                                     if ui.add(btn_restart).clicked() {
                                         action_to_run = Some("restart");
                                     }
 
-                                    let btn_enable = egui::Button::new(RichText::new("✅ Enable").size(11.0).color(p.text_primary))
-                                        .fill(p.bg_button)
-                                        .stroke(Stroke::new(1.0_f32, p.border))
-                                        .rounding(Rounding::same(4.0));
-                                    if ui.add(btn_enable).clicked() {
-                                        action_to_run = Some("enable");
-                                    }
-
-                                    let btn_disable = egui::Button::new(RichText::new("❌ Disable").size(11.0).color(p.text_primary))
-                                        .fill(p.bg_button)
-                                        .stroke(Stroke::new(1.0_f32, p.border))
-                                        .rounding(Rounding::same(4.0));
-                                    if ui.add(btn_disable).clicked() {
-                                        action_to_run = Some("disable");
+                                    if is_enabled {
+                                        let btn_disable = egui::Button::new(RichText::new("❌ Disable").size(11.0).color(p.text_primary))
+                                            .fill(p.bg_button)
+                                            .stroke(Stroke::NONE)
+                                            .rounding(Rounding::same(999.0))
+                                            .min_size(egui::vec2(86.0, 26.0));
+                                        if ui.add(btn_disable).clicked() {
+                                            action_to_run = Some("disable");
+                                        }
+                                    } else {
+                                        let btn_enable = egui::Button::new(RichText::new("✅ Enable").size(11.0).color(p.text_primary))
+                                            .fill(p.bg_button)
+                                            .stroke(Stroke::NONE)
+                                            .rounding(Rounding::same(999.0))
+                                            .min_size(egui::vec2(86.0, 26.0));
+                                        if ui.add(btn_enable).clicked() {
+                                            action_to_run = Some("enable");
+                                        }
                                     }
 
                                     let btn_reload = egui::Button::new(RichText::new("🔄 Reload Daemon").size(11.0).color(p.text_secondary))
                                         .fill(p.bg_button)
-                                        .rounding(Rounding::same(4.0));
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(999.0))
+                                        .min_size(egui::vec2(120.0, 26.0));
                                     if ui.add(btn_reload).clicked() {
                                         action_to_run = Some("daemon-reload");
                                     }
@@ -4442,6 +4542,14 @@ impl LauncherApp {
                             });
 
                             if let Some(act) = action_to_run {
+                                let host_id_str = host_opt.as_ref().map(|h| h.id.as_str()).unwrap_or("local");
+                                let cache_key = format!("{}:{}:{}", host_id_str, s.name, if user_mode { "user" } else { "system" });
+                                if act == "enable" {
+                                    self.service_enabled_cache.insert(cache_key, (true, Instant::now()));
+                                } else if act == "disable" {
+                                    self.service_enabled_cache.insert(cache_key, (false, Instant::now()));
+                                }
+
                                 if let Some(host) = &host_opt {
                                     self.trigger_remote_service_action(host, &s.name, act, user_mode);
                                 } else {
@@ -4507,8 +4615,8 @@ impl LauncherApp {
                         ui.add_space(6.0);
                         Frame::none()
                             .fill(p.bg_subtle)
-                            .stroke(Stroke::new(1.0_f32, p.accent))
-                            .rounding(Rounding::same(4.0))
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                             .show(ui, |ui| {
                                 ui.label(RichText::new(msg).size(11.0).color(p.accent));
@@ -4601,8 +4709,8 @@ impl LauncherApp {
                     let log_h = (ui.available_height() - 20.0).max(180.0);
                     Frame::none()
                         .fill(Color32::from_rgb(12, 14, 20))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(32, 36, 48)))
-                        .rounding(Rounding::same(6.0))
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                         .show(ui, |ui| {
                             ui.set_height(log_h);
@@ -4761,8 +4869,8 @@ impl LauncherApp {
                 if let Some(err) = &self.sudo_popup.error {
                     Frame::none()
                         .fill(palette.bg_subtle)
-                        .stroke(Stroke::new(1.0_f32, palette.danger))
-                        .rounding(Rounding::same(4.0))
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(8.0, 5.0))
                         .show(ui, |ui| {
                             ui.label(RichText::new(err).size(11.0).color(palette.danger));
@@ -4817,6 +4925,392 @@ impl LauncherApp {
                 self.execute_pending_sudo_action(pending, true);
             }
         }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // SETTINGS MODAL: Themes, Boot Autostart, Server Import/Export, Shortcuts
+    // ═════════════════════════════════════════════════════════════════════════
+    fn render_settings_modal(&mut self, ctx: &Context, palette: &crate::theme::ThemePalette) {
+        if !self.settings_modal_open {
+            return;
+        }
+
+        if ctx.input(|i| i.key_pressed(Key::Escape)) {
+            self.settings_modal_open = false;
+            return;
+        }
+
+        let mut is_open = self.settings_modal_open;
+        let screen = ctx.screen_rect();
+        let modal_w = 540.0_f32.min(screen.width() - 40.0).max(360.0);
+        let max_h = (screen.height() - 80.0).max(400.0);
+
+        let mut change_theme: Option<ThemeMode> = None;
+        let mut toggle_boot = false;
+        let mut do_import = false;
+        let mut do_export = false;
+        let mut close_requested = false;
+
+        egui::Window::new(
+            RichText::new("⚙ Settings & Preferences")
+                .size(15.0)
+                .strong()
+                .color(palette.text_primary),
+        )
+        .open(&mut is_open)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .min_width(modal_w)
+        .max_width(modal_w)
+        .default_height(480.0)
+        .max_height(max_h)
+        .show(ctx, |ui| {
+            ui.add_space(4.0);
+
+            ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 10.0;
+
+                    // ─────────────────────────────────────────────────────────────
+                    // SECTION 1: 🎨 Themes & Visual Styling
+                    // ─────────────────────────────────────────────────────────────
+                    Frame::none()
+                        .fill(palette.bg_card)
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(10.0))
+                        .inner_margin(egui::Margin::same(12.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new("🎨 Theme & Visual Styling")
+                                        .size(13.0)
+                                        .strong()
+                                        .color(palette.text_primary),
+                                );
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let mut selected_theme = self.theme;
+                                    egui::ComboBox::from_id_salt("settings_theme_dropdown")
+                                        .selected_text(
+                                            RichText::new(format!(
+                                                "{} {}",
+                                                self.theme.emoji(),
+                                                self.theme.name()
+                                            ))
+                                            .size(11.5)
+                                            .color(palette.text_primary),
+                                        )
+                                        .width(175.0)
+                                        .show_ui(ui, |ui| {
+                                            for &thm in ThemeMode::all() {
+                                                let label = format!("{} {}", thm.emoji(), thm.name());
+                                                if ui.selectable_value(
+                                                    &mut selected_theme,
+                                                    thm,
+                                                    RichText::new(label).size(11.5),
+                                                ).clicked() {
+                                                    change_theme = Some(thm);
+                                                }
+                                            }
+                                        });
+                                });
+                            });
+
+                            ui.add_space(2.0);
+                            ui.label(
+                                RichText::new(
+                                    "Choose an aesthetic palette tailored for high-density developer operations.",
+                                )
+                                .size(10.5)
+                                .color(palette.text_muted),
+                            );
+
+                            ui.add_space(8.0);
+
+                            // Quick theme pills
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                                for &thm in ThemeMode::all() {
+                                    let is_active = self.theme == thm;
+                                    let (bg, fg) = if is_active {
+                                        (palette.accent, palette.accent_text)
+                                    } else {
+                                        (palette.bg_subtle, palette.text_secondary)
+                                    };
+                                    let btn = egui::Button::new(
+                                        RichText::new(format!("{} {}", thm.emoji(), thm.name()))
+                                            .size(10.5)
+                                            .strong()
+                                            .color(fg),
+                                    )
+                                    .fill(bg)
+                                    .stroke(Stroke::NONE)
+                                    .rounding(Rounding::same(999.0))
+                                    .min_size(egui::vec2(0.0, 24.0));
+
+                                    if ui.add(btn).clicked() {
+                                        change_theme = Some(thm);
+                                    }
+                                }
+                            });
+                        });
+
+                    // ─────────────────────────────────────────────────────────────
+                    // SECTION 2: 🚀 System Startup & Boot
+                    // ─────────────────────────────────────────────────────────────
+                    Frame::none()
+                        .fill(palette.bg_card)
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(10.0))
+                        .inner_margin(egui::Margin::same(12.0))
+                        .show(ui, |ui| {
+                            let is_boot = crate::autostart::is_app_autostart_enabled();
+
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new("🚀 System Startup (Autostart on Boot)")
+                                        .size(13.0)
+                                        .strong()
+                                        .color(palette.text_primary),
+                                );
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let (btn_txt, btn_bg, btn_fg) = if is_boot {
+                                        ("Turn OFF Autostart", palette.danger_subtle, palette.danger)
+                                    } else {
+                                        ("Turn ON Autostart", palette.success_subtle, palette.success)
+                                    };
+                                    let btn = egui::Button::new(
+                                        RichText::new(btn_txt)
+                                            .size(11.0)
+                                            .strong()
+                                            .color(btn_fg),
+                                    )
+                                    .fill(btn_bg)
+                                    .stroke(Stroke::NONE)
+                                    .rounding(Rounding::same(999.0))
+                                    .min_size(egui::vec2(130.0, 26.0));
+
+                                    if ui.add(btn).clicked() {
+                                        toggle_boot = true;
+                                    }
+
+                                    let (badge_txt, badge_bg, badge_fg) = if is_boot {
+                                        ("● ENABLED", palette.success_subtle, palette.success)
+                                    } else {
+                                        ("○ DISABLED", palette.bg_subtle, palette.text_muted)
+                                    };
+                                    Frame::none()
+                                        .fill(badge_bg)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(999.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new(badge_txt).size(10.0).strong().color(badge_fg));
+                                        });
+                                });
+                            });
+
+                            ui.add_space(2.0);
+                            ui.label(
+                                RichText::new(
+                                    "When enabled, Server Launcher initializes silently on login or desktop startup.",
+                                )
+                                .size(10.5)
+                                .color(palette.text_muted),
+                            );
+                        });
+
+                    // ─────────────────────────────────────────────────────────────
+                    // SECTION 3: 📦 Servers Configuration (Import / Export)
+                    // ─────────────────────────────────────────────────────────────
+                    Frame::none()
+                        .fill(palette.bg_card)
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(10.0))
+                        .inner_margin(egui::Margin::same(12.0))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new("📦 Servers Configuration (Import & Export)")
+                                    .size(13.0)
+                                    .strong()
+                                    .color(palette.text_primary),
+                            );
+                            ui.add_space(2.0);
+                            ui.label(
+                                RichText::new(
+                                    "Load configuration profiles from a servers.json file, or export current servers.",
+                                )
+                                .size(10.5)
+                                .color(palette.text_muted),
+                            );
+                            ui.add_space(8.0);
+
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+
+                                let btn_import = egui::Button::new(
+                                    RichText::new("📥 Import servers.json")
+                                        .size(11.5)
+                                        .strong()
+                                        .color(palette.accent_text),
+                                )
+                                .fill(palette.accent)
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(999.0))
+                                .min_size(egui::vec2(150.0, 28.0));
+                                if ui.add(btn_import).on_hover_text("Select and import servers.json file").clicked() {
+                                    do_import = true;
+                                }
+
+                                let btn_export = egui::Button::new(
+                                    RichText::new("📤 Export servers.json")
+                                        .size(11.5)
+                                        .strong()
+                                        .color(palette.text_primary),
+                                )
+                                .fill(palette.bg_button)
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(999.0))
+                                .min_size(egui::vec2(150.0, 28.0));
+                                if ui.add(btn_export).on_hover_text("Export current servers to servers.json file").clicked() {
+                                    do_export = true;
+                                }
+                            });
+
+                            if let Some((ref msg, is_err, _)) = self.import_status_msg {
+                                ui.add_space(6.0);
+                                let color = if is_err { palette.danger } else { Color32::from_rgb(16, 185, 129) };
+                                Frame::none()
+                                    .fill(palette.bg_subtle)
+                                    .stroke(Stroke::NONE)
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(msg).size(10.5).color(color));
+                                    });
+                            }
+                        });
+
+                    // ─────────────────────────────────────────────────────────────
+                    // SECTION 4: ⌨ Keyboard Shortcuts Reference
+                    // ─────────────────────────────────────────────────────────────
+                    Frame::none()
+                        .fill(palette.bg_card)
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(10.0))
+                        .inner_margin(egui::Margin::same(12.0))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new("⌨ Keyboard Shortcuts")
+                                    .size(13.0)
+                                    .strong()
+                                    .color(palette.text_primary),
+                            );
+                            ui.add_space(6.0);
+
+                            let shortcuts = [
+                                ("Ctrl+P / Ctrl+K", "Quick Launch & Command Palette"),
+                                ("Ctrl+,", "Open Settings & Preferences"),
+                                ("Ctrl+A", "Start All Servers"),
+                                ("Ctrl+X", "Stop All Servers"),
+                                ("Ctrl+F", "Focus Instance Search Bar"),
+                                ("Esc", "Close Modals / Dismiss Dialogs"),
+                            ];
+
+                            for (keys, desc) in shortcuts {
+                                ui.horizontal(|ui| {
+                                    Frame::none()
+                                        .fill(palette.bg_subtle)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                        .show(ui, |ui| {
+                                            ui.label(
+                                                RichText::new(keys)
+                                                    .size(10.5)
+                                                    .monospace()
+                                                    .strong()
+                                                    .color(palette.accent),
+                                            );
+                                        });
+                                    ui.label(RichText::new(desc).size(11.0).color(palette.text_secondary));
+                                });
+                                ui.add_space(1.0);
+                            }
+                        });
+
+                    // ─────────────────────────────────────────────────────────────
+                    // SECTION 5: ℹ️ System Diagnostics & Information
+                    // ─────────────────────────────────────────────────────────────
+                    Frame::none()
+                        .fill(palette.bg_subtle)
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(10.0))
+                        .inner_margin(egui::Margin::same(10.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Host IP:").size(10.5).color(palette.text_muted));
+                                ui.label(RichText::new(&self.lan_ip).size(10.5).monospace().color(palette.text_primary));
+                                ui.add_space(8.0);
+                                ui.label(RichText::new("Managed Servers:").size(10.5).color(palette.text_muted));
+                                ui.label(RichText::new(format!("{}", self.services.len())).size(10.5).strong().color(palette.text_primary));
+                            });
+                            ui.add_space(2.0);
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new("Config File:").size(10.5).color(palette.text_muted));
+                                ui.label(RichText::new(self.config_path.display().to_string()).size(10.5).monospace().color(palette.text_secondary));
+                            });
+                        });
+
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let btn_done = egui::Button::new(
+                                RichText::new("Done")
+                                    .size(11.5)
+                                    .strong()
+                                    .color(palette.accent_text),
+                            )
+                            .fill(palette.accent)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(999.0))
+                            .min_size(egui::vec2(80.0, 26.0));
+                            if ui.add(btn_done).clicked() {
+                                close_requested = true;
+                            }
+                        });
+                    });
+                });
+        });
+
+        if close_requested {
+            is_open = false;
+        }
+
+        // Apply any actions after UI pass (avoids borrow conflict)
+        if let Some(thm) = change_theme {
+            if thm != self.theme {
+                self.theme = thm;
+                ctx.set_visuals(self.theme.palette().egui_visuals());
+                self.persist_config();
+            }
+        }
+        if toggle_boot {
+            let is_boot = crate::autostart::is_app_autostart_enabled();
+            let new_state = !is_boot;
+            let _ = crate::autostart::set_app_autostart(new_state);
+            self.app_autostart = new_state;
+            self.persist_config();
+        }
+        if do_import {
+            self.import_servers_from_file_dialog();
+        }
+        if do_export {
+            self.export_servers_to_file_dialog();
+        }
+
+        self.settings_modal_open = is_open;
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -4919,8 +5413,8 @@ impl LauncherApp {
                     let fg = if is_active { p.accent_text } else { p.text_secondary };
                     let btn = egui::Button::new(RichText::new(cat).size(10.0).strong().color(fg))
                         .fill(bg)
-                        .stroke(Stroke::new(1.0_f32, if is_active { p.accent } else { p.border }))
-                        .rounding(Rounding::same(4.0));
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(999.0));
                     if ui.add(btn).clicked() {
                         self.sensors_category_filter = cat.to_string();
                     }
@@ -4942,8 +5436,8 @@ impl LauncherApp {
                     // Card 1: CPU Quick Card
                     Frame::none()
                         .fill(p.bg_card)
-                        .stroke(Stroke::new(1.0_f32, p.border))
-                        .rounding(Rounding::same(6.0))
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -4977,8 +5471,8 @@ impl LauncherApp {
                     // Card 2: RAM Quick Card
                     Frame::none()
                         .fill(p.bg_card)
-                        .stroke(Stroke::new(1.0_f32, p.border))
-                        .rounding(Rounding::same(6.0))
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -5002,8 +5496,8 @@ impl LauncherApp {
                     if let Some(gpu) = snap.gpus.first() {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, p.border))
-                            .rounding(Rounding::same(6.0))
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
@@ -5035,8 +5529,8 @@ impl LauncherApp {
                     if snap.power.ac_online.is_some() || !snap.power.batteries.is_empty() {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, p.border))
-                            .rounding(Rounding::same(6.0))
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
@@ -5064,8 +5558,8 @@ impl LauncherApp {
                     // Card 5: Network Live Bandwidth Card
                     Frame::none()
                         .fill(p.bg_card)
-                        .stroke(Stroke::new(1.0_f32, p.border))
-                        .rounding(Rounding::same(6.0))
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -5089,8 +5583,8 @@ impl LauncherApp {
                     // Card 6: Sensors Count Card
                     Frame::none()
                         .fill(p.bg_card)
-                        .stroke(Stroke::new(1.0_f32, p.border))
-                        .rounding(Rounding::same(6.0))
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -5168,8 +5662,8 @@ impl LauncherApp {
             // ═════════════════════════════════════════════════════════════════
             Frame::none()
                 .fill(p.bg_card)
-                .stroke(Stroke::new(1.0_f32, p.border))
-                .rounding(Rounding::same(6.0))
+                .stroke(Stroke::NONE)
+                .rounding(Rounding::same(8.0))
                 .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
@@ -5211,7 +5705,7 @@ impl LauncherApp {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let btn_ref = egui::Button::new(RichText::new("🔄 Refresh Now").size(11.5).strong().color(Color32::WHITE))
                                 .fill(p.accent)
-                                .rounding(Rounding::same(4.0));
+                                .rounding(Rounding::same(999.0));
                             if ui.add(btn_ref).clicked() {
                                 if let Some(hid) = host_id {
                                     if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
@@ -5232,8 +5726,8 @@ impl LauncherApp {
                     ui.add_space(4.0);
                     Frame::none()
                         .fill(Color32::from_rgba_premultiplied(239, 68, 68, 25))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(239, 68, 68)))
-                        .rounding(Rounding::same(4.0))
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -5259,8 +5753,8 @@ impl LauncherApp {
                     if show_cpu {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, p.border))
-                            .rounding(Rounding::same(6.0))
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
@@ -5336,8 +5830,8 @@ impl LauncherApp {
                     if show_ram {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, p.border))
-                            .rounding(Rounding::same(6.0))
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
@@ -5373,8 +5867,8 @@ impl LauncherApp {
                         for (idx, gpu) in snap.gpus.iter().enumerate() {
                             Frame::none()
                                 .fill(p.bg_card)
-                                .stroke(Stroke::new(1.0_f32, p.border))
-                                .rounding(Rounding::same(6.0))
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(8.0))
                                 .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
@@ -5426,8 +5920,8 @@ impl LauncherApp {
                     if show_power && (snap.power.ac_online.is_some() || !snap.power.batteries.is_empty()) {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, p.border))
-                            .rounding(Rounding::same(6.0))
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
@@ -5520,8 +6014,8 @@ impl LauncherApp {
                     if show_storage && !snap.disks.is_empty() {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, p.border))
-                            .rounding(Rounding::same(6.0))
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
@@ -5558,8 +6052,8 @@ impl LauncherApp {
                     if show_net && !snap.networks.is_empty() {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, p.border))
-                            .rounding(Rounding::same(6.0))
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
@@ -5606,8 +6100,8 @@ impl LauncherApp {
                     if show_temps {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, p.border))
-                            .rounding(Rounding::same(6.0))
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
@@ -6186,7 +6680,12 @@ impl LauncherApp {
                                                 s.open_console();
                                             }
 
-                                            if is_running && s.config.port > 0 {
+                                            if (is_running && s.config.port > 0) || s.config.url.is_some() {
+                                                let target_url = if let Some(u) = &s.config.url {
+                                                    u.clone()
+                                                } else {
+                                                    format!("http://localhost:{}", s.config.port)
+                                                };
                                                 let btn_browser = egui::Button::new(
                                                     RichText::new("↗").size(11.5).strong().color(Color32::from_rgb(0x38, 0xbd, 0xf8)),
                                                 )
@@ -6194,8 +6693,8 @@ impl LauncherApp {
                                                 .stroke(Stroke::NONE)
                                                 .rounding(circ_rnd)
                                                 .min_size(circ_size);
-                                                if ui.add(btn_browser).on_hover_text(format!("Open http://localhost:{} in browser", s.config.port)).clicked() {
-                                                    ui.ctx().open_url(egui::OpenUrl::new_tab(format!("http://localhost:{}", s.config.port)));
+                                                if ui.add(btn_browser).on_hover_text(format!("Open {} in browser", target_url)).clicked() {
+                                                    ui.ctx().open_url(egui::OpenUrl::new_tab(target_url));
                                                 }
                                             }
                                         });
@@ -6261,11 +6760,6 @@ impl LauncherApp {
             ui.horizontal(|ui| {
                 // Tab 0: Server Overview
                 let is_ov_active = self.active_tab == "overview";
-                let ov_border = if is_ov_active {
-                    Stroke::new(1.0_f32, p.accent)
-                } else {
-                    Stroke::new(1.0_f32, p.border)
-                };
                 let ov_bg = if is_ov_active {
                     p.bg_card
                 } else {
@@ -6279,8 +6773,8 @@ impl LauncherApp {
                         .color(if is_ov_active { p.text_primary } else { p.text_secondary }),
                 )
                 .fill(ov_bg)
-                .stroke(ov_border)
-                .rounding(Rounding { nw: 4.0, ne: 4.0, sw: 0.0, se: 0.0 });
+                .stroke(Stroke::NONE)
+                .rounding(Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 });
 
                 if ui.add(ov_btn).clicked() {
                     self.active_tab = "overview".to_string();
@@ -6289,11 +6783,6 @@ impl LauncherApp {
                 // Server tabs
                 for s in &self.services {
                     let is_active = self.active_tab == s.config.key;
-                    let border = if is_active {
-                        Stroke::new(1.0_f32, p.accent)
-                    } else {
-                        Stroke::new(1.0_f32, p.border)
-                    };
                     let bg = if is_active {
                         p.bg_card
                     } else {
@@ -6313,8 +6802,8 @@ impl LauncherApp {
                             .color(if is_active { p.text_primary } else { p.text_secondary }),
                     )
                     .fill(bg)
-                    .stroke(border)
-                    .rounding(Rounding { nw: 4.0, ne: 4.0, sw: 0.0, se: 0.0 });
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 });
 
                     if ui.add(tab_btn).clicked() {
                         self.active_tab = s.config.key.clone();
@@ -6325,9 +6814,9 @@ impl LauncherApp {
             // Outer Frame for the tab content (FILLS 100% OF REMAINING SPACE!)
             Frame::none()
                 .fill(p.bg_main)
-                .stroke(Stroke::new(1.0_f32, p.border))
-                .rounding(Rounding { nw: 0.0, ne: 4.0, sw: 4.0, se: 4.0 })
-                .inner_margin(14.0)
+                .stroke(Stroke::NONE)
+                .rounding(Rounding { nw: 0.0, ne: 6.0, sw: 6.0, se: 6.0 })
+                .inner_margin(12.0)
                 .show(ui, |ui| {
                     ui.set_height(ui.available_height());
                     if self.active_tab == "overview" {
@@ -6381,25 +6870,19 @@ impl LauncherApp {
                         .color(p.accent),
                 )
                 .fill(p.bg_button)
-                .stroke(Stroke::new(1.0_f32, p.border))
-                .rounding(Rounding::same(4.0));
+                .stroke(Stroke::NONE)
+                .rounding(Rounding::same(999.0))
+                .min_size(egui::vec2(86.0, 26.0));
                 if ui.add(btn_refresh).clicked() {
                     self.refresh_server_list();
                 }
 
                 // Search Box with 🔍 icon, hint, clear button, and Ctrl+F focus support
                 Frame::none()
-                    .fill(p.bg_card)
-                    .stroke(Stroke::new(
-                        1.0_f32,
-                        if !self.overview_search_query.is_empty() {
-                            p.accent
-                        } else {
-                            p.border
-                        },
-                    ))
-                    .rounding(Rounding::same(4.0))
-                    .inner_margin(egui::Margin::symmetric(8.0, 3.5))
+                    .fill(p.bg_input)
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(999.0))
+                    .inner_margin(egui::Margin::symmetric(10.0, 4.0))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.label(
@@ -6449,9 +6932,7 @@ impl LauncherApp {
             });
         });
 
-        ui.add_space(8.0);
-        ui.separator();
-        ui.add_space(10.0);
+        ui.add_space(6.0);
 
         let q = self.overview_search_query.trim().to_lowercase();
 
@@ -6494,8 +6975,8 @@ impl LauncherApp {
                 if managed_indices.is_empty() && !q.is_empty() {
                     Frame::none()
                         .fill(p.bg_card)
-                        .stroke(Stroke::new(1.0_f32, p.border))
-                        .rounding(Rounding::same(6.0))
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                         .show(ui, |ui| {
                             ui.label(
@@ -7051,8 +7532,8 @@ impl LauncherApp {
                 if unmanaged_listeners.is_empty() && visible_stopped.is_empty() {
                     Frame::none()
                         .fill(p.bg_card)
-                        .stroke(Stroke::new(1.0_f32, p.border))
-                        .rounding(Rounding::same(6.0))
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                         .show(ui, |ui| {
                             let msg = if q.is_empty() {
@@ -7092,8 +7573,8 @@ impl LauncherApp {
 
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, p.border))
-                            .rounding(Rounding::same(6.0))
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(12.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                             .show(ui, |ui| {
                                 ui.vertical(|ui| {
@@ -7217,8 +7698,8 @@ impl LauncherApp {
                                         ui.add_space(8.0);
                                         Frame::none()
                                             .fill(p.bg_main)
-                                            .stroke(Stroke::new(1.0_f32, p.border))
-                                            .rounding(Rounding::same(5.0))
+                                            .stroke(Stroke::NONE)
+                                            .rounding(Rounding::same(8.0))
                                             .inner_margin(egui::Margin::symmetric(12.0, 8.0))
                                             .show(ui, |ui| {
                                                 ui.vertical(|ui| {
@@ -7260,9 +7741,9 @@ impl LauncherApp {
                                                     ui.horizontal(|ui| {
                                                         let is_inline_open = self.open_inline_terminals.contains(&listener.port);
                                                         let inline_btn_text = if is_inline_open {
-                                                            "📟 Hide Inline Terminal"
+                                                             "📟 Hide Inline Terminal"
                                                         } else {
-                                                            "📟 View Output (Inline Terminal)"
+                                                             "📟 View Output (Inline Terminal)"
                                                         };
                                                         let btn_inline = egui::Button::new(
                                                             RichText::new(inline_btn_text)
@@ -7271,8 +7752,8 @@ impl LauncherApp {
                                                                 .color(if is_inline_open { p.warning } else { p.accent }),
                                                         )
                                                         .fill(if is_inline_open { p.bg_card } else { p.bg_button })
-                                                        .stroke(Stroke::new(1.0_f32, if is_inline_open { p.warning } else { p.border }))
-                                                        .rounding(Rounding::same(4.0));
+                                                        .stroke(Stroke::NONE)
+                                                        .rounding(Rounding::same(999.0));
 
                                                         if ui.add(btn_inline).on_hover_text("Open inline terminal to view live process output and run shell commands in working directory").clicked() {
                                                             if is_inline_open {
@@ -7290,8 +7771,8 @@ impl LauncherApp {
                                                                 .color(p.info),
                                                         )
                                                         .fill(p.bg_button)
-                                                        .stroke(Stroke::new(1.0_f32, p.border))
-                                                        .rounding(Rounding::same(4.0));
+                                                        .stroke(Stroke::NONE)
+                                                        .rounding(Rounding::same(999.0));
 
                                                         if ui.add(btn_external).on_hover_text("Open desktop terminal window (gnome-terminal, alacritty, etc.) in working directory").clicked() {
                                                             to_launch_external_terminal = Some((
@@ -7311,8 +7792,8 @@ impl LauncherApp {
                                                                     .color(p.warning),
                                                             )
                                                             .fill(p.bg_button)
-                                                            .stroke(Stroke::new(1.0_f32, p.border))
-                                                            .rounding(Rounding::same(4.0));
+                                                            .stroke(Stroke::NONE)
+                                                            .rounding(Rounding::same(999.0));
 
                                                             if ui.add(btn_folder).on_hover_text("Open working directory in desktop file manager (xdg-open)").clicked() {
                                                                 crate::service::open_folder(&cwd_str);
@@ -7325,8 +7806,8 @@ impl LauncherApp {
                                                                     .color(p.info),
                                                             )
                                                             .fill(p.bg_button)
-                                                            .stroke(Stroke::new(1.0_f32, p.border))
-                                                            .rounding(Rounding::same(4.0));
+                                                            .stroke(Stroke::NONE)
+                                                            .rounding(Rounding::same(999.0));
 
                                                             if ui.add(btn_vscode).on_hover_text("Open working directory in VS Code (code .)").clicked() {
                                                                 crate::service::open_in_vscode(&cwd_str);
@@ -7361,8 +7842,8 @@ impl LauncherApp {
 
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, p.border))
-                            .rounding(Rounding::same(6.0))
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(12.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                             .show(ui, |ui| {
                                 ui.vertical(|ui| {
@@ -7441,8 +7922,8 @@ impl LauncherApp {
                                         ui.add_space(8.0);
                                         Frame::none()
                                             .fill(p.bg_main)
-                                            .stroke(Stroke::new(1.0_f32, p.border))
-                                            .rounding(Rounding::same(5.0))
+                                            .stroke(Stroke::NONE)
+                                            .rounding(Rounding::same(8.0))
                                             .inner_margin(egui::Margin::symmetric(12.0, 8.0))
                                             .show(ui, |ui| {
                                                 ui.vertical(|ui| {
@@ -7495,8 +7976,8 @@ impl LauncherApp {
                                                                 .color(if is_inline_open { p.warning } else { p.accent }),
                                                         )
                                                         .fill(if is_inline_open { p.bg_card } else { p.bg_button })
-                                                        .stroke(Stroke::new(1.0_f32, if is_inline_open { p.warning } else { p.border }))
-                                                        .rounding(Rounding::same(4.0));
+                                                        .stroke(Stroke::NONE)
+                                                        .rounding(Rounding::same(999.0));
 
                                                         if ui.add(btn_inline).on_hover_text("Open inline terminal to run shell commands in working directory").clicked() {
                                                             if is_inline_open {
@@ -7514,8 +7995,8 @@ impl LauncherApp {
                                                                 .color(p.info),
                                                         )
                                                         .fill(p.bg_button)
-                                                        .stroke(Stroke::new(1.0_f32, p.border))
-                                                        .rounding(Rounding::same(4.0));
+                                                        .stroke(Stroke::NONE)
+                                                        .rounding(Rounding::same(999.0));
 
                                                         if ui.add(btn_external).on_hover_text("Open desktop terminal window (gnome-terminal, alacritty, etc.) in working directory").clicked() {
                                                             to_launch_external_terminal = Some((
@@ -7535,8 +8016,8 @@ impl LauncherApp {
                                                                     .color(p.warning),
                                                             )
                                                             .fill(p.bg_button)
-                                                            .stroke(Stroke::new(1.0_f32, p.border))
-                                                            .rounding(Rounding::same(4.0));
+                                                            .stroke(Stroke::NONE)
+                                                            .rounding(Rounding::same(999.0));
 
                                                             if ui.add(btn_folder).on_hover_text("Open working directory in desktop file manager (xdg-open)").clicked() {
                                                                 crate::service::open_folder(cwd);
@@ -7549,8 +8030,8 @@ impl LauncherApp {
                                                                     .color(p.info),
                                                             )
                                                             .fill(p.bg_button)
-                                                            .stroke(Stroke::new(1.0_f32, p.border))
-                                                            .rounding(Rounding::same(4.0));
+                                                            .stroke(Stroke::NONE)
+                                                            .rounding(Rounding::same(999.0));
 
                                                             if ui.add(btn_vscode).on_hover_text("Open working directory in VS Code (code .)").clicked() {
                                                                 crate::service::open_in_vscode(cwd);
@@ -7762,8 +8243,8 @@ impl LauncherApp {
                         .color(if search_is_open { p.accent } else { p.text_secondary }),
                 )
                 .fill(if search_is_open { p.accent.gamma_multiply(0.25) } else { p.bg_button })
-                .stroke(Stroke::new(1.0_f32, if search_is_open { p.accent } else { p.border }))
-                .rounding(Rounding::same(4.0));
+                .stroke(Stroke::NONE)
+                .rounding(Rounding::same(999.0));
                 if ui.add(find_btn).clicked() {
                     self.search_open.insert(key.to_string(), !search_is_open);
                 }
@@ -7782,8 +8263,8 @@ impl LauncherApp {
                     .color(p.info),
             )
             .fill(p.bg_button)
-            .stroke(Stroke::new(1.0_f32, p.border))
-            .rounding(Rounding::same(4.0));
+            .stroke(Stroke::NONE)
+            .rounding(Rounding::same(999.0));
             if ui.add(vscode_btn).on_hover_text("Open working directory in VS Code (code .)").clicked() {
                 let cwd = self.find_service(key).map(|s| s.config.cwd.clone()).unwrap_or_default();
                 crate::service::open_in_vscode(&cwd);
@@ -7795,8 +8276,8 @@ impl LauncherApp {
                     .color(p.text_secondary),
             )
             .fill(p.bg_button)
-            .stroke(Stroke::new(1.0_f32, p.border))
-            .rounding(Rounding::same(4.0));
+            .stroke(Stroke::NONE)
+            .rounding(Rounding::same(999.0));
             if ui.add(folder_btn).on_hover_text("Open working directory in file manager (xdg-open)").clicked() {
                 let cwd = self.find_service(key).map(|s| s.config.cwd.clone()).unwrap_or_default();
                 crate::service::open_folder(&cwd);
@@ -7808,8 +8289,8 @@ impl LauncherApp {
                     .color(p.accent_light),
             )
             .fill(p.bg_button)
-            .stroke(Stroke::new(1.0_f32, p.border))
-            .rounding(Rounding::same(4.0));
+            .stroke(Stroke::NONE)
+            .rounding(Rounding::same(999.0));
             if ui.add(console_btn).on_hover_text("Open interactive console / terminal window in working directory").clicked() {
                 if let Some(s) = self.find_service(key) {
                     s.open_console();
@@ -8159,8 +8640,8 @@ impl LauncherApp {
                 for (label, key_cmd, tip) in shortcuts {
                     let btn = egui::Button::new(RichText::new(label).size(10.5).color(p.accent_light))
                         .fill(p.bg_button)
-                        .stroke(Stroke::new(1.0_f32, p.border))
-                        .rounding(Rounding::same(3.0));
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(999.0));
                     if ui.add(btn).on_hover_text(tip).clicked() {
                         if let Some(s) = self.find_service(key) {
                             s.send_input(key_cmd);
@@ -8192,14 +8673,14 @@ impl LauncherApp {
 
             let btn_send = egui::Button::new(RichText::new("Send").size(11.0).strong().color(p.accent_text))
                 .fill(p.accent)
-                .rounding(Rounding::same(4.0));
+                .rounding(Rounding::same(999.0));
             if ui.add(btn_send).clicked() {
                 do_send = true;
             }
 
             let btn_ctrlc = egui::Button::new(RichText::new("Ctrl+C").size(11.0).color(p.warning))
                 .fill(p.bg_button)
-                .rounding(Rounding::same(4.0));
+                .rounding(Rounding::same(999.0));
             if ui.add(btn_ctrlc).clicked() {
                 if let Some(s) = self.find_service(key) {
                     s.send_interrupt();
@@ -8208,7 +8689,7 @@ impl LauncherApp {
 
             let btn_clear = egui::Button::new(RichText::new("Clear").size(11.0).color(p.text_muted))
                 .fill(p.bg_button)
-                .rounding(Rounding::same(4.0));
+                .rounding(Rounding::same(999.0));
             if ui.add(btn_clear).clicked() {
                 if let Some(s) = self.find_service(key) {
                     s.clear_logs();
@@ -8217,8 +8698,8 @@ impl LauncherApp {
 
             let btn_console = egui::Button::new(RichText::new("🖥️ Console").size(11.0).color(p.accent_light))
                 .fill(p.bg_button)
-                .stroke(Stroke::new(1.0_f32, p.border))
-                .rounding(Rounding::same(4.0));
+                .stroke(Stroke::NONE)
+                .rounding(Rounding::same(999.0));
             if ui.add(btn_console).on_hover_text("Open in external console / terminal window").clicked() {
                 if let Some(s) = self.find_service(key) {
                     s.open_console();
@@ -8242,8 +8723,8 @@ impl LauncherApp {
                 .show(ui.ctx(), |ui| {
                     Frame::none()
                         .fill(p.bg_card)
-                        .stroke(Stroke::new(1.0_f32, p.border))
-                        .rounding(Rounding::same(6.0))
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(12.0))
                         .shadow(egui::epaint::Shadow {
                             offset: egui::vec2(0.0, 4.0),
                             blur: 12.0,
@@ -8299,8 +8780,8 @@ impl LauncherApp {
                                                     };
                                                     Frame::none()
                                                         .fill(badge_bg)
-                                                        .stroke(Stroke::new(1.0_f32, p.border))
-                                                        .rounding(Rounding::same(3.0))
+                                                        .stroke(Stroke::NONE)
+                                                        .rounding(Rounding::same(999.0))
                                                         .inner_margin(egui::Margin::symmetric(5.0, 2.0))
                                                         .show(ui, |ui| {
                                                             ui.label(RichText::new(cmd.category).size(9.5).color(badge_fg));

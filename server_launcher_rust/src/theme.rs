@@ -4,80 +4,86 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ThemeMode {
     #[default]
-    NocturnalCommand,
     Dark,
+    NocturnalCommand,
     CatppuccinMocha,
     CatppuccinLatte,
     Light,
     Dracula,
     Nord,
     TokyoNight,
+    Gtk4,
 }
 
 impl ThemeMode {
     pub fn all() -> &'static [ThemeMode] {
         &[
-            ThemeMode::NocturnalCommand,
             ThemeMode::Dark,
+            ThemeMode::NocturnalCommand,
             ThemeMode::CatppuccinMocha,
             ThemeMode::CatppuccinLatte,
             ThemeMode::Light,
             ThemeMode::Dracula,
             ThemeMode::Nord,
             ThemeMode::TokyoNight,
+            ThemeMode::Gtk4,
         ]
     }
 
     pub fn name(&self) -> &'static str {
         match self {
-            ThemeMode::NocturnalCommand => "Nocturnal Command (M3)",
             ThemeMode::Dark => "Dark (Midnight)",
+            ThemeMode::NocturnalCommand => "Nocturnal Command (M3)",
             ThemeMode::CatppuccinMocha => "Catppuccin Mocha",
             ThemeMode::CatppuccinLatte => "Catppuccin Latte",
             ThemeMode::Light => "Light Mode",
             ThemeMode::Dracula => "Dracula",
             ThemeMode::Nord => "Nord",
             ThemeMode::TokyoNight => "Tokyo Night",
+            ThemeMode::Gtk4 => "GTK4 / System (Follow Desktop)",
         }
     }
 
     pub fn emoji(&self) -> &'static str {
         match self {
-            ThemeMode::NocturnalCommand => "🌌",
             ThemeMode::Dark => "🌙",
+            ThemeMode::NocturnalCommand => "🌌",
             ThemeMode::CatppuccinMocha => "☕",
             ThemeMode::CatppuccinLatte => "🥛",
             ThemeMode::Light => "☀️",
             ThemeMode::Dracula => "🧛",
             ThemeMode::Nord => "❄️",
             ThemeMode::TokyoNight => "🌆",
+            ThemeMode::Gtk4 => "🐧",
         }
     }
 
     pub fn id_str(&self) -> &'static str {
         match self {
-            ThemeMode::NocturnalCommand => "nocturnal_command",
             ThemeMode::Dark => "dark",
+            ThemeMode::NocturnalCommand => "nocturnal_command",
             ThemeMode::CatppuccinMocha => "catppuccin_mocha",
             ThemeMode::CatppuccinLatte => "catppuccin_latte",
             ThemeMode::Light => "light",
             ThemeMode::Dracula => "dracula",
             ThemeMode::Nord => "nord",
             ThemeMode::TokyoNight => "tokyo_night",
+            ThemeMode::Gtk4 => "gtk4",
         }
     }
 
     pub fn from_id_str(s: &str) -> Self {
         match s.to_lowercase().replace('-', "_").as_str() {
-            "nocturnal" | "nocturnal_command" | "nocturnal-command" | "m3" => ThemeMode::NocturnalCommand,
             "dark" | "midnight" => ThemeMode::Dark,
+            "nocturnal" | "nocturnal_command" | "nocturnal-command" | "m3" => ThemeMode::NocturnalCommand,
             "catppuccin" | "catppuccin_mocha" | "mocha" => ThemeMode::CatppuccinMocha,
             "catppuccin_latte" | "latte" => ThemeMode::CatppuccinLatte,
             "light" | "light_mode" => ThemeMode::Light,
             "dracula" => ThemeMode::Dracula,
             "nord" => ThemeMode::Nord,
             "tokyo_night" | "tokyonight" => ThemeMode::TokyoNight,
-            _ => ThemeMode::NocturnalCommand,
+            "gtk4" | "gtk" | "system" | "auto" | "default" => ThemeMode::Gtk4,
+            _ => ThemeMode::Dark,
         }
     }
 
@@ -125,43 +131,43 @@ impl ThemeMode {
             },
             ThemeMode::Dark => ThemePalette {
                 is_dark: true,
-                bg_app: Color32::from_rgb(0x11, 0x11, 0x17),
-                bg_header: Color32::from_rgb(0x11, 0x11, 0x17),
-                bg_machines_nav: Color32::from_rgb(0x0c, 0x0c, 0x11),
-                bg_sidebar: Color32::from_rgb(0x14, 0x15, 0x1d),
-                bg_main: Color32::from_rgb(0x11, 0x11, 0x17),
-                bg_card: Color32::from_rgb(0x18, 0x19, 0x22),
-                bg_card_hover: Color32::from_rgb(0x1f, 0x20, 0x2c),
-                bg_card_active: Color32::from_rgb(0x23, 0x25, 0x33),
-                bg_subtle: Color32::from_rgb(0x15, 0x16, 0x20),
-                bg_input: Color32::from_rgb(0x10, 0x11, 0x17),
-                bg_button: Color32::from_rgb(0x23, 0x25, 0x30),
-                bg_button_hover: Color32::from_rgb(0x2a, 0x2c, 0x3a),
+                bg_app: Color32::from_rgb(15, 17, 23),
+                bg_header: Color32::from_rgb(15, 17, 23),
+                bg_machines_nav: Color32::from_rgb(12, 14, 19),
+                bg_sidebar: Color32::from_rgb(15, 17, 23),
+                bg_main: Color32::from_rgb(15, 17, 23),
+                bg_card: Color32::from_rgb(22, 25, 34),
+                bg_card_hover: Color32::from_rgb(28, 32, 44),
+                bg_card_active: Color32::from_rgb(32, 38, 55),
+                bg_subtle: Color32::from_rgb(18, 21, 29),
+                bg_input: Color32::from_rgb(10, 12, 17),
+                bg_button: Color32::from_rgb(37, 40, 51),
+                bg_button_hover: Color32::from_rgb(47, 51, 64),
                 border: Color32::TRANSPARENT,
                 border_subtle: Color32::TRANSPARENT,
-                text_primary: Color32::from_rgb(0xf1, 0xf5, 0xf9),
-                text_secondary: Color32::from_rgb(0xcb, 0xd5, 0xe1),
-                text_muted: Color32::from_rgb(0x94, 0xa3, 0xb8),
-                accent: Color32::from_rgb(0xc4, 0xc0, 0xff),
-                accent_hover: Color32::from_rgb(0xe3, 0xdf, 0xff),
-                accent_light: Color32::from_rgb(0x5e, 0xea, 0xd4),
-                accent_subtle: Color32::from_rgb(0x13, 0x27, 0x22),
-                accent_text: Color32::from_rgb(0x18, 0x19, 0x22),
-                success: Color32::from_rgb(0x4a, 0xde, 0x80),
-                success_subtle: Color32::from_rgb(0x13, 0x27, 0x22),
-                warning: Color32::from_rgb(0xfc, 0xd3, 0x4d),
-                warning_subtle: Color32::from_rgb(0x35, 0x22, 0x05),
-                danger: Color32::from_rgb(0xf8, 0x71, 0x71),
-                danger_subtle: Color32::from_rgb(0x99, 0x1b, 0x1b),
-                info: Color32::from_rgb(0x38, 0xbd, 0xf8),
-                info_subtle: Color32::from_rgb(0x0e, 0x74, 0x90),
-                terminal_bg: Color32::from_rgb(0x10, 0x11, 0x17),
+                text_primary: Color32::from_rgb(235, 238, 245),
+                text_secondary: Color32::from_rgb(200, 205, 216),
+                text_muted: Color32::from_rgb(123, 131, 148),
+                accent: Color32::from_rgb(108, 92, 231),
+                accent_hover: Color32::from_rgb(124, 110, 240),
+                accent_light: Color32::from_rgb(162, 155, 254),
+                accent_subtle: Color32::from_rgb(40, 32, 68),
+                accent_text: Color32::WHITE,
+                success: Color32::from_rgb(0, 210, 160),
+                success_subtle: Color32::from_rgb(20, 48, 40),
+                warning: Color32::from_rgb(245, 158, 11),
+                warning_subtle: Color32::from_rgb(48, 38, 18),
+                danger: Color32::from_rgb(235, 87, 87),
+                danger_subtle: Color32::from_rgb(48, 22, 22),
+                info: Color32::from_rgb(96, 165, 250),
+                info_subtle: Color32::from_rgb(20, 35, 55),
+                terminal_bg: Color32::from_rgb(10, 12, 17),
                 terminal_border: Color32::TRANSPARENT,
-                log_stdout: Color32::from_rgb(0xf1, 0xf5, 0xf9),
-                log_stderr: Color32::from_rgb(0xf8, 0x71, 0x71),
-                log_launcher: Color32::from_rgb(0xc4, 0xc0, 0xff),
-                log_stdin: Color32::from_rgb(0x4a, 0xde, 0x80),
-                log_warning: Color32::from_rgb(0xfc, 0xd3, 0x4d),
+                log_stdout: Color32::from_rgb(200, 205, 216),
+                log_stderr: Color32::from_rgb(235, 87, 87),
+                log_launcher: Color32::from_rgb(124, 138, 255),
+                log_stdin: Color32::from_rgb(0, 210, 160),
+                log_warning: Color32::from_rgb(245, 158, 11),
             },
             ThemeMode::CatppuccinMocha => ThemePalette {
                 is_dark: true,
@@ -403,11 +409,136 @@ impl ThemeMode {
                 log_stdin: Color32::from_rgb(158, 206, 106),
                 log_warning: Color32::from_rgb(255, 158, 100),
             },
+            ThemeMode::Gtk4 => gtk4_system_palette(),
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Gtk4SystemStyle {
+    dark: bool,
+    accent: Color32,
+}
+
+fn gtk4_system_palette() -> ThemePalette {
+    let style = current_gtk4_system_style();
+    let mut p = if style.dark {
+        ThemeMode::Dark.palette()
+    } else {
+        ThemeMode::Light.palette()
+    };
+    let bg = p.bg_app;
+    p.is_dark = style.dark;
+    p.accent = style.accent;
+    p.accent_hover = mix_color(style.accent, Color32::WHITE, 0.18);
+    p.accent_light = mix_color(style.accent, Color32::WHITE, 0.38);
+    p.accent_subtle = mix_color(style.accent, bg, 0.86);
+    p.accent_text = if luminance(style.accent) > 150.0 {
+        Color32::from_rgb(0x11, 0x11, 0x17)
+    } else {
+        Color32::WHITE
+    };
+    p
+}
+
+fn current_gtk4_system_style() -> Gtk4SystemStyle {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<(std::time::Instant, Gtk4SystemStyle)>> =
+        std::sync::OnceLock::new();
+    let fallback = Gtk4SystemStyle {
+        dark: true,
+        accent: Color32::from_rgb(0x35, 0x84, 0xe4),
+    };
+    let lock = CACHE.get_or_init(|| {
+        std::sync::Mutex::new((
+            std::time::Instant::now() - std::time::Duration::from_secs(60),
+            fallback,
+        ))
+    });
+    let mut guard = match lock.lock() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if guard.0.elapsed() >= std::time::Duration::from_secs(3) {
+        *guard = (std::time::Instant::now(), detect_gtk4_system_style());
+    }
+    guard.1
+}
+
+fn detect_gtk4_system_style() -> Gtk4SystemStyle {
+    #[cfg(target_os = "linux")]
+    {
+        let scheme = read_gsettings("org.gnome.desktop.interface", "color-scheme");
+        let dark = match scheme.as_deref().map(str::trim) {
+            Some(s) if s.to_lowercase().contains("dark") => true,
+            Some(s) if s.to_lowercase().contains("light") => false,
+            _ => read_gsettings("org.gnome.desktop.interface", "gtk-theme")
+                .map(|t| t.to_lowercase().contains("dark"))
+                .unwrap_or(true),
+        };
+        let accent = read_gsettings("org.gnome.desktop.interface", "accent-color")
+            .map(|v| gtk4_accent_color(&v))
+            .unwrap_or_else(|| Color32::from_rgb(0x35, 0x84, 0xe4));
+        Gtk4SystemStyle { dark, accent }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Gtk4SystemStyle {
+            dark: true,
+            accent: Color32::from_rgb(0x35, 0x84, 0xe4),
+        }
+    }
+}
+
+fn read_gsettings(schema: &str, key: &str) -> Option<String> {
+    let out = std::process::Command::new("gsettings")
+        .args(["get", schema, key])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .trim_matches('\'')
+        .trim()
+        .to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+fn gtk4_accent_color(v: &str) -> Color32 {
+    match v.trim() {
+        "teal" => Color32::from_rgb(0x21, 0x90, 0xa4),
+        "green" => Color32::from_rgb(0x2e, 0xc2, 0x7e),
+        "yellow" => Color32::from_rgb(0xf5, 0xc2, 0x11),
+        "orange" => Color32::from_rgb(0xff, 0x78, 0x00),
+        "red" => Color32::from_rgb(0xe0, 0x1b, 0x24),
+        "pink" => Color32::from_rgb(0xff, 0x61, 0xa8),
+        "purple" => Color32::from_rgb(0x91, 0x41, 0xac),
+        "slate" => Color32::from_rgb(0x98, 0xa6, 0xad),
+        _ => Color32::from_rgb(0x35, 0x84, 0xe4),
+    }
+}
+
+fn mix_color(a: Color32, b: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let mix = |x: u8, y: u8| ((x as f32) * (1.0 - t) + (y as f32) * t).round() as u8;
+    Color32::from_rgba_unmultiplied(
+        mix(a.r(), b.r()),
+        mix(a.g(), b.g()),
+        mix(a.b(), b.b()),
+        mix(a.a(), b.a()),
+    )
+}
+
+fn luminance(c: Color32) -> f32 {
+    0.299 * (c.r() as f32) + 0.587 * (c.g() as f32) + 0.114 * (c.b() as f32)
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ThemePalette {
     pub is_dark: bool,
     pub bg_app: Color32,
@@ -520,6 +651,9 @@ mod tests {
         assert_eq!(ThemeMode::from_id_str("dracula"), ThemeMode::Dracula);
         assert_eq!(ThemeMode::from_id_str("nord"), ThemeMode::Nord);
         assert_eq!(ThemeMode::from_id_str("tokyo-night"), ThemeMode::TokyoNight);
-        assert_eq!(ThemeMode::from_id_str("unknown"), ThemeMode::NocturnalCommand);
+        assert_eq!(ThemeMode::from_id_str("gtk4"), ThemeMode::Gtk4);
+        assert_eq!(ThemeMode::from_id_str("system"), ThemeMode::Gtk4);
+        assert_eq!(ThemeMode::from_id_str("auto"), ThemeMode::Gtk4);
+        assert_eq!(ThemeMode::from_id_str("unknown"), ThemeMode::Dark);
     }
 }

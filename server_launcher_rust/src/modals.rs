@@ -12,9 +12,6 @@ pub struct ServerTemplate {
     pub stop_command: &'static str,
     pub port: u16,
     pub group: &'static str,
-    pub server_type: Option<&'static str>,
-    pub url: Option<&'static str>,
-    pub headers: &'static [(&'static str, &'static str)],
     pub env: &'static [(&'static str, &'static str)],
     pub actions: &'static [(&'static str, &'static str)],
     pub links: &'static [(&'static str, &'static str)],
@@ -22,43 +19,11 @@ pub struct ServerTemplate {
 
 pub const SERVER_TEMPLATES: &[ServerTemplate] = &[
     ServerTemplate {
-        name: "Google Stitch MCP (HTTP)",
-        command: "curl -i -H \"X-Goog-Api-Key: YOUR_API_KEY\" https://stitch.googleapis.com/mcp",
-        stop_command: "",
-        port: 0,
-        group: "MCP",
-        server_type: Some("http"),
-        url: Some("https://stitch.googleapis.com/mcp"),
-        headers: &[("X-Goog-Api-Key", "YOUR_API_KEY")],
-        env: &[("X_GOOG_API_KEY", "YOUR_API_KEY")],
-        actions: &[
-            ("Test Ping", "curl -i -H \"X-Goog-Api-Key: YOUR_API_KEY\" https://stitch.googleapis.com/mcp"),
-            ("List Tools", "curl -i -X POST -H \"Content-Type: application/json\" -H \"X-Goog-Api-Key: YOUR_API_KEY\" -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}' https://stitch.googleapis.com/mcp"),
-        ],
-        links: &[("MCP Endpoint", "https://stitch.googleapis.com/mcp")],
-    },
-    ServerTemplate {
-        name: "MCP HTTP Endpoint",
-        command: "curl -i https://example.com/mcp",
-        stop_command: "",
-        port: 0,
-        group: "MCP",
-        server_type: Some("http"),
-        url: Some("https://example.com/mcp"),
-        headers: &[("Authorization", "Bearer YOUR_TOKEN")],
-        env: &[],
-        actions: &[("Test Ping", "curl -i https://example.com/mcp")],
-        links: &[("MCP Endpoint", "https://example.com/mcp")],
-    },
-    ServerTemplate {
         name: "React (Vite)",
         command: "npm run dev",
         stop_command: "",
         port: 5173,
         group: "Frontend",
-        server_type: None,
-        url: None,
-        headers: &[],
         env: &[],
         actions: &[("Build", "npm run build"), ("Install", "npm install")],
         links: &[("Localhost", "http://localhost:5173")],
@@ -69,9 +34,6 @@ pub const SERVER_TEMPLATES: &[ServerTemplate] = &[
         stop_command: "",
         port: 3000,
         group: "Frontend",
-        server_type: None,
-        url: None,
-        headers: &[],
         env: &[],
         actions: &[("Build", "npm run build"), ("Install", "npm install")],
         links: &[("Localhost", "http://localhost:3000")],
@@ -82,9 +44,6 @@ pub const SERVER_TEMPLATES: &[ServerTemplate] = &[
         stop_command: "",
         port: 8081,
         group: "Mobile",
-        server_type: None,
-        url: None,
-        headers: &[],
         env: &[],
         actions: &[
             ("Android", "npx react-native run-android"),
@@ -103,9 +62,6 @@ pub const SERVER_TEMPLATES: &[ServerTemplate] = &[
         stop_command: "",
         port: 8081,
         group: "Mobile",
-        server_type: None,
-        url: None,
-        headers: &[],
         env: &[],
         actions: &[
             ("Android", "npx expo run:android"),
@@ -121,9 +77,6 @@ pub const SERVER_TEMPLATES: &[ServerTemplate] = &[
         stop_command: "",
         port: 8000,
         group: "Backend",
-        server_type: None,
-        url: None,
-        headers: &[],
         env: &[],
         actions: &[("Install reqs", "pip install -r requirements.txt")],
         links: &[("Swagger Docs", "http://localhost:8000/docs")],
@@ -134,9 +87,6 @@ pub const SERVER_TEMPLATES: &[ServerTemplate] = &[
         stop_command: "",
         port: 5000,
         group: "Backend",
-        server_type: None,
-        url: None,
-        headers: &[],
         env: &[("FLASK_ENV", "development"), ("FLASK_DEBUG", "1")],
         actions: &[("Install reqs", "pip install -r requirements.txt")],
         links: &[("Localhost", "http://localhost:5000")],
@@ -147,9 +97,6 @@ pub const SERVER_TEMPLATES: &[ServerTemplate] = &[
         stop_command: "",
         port: 8000,
         group: "Backend",
-        server_type: None,
-        url: None,
-        headers: &[],
         env: &[],
         actions: &[("Migrate", "python manage.py migrate")],
         links: &[("Admin Panel", "http://localhost:8000/admin")],
@@ -160,9 +107,6 @@ pub const SERVER_TEMPLATES: &[ServerTemplate] = &[
         stop_command: "",
         port: 3000,
         group: "Backend",
-        server_type: None,
-        url: None,
-        headers: &[],
         env: &[],
         actions: &[("Install", "npm install")],
         links: &[("Localhost", "http://localhost:3000")],
@@ -173,9 +117,6 @@ pub const SERVER_TEMPLATES: &[ServerTemplate] = &[
         stop_command: "pg_ctl stop -D ./data",
         port: 5432,
         group: "DB",
-        server_type: None,
-        url: None,
-        headers: &[],
         env: &[],
         actions: &[],
         links: &[],
@@ -186,9 +127,6 @@ pub const SERVER_TEMPLATES: &[ServerTemplate] = &[
         stop_command: "redis-cli shutdown",
         port: 6379,
         group: "DB",
-        server_type: None,
-        url: None,
-        headers: &[],
         env: &[],
         actions: &[],
         links: &[],
@@ -199,9 +137,6 @@ pub const SERVER_TEMPLATES: &[ServerTemplate] = &[
         stop_command: "",
         port: 27017,
         group: "DB",
-        server_type: None,
-        url: None,
-        headers: &[],
         env: &[],
         actions: &[],
         links: &[],
@@ -228,13 +163,15 @@ pub struct AddEditModalState {
     pub env_text: String,
     pub actions: Vec<(String, String)>,
     pub links: Vec<(String, String)>,
-    pub server_type: String, // "cli" or "http"
+    pub error_msg: Option<String>,
+
+    pub server_type: String,
     pub url: String,
     pub headers: Vec<(String, String)>,
+
     pub paste_json_open: bool,
     pub paste_json_input: String,
     pub paste_json_msg: Option<(String, bool)>,
-    pub error_msg: Option<String>,
 }
 
 impl AddEditModalState {
@@ -256,13 +193,13 @@ impl AddEditModalState {
         self.env_text.clear();
         self.actions.clear();
         self.links.clear();
+        self.error_msg = None;
         self.server_type = "cli".to_string();
         self.url.clear();
         self.headers.clear();
         self.paste_json_open = false;
         self.paste_json_input.clear();
         self.paste_json_msg = None;
-        self.error_msg = None;
     }
 
     #[allow(dead_code)]
@@ -304,10 +241,6 @@ impl AddEditModalState {
         self.auto_restart = cfg.auto_restart;
         self.autostart = cfg.autostart;
 
-        self.server_type = cfg.server_type.clone().unwrap_or_else(|| "cli".to_string());
-        self.url = cfg.url.clone().unwrap_or_default();
-        self.headers = cfg.headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-
         let mut env_lines = Vec::new();
         for (k, v) in &cfg.env {
             env_lines.push(format!("{}={}", k, v));
@@ -324,10 +257,20 @@ impl AddEditModalState {
             .iter()
             .map(|l| (l.label.clone(), l.url.clone()))
             .collect();
+        self.error_msg = None;
+
+        self.server_type = cfg.server_type.clone().unwrap_or_else(|| "cli".to_string());
+        self.url = cfg.url.clone().unwrap_or_default();
+        let mut headers: Vec<(String, String)> = cfg
+            .headers
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        headers.sort_by(|a, b| a.0.cmp(&b.0));
+        self.headers = headers;
         self.paste_json_open = false;
         self.paste_json_input.clear();
         self.paste_json_msg = None;
-        self.error_msg = None;
     }
 
     pub fn apply_template(&mut self, idx: usize) {
@@ -353,22 +296,6 @@ impl AddEditModalState {
         self.port_str = tpl.port.to_string();
         self.group = tpl.group.to_string();
 
-        if let Some(st) = tpl.server_type {
-            self.server_type = st.to_string();
-        } else {
-            self.server_type = "cli".to_string();
-        }
-        if let Some(u) = tpl.url {
-            self.url = u.to_string();
-        } else {
-            self.url.clear();
-        }
-        self.headers = tpl
-            .headers
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-
         let env_lines: Vec<String> = tpl
             .env
             .iter()
@@ -388,188 +315,151 @@ impl AddEditModalState {
             .collect();
     }
 
-    pub fn apply_json_snippet(&mut self, text: &str) -> Result<String, String> {
-        let trimmed = text.trim();
+    pub fn apply_json_snippet(&mut self, input: &str) -> Result<String, String> {
+        let trimmed = input.trim();
         if trimmed.is_empty() {
-            return Err("JSON input is empty.".to_string());
+            return Err("Nothing to parse - paste some JSON first.".to_string());
         }
+        if self.cwd.trim().is_empty() {
+            self.cwd = ".".to_string();
+        }
+        let value: serde_json::Value =
+            serde_json::from_str(trimmed).map_err(|e| format!("Invalid JSON: {}", e))?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| "Expected a JSON object.".to_string())?;
 
-        let val: serde_json::Value = serde_json::from_str(trimmed)
-            .map_err(|e| format!("Invalid JSON: {}", e))?;
-
-        // Helper to extract a server object
-        let (server_key, srv_obj) = if let Some(map) = val.get("servers").and_then(|v| v.as_object()) {
-            if let Some((k, v)) = map.iter().next() {
-                (k.clone(), v.clone())
-            } else {
-                return Err("The 'servers' object is empty.".to_string());
-            }
-        } else if let Some(map) = val.get("mcpServers").and_then(|v| v.as_object()) {
-            if let Some((k, v)) = map.iter().next() {
-                (k.clone(), v.clone())
-            } else {
-                return Err("The 'mcpServers' object is empty.".to_string());
-            }
-        } else if let Some(obj) = val.as_object() {
-            // Check if it's a wrapper map like { "stitch": { ... } }
-            if obj.len() == 1
-                && obj.values().next().map_or(false, |v| {
-                    v.is_object()
-                        && (v.get("url").is_some()
-                            || v.get("command").is_some()
-                            || v.get("type").is_some())
-                })
-            {
-                let (k, v) = obj.iter().next().unwrap();
-                (k.clone(), v.clone())
-            } else {
-                // Direct object { "type": "http", "url": "..." } or { "name": "...", "command": "..." }
-                ("server".to_string(), val.clone())
-            }
+        let (entry_key, entry) = if let Some(servers) = obj
+            .get("servers")
+            .or_else(|| obj.get("mcpServers"))
+            .and_then(|v| v.as_object())
+        {
+            servers
+                .iter()
+                .next()
+                .map(|(k, v)| (k.clone(), v))
+                .ok_or_else(|| "The servers object is empty.".to_string())?
+        } else if obj.contains_key("url") || obj.contains_key("command") || obj.contains_key("type") {
+            let key = obj
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("custom")
+                .to_string();
+            (key, &value)
         } else {
-            return Err("Expected a JSON object or configuration snippet.".to_string());
+            obj.iter()
+                .find(|(_, v)| v.is_object())
+                .map(|(k, v)| (k.clone(), v))
+                .ok_or_else(|| "Could not find a server definition in the JSON.".to_string())?
         };
 
-        let obj = srv_obj
+        let entry_obj = entry
             .as_object()
             .ok_or_else(|| "Server definition must be a JSON object.".to_string())?;
 
-        // Extract key
-        let key = if server_key != "server" {
-            server_key.clone()
-        } else if let Some(k) = obj.get("key").and_then(|k| k.as_str()) {
-            k.to_string()
+        let declared_type = entry_obj
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        self.server_type = if declared_type.contains("http") || entry_obj.contains_key("url") {
+            "http".to_string()
         } else {
-            "custom".to_string()
+            "cli".to_string()
         };
-        self.key = key.clone();
 
-        // Extract name
-        if let Some(n) = obj.get("name").and_then(|n| n.as_str()) {
-            self.name = n.to_string();
-        } else {
-            let mut chars = key.chars();
-            self.name = match chars.next() {
-                None => "Server".to_string(),
-                Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
-            };
+        self.key = entry_key
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect::<String>()
+            .trim_matches('_')
+            .to_string();
+        if self.key.is_empty() {
+            self.key = "custom_mcp".to_string();
         }
 
-        // Extract type
-        let s_type = obj.get("type").and_then(|t| t.as_str()).unwrap_or("");
-        let url_val = obj.get("url").and_then(|u| u.as_str()).unwrap_or("");
+        self.name = entry_obj
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                entry_key
+                    .split(['_', '-', '.'])
+                    .filter(|s| !s.is_empty())
+                    .map(|s| {
+                        let mut chars = s.chars();
+                        match chars.next() {
+                            Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                            None => String::new(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            });
 
-        let is_http = s_type.eq_ignore_ascii_case("http")
-            || s_type.eq_ignore_ascii_case("sse")
-            || !url_val.is_empty();
-        if is_http {
-            self.server_type = "http".to_string();
-            self.url = url_val.to_string();
-            self.group = "MCP".to_string();
-        } else {
-            self.server_type = "cli".to_string();
-            if let Some(g) = obj.get("group").and_then(|g| g.as_str()) {
-                self.group = g.to_string();
-            }
-        }
+        self.url = entry_obj
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
-        // Extract headers
         self.headers.clear();
-        if let Some(h_map) = obj.get("headers").and_then(|h| h.as_object()) {
-            for (hk, hv) in h_map {
-                let hv_str = if let Some(s) = hv.as_str() {
-                    s.to_string()
-                } else {
-                    hv.to_string()
-                };
-                self.headers.push((hk.clone(), hv_str));
+        if let Some(h) = entry_obj.get("headers").and_then(|v| v.as_object()) {
+            for (k, v) in h {
+                let val = v
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| v.to_string());
+                self.headers.push((k.clone(), val));
             }
         }
 
-        // Extract env
-        let mut env_lines = Vec::new();
-        if let Some(e_map) = obj.get("env").and_then(|e| e.as_object()) {
-            for (ek, ev) in e_map {
-                let ev_str = if let Some(s) = ev.as_str() {
-                    s.to_string()
-                } else {
-                    ev.to_string()
-                };
-                env_lines.push(format!("{}={}", ek, ev_str));
+        if let Some(env) = entry_obj.get("env").and_then(|v| v.as_object()) {
+            let lines: Vec<String> = env
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, v.as_str().unwrap_or("")))
+                .collect();
+            if !lines.is_empty() {
+                self.env_text = lines.join("\n");
             }
-        }
-        for (hk, hv) in &self.headers {
-            let env_key = hk.to_uppercase().replace('-', "_");
-            if !env_lines.iter().any(|l| l.starts_with(&format!("{}=", env_key))) {
-                env_lines.push(format!("{}={}", env_key, hv));
-            }
-        }
-        if !env_lines.is_empty() {
-            self.env_text = env_lines.join("\n");
         }
 
-        // Extract command or generate for HTTP MCP
-        if let Some(cmd) = obj.get("command").and_then(|c| c.as_str()) {
-            let mut full_cmd = cmd.to_string();
-            if let Some(args) = obj.get("args").and_then(|a| a.as_array()) {
-                for arg in args {
-                    if let Some(s) = arg.as_str() {
-                        full_cmd.push(' ');
-                        full_cmd.push_str(s);
-                    }
-                }
-            }
-            self.command = full_cmd;
-        } else if is_http && !self.url.is_empty() {
+        if self.server_type == "http" {
+            self.group = "MCP".to_string();
             let mut h_args = String::new();
             for (hk, hv) in &self.headers {
-                h_args.push_str(&format!(" -H \"{}: {}\"", hk, hv));
-            }
-            self.command = format!("curl -i{} {}", h_args, self.url);
-        }
-
-        if let Some(stop) = obj.get("stop_command").and_then(|s| s.as_str()) {
-            self.stop_command = stop.to_string();
-        }
-
-        if let Some(port) = obj.get("port").and_then(|p| p.as_u64()) {
-            self.port_str = port.to_string();
-        } else if is_http {
-            self.port_str = "0".to_string();
-        }
-
-        if let Some(cwd) = obj.get("cwd").and_then(|c| c.as_str()) {
-            self.cwd = cwd.to_string();
-        } else if self.cwd.is_empty() {
-            self.cwd = ".".to_string();
-        }
-
-        // Links
-        self.links.clear();
-        if is_http && !self.url.is_empty() {
-            self.links.push(("MCP Endpoint".to_string(), self.url.clone()));
-        }
-
-        // Actions
-        self.actions.clear();
-        if is_http && !self.command.is_empty() {
-            self.actions.push(("Test Ping".to_string(), self.command.clone()));
-            if !self.url.is_empty() {
-                let mut h_args = String::new();
-                for (hk, hv) in &self.headers {
-                    h_args.push_str(&format!(" -H \"{}: {}\"", hk, hv));
+                if !hk.trim().is_empty() {
+                    h_args.push_str(&format!(" -H \"{}: {}\"", hk.trim(), hv.trim()));
                 }
-                self.actions.push((
-                    "List Tools".to_string(),
-                    format!(
-                        "curl -i -X POST -H \"Content-Type: application/json\"{} -d '{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}}' {}",
-                        h_args, self.url
-                    ),
-                ));
             }
+            self.command = format!("curl -i{} {}", h_args, self.url.trim());
+            if !self.actions.iter().any(|(l, _)| l == "Test Ping") {
+                self.actions
+                    .push(("Test Ping".to_string(), self.command.clone()));
+            }
+            if !self.url.trim().is_empty()
+                && !self.links.iter().any(|(l, _)| l == "MCP Endpoint")
+            {
+                self.links
+                    .push(("MCP Endpoint".to_string(), self.url.trim().to_string()));
+            }
+        } else if let Some(cmd) = entry_obj.get("command").and_then(|v| v.as_str()) {
+            let mut full = cmd.to_string();
+            if let Some(args) = entry_obj.get("args").and_then(|v| v.as_array()) {
+                for a in args.iter().filter_map(|a| a.as_str()) {
+                    full.push(' ');
+                    full.push_str(a);
+                }
+            }
+            self.command = full;
         }
 
-        Ok(format!("Successfully parsed and autofilled config for '{}'!", self.name))
+        self.paste_json_msg = None;
+        Ok(format!(
+            "Autofilled '{}' from pasted JSON. Review the fields below and save.",
+            entry_key
+        ))
     }
 
     pub fn to_server_config(&self) -> Result<ServerConfig, String> {
@@ -583,20 +473,21 @@ impl AddEditModalState {
         if cwd.is_empty() {
             return Err("Working directory is required.".to_string());
         }
-
-        let is_http = self.server_type == "http" || !self.url.trim().is_empty();
-        if command.is_empty() && is_http && !self.url.trim().is_empty() {
-            let mut h_args = String::new();
-            for (k, v) in &self.headers {
-                if !k.trim().is_empty() {
-                    h_args.push_str(&format!(" -H \"{}: {}\"", k.trim(), v.trim()));
-                }
-            }
-            command = format!("curl -i{} {}", h_args, self.url.trim());
+        if self.server_type == "http" && self.url.trim().is_empty() {
+            return Err("Endpoint URL is required for HTTP / MCP servers.".to_string());
         }
-
         if command.is_empty() {
-            return Err("Start command or Endpoint URL is required.".to_string());
+            if self.server_type == "http" {
+                let mut h_args = String::new();
+                for (hk, hv) in &self.headers {
+                    if !hk.trim().is_empty() {
+                        h_args.push_str(&format!(" -H \"{}: {}\"", hk.trim(), hv.trim()));
+                    }
+                }
+                command = format!("curl -i{} {}", h_args, self.url.trim());
+            } else {
+                return Err("Start command is required.".to_string());
+            }
         }
 
         let key = if self.key.trim().is_empty() {
@@ -618,11 +509,7 @@ impl AddEditModalState {
 
         let port = self.port_str.trim().parse::<u16>().unwrap_or(0);
         let group = if self.group.trim().is_empty() {
-            if is_http {
-                "MCP".to_string()
-            } else {
-                "General".to_string()
-            }
+            "General".to_string()
         } else {
             self.group.trim().to_string()
         };
@@ -639,7 +526,7 @@ impl AddEditModalState {
         }
 
         // Actions
-        let mut actions: Vec<CustomAction> = self
+        let actions: Vec<CustomAction> = self
             .actions
             .iter()
             .filter(|(l, c)| !l.trim().is_empty() && !c.trim().is_empty())
@@ -649,15 +536,8 @@ impl AddEditModalState {
             })
             .collect();
 
-        if is_http && actions.is_empty() && !command.is_empty() {
-            actions.push(CustomAction {
-                label: "Test Ping".to_string(),
-                command: command.clone(),
-            });
-        }
-
         // Links
-        let mut links: Vec<CustomLink> = self
+        let links: Vec<CustomLink> = self
             .links
             .iter()
             .filter(|(l, u)| !l.trim().is_empty() && !u.trim().is_empty())
@@ -666,33 +546,6 @@ impl AddEditModalState {
                 url: u.trim().to_string(),
             })
             .collect();
-
-        if is_http && !self.url.trim().is_empty() && !links.iter().any(|l| l.url == self.url.trim()) {
-            links.push(CustomLink {
-                label: "MCP Endpoint".to_string(),
-                url: self.url.trim().to_string(),
-            });
-        }
-
-        let server_type = if is_http {
-            Some("http".to_string())
-        } else {
-            None
-        };
-
-        let url = if self.url.trim().is_empty() {
-            None
-        } else {
-            Some(self.url.trim().to_string())
-        };
-
-        let mut headers = HashMap::new();
-        for (k, v) in &self.headers {
-            let k_trim = k.trim();
-            if !k_trim.is_empty() {
-                headers.insert(k_trim.to_string(), v.trim().to_string());
-            }
-        }
 
         Ok(ServerConfig {
             key,
@@ -708,9 +561,22 @@ impl AddEditModalState {
             env,
             actions,
             links,
-            server_type,
-            url,
-            headers,
+            server_type: if self.server_type == "http" {
+                Some("http".to_string())
+            } else {
+                None
+            },
+            url: if self.server_type == "http" && !self.url.trim().is_empty() {
+                Some(self.url.trim().to_string())
+            } else {
+                None
+            },
+            headers: self
+                .headers
+                .iter()
+                .filter(|(k, _)| !k.trim().is_empty())
+                .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+                .collect::<HashMap<String, String>>(),
         })
     }
 }

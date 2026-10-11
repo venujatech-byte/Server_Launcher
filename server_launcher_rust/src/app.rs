@@ -176,6 +176,7 @@ pub struct LauncherApp {
     remote_connection_status: Arc<Mutex<HashMap<String, Result<String, String>>>>,
     remote_connecting: Arc<Mutex<BTreeSet<String>>>,
     pub theme: ThemeMode,
+    pub last_applied_palette: Option<crate::theme::ThemePalette>,
     pub app_autostart: bool,
     pub auto_scroll: HashMap<String, bool>,
     proc_info_cache: HashMap<u32, (Option<String>, Option<String>, Instant)>,
@@ -400,6 +401,7 @@ impl LauncherApp {
             remote_connection_status,
             remote_connecting,
             theme,
+            last_applied_palette: None,
             app_autostart,
             auto_scroll: HashMap::new(),
             proc_info_cache: HashMap::new(),
@@ -2313,6 +2315,15 @@ impl eframe::App for LauncherApp {
             self.other_metrics.clear();
         }
 
+        // GTK4 / System theme: live-follow desktop color scheme + accent changes
+        if self.theme == ThemeMode::Gtk4 {
+            let p = self.theme.palette();
+            if self.last_applied_palette.as_ref() != Some(&p) {
+                ctx.set_visuals(p.egui_visuals());
+                self.last_applied_palette = Some(p);
+            }
+        }
+
         self.handle_global_shortcuts(ctx);
         let p = self.theme.palette();
 
@@ -2679,34 +2690,7 @@ impl eframe::App for LauncherApp {
 
         if self.selected_machine == "local" {
             // ═════════════════════════════════════════════════════════════════
-            // LEFT SIDEBAR: Full Window Height (380px width)
-            // ═════════════════════════════════════════════════════════════════
-            egui::SidePanel::left("local_main_sidebar")
-                .resizable(false)
-                .exact_width(380.0)
-                .default_width(380.0)
-                .width_range(380.0..=380.0)
-                .show_separator_line(false)
-                .frame(
-                    Frame::none()
-                        .fill(p.bg_sidebar)
-                        .stroke(Stroke::NONE)
-                        .inner_margin(egui::Margin {
-                            left: 14.0,
-                            right: 12.0,
-                            top: 8.0,
-                            bottom: 12.0,
-                        }),
-                )
-                .show(ctx, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.set_min_width(ui.available_width());
-                    ui.set_max_width(ui.available_width());
-                    self.render_left_panel(ui);
-                });
-
-            // ═════════════════════════════════════════════════════════════════
-            // RIGHT MAIN AREA: Full Window Height & Remaining Width
+            // LOCAL PC VIEW: Left Sidebar (380px) + Right Main Area (Remaining)
             // ═════════════════════════════════════════════════════════════════
             egui::CentralPanel::default()
                 .frame(
@@ -2714,15 +2698,50 @@ impl eframe::App for LauncherApp {
                         .fill(p.bg_main)
                         .stroke(Stroke::NONE)
                         .inner_margin(egui::Margin {
-                            left: 8.0,
+                            left: 0.0,
                             right: 16.0,
                             top: 8.0,
                             bottom: 14.0,
                         }),
                 )
                 .show(ctx, |ui| {
-                    ui.set_width(ui.available_width());
-                    self.render_right_panel(ui);
+                    let total_h = ui.available_height();
+                    let left_w = 380.0;
+                    ui.horizontal(|ui| {
+                        ui.set_height(total_h);
+                        ui.set_min_height(total_h);
+
+                        // LEFT SIDEBAR (380px width)
+                        Frame::none()
+                            .fill(p.bg_sidebar)
+                            .stroke(Stroke::NONE)
+                            .inner_margin(egui::Margin {
+                                left: 14.0,
+                                right: 12.0,
+                                top: 0.0,
+                                bottom: 0.0,
+                            })
+                            .show(ui, |ui| {
+                                ui.set_width(left_w);
+                                ui.set_min_width(left_w);
+                                ui.set_max_width(left_w);
+                                ui.set_height(total_h);
+                                ui.set_min_height(total_h);
+                                self.render_left_panel(ui);
+                            });
+
+                        ui.add_space(8.0);
+
+                        // RIGHT MAIN AREA: Fills 100% of remaining width
+                        let right_w = ui.available_width().max(100.0);
+                        ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.set_width(right_w);
+                            ui.set_max_width(right_w);
+                            ui.set_height(total_h);
+                            ui.set_min_height(total_h);
+                            self.render_right_panel(ui);
+                        });
+                    });
                 });
         } else {
             // ═════════════════════════════════════════════════════════════════
@@ -2815,7 +2834,9 @@ impl eframe::App for LauncherApp {
             ModalAction::ExecutePaletteAction(PaletteAction::SetTheme(thm_id)) => {
                 let thm = ThemeMode::from_id_str(&thm_id);
                 self.theme = thm;
-                ctx.set_visuals(thm.palette().egui_visuals());
+                let pal = thm.palette();
+                ctx.set_visuals(pal.egui_visuals());
+                self.last_applied_palette = Some(pal);
                 self.persist_config();
             }
             ModalAction::ExecutePaletteAction(PaletteAction::ToggleAppAutostart) => {
@@ -5292,7 +5313,9 @@ impl LauncherApp {
         if let Some(thm) = change_theme {
             if thm != self.theme {
                 self.theme = thm;
-                ctx.set_visuals(self.theme.palette().egui_visuals());
+                let pal = self.theme.palette();
+                ctx.set_visuals(pal.egui_visuals());
+                self.last_applied_palette = Some(pal);
                 self.persist_config();
             }
         }
@@ -5666,25 +5689,28 @@ impl LauncherApp {
                 .rounding(Rounding::same(8.0))
                 .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                 .show(ui, |ui| {
+                    let refresh_w = 125.0;
+                    let left_w = (ui.available_width() - refresh_w - 14.0).max(100.0);
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("🌡").size(22.0));
-                        ui.vertical(|ui| {
-                            ui.horizontal(|ui| {
+                        ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new("🌡").size(20.0));
                                 let title = if let Some(hid) = host_id {
                                     format!("Hardware Sensors Monitor — Remote Host ({})", hid)
                                 } else {
                                     "Hardware Sensors & System Resource Monitor".to_string()
                                 };
-                                ui.label(RichText::new(title).size(15.0).strong().color(p.text_primary));
+                                ui.label(RichText::new(title).size(14.5).strong().color(p.text_primary));
                                 if is_fetching {
-                                    ui.label(RichText::new("● Updating remote metrics in background...").size(11.0).color(p.info));
+                                    ui.label(RichText::new("● Updating remote metrics...").size(11.0).color(p.info));
                                 } else if self.sensors_refresh_interval > 0 {
                                     ui.label(RichText::new(format!("● Live ({}s refresh)", self.sensors_refresh_interval)).size(11.0).color(Color32::from_rgb(16, 185, 129)));
                                 } else {
                                     ui.label(RichText::new("○ Manual refresh").size(11.0).color(p.text_muted));
                                 }
                             });
-                            ui.horizontal(|ui| {
+                            ui.add_space(2.0);
+                            ui.horizontal_wrapped(|ui| {
                                 ui.label(RichText::new(&snap.cpu_brand).size(11.0).strong().color(p.text_secondary));
                                 ui.label(RichText::new("•").size(11.0).color(p.text_muted));
                                 ui.label(RichText::new(format!("{} Physical / {} Logical Cores", snap.cpu_cores_physical, snap.cpu_cores_logical)).size(11.0).color(p.text_muted));
@@ -5764,25 +5790,30 @@ impl LauncherApp {
                                             ui.label(RichText::new(format!("Package: {:.1}°C", t)).size(12.0).strong().color(crate::sensors::temp_color(t)));
                                         }
                                         if let Some(w) = snap.cpu_power_watts {
-                                            ui.label(RichText::new(format!("⚡ Power: {:.1} W", w)).size(12.0).strong().color(p.info));
+                                            ui.label(RichText::new(format!("⚡ {:.1} W", w)).size(12.0).strong().color(p.info));
                                         }
-                                        if let Some(tdp) = snap.cpu_tdp_watts {
-                                            ui.label(RichText::new(format!("TDP Limit: {:.0} W", tdp)).size(11.0).color(p.text_muted));
-                                        }
+                                    });
+                                });
+
+                                ui.add_space(4.0);
+                                ui.horizontal(|ui| {
+                                    let global_pct = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
+                                    let bar_w = (ui.available_width() - 200.0).max(120.0);
+                                    ui.add(egui::ProgressBar::new(global_pct).desired_width(bar_w).text(format!("Global Usage: {:.1}%", snap.cpu_global_usage)).animate(false));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         if snap.cpu_frequency_mhz > 0 {
                                             let freq_text = if snap.cpu_frequency_mhz >= 1000 {
                                                 format!("{:.2} GHz avg", snap.cpu_frequency_mhz as f64 / 1000.0)
                                             } else {
                                                 format!("{} MHz avg", snap.cpu_frequency_mhz)
                                             };
-                                            ui.label(RichText::new(freq_text).size(11.5).monospace().color(p.text_secondary));
+                                            ui.label(RichText::new(freq_text).size(11.0).monospace().color(p.text_secondary));
+                                        }
+                                        if let Some(tdp) = snap.cpu_tdp_watts {
+                                            ui.label(RichText::new(format!("TDP Limit: {:.0} W", tdp)).size(10.5).color(p.text_muted));
                                         }
                                     });
                                 });
-
-                                ui.add_space(6.0);
-                                let global_pct = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
-                                ui.add(egui::ProgressBar::new(global_pct).text(format!("Global Usage: {:.1}%", snap.cpu_global_usage)).animate(false));
 
                                 // Per-core usages and live frequencies grid
                                 if !snap.cpu_core_usages.is_empty() {
@@ -5795,22 +5826,25 @@ impl LauncherApp {
                                     });
                                     ui.add_space(4.0);
 
-                                    let cols = 4.min(snap.cpu_core_usages.len().max(1));
+                                    let avail = ui.available_width();
+                                    let cols = ((avail / 140.0).floor() as usize).clamp(1, 4).min(snap.cpu_core_usages.len().max(1));
+                                    let item_w = (avail / cols as f32) - 12.0;
+                                    let bar_w = (item_w - 75.0).clamp(45.0, 85.0);
                                     egui::Grid::new("cpu_cores_grid")
                                         .num_columns(cols)
-                                        .spacing(egui::vec2(12.0, 6.0))
+                                        .spacing(egui::vec2(10.0, 6.0))
                                         .show(ui, |ui| {
                                             for (i, &usage) in snap.cpu_core_usages.iter().enumerate() {
                                                 let core_val = (usage / 100.0).clamp(0.0, 1.0);
                                                 let core_freq = snap.cpu_frequencies_mhz.get(i).copied().unwrap_or(0);
                                                 ui.horizontal(|ui| {
                                                     ui.label(RichText::new(format!("C{}:", i)).size(10.5).color(p.text_muted));
-                                                    ui.add(egui::ProgressBar::new(core_val).desired_width(90.0).text(format!("{:.0}%", usage)).animate(false));
+                                                    ui.add(egui::ProgressBar::new(core_val).desired_width(bar_w).text(format!("{:.0}%", usage)).animate(false));
                                                     if core_freq > 0 {
                                                         let f_str = if core_freq >= 1000 {
-                                                            format!("{:.2} GHz", core_freq as f64 / 1000.0)
+                                                            format!("{:.2}G", core_freq as f64 / 1000.0)
                                                         } else {
-                                                            format!("{} MHz", core_freq)
+                                                            format!("{}M", core_freq)
                                                         };
                                                         ui.label(RichText::new(f_str).size(10.0).monospace().color(p.text_secondary));
                                                     }
@@ -5929,14 +5963,14 @@ impl LauncherApp {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         if let Some(ac) = snap.power.ac_online {
                                             let (txt, col) = if ac {
-                                                ("🔌 AC Mains: Connected / Online", Color32::from_rgb(16, 185, 129))
+                                                ("🔌 AC Mains: Online", Color32::from_rgb(16, 185, 129))
                                             } else {
-                                                ("🔋 Battery Mode: Running on DC", Color32::from_rgb(245, 158, 11))
+                                                ("🔋 Battery Mode", Color32::from_rgb(245, 158, 11))
                                             };
                                             ui.label(RichText::new(txt).size(11.5).strong().color(col));
                                         }
                                         if let Some(w) = snap.power.total_power_watts {
-                                            ui.label(RichText::new(format!("⚡ Rate: {:.1} W", w)).size(11.5).monospace().color(p.info));
+                                            ui.label(RichText::new(format!("⚡ {:.1} W", w)).size(11.5).monospace().color(p.info));
                                         }
                                     });
                                 });
@@ -6073,12 +6107,12 @@ impl LauncherApp {
                                 egui::Grid::new("network_interfaces_grid")
                                     .num_columns(5)
                                     .striped(true)
-                                    .spacing(egui::vec2(16.0, 6.0))
+                                    .spacing(egui::vec2(10.0, 5.0))
                                     .show(ui, |ui| {
                                         ui.label(RichText::new("Interface").size(11.0).strong().color(p.text_muted));
                                         ui.label(RichText::new("Download Rate").size(11.0).strong().color(Color32::from_rgb(56, 189, 248)));
                                         ui.label(RichText::new("Upload Rate").size(11.0).strong().color(Color32::from_rgb(168, 85, 247)));
-                                        ui.label(RichText::new("Total Received").size(11.0).strong().color(p.text_muted));
+                                        ui.label(RichText::new("Total Recv").size(11.0).strong().color(p.text_muted));
                                         ui.label(RichText::new("Total Sent").size(11.0).strong().color(p.text_muted));
                                         ui.end_row();
 
@@ -6107,7 +6141,7 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new(format!("🌡 All Hardware Temperature Probes ({})", snap.temp_sensors.len())).size(13.5).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new("Status badge: ● <55°C Normal | ● 55-75°C Warm | ● >75°C High").size(10.5).color(p.text_muted));
+                                        ui.label(RichText::new("● <55°C | ● 55-75°C | ● >75°C").size(10.5).color(p.text_muted));
                                     });
                                 });
 
@@ -6132,13 +6166,13 @@ impl LauncherApp {
                                     egui::Grid::new("all_temp_sensors_grid")
                                         .num_columns(5)
                                         .striped(true)
-                                        .spacing(egui::vec2(20.0, 7.0))
+                                        .spacing(egui::vec2(10.0, 5.0))
                                         .show(ui, |ui| {
                                             ui.label(RichText::new("Component / Label").size(11.0).strong().color(p.text_muted));
                                             ui.label(RichText::new("Category").size(11.0).strong().color(p.text_muted));
-                                            ui.label(RichText::new("Chip Driver").size(11.0).strong().color(p.text_muted));
-                                            ui.label(RichText::new("Current Temp").size(11.0).strong().color(p.text_muted));
-                                            ui.label(RichText::new("Thresholds (Max / Crit)").size(11.0).strong().color(p.text_muted));
+                                            ui.label(RichText::new("Driver").size(11.0).strong().color(p.text_muted));
+                                            ui.label(RichText::new("Temp").size(11.0).strong().color(p.text_muted));
+                                            ui.label(RichText::new("Max / Crit").size(11.0).strong().color(p.text_muted));
                                             ui.end_row();
 
                                             for s in filtered_sensors {

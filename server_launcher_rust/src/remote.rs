@@ -94,7 +94,9 @@ pub fn build_ssh_command(host: &SshRemoteHost, remote_cmd: &str) -> Command {
         }
     }
 
-    cmd.arg("-o").arg("ConnectTimeout=8")
+    cmd.arg("-o").arg("ConnectTimeout=5")
+        .arg("-o").arg("ServerAliveInterval=15")
+        .arg("-o").arg("ServerAliveCountMax=2")
         .arg("-o").arg("StrictHostKeyChecking=accept-new")
         .arg("-p").arg(host.port.to_string());
 

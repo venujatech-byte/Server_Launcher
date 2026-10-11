@@ -25,7 +25,7 @@ use eframe::egui;
 use egui::{
     Color32, Context, Frame, Key, Modifiers, RichText, Rounding, ScrollArea, Stroke, Ui,
 };
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -169,10 +169,16 @@ pub struct LauncherApp {
     pub local_services: Vec<SystemdService>,
     pub local_services_user: bool,
     pub local_services_loaded: bool,
-    pub remote_services: HashMap<String, Vec<SystemdService>>,
+    pub remote_services: Arc<Mutex<HashMap<String, Vec<SystemdService>>>>,
+    pub remote_services_in_flight: Arc<Mutex<HashSet<String>>>,
+    pub remote_services_errors: Arc<Mutex<HashMap<String, String>>>,
     pub remote_services_user: HashMap<String, bool>,
     pub selected_service: Option<String>,
     pub service_journal_logs: String,
+    pub remote_journal_logs: Arc<Mutex<HashMap<String, String>>>,
+    pub remote_journal_in_flight: Arc<Mutex<HashSet<String>>>,
+    pub remote_service_action_in_flight: Arc<Mutex<HashSet<String>>>,
+    pub remote_service_action_msg: Arc<Mutex<Option<String>>>,
     pub service_search_query: String,
     pub service_action_msg: Option<String>,
     pub journal_refresh_interval: u32,
@@ -183,7 +189,10 @@ pub struct LauncherApp {
     pub sensors_snapshot: crate::sensors::SystemSensorsSnapshot,
     pub sensors_refresh_interval: u32,
     pub last_sensors_refresh: Instant,
-    pub remote_sensors_snapshots: HashMap<String, crate::sensors::SystemSensorsSnapshot>,
+    pub remote_sensors_snapshots: Arc<Mutex<HashMap<String, crate::sensors::SystemSensorsSnapshot>>>,
+    pub remote_sensors_in_flight: Arc<Mutex<HashSet<String>>>,
+    pub remote_sensors_last_fetch: Arc<Mutex<HashMap<String, Instant>>>,
+    pub remote_sensors_errors: Arc<Mutex<HashMap<String, String>>>,
     pub sensors_search_query: String,
     pub sensors_category_filter: String,
 }
@@ -369,10 +378,16 @@ impl LauncherApp {
             local_services: Vec::new(),
             local_services_user: true,
             local_services_loaded: false,
-            remote_services: HashMap::new(),
+            remote_services: Arc::new(Mutex::new(HashMap::new())),
+            remote_services_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            remote_services_errors: Arc::new(Mutex::new(HashMap::new())),
             remote_services_user: HashMap::new(),
             selected_service: None,
             service_journal_logs: String::new(),
+            remote_journal_logs: Arc::new(Mutex::new(HashMap::new())),
+            remote_journal_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            remote_service_action_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            remote_service_action_msg: Arc::new(Mutex::new(None)),
             service_search_query: String::new(),
             service_action_msg: None,
             journal_refresh_interval: config_file.journal_refresh_interval.unwrap_or(0),
@@ -382,10 +397,43 @@ impl LauncherApp {
             sensors_snapshot: crate::sensors::SystemSensorsSnapshot::default(),
             sensors_refresh_interval: 2,
             last_sensors_refresh: Instant::now() - Duration::from_secs(10),
-            remote_sensors_snapshots: HashMap::new(),
+            remote_sensors_snapshots: Arc::new(Mutex::new(HashMap::new())),
+            remote_sensors_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            remote_sensors_last_fetch: Arc::new(Mutex::new(HashMap::new())),
+            remote_sensors_errors: Arc::new(Mutex::new(HashMap::new())),
             sensors_search_query: String::new(),
             sensors_category_filter: "All".to_string(),
         }
+    }
+
+    pub fn trigger_remote_sensors_query(&self, host: SshRemoteHost) {
+        let hid = host.id.clone();
+        {
+            let mut in_flight = self.remote_sensors_in_flight.lock().unwrap();
+            if in_flight.contains(&hid) {
+                return;
+            }
+            in_flight.insert(hid.clone());
+        }
+
+        let snapshots_arc = self.remote_sensors_snapshots.clone();
+        let in_flight_arc = self.remote_sensors_in_flight.clone();
+        let last_fetch_arc = self.remote_sensors_last_fetch.clone();
+        let errors_arc = self.remote_sensors_errors.clone();
+
+        std::thread::spawn(move || {
+            match crate::sensors::query_remote_sensors(&host) {
+                Ok(snap) => {
+                    snapshots_arc.lock().unwrap().insert(hid.clone(), snap);
+                    last_fetch_arc.lock().unwrap().insert(hid.clone(), Instant::now());
+                    errors_arc.lock().unwrap().remove(&hid);
+                }
+                Err(e) => {
+                    errors_arc.lock().unwrap().insert(hid.clone(), e);
+                }
+            }
+            in_flight_arc.lock().unwrap().remove(&hid);
+        });
     }
 
     fn persist_config(&self) {
@@ -961,13 +1009,129 @@ impl LauncherApp {
 
         std::thread::spawn(move || {
             let res = fetch_remote_listeners(&host_clone);
-            if let Ok(listeners) = res {
-                if let Ok(mut map) = listeners_arc.lock() {
-                    map.insert(host_clone.id.clone(), listeners);
-                }
+            if let Ok(mut map) = listeners_arc.lock() {
+                // Ensure entry is inserted even on error to prevent runaway reconnect loop
+                map.insert(host_clone.id.clone(), res.unwrap_or_default());
             }
             if let Ok(mut scanning) = scanning_arc.lock() {
                 scanning.remove(&host_clone.id);
+            }
+        });
+    }
+
+    fn trigger_remote_services_list(&self, host: &SshRemoteHost, user_mode: bool) {
+        let key = format!("{}:{}", host.id, if user_mode { "user" } else { "system" });
+        {
+            let mut in_flight = self.remote_services_in_flight.lock().unwrap();
+            if in_flight.contains(&key) {
+                return;
+            }
+            in_flight.insert(key.clone());
+        }
+
+        let host_clone = host.clone();
+        let key_clone = key.clone();
+        let services_arc = self.remote_services.clone();
+        let in_flight_arc = self.remote_services_in_flight.clone();
+        let errors_arc = self.remote_services_errors.clone();
+
+        std::thread::spawn(move || {
+            match list_remote_services(&host_clone, user_mode) {
+                Ok(services) => {
+                    if let Ok(mut map) = services_arc.lock() {
+                        map.insert(key_clone.clone(), services);
+                    }
+                    if let Ok(mut errs) = errors_arc.lock() {
+                        errs.remove(&key_clone);
+                    }
+                }
+                Err(err) => {
+                    if let Ok(mut errs) = errors_arc.lock() {
+                        errs.insert(key_clone.clone(), err);
+                    }
+                    if let Ok(mut map) = services_arc.lock() {
+                        map.entry(key_clone.clone()).or_insert_with(Vec::new);
+                    }
+                }
+            }
+            if let Ok(mut in_flight) = in_flight_arc.lock() {
+                in_flight.remove(&key_clone);
+            }
+        });
+    }
+
+    fn trigger_remote_journal_fetch(&self, host: &SshRemoteHost, unit: &str, user_mode: bool) {
+        let key = format!("{}:{}:{}", host.id, unit, if user_mode { "user" } else { "system" });
+        {
+            let mut in_flight = self.remote_journal_in_flight.lock().unwrap();
+            if in_flight.contains(&key) {
+                return;
+            }
+            in_flight.insert(key.clone());
+        }
+
+        let host_clone = host.clone();
+        let unit_clone = unit.to_string();
+        let key_clone = key.clone();
+        let journal_arc = self.remote_journal_logs.clone();
+        let in_flight_arc = self.remote_journal_in_flight.clone();
+
+        std::thread::spawn(move || {
+            let logs = fetch_remote_journal(&host_clone, &unit_clone, user_mode, 100).unwrap_or_default();
+            if let Ok(mut map) = journal_arc.lock() {
+                map.insert(key_clone.clone(), logs);
+            }
+            if let Ok(mut in_flight) = in_flight_arc.lock() {
+                in_flight.remove(&key_clone);
+            }
+        });
+    }
+
+    fn trigger_remote_service_action(&self, host: &SshRemoteHost, unit: &str, action: &'static str, user_mode: bool) {
+        let action_key = format!("{}:{}", host.id, unit);
+        {
+            let mut in_flight = self.remote_service_action_in_flight.lock().unwrap();
+            if in_flight.contains(&action_key) {
+                return;
+            }
+            in_flight.insert(action_key.clone());
+        }
+
+        let host_clone = host.clone();
+        let unit_clone = unit.to_string();
+        let action_key_clone = action_key.clone();
+        let in_flight_arc = self.remote_service_action_in_flight.clone();
+        let services_arc = self.remote_services.clone();
+        let journal_arc = self.remote_journal_logs.clone();
+        let action_msg_arc = self.remote_service_action_msg.clone();
+
+        std::thread::spawn(move || {
+            let res = control_remote_service(&host_clone, &unit_clone, action, user_mode);
+            let action_msg = match res {
+                Ok(msg) => msg,
+                Err(e) => format!("Error: {}", e),
+            };
+            if let Ok(mut m) = action_msg_arc.lock() {
+                *m = Some(action_msg);
+            }
+
+            // Refresh services list for this host & scope
+            let s_key = format!("{}:{}", host_clone.id, if user_mode { "user" } else { "system" });
+            if let Ok(services) = list_remote_services(&host_clone, user_mode) {
+                if let Ok(mut map) = services_arc.lock() {
+                    map.insert(s_key, services);
+                }
+            }
+
+            // Refresh journal logs
+            let j_key = format!("{}:{}:{}", host_clone.id, unit_clone, if user_mode { "user" } else { "system" });
+            let logs = fetch_remote_journal(&host_clone, &unit_clone, user_mode, 100).unwrap_or_default();
+            if let Ok(mut map) = journal_arc.lock() {
+                map.insert(j_key, logs);
+            }
+
+            if let Ok(mut in_flight) = in_flight_arc.lock() {
+                in_flight.remove(&action_key_clone);
             }
         });
     }
@@ -2351,17 +2515,28 @@ impl eframe::App for LauncherApp {
             let is_remote = self.selected_machine != "local";
             if is_remote {
                 if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == self.selected_machine).cloned() {
-                    match create_remote_service(&host, &service_def) {
-                        Ok(msg) => {
-                            self.service_action_msg = Some(msg);
-                            if let Ok(services) = list_remote_services(&host, service_def.is_user) {
-                                self.remote_services.insert(host.id.clone(), services);
+                    let action_msg_arc = self.remote_service_action_msg.clone();
+                    let services_arc = self.remote_services.clone();
+                    std::thread::spawn(move || {
+                        match create_remote_service(&host, &service_def) {
+                            Ok(msg) => {
+                                if let Ok(mut m) = action_msg_arc.lock() {
+                                    *m = Some(msg);
+                                }
+                                if let Ok(services) = list_remote_services(&host, service_def.is_user) {
+                                    let key = format!("{}:{}", host.id, if service_def.is_user { "user" } else { "system" });
+                                    if let Ok(mut map) = services_arc.lock() {
+                                        map.insert(key, services);
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                if let Ok(mut m) = action_msg_arc.lock() {
+                                    *m = Some(format!("Error: {}", err));
+                                }
                             }
                         }
-                        Err(err) => {
-                            self.service_action_msg = Some(format!("Error: {}", err));
-                        }
-                    }
+                    });
                 }
             } else {
                 match create_local_service(&service_def) {
@@ -2379,11 +2554,19 @@ impl eframe::App for LauncherApp {
         }
 
         let is_scanning = self.scanner.is_scanning.lock().map(|s| *s).unwrap_or(false);
+        let has_remote_bg_work = {
+            self.remote_connecting.lock().map(|s| !s.is_empty()).unwrap_or(false)
+                || self.remote_scanning.lock().map(|s| !s.is_empty()).unwrap_or(false)
+                || self.remote_services_in_flight.lock().map(|s| !s.is_empty()).unwrap_or(false)
+                || self.remote_service_action_in_flight.lock().map(|s| !s.is_empty()).unwrap_or(false)
+                || self.remote_journal_in_flight.lock().map(|s| !s.is_empty()).unwrap_or(false)
+                || self.remote_sensors_in_flight.lock().map(|s| !s.is_empty()).unwrap_or(false)
+        };
         if self.close_confirm_open {
             // Keep repainting while confirmation dialog is open
             ctx.request_repaint();
-        } else if is_scanning {
-            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        } else if is_scanning || has_remote_bg_work {
+            ctx.request_repaint_after(std::time::Duration::from_millis(150));
         } else if self.active_sidebar_tab == SidebarTab::Sensors && self.sensors_refresh_interval > 0 {
             // Repaint dynamically matching sensors interval (minimum 500ms for smooth UI)
             ctx.request_repaint_after(std::time::Duration::from_millis(500));
@@ -3521,6 +3704,8 @@ impl LauncherApp {
         } else {
             self.local_services_user
         };
+        let host_opt = host_id.and_then(|hid| self.ssh_hosts.iter().find(|h| h.id == hid).cloned());
+        let s_key = host_id.map(|hid| format!("{}:{}", hid, if user_mode { "user" } else { "system" }));
 
         ui.set_width(ui.available_width());
         ui.set_max_width(ui.available_width());
@@ -3555,10 +3740,8 @@ impl LauncherApp {
                 if ui.add(user_btn).clicked() {
                     if let Some(hid) = host_id {
                         self.remote_services_user.insert(hid.to_string(), true);
-                        if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                            if let Ok(s) = list_remote_services(&host, true) {
-                                self.remote_services.insert(hid.to_string(), s);
-                            }
+                        if let Some(host) = &host_opt {
+                            self.trigger_remote_services_list(host, true);
                         }
                     } else {
                         self.local_services_user = true;
@@ -3578,10 +3761,8 @@ impl LauncherApp {
                 if ui.add(sys_btn).clicked() {
                     if let Some(hid) = host_id {
                         self.remote_services_user.insert(hid.to_string(), false);
-                        if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                            if let Ok(s) = list_remote_services(&host, false) {
-                                self.remote_services.insert(hid.to_string(), s);
-                            }
+                        if let Some(host) = &host_opt {
+                            self.trigger_remote_services_list(host, false);
                         }
                     } else {
                         self.local_services_user = false;
@@ -3595,11 +3776,9 @@ impl LauncherApp {
                     let btn_ref = egui::Button::new(RichText::new("🔄").size(11.0).color(p.text_secondary))
                         .fill(p.bg_button);
                     if ui.add(btn_ref).on_hover_text("Refresh systemd services list").clicked() {
-                        if let Some(hid) = host_id {
-                            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                if let Ok(s) = list_remote_services(&host, user_mode) {
-                                    self.remote_services.insert(hid.to_string(), s);
-                                }
+                        if host_id.is_some() {
+                            if let Some(host) = &host_opt {
+                                self.trigger_remote_services_list(host, user_mode);
                             }
                         } else {
                             if let Ok(s) = list_local_services(user_mode) {
@@ -3618,13 +3797,11 @@ impl LauncherApp {
                 if let Ok(s) = list_local_services(self.local_services_user) {
                     self.local_services = s;
                 }
-            } else if let Some(hid) = host_id {
-                if !self.remote_services.contains_key(hid) {
-                    if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                        if let Ok(s) = list_remote_services(&host, user_mode) {
-                            self.remote_services.insert(hid.to_string(), s);
-                        }
-                    }
+            } else if let (Some(host), Some(ref key)) = (&host_opt, &s_key) {
+                let has_cached = self.remote_services.lock().map(|m| m.contains_key(key)).unwrap_or(false);
+                let is_in_flight = self.remote_services_in_flight.lock().map(|s| s.contains(key)).unwrap_or(false);
+                if !has_cached && !is_in_flight {
+                    self.trigger_remote_services_list(host, user_mode);
                 }
             }
 
@@ -3638,11 +3815,15 @@ impl LauncherApp {
             ui.add_space(8.0);
 
             let q = self.service_search_query.trim().to_lowercase();
-            let services_list: Vec<SystemdService> = if let Some(hid) = host_id {
-                self.remote_services.get(hid).cloned().unwrap_or_default()
+            let services_list: Vec<SystemdService> = if let Some(ref key) = s_key {
+                self.remote_services.lock().map(|m| m.get(key).cloned().unwrap_or_default()).unwrap_or_default()
             } else {
                 self.local_services.clone()
             };
+
+            let is_services_loading = s_key.as_ref().map(|k| {
+                self.remote_services_in_flight.lock().map(|s| s.contains(k)).unwrap_or(false)
+            }).unwrap_or(false);
 
             let filtered_services: Vec<SystemdService> = services_list
                 .into_iter()
@@ -3657,9 +3838,24 @@ impl LauncherApp {
             if filtered_services.is_empty() {
                 ui.add_space(20.0);
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("No systemd services found").size(12.0).color(p.text_muted));
-                    ui.add_space(4.0);
-                    ui.label(RichText::new("Click '🔄' to scan or switch scope.").size(11.0).color(p.text_muted));
+                    if is_services_loading {
+                        ui.spinner();
+                        ui.add_space(6.0);
+                        ui.label(RichText::new("Loading systemd services over SSH...").size(12.0).color(p.text_muted));
+                    } else if let Some(ref key) = s_key {
+                        let err_opt = self.remote_services_errors.lock().ok().and_then(|e| e.get(key).cloned());
+                        if let Some(err) = err_opt {
+                            ui.label(RichText::new(format!("Error loading services: {}", err)).size(11.5).color(p.danger));
+                        } else {
+                            ui.label(RichText::new("No systemd services found").size(12.0).color(p.text_muted));
+                            ui.add_space(4.0);
+                            ui.label(RichText::new("Click '🔄' to scan or switch scope.").size(11.0).color(p.text_muted));
+                        }
+                    } else {
+                        ui.label(RichText::new("No systemd services found").size(12.0).color(p.text_muted));
+                        ui.add_space(4.0);
+                        ui.label(RichText::new("Click '🔄' to scan or switch scope.").size(11.0).color(p.text_muted));
+                    }
                 });
                 return;
             }
@@ -3764,11 +3960,9 @@ impl LauncherApp {
                     if let Some(unit) = selected {
                         self.selected_service = Some(unit.clone());
                         self.service_action_msg = None;
-                        // Fetch journalctl
-                        if let Some(hid) = host_id {
-                            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                self.service_journal_logs = fetch_remote_journal(&host, &unit, user_mode, 100).unwrap_or_default();
-                            }
+                        // Fetch journalctl asynchronously
+                        if let Some(host) = &host_opt {
+                            self.trigger_remote_journal_fetch(host, &unit, user_mode);
                         } else {
                             self.service_journal_logs = fetch_local_journal(&unit, user_mode, 100).unwrap_or_default();
                         }
@@ -3785,9 +3979,11 @@ impl LauncherApp {
         } else {
             self.local_services_user
         };
+        let host_opt = host_id.and_then(|hid| self.ssh_hosts.iter().find(|h| h.id == hid).cloned());
+        let s_key = host_id.map(|hid| format!("{}:{}", hid, if user_mode { "user" } else { "system" }));
 
-        let services_list: Vec<SystemdService> = if let Some(hid) = host_id {
-            self.remote_services.get(hid).cloned().unwrap_or_default()
+        let services_list: Vec<SystemdService> = if let Some(ref key) = s_key {
+            self.remote_services.lock().map(|m| m.get(key).cloned().unwrap_or_default()).unwrap_or_default()
         } else {
             self.local_services.clone()
         };
@@ -3799,6 +3995,24 @@ impl LauncherApp {
             Some(s) => {
                 let is_active = s.is_active();
                 let is_failed = s.is_failed();
+
+                let action_key = host_id.map(|hid| format!("{}:{}", hid, s.name));
+                let is_action_in_flight = action_key.as_ref().map(|k| {
+                    self.remote_service_action_in_flight.lock().map(|set| set.contains(k)).unwrap_or(false)
+                }).unwrap_or(false);
+
+                let j_key = host_id.map(|hid| format!("{}:{}:{}", hid, s.name, if user_mode { "user" } else { "system" }));
+                let is_journal_in_flight = j_key.as_ref().map(|k| {
+                    self.remote_journal_in_flight.lock().map(|set| set.contains(k)).unwrap_or(false)
+                }).unwrap_or(false);
+
+                // Auto-fetch journal logs on first selection if not yet loaded
+                if let (Some(host), Some(ref jk)) = (&host_opt, &j_key) {
+                    let has_logs = self.remote_journal_logs.lock().map(|m| m.contains_key(jk)).unwrap_or(false);
+                    if !has_logs && !is_journal_in_flight {
+                        self.trigger_remote_journal_fetch(host, &s.name, user_mode);
+                    }
+                }
 
                 ui.vertical(|ui| {
                     // Header Bar
@@ -3847,65 +4061,61 @@ impl LauncherApp {
                             // Control buttons row
                             let mut action_to_run = None;
                             ui.horizontal_wrapped(|ui| {
-                                let btn_start = egui::Button::new(RichText::new("▶ Start").size(11.0).strong().color(Color32::WHITE))
-                                    .fill(Color32::from_rgb(16, 185, 129))
-                                    .rounding(Rounding::same(4.0));
-                                if ui.add(btn_start).clicked() {
-                                    action_to_run = Some("start");
-                                }
+                                if is_action_in_flight {
+                                    ui.spinner();
+                                    ui.add_space(4.0);
+                                    ui.label(RichText::new("Executing remote action...").size(11.0).color(p.accent));
+                                } else {
+                                    let btn_start = egui::Button::new(RichText::new("▶ Start").size(11.0).strong().color(Color32::WHITE))
+                                        .fill(Color32::from_rgb(16, 185, 129))
+                                        .rounding(Rounding::same(4.0));
+                                    if ui.add(btn_start).clicked() {
+                                        action_to_run = Some("start");
+                                    }
 
-                                let btn_stop = egui::Button::new(RichText::new("⏹ Stop").size(11.0).strong().color(Color32::WHITE))
-                                    .fill(p.danger)
-                                    .rounding(Rounding::same(4.0));
-                                if ui.add(btn_stop).clicked() {
-                                    action_to_run = Some("stop");
-                                }
+                                    let btn_stop = egui::Button::new(RichText::new("⏹ Stop").size(11.0).strong().color(Color32::WHITE))
+                                        .fill(p.danger)
+                                        .rounding(Rounding::same(4.0));
+                                    if ui.add(btn_stop).clicked() {
+                                        action_to_run = Some("stop");
+                                    }
 
-                                let btn_restart = egui::Button::new(RichText::new("🔄 Restart").size(11.0).color(p.text_primary))
-                                    .fill(p.bg_button)
-                                    .stroke(Stroke::new(1.0_f32, p.border))
-                                    .rounding(Rounding::same(4.0));
-                                if ui.add(btn_restart).clicked() {
-                                    action_to_run = Some("restart");
-                                }
+                                    let btn_restart = egui::Button::new(RichText::new("🔄 Restart").size(11.0).color(p.text_primary))
+                                        .fill(p.bg_button)
+                                        .stroke(Stroke::new(1.0_f32, p.border))
+                                        .rounding(Rounding::same(4.0));
+                                    if ui.add(btn_restart).clicked() {
+                                        action_to_run = Some("restart");
+                                    }
 
-                                let btn_enable = egui::Button::new(RichText::new("✅ Enable").size(11.0).color(p.text_primary))
-                                    .fill(p.bg_button)
-                                    .stroke(Stroke::new(1.0_f32, p.border))
-                                    .rounding(Rounding::same(4.0));
-                                if ui.add(btn_enable).clicked() {
-                                    action_to_run = Some("enable");
-                                }
+                                    let btn_enable = egui::Button::new(RichText::new("✅ Enable").size(11.0).color(p.text_primary))
+                                        .fill(p.bg_button)
+                                        .stroke(Stroke::new(1.0_f32, p.border))
+                                        .rounding(Rounding::same(4.0));
+                                    if ui.add(btn_enable).clicked() {
+                                        action_to_run = Some("enable");
+                                    }
 
-                                let btn_disable = egui::Button::new(RichText::new("❌ Disable").size(11.0).color(p.text_primary))
-                                    .fill(p.bg_button)
-                                    .stroke(Stroke::new(1.0_f32, p.border))
-                                    .rounding(Rounding::same(4.0));
-                                if ui.add(btn_disable).clicked() {
-                                    action_to_run = Some("disable");
-                                }
+                                    let btn_disable = egui::Button::new(RichText::new("❌ Disable").size(11.0).color(p.text_primary))
+                                        .fill(p.bg_button)
+                                        .stroke(Stroke::new(1.0_f32, p.border))
+                                        .rounding(Rounding::same(4.0));
+                                    if ui.add(btn_disable).clicked() {
+                                        action_to_run = Some("disable");
+                                    }
 
-                                let btn_reload = egui::Button::new(RichText::new("🔄 Reload Daemon").size(11.0).color(p.text_secondary))
-                                    .fill(p.bg_button)
-                                    .rounding(Rounding::same(4.0));
-                                if ui.add(btn_reload).clicked() {
-                                    action_to_run = Some("daemon-reload");
+                                    let btn_reload = egui::Button::new(RichText::new("🔄 Reload Daemon").size(11.0).color(p.text_secondary))
+                                        .fill(p.bg_button)
+                                        .rounding(Rounding::same(4.0));
+                                    if ui.add(btn_reload).clicked() {
+                                        action_to_run = Some("daemon-reload");
+                                    }
                                 }
                             });
 
                             if let Some(act) = action_to_run {
-                                if let Some(hid) = host_id {
-                                    if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                        let res = control_remote_service(&host, &s.name, act, user_mode);
-                                        match res {
-                                            Ok(msg) => self.service_action_msg = Some(msg),
-                                            Err(e) => self.service_action_msg = Some(format!("Error: {}", e)),
-                                        }
-                                        if let Ok(services) = list_remote_services(&host, user_mode) {
-                                            self.remote_services.insert(hid.to_string(), services);
-                                        }
-                                        self.service_journal_logs = fetch_remote_journal(&host, &s.name, user_mode, 100).unwrap_or_default();
-                                    }
+                                if let Some(host) = &host_opt {
+                                    self.trigger_remote_service_action(host, &s.name, act, user_mode);
                                 } else {
                                     let res = control_local_service(&s.name, act, user_mode);
                                     match res {
@@ -3920,7 +4130,13 @@ impl LauncherApp {
                             }
                         });
 
-                    if let Some(msg) = &self.service_action_msg {
+                    let action_msg = if host_id.is_some() {
+                        self.remote_service_action_msg.lock().ok().and_then(|m| m.clone())
+                    } else {
+                        self.service_action_msg.clone()
+                    };
+
+                    if let Some(msg) = &action_msg {
                         ui.add_space(6.0);
                         Frame::none()
                             .fill(p.bg_subtle)
@@ -3937,14 +4153,16 @@ impl LauncherApp {
                     // Journalctl Logs Viewer
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Service Logs (journalctl -n 100)").size(12.0).strong().color(p.text_muted));
+                        if is_journal_in_flight {
+                            ui.add_space(4.0);
+                            ui.spinner();
+                        }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let btn_ref_log = egui::Button::new(RichText::new("🔄 Refresh Logs").size(11.0).color(p.text_secondary))
                                 .fill(p.bg_button);
                             if ui.add(btn_ref_log).clicked() {
-                                if let Some(hid) = host_id {
-                                    if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                        self.service_journal_logs = fetch_remote_journal(&host, &s.name, user_mode, 100).unwrap_or_default();
-                                    }
+                                if let Some(host) = &host_opt {
+                                    self.trigger_remote_journal_fetch(host, &s.name, user_mode);
                                 } else {
                                     self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100).unwrap_or_default();
                                 }
@@ -3981,10 +4199,8 @@ impl LauncherApp {
                         ui.ctx().request_repaint_after(Duration::from_millis(500));
                         if self.last_journal_refresh.elapsed() >= Duration::from_secs(self.journal_refresh_interval as u64) {
                             self.last_journal_refresh = Instant::now();
-                            if let Some(hid) = host_id {
-                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                    self.service_journal_logs = fetch_remote_journal(&host, &s.name, user_mode, 100).unwrap_or_default();
-                                }
+                            if let Some(host) = &host_opt {
+                                self.trigger_remote_journal_fetch(host, &s.name, user_mode);
                             } else {
                                 self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100).unwrap_or_default();
                             }
@@ -3992,6 +4208,18 @@ impl LauncherApp {
                     }
 
                     ui.add_space(4.0);
+
+                    let display_logs = if let Some(ref jk) = j_key {
+                        self.remote_journal_logs.lock().map(|m| m.get(jk).cloned()).unwrap_or(None).unwrap_or_else(|| {
+                            if is_journal_in_flight {
+                                "Fetching logs from remote host...".to_string()
+                            } else {
+                                "No journal logs received yet. Click '🔄 Refresh Logs'.".to_string()
+                            }
+                        })
+                    } else {
+                        self.service_journal_logs.clone()
+                    };
 
                     let log_h = (ui.available_height() - 20.0).max(180.0);
                     Frame::none()
@@ -4006,11 +4234,11 @@ impl LauncherApp {
                                 .stick_to_bottom(true)
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
-                                    if self.service_journal_logs.trim().is_empty() {
+                                    if display_logs.trim().is_empty() {
                                         ui.label(RichText::new("No journal logs recorded for this service.").size(11.5).color(Color32::from_rgb(100, 110, 130)));
                                     } else {
                                         ui.label(
-                                            RichText::new(&self.service_journal_logs)
+                                            RichText::new(&display_logs)
                                                 .size(11.0)
                                                 .monospace()
                                                 .color(Color32::from_rgb(220, 225, 235)),
@@ -4043,9 +4271,27 @@ impl LauncherApp {
         ui.set_width(ui.available_width());
         ui.set_max_width(ui.available_width());
 
-        // Fetch or refresh sensors snapshot
+        let is_fetching = if let Some(hid) = host_id {
+            self.remote_sensors_in_flight.lock().unwrap().contains(hid)
+        } else {
+            false
+        };
+
+        // Fetch or refresh sensors snapshot asynchronously without blocking UI thread
         let snap = if let Some(hid) = host_id {
-            self.remote_sensors_snapshots.get(hid).cloned().unwrap_or_default()
+            let has_snap = self.remote_sensors_snapshots.lock().unwrap().contains_key(hid);
+            let last_fetch = self.remote_sensors_last_fetch.lock().unwrap().get(hid).copied();
+            let interval_passed = self.sensors_refresh_interval > 0
+                && last_fetch
+                    .map(|t| t.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64))
+                    .unwrap_or(true);
+
+            if (!has_snap || interval_passed) && !is_fetching {
+                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                    self.trigger_remote_sensors_query(host);
+                }
+            }
+            self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_default()
         } else {
             if self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval.max(1) as u64) {
                 self.sensors_snapshot = self.sensors_collector.collect();
@@ -4061,20 +4307,21 @@ impl LauncherApp {
             // Header Row: Title & Manual Refresh
             ui.horizontal(|ui| {
                 ui.label(RichText::new("HARDWARE SENSORS").size(12.0).strong().color(p.text_muted));
+                if is_fetching {
+                    ui.label(RichText::new("⟳ Updating...").size(10.5).color(p.info));
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_ref = egui::Button::new(RichText::new("🔄").size(11.0).color(p.text_secondary))
                         .fill(p.bg_button);
                     if ui.add(btn_ref).on_hover_text("Refresh all sensors now").clicked() {
                         if let Some(hid) = host_id {
                             if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                if let Ok(s) = crate::sensors::query_remote_sensors(&host) {
-                                    self.remote_sensors_snapshots.insert(hid.to_string(), s);
-                                }
+                                self.trigger_remote_sensors_query(host);
                             }
                         } else {
                             self.sensors_snapshot = self.sensors_collector.collect();
+                            self.last_sensors_refresh = Instant::now();
                         }
-                        self.last_sensors_refresh = Instant::now();
                     }
 
                     // Auto-refresh interval dropdown
@@ -4109,7 +4356,7 @@ impl LauncherApp {
             // Category Filter Pills
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-                let categories = ["All", "CPU", "RAM", "GPU", "Storage", "Network", "Temps"];
+                let categories = ["All", "CPU", "RAM", "GPU", "Power", "Storage", "Network", "Temps"];
                 for cat in categories {
                     let is_active = self.sensors_category_filter == cat;
                     let bg = if is_active { p.accent } else { p.bg_button };
@@ -4153,7 +4400,20 @@ impl LauncherApp {
                             });
                             ui.add_space(3.0);
                             let cpu_val = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
-                            ui.add(egui::ProgressBar::new(cpu_val).text(format!("{:.1}% ({} cores)", snap.cpu_global_usage, snap.cpu_cores_logical)).animate(false));
+                            let freq_badge = if snap.cpu_frequency_mhz > 0 {
+                                if snap.cpu_frequency_mhz >= 1000 {
+                                    format!(" @ {:.2} GHz", snap.cpu_frequency_mhz as f64 / 1000.0)
+                                } else {
+                                    format!(" @ {} MHz", snap.cpu_frequency_mhz)
+                                }
+                            } else {
+                                String::new()
+                            };
+                            ui.add(egui::ProgressBar::new(cpu_val).text(format!("{:.1}% ({} cores{})", snap.cpu_global_usage, snap.cpu_cores_logical, freq_badge)).animate(false));
+                            if let Some(w) = snap.cpu_power_watts {
+                                ui.add_space(2.0);
+                                ui.label(RichText::new(format!("⚡ Draw: {:.1} W", w)).size(10.0).color(p.info));
+                            }
                         });
 
                     ui.add_space(6.0);
@@ -4201,16 +4461,51 @@ impl LauncherApp {
                                 ui.add_space(3.0);
                                 if let Some(load) = gpu.load_pct {
                                     let load_val = (load / 100.0).clamp(0.0, 1.0);
-                                    ui.add(egui::ProgressBar::new(load_val).text(format!("{:.1}% Load", load)).animate(false));
+                                    let clk_str = gpu.clock_mhz.map(|c| format!(" @ {} MHz", c)).unwrap_or_default();
+                                    ui.add(egui::ProgressBar::new(load_val).text(format!("{:.1}% Load{}", load, clk_str)).animate(false));
                                 } else {
                                     ui.label(RichText::new(&gpu.name).size(10.5).color(p.text_secondary));
+                                }
+                                if let Some(w) = gpu.power_watts {
+                                    ui.add_space(2.0);
+                                    ui.label(RichText::new(format!("⚡ Draw: {:.1} W", w)).size(10.0).color(p.info));
                                 }
                             });
 
                         ui.add_space(6.0);
                     }
 
-                    // Card 4: Network Live Bandwidth Card
+                    // Card 4: Power Supply / Battery Quick Card
+                    if snap.power.ac_online.is_some() || !snap.power.batteries.is_empty() {
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::new(1.0_f32, p.border))
+                            .rounding(Rounding::same(6.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("🔋 Power").size(12.0).strong().color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let ac_text = if snap.power.ac_online == Some(true) { "🔌 AC Online" } else { "🔋 Battery" };
+                                        ui.label(RichText::new(ac_text).size(10.5).strong().color(p.text_secondary));
+                                    });
+                                });
+                                if let Some(pct) = snap.power.total_battery_pct {
+                                    ui.add_space(3.0);
+                                    let val = (pct / 100.0).clamp(0.0, 1.0);
+                                    let status_text = snap.power.batteries.first().map(|b| b.status.as_str()).unwrap_or("Battery");
+                                    ui.add(egui::ProgressBar::new(val).text(format!("{:.0}% ({})", pct, status_text)).animate(false));
+                                }
+                                if let Some(w) = snap.power.total_power_watts {
+                                    ui.add_space(2.0);
+                                    ui.label(RichText::new(format!("⚡ Rate: {:.1} W", w)).size(10.0).color(p.info));
+                                }
+                            });
+
+                        ui.add_space(6.0);
+                    }
+
+                    // Card 5: Network Live Bandwidth Card
                     Frame::none()
                         .fill(p.bg_card)
                         .stroke(Stroke::new(1.0_f32, p.border))
@@ -4235,7 +4530,7 @@ impl LauncherApp {
 
                     ui.add_space(6.0);
 
-                    // Card 5: Sensors Count Card
+                    // Card 6: Sensors Count Card
                     Frame::none()
                         .fill(p.bg_card)
                         .stroke(Stroke::new(1.0_f32, p.border))
@@ -4271,24 +4566,32 @@ impl LauncherApp {
     fn render_sensors_right_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
         let p = self.theme.palette();
 
-        // Auto-refresh timer logic
-        if let Some(hid) = host_id {
-            if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
-                self.last_sensors_refresh = Instant::now();
+        let is_fetching = if let Some(hid) = host_id {
+            self.remote_sensors_in_flight.lock().unwrap().contains(hid)
+        } else {
+            false
+        };
+
+        // Auto-refresh timer logic (asynchronous for SSH hosts, never blocking UI thread)
+        let snap = if let Some(hid) = host_id {
+            let has_snap = self.remote_sensors_snapshots.lock().unwrap().contains_key(hid);
+            let last_fetch = self.remote_sensors_last_fetch.lock().unwrap().get(hid).copied();
+            let interval_passed = self.sensors_refresh_interval > 0
+                && last_fetch
+                    .map(|t| t.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64))
+                    .unwrap_or(true);
+
+            if (!has_snap || interval_passed) && !is_fetching {
                 if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                    if let Ok(s) = crate::sensors::query_remote_sensors(&host) {
-                        self.remote_sensors_snapshots.insert(hid.to_string(), s);
-                    }
+                    self.trigger_remote_sensors_query(host);
                 }
             }
-        } else if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
-            self.sensors_snapshot = self.sensors_collector.collect();
-            self.last_sensors_refresh = Instant::now();
-        }
-
-        let snap = if let Some(hid) = host_id {
-            self.remote_sensors_snapshots.get(hid).cloned().unwrap_or_default()
+            self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_default()
         } else {
+            if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
+                self.sensors_snapshot = self.sensors_collector.collect();
+                self.last_sensors_refresh = Instant::now();
+            }
             self.sensors_snapshot.clone()
         };
 
@@ -4298,6 +4601,7 @@ impl LauncherApp {
         let show_cpu = filter_cat == "All" || filter_cat == "CPU";
         let show_ram = filter_cat == "All" || filter_cat == "RAM";
         let show_gpu = filter_cat == "All" || filter_cat == "GPU";
+        let show_power = filter_cat == "All" || filter_cat == "Power";
         let show_storage = filter_cat == "All" || filter_cat == "Storage";
         let show_net = filter_cat == "All" || filter_cat == "Network";
         let show_temps = filter_cat == "All" || filter_cat == "Temps";
@@ -4322,7 +4626,9 @@ impl LauncherApp {
                                     "Hardware Sensors & System Resource Monitor".to_string()
                                 };
                                 ui.label(RichText::new(title).size(15.0).strong().color(p.text_primary));
-                                if self.sensors_refresh_interval > 0 {
+                                if is_fetching {
+                                    ui.label(RichText::new("● Updating remote metrics in background...").size(11.0).color(p.info));
+                                } else if self.sensors_refresh_interval > 0 {
                                     ui.label(RichText::new(format!("● Live ({}s refresh)", self.sensors_refresh_interval)).size(11.0).color(Color32::from_rgb(16, 185, 129)));
                                 } else {
                                     ui.label(RichText::new("○ Manual refresh").size(11.0).color(p.text_muted));
@@ -4334,7 +4640,12 @@ impl LauncherApp {
                                 ui.label(RichText::new(format!("{} Physical / {} Logical Cores", snap.cpu_cores_physical, snap.cpu_cores_logical)).size(11.0).color(p.text_muted));
                                 if snap.cpu_frequency_mhz > 0 {
                                     ui.label(RichText::new("•").size(11.0).color(p.text_muted));
-                                    ui.label(RichText::new(format!("{} MHz", snap.cpu_frequency_mhz)).size(11.0).monospace().color(p.info));
+                                    let freq_s = if snap.cpu_frequency_mhz >= 1000 {
+                                        format!("{:.2} GHz", snap.cpu_frequency_mhz as f64 / 1000.0)
+                                    } else {
+                                        format!("{} MHz", snap.cpu_frequency_mhz)
+                                    };
+                                    ui.label(RichText::new(freq_s).size(11.0).monospace().color(p.info));
                                 }
                                 ui.label(RichText::new("•").size(11.0).color(p.text_muted));
                                 ui.label(RichText::new(format!("{} Total RAM", crate::sensors::format_bytes(snap.mem_total_bytes))).size(11.0).color(p.success));
@@ -4348,18 +4659,34 @@ impl LauncherApp {
                             if ui.add(btn_ref).clicked() {
                                 if let Some(hid) = host_id {
                                     if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                        if let Ok(s) = crate::sensors::query_remote_sensors(&host) {
-                                            self.remote_sensors_snapshots.insert(hid.to_string(), s);
-                                        }
+                                        self.trigger_remote_sensors_query(host);
                                     }
                                 } else {
                                     self.sensors_snapshot = self.sensors_collector.collect();
+                                    self.last_sensors_refresh = Instant::now();
                                 }
-                                self.last_sensors_refresh = Instant::now();
                             }
                         });
                     });
                 });
+
+            // Remote host error notification (if query failed)
+            if let Some(hid) = host_id {
+                if let Some(err_msg) = self.remote_sensors_errors.lock().unwrap().get(hid) {
+                    ui.add_space(4.0);
+                    Frame::none()
+                        .fill(Color32::from_rgba_premultiplied(239, 68, 68, 25))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(239, 68, 68)))
+                        .rounding(Rounding::same(4.0))
+                        .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("⚠️ Remote sensor query notice:").size(11.5).strong().color(Color32::from_rgb(239, 68, 68)));
+                                ui.label(RichText::new(err_msg).size(11.0).color(p.text_secondary));
+                            });
+                        });
+                }
+            }
 
             ui.add_space(8.0);
 
@@ -4386,6 +4713,20 @@ impl LauncherApp {
                                         if let Some(t) = snap.cpu_temp {
                                             ui.label(RichText::new(format!("Package: {:.1}°C", t)).size(12.0).strong().color(crate::sensors::temp_color(t)));
                                         }
+                                        if let Some(w) = snap.cpu_power_watts {
+                                            ui.label(RichText::new(format!("⚡ Power: {:.1} W", w)).size(12.0).strong().color(p.info));
+                                        }
+                                        if let Some(tdp) = snap.cpu_tdp_watts {
+                                            ui.label(RichText::new(format!("TDP Limit: {:.0} W", tdp)).size(11.0).color(p.text_muted));
+                                        }
+                                        if snap.cpu_frequency_mhz > 0 {
+                                            let freq_text = if snap.cpu_frequency_mhz >= 1000 {
+                                                format!("{:.2} GHz avg", snap.cpu_frequency_mhz as f64 / 1000.0)
+                                            } else {
+                                                format!("{} MHz avg", snap.cpu_frequency_mhz)
+                                            };
+                                            ui.label(RichText::new(freq_text).size(11.5).monospace().color(p.text_secondary));
+                                        }
                                     });
                                 });
 
@@ -4393,10 +4734,15 @@ impl LauncherApp {
                                 let global_pct = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
                                 ui.add(egui::ProgressBar::new(global_pct).text(format!("Global Usage: {:.1}%", snap.cpu_global_usage)).animate(false));
 
-                                // Per-core usages grid
+                                // Per-core usages and live frequencies grid
                                 if !snap.cpu_core_usages.is_empty() {
                                     ui.add_space(8.0);
-                                    ui.label(RichText::new("Per-Core Utilization:").size(11.0).color(p.text_muted));
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("Per-Core Utilization & Speed:").size(11.0).color(p.text_muted));
+                                        if !snap.cpu_frequencies_mhz.is_empty() {
+                                            ui.label(RichText::new("• Dynamic Core Clocks active").size(10.5).color(Color32::from_rgb(16, 185, 129)));
+                                        }
+                                    });
                                     ui.add_space(4.0);
 
                                     let cols = 4.min(snap.cpu_core_usages.len().max(1));
@@ -4406,9 +4752,18 @@ impl LauncherApp {
                                         .show(ui, |ui| {
                                             for (i, &usage) in snap.cpu_core_usages.iter().enumerate() {
                                                 let core_val = (usage / 100.0).clamp(0.0, 1.0);
+                                                let core_freq = snap.cpu_frequencies_mhz.get(i).copied().unwrap_or(0);
                                                 ui.horizontal(|ui| {
                                                     ui.label(RichText::new(format!("C{}:", i)).size(10.5).color(p.text_muted));
-                                                    ui.add(egui::ProgressBar::new(core_val).desired_width(120.0).text(format!("{:.0}%", usage)).animate(false));
+                                                    ui.add(egui::ProgressBar::new(core_val).desired_width(90.0).text(format!("{:.0}%", usage)).animate(false));
+                                                    if core_freq > 0 {
+                                                        let f_str = if core_freq >= 1000 {
+                                                            format!("{:.2} GHz", core_freq as f64 / 1000.0)
+                                                        } else {
+                                                            format!("{} MHz", core_freq)
+                                                        };
+                                                        ui.label(RichText::new(f_str).size(10.0).monospace().color(p.text_secondary));
+                                                    }
                                                 });
                                                 if (i + 1) % cols == 0 {
                                                     ui.end_row();
@@ -4472,12 +4827,28 @@ impl LauncherApp {
                                             if let Some(t) = gpu.temp {
                                                 ui.label(RichText::new(format!("Temp: {:.1}°C", t)).size(12.0).strong().color(crate::sensors::temp_color(t)));
                                             }
+                                            if let Some(w) = gpu.power_watts {
+                                                let p_str = if let Some(lim) = gpu.power_limit_watts {
+                                                    format!("⚡ Power: {:.1} W / {:.0} W limit", w, lim)
+                                                } else {
+                                                    format!("⚡ Power: {:.1} W", w)
+                                                };
+                                                ui.label(RichText::new(p_str).size(11.5).strong().color(p.info));
+                                            }
                                         });
                                     });
 
                                     ui.add_space(4.0);
                                     ui.horizontal(|ui| {
                                         ui.label(RichText::new(format!("Driver: {}", gpu.driver)).size(10.5).color(p.text_muted));
+                                        if let Some(clk) = gpu.clock_mhz {
+                                            ui.label(RichText::new("•").size(10.5).color(p.text_muted));
+                                            ui.label(RichText::new(format!("Core Clock: {} MHz", clk)).size(10.5).monospace().color(p.info));
+                                        }
+                                        if let Some(mclk) = gpu.mem_clock_mhz {
+                                            ui.label(RichText::new("•").size(10.5).color(p.text_muted));
+                                            ui.label(RichText::new(format!("VRAM Clock: {} MHz", mclk)).size(10.5).monospace().color(p.text_secondary));
+                                        }
                                         if let (Some(used), Some(total)) = (gpu.mem_used_mb, gpu.mem_total_mb) {
                                             ui.label(RichText::new("•").size(10.5).color(p.text_muted));
                                             ui.label(RichText::new(format!("VRAM: {} MB / {} MB", used, total)).size(10.5).color(p.info));
@@ -4493,6 +4864,100 @@ impl LauncherApp {
 
                             ui.add_space(8.0);
                         }
+                    }
+
+                    // SECTION 4: POWER SUPPLY & BATTERY HEALTH
+                    if show_power && (snap.power.ac_online.is_some() || !snap.power.batteries.is_empty()) {
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::new(1.0_f32, p.border))
+                            .rounding(Rounding::same(6.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("🔋 Power Supply & Battery Health").size(13.5).strong().color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if let Some(ac) = snap.power.ac_online {
+                                            let (txt, col) = if ac {
+                                                ("🔌 AC Mains: Connected / Online", Color32::from_rgb(16, 185, 129))
+                                            } else {
+                                                ("🔋 Battery Mode: Running on DC", Color32::from_rgb(245, 158, 11))
+                                            };
+                                            ui.label(RichText::new(txt).size(11.5).strong().color(col));
+                                        }
+                                        if let Some(w) = snap.power.total_power_watts {
+                                            ui.label(RichText::new(format!("⚡ Rate: {:.1} W", w)).size(11.5).monospace().color(p.info));
+                                        }
+                                    });
+                                });
+
+                                if snap.power.batteries.is_empty() {
+                                    ui.add_space(6.0);
+                                    ui.label(RichText::new("Host is connected to AC mains power (Desktop / Rack Server — No battery attached).").size(11.0).color(p.text_muted));
+                                } else {
+                                    for (b_idx, bat) in snap.power.batteries.iter().enumerate() {
+                                        ui.add_space(8.0);
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(format!("Battery #{}: {}", b_idx + 1, bat.name)).size(12.0).strong().color(p.text_primary));
+                                            ui.label(RichText::new(format!("[{}]", bat.status)).size(11.0).strong().color(
+                                                match bat.status.to_lowercase().as_str() {
+                                                    "charging" => Color32::from_rgb(16, 185, 129),
+                                                    "full" => Color32::from_rgb(56, 189, 248),
+                                                    "discharging" => Color32::from_rgb(245, 158, 11),
+                                                    _ => p.text_secondary,
+                                                }
+                                            ));
+
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                if let Some(h) = bat.health_pct {
+                                                    ui.label(RichText::new(format!("Health: {:.1}%", h)).size(11.0).strong().color(
+                                                        if h >= 80.0 { Color32::from_rgb(16, 185, 129) }
+                                                        else if h >= 60.0 { Color32::from_rgb(245, 158, 11) }
+                                                        else { Color32::from_rgb(239, 68, 68) }
+                                                    ));
+                                                }
+                                                if let Some(v) = bat.voltage_volts {
+                                                    ui.label(RichText::new(format!("Voltage: {:.2} V", v)).size(11.0).color(p.text_muted));
+                                                }
+                                            });
+                                        });
+
+                                        ui.add_space(4.0);
+                                        let pct_val = (bat.capacity_pct / 100.0).clamp(0.0, 1.0);
+                                        let bar_text = if let (Some(cur_wh), Some(full_wh)) = (bat.energy_wh, bat.energy_full_wh) {
+                                            format!("{:.0}% ({:.1} Wh / {:.1} Wh)", bat.capacity_pct, cur_wh, full_wh)
+                                        } else {
+                                            format!("{:.1}% Charge Level", bat.capacity_pct)
+                                        };
+                                        ui.add(egui::ProgressBar::new(pct_val).text(bar_text).animate(bat.status.to_lowercase() == "charging"));
+
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            if !bat.technology.is_empty() {
+                                                ui.label(RichText::new(format!("Tech: {}", bat.technology)).size(10.5).color(p.text_muted));
+                                            }
+                                            if !bat.model_name.is_empty() {
+                                                ui.label(RichText::new("•").size(10.5).color(p.text_muted));
+                                                ui.label(RichText::new(format!("Model: {}", bat.model_name)).size(10.5).color(p.text_muted));
+                                            }
+                                            if !bat.manufacturer.is_empty() {
+                                                ui.label(RichText::new("•").size(10.5).color(p.text_muted));
+                                                ui.label(RichText::new(format!("Vendor: {}", bat.manufacturer)).size(10.5).color(p.text_muted));
+                                            }
+                                            if let Some(c) = bat.cycle_count {
+                                                ui.label(RichText::new("•").size(10.5).color(p.text_muted));
+                                                ui.label(RichText::new(format!("Cycles: {}", c)).size(10.5).color(p.text_muted));
+                                            }
+                                            if let Some(d_wh) = bat.energy_design_wh {
+                                                ui.label(RichText::new("•").size(10.5).color(p.text_muted));
+                                                ui.label(RichText::new(format!("Design: {:.1} Wh", d_wh)).size(10.5).color(p.text_muted));
+                                            }
+                                        });
+                                    }
+                                }
+                            });
+
+                        ui.add_space(8.0);
                     }
 
                     // SECTION 4: STORAGE / DISKS

@@ -42,8 +42,9 @@ Engineered for modern developer cockpits, server orchestrators, and technical to
   - **📦 Server Configuration Management**: One-click `📥 Import servers.json` and `📤 Export servers.json` file dialogs for effortless backup and restore.
   - **⌨ Keyboard Shortcuts Guide**: Instant cheatsheet for `Ctrl+P`/`Ctrl+K`, `Ctrl+,`, `Ctrl+A`, `Ctrl+X`, and `Ctrl+F`.
   - **ℹ️ System Diagnostics**: Quick overview of host IP, managed instance count, and active config path.
-- **✨ Streamlined Borderless Top Bar**: Minimalist, spacious header layout eliminating overcrowding: includes instance search pill bar, batch controls (`▶ Start All`, `⏹ Stop All`), Quick Launch (`⚡ Quick Launch Ctrl+P`), `+ Add Server`, and `⚙` Settings.
-- **🚀 Per-Server Launch Autostart**: Configure individual servers with the `🚀 Autostart` checkbox to start running immediately whenever Server Launcher is opened.
+- **✨ Streamlined Borderless Top Bar**: Minimalist, spacious header layout eliminating overcrowding: includes enlarged branding logo, instance search pill bar, batch controls (`▶ Start All`, `⏹ Stop All`), Quick Launch (`⚡ Quick Launch Ctrl+P`), `+ Add Server`, and `⚙` Settings.
+- **🚀 Per-Server Launch Autostart**: Configure individual servers with the `autostart` checkbox in the left sidebar and overview cards to start running immediately whenever Server Launcher opens.
+- **🖥️ Run in External Terminal Toggle**: Per-server `[✓] run in external terminal` checkbox in both overview cards and left sidebar containers to launch services into a native desktop terminal window upon start.
 - **Auto-Restart on Crash**: Per-server crash guard option that monitors exit codes and automatically restarts failed services after a short delay.
 - **Port-Aware Status Detection**: Monitors process sockets and marks services as `Running` once their configured TCP port is bound and listening.
 - **Pre-Stop Command Hooks**: Run graceful shutdown or data backup scripts before process termination (e.g., `firebase emulators:export ./data`).
@@ -55,14 +56,16 @@ Engineered for modern developer cockpits, server orchestrators, and technical to
 - **External Remote Terminals**: Launch native terminal sessions directly into remote servers with working directory preloaded.
 
 ### 📊 System Resource & Port Monitoring
-- **Live Performance Metrics**: Real-time per-process **CPU %** and **RAM (MB)** utilization tracking with cached lookup for zero CPU scroll overhead.
+- **Live Performance Metrics**: Real-time per-process **CPU %** and **RAM (MB)** utilization tracking with cached lookup for near-zero CPU scroll overhead.
+- **Top Apps & Process Properties**: Inspect resource-heavy processes, view detailed command arguments, working directories, open files, memory maps, and property files with responsive non-blocking background inspection.
 - **Listening Port Scanner**: Live overview of all active TCP/UDP ports on your machine, distinguishing launcher-managed servers from unmanaged background services.
 - **One-Click Import**: Found an unmanaged daemon listening on port 8080 or 3000? Import it directly into the Launcher with prefilled command and directory paths.
+- **⚡ Ultra-Low Idle Footprint**: Engineered with reactive frame rendering, lightweight timer tickers, and optimized release builds (`lto = "thin"`) for minimal CPU, GPU, and RAM consumption.
 
 ### 📟 Interactive Terminal & Shell Execution
 - **Interactive Inline Terminal**: Inspect stdout/stderr streams or send arbitrary commands (`ps`, `git status`, `npm install`, `curl`) directly inside the card view.
 - **High-Performance Virtualized Logs**: Smooth scrolling with `show_rows` virtualization, distinct scroll persistence, and optional auto-scroll toggle (`📜 Auto-scroll`) eliminating frame drops and jitter.
-- **External Terminal Launcher**: One-click opening of desktop terminals (`gnome-terminal`, `alacritty`, `kitty`, `konsole`, `xterm`, `cmd.exe`, `powershell`) initialized in the server's working directory.
+- **External Terminal Launcher**: One-click opening of desktop terminals (`gnome-terminal`, `ptyxis`, `alacritty`, `kitty`, `konsole`, `xterm`, `cmd.exe`, `powershell`) initialized in the server's working directory.
 - **Built-in Slash Commands**: Type `/start`, `/stop`, `/restart`, `/status`, `/clear`, or run custom action buttons from the interactive command bar.
 
 ### ⚙️ SystemD Services Manager & Sudo Authentication
@@ -237,7 +240,9 @@ All configurations are human-readable and automatically persisted to `servers.js
       "command": "python -m uvicorn main:app --port 8000",
       "stop_command": "",
       "port": 8000,
+      "autostart": false,
       "auto_restart": true,
+      "own_console": false,
       "env": {
         "ENV": "development",
         "DEBUG": "true"
@@ -269,7 +274,9 @@ All configurations are human-readable and automatically persisted to `servers.js
 | `command` | `string` | Shell command used to launch the service |
 | `stop_command` | `string` | Optional cleanup command executed before termination |
 | `port` | `number` | TCP port monitored to confirm successful startup |
+| `autostart` | `boolean` | Automatically start this server when Server Launcher opens |
 | `auto_restart` | `boolean` | Automatically restart the process if it crashes or exits unexpectedly |
+| `own_console` | `boolean` | Launch service in an external desktop terminal window upon start |
 | `env` | `object` | Key-value dictionary of environment variables |
 | `actions` | `array` | Custom action buttons runnable in the service directory |
 | `links` | `array` | Quick-access URLs opened in your default web browser |

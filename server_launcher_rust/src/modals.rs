@@ -1045,8 +1045,12 @@ pub fn render_modal_titlebar(
     // In every popup dialog, ensure inputs have clean light grey text and clearly visible hint text
     ui.visuals_mut().override_text_color = Some(Color32::from_rgb(215, 220, 230));
     ui.visuals_mut().widgets.inactive.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 220));
+    ui.visuals_mut().widgets.hovered.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(230, 235, 245));
+    ui.visuals_mut().widgets.active.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(240, 242, 250));
     ui.visuals_mut().widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 220));
     ui.visuals_mut().widgets.noninteractive.weak_bg_fill = Color32::from_rgb(180, 185, 195);
+    ui.visuals_mut().text_cursor.stroke = Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 220));
+    ui.visuals_mut().extreme_bg_color = Color32::from_rgb(22, 25, 35);
 
     let titlebar_height = 28.0;
     let (rect, resp) = ui.allocate_exact_size(
@@ -1748,8 +1752,12 @@ pub fn render_command_palette(
         .show(ctx, |ui| {
             ui.visuals_mut().override_text_color = Some(Color32::from_rgb(215, 220, 230));
             ui.visuals_mut().widgets.inactive.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 220));
+            ui.visuals_mut().widgets.hovered.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(230, 235, 245));
+            ui.visuals_mut().widgets.active.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(240, 242, 250));
             ui.visuals_mut().widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 220));
             ui.visuals_mut().widgets.noninteractive.weak_bg_fill = Color32::from_rgb(180, 185, 195);
+            ui.visuals_mut().text_cursor.stroke = Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 220));
+            ui.visuals_mut().extreme_bg_color = Color32::from_rgb(22, 25, 35);
 
             ui.horizontal(|ui| {
                 ui.label(
@@ -4104,6 +4112,32 @@ mod tests {
                 config_res.err()
             );
         }
+    }
+
+    #[test]
+    fn test_modal_input_visuals_light_grey() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let mut is_open = true;
+                render_modal_titlebar(ui, "Test Modal", &mut is_open);
+                let visuals = ui.visuals();
+
+                // Input typed text must render in light grey
+                let text_color = visuals.override_text_color.expect("override_text_color must be set");
+                assert!(text_color.r() >= 200 && text_color.g() >= 200 && text_color.b() >= 200,
+                    "Input text color must be light grey, got {:?}", text_color);
+
+                // Placeholders (weak_text_color) must also render in light grey
+                let weak_color = visuals.weak_text_color();
+                assert!(weak_color.r() >= 180 && weak_color.g() >= 180 && weak_color.b() >= 180,
+                    "Placeholder text color must be light grey, got {:?}", weak_color);
+
+                // Inactive and noninteractive strokes must be light grey
+                assert!(visuals.widgets.inactive.fg_stroke.color.r() >= 190);
+                assert!(visuals.widgets.noninteractive.fg_stroke.color.r() >= 190);
+            });
+        });
     }
 }
 

@@ -8111,13 +8111,12 @@ impl LauncherApp {
     fn render_sensors_top_apps_tab(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot) {
         let p = self.theme.palette();
 
-        // Fixed column widths with generous spacing matching Windows 11 Task Manager
-        const COL_STATUS_W: f32 = 65.0;
-        const COL_CPU_W: f32 = 88.0;
-        const COL_MEM_W: f32 = 110.0;
-        const COL_DISK_W: f32 = 105.0;
-        const COL_NET_W: f32 = 95.0;
-        const COL_SPACING: f32 = 16.0;
+        // Fixed column widths and compact spacing matching Windows 11 Task Manager
+        const COL_CPU_W: f32 = 82.0;
+        const COL_MEM_W: f32 = 96.0;
+        const COL_DISK_W: f32 = 92.0;
+        const COL_NET_W: f32 = 82.0;
+        const COL_SPACING: f32 = 8.0;
 
         let num_logical_cores = snap.cpu_cores_logical.max(1) as f32;
         // Total system CPU % normalization: 0 - 100% total system CPU matching Windows Task Manager
@@ -8528,8 +8527,8 @@ impl LauncherApp {
 
                 // Responsive Name column width accounting for all column widths and gaps
                 let avail_w = ui.available_width();
-                let total_fixed_w = COL_STATUS_W + COL_CPU_W + COL_MEM_W + COL_DISK_W + COL_NET_W + 5.0 * COL_SPACING + 40.0;
-                let col_name_w = (avail_w - total_fixed_w).max(220.0);
+                let total_fixed_w = COL_CPU_W + COL_MEM_W + COL_DISK_W + COL_NET_W + 4.0 * COL_SPACING + 24.0;
+                let col_name_w = (avail_w - total_fixed_w).max(180.0);
 
                 // Helper to return crisp Lucide arrow or empty string for sort indicators
                 let current_sort = self.sensors_top_apps_sort.clone();
@@ -8558,7 +8557,7 @@ impl LauncherApp {
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 egui::Grid::new("top_apps_task_manager_grid")
-                                    .num_columns(6)
+                                    .num_columns(5)
                                     .spacing(egui::vec2(COL_SPACING, 4.0))
                                     .show(ui, |ui| {
                                         // ═════════════════════════════════════
@@ -8584,25 +8583,7 @@ impl LauncherApp {
                                             }
                                         });
 
-                                        // 2. Status
-                                        ui.allocate_ui_with_layout(egui::vec2(COL_STATUS_W, 36.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                            let is_sel = self.sensors_top_apps_sort == "status";
-                                            let arr = get_sort_arrow("status");
-                                            let title = if arr.is_empty() { "Status".to_string() } else { format!("Status {}", arr) };
-                                            let btn = egui::Button::new(
-                                                RichText::new(title)
-                                                    .size(11.5)
-                                                    .strong()
-                                                    .color(if is_sel { p.accent_light } else { p.text_secondary }),
-                                            )
-                                            .fill(Color32::TRANSPARENT)
-                                            .stroke(Stroke::NONE);
-                                            if ui.add(btn).clicked() {
-                                                new_sort = Some("status");
-                                            }
-                                        });
-
-                                        // 3. CPU (Stacked: Total % top, CPU bottom)
+                                        // 2. CPU (Stacked: Total % top, CPU bottom)
                                         ui.allocate_ui_with_layout(egui::vec2(COL_CPU_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
                                             let is_sel = self.sensors_top_apps_sort == "cpu";
                                             let arr = get_sort_arrow("cpu");
@@ -8721,19 +8702,7 @@ impl LauncherApp {
                                                 }
                                             });
 
-                                            // 2. Status (e.g. 🍃 for background/efficiency or blank)
-                                            let (status_rect, _) = ui.allocate_exact_size(egui::vec2(COL_STATUS_W, 22.0), egui::Sense::hover());
-                                            if !is_app_sec {
-                                                ui.painter().text(
-                                                    status_rect.center(),
-                                                    egui::Align2::CENTER_CENTER,
-                                                    "🍃",
-                                                    egui::FontId::proportional(11.0),
-                                                    Color32::from_rgb(16, 185, 129),
-                                                );
-                                            }
-
-                                            // 3. CPU (Heatmap tinted cell, strictly bounded, right aligned)
+                                            // 2. CPU (Heatmap tinted cell, strictly bounded, right aligned)
                                             let (cpu_rect, cpu_resp) = ui.allocate_exact_size(egui::vec2(COL_CPU_W, 22.0), egui::Sense::hover());
                                             if cpu_fill != Color32::TRANSPARENT {
                                                 ui.painter().rect_filled(cpu_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, cpu_fill);
@@ -8822,16 +8791,6 @@ impl LauncherApp {
                                                         }
                                                     });
 
-                                                    // Child Status
-                                                    let (c_status_rect, _) = ui.allocate_exact_size(egui::vec2(COL_STATUS_W, 20.0), egui::Sense::hover());
-                                                    ui.painter().text(
-                                                        c_status_rect.left_center(),
-                                                        egui::Align2::LEFT_CENTER,
-                                                        &child.status,
-                                                        egui::FontId::proportional(9.5),
-                                                        p.text_muted,
-                                                    );
-
                                                     // Child CPU
                                                     let (c_cpu_rect, _) = ui.allocate_exact_size(egui::vec2(COL_CPU_W, 20.0), egui::Sense::hover());
                                                     ui.painter().text(
@@ -8894,7 +8853,7 @@ impl LauncherApp {
                                                     self.sensors_top_apps_section_apps_expanded = !self.sensors_top_apps_section_apps_expanded;
                                                 }
                                             });
-                                            for _ in 0..5 {
+                                            for _ in 0..4 {
                                                 ui.label("");
                                             }
                                             ui.end_row();
@@ -8924,7 +8883,7 @@ impl LauncherApp {
                                                     self.sensors_top_apps_section_bg_expanded = !self.sensors_top_apps_section_bg_expanded;
                                                 }
                                             });
-                                            for _ in 0..5 {
+                                            for _ in 0..4 {
                                                 ui.label("");
                                             }
                                             ui.end_row();

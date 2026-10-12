@@ -1225,6 +1225,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                                 };
                                 action = ModalAction::SaveServer(cfg, old_key);
                                 state.open = false;
+                                is_open = false;
                             }
                             Err(err) => {
                                 state.error_msg = Some(err);
@@ -1244,12 +1245,15 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
 
                     if ui.add(btn_cancel).clicked() {
                         state.open = false;
+                        is_open = false;
                     }
                 });
             });
         });
 
-    state.open = is_open;
+    if !is_open {
+        state.open = false;
+    }
     action
 }
 
@@ -1394,7 +1398,9 @@ pub fn render_command_palette(
             });
         });
 
-    state.open = is_open;
+    if !is_open {
+        state.open = false;
+    }
     action
 }
 
@@ -1784,6 +1790,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
 
                         action = ModalAction::SaveSshHost(host_obj, state.editing_id.clone());
                         state.open = false;
+                        is_open = false;
                     }
 
                     let cancel_btn = egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
@@ -1793,12 +1800,15 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                         .min_size(egui::vec2(75.0, 28.0));
                     if ui.add(cancel_btn).clicked() {
                         state.open = false;
+                        is_open = false;
                     }
                 });
             });
         });
 
-    state.open = is_open;
+    if !is_open {
+        state.open = false;
+    }
     action
 }
 
@@ -1991,6 +2001,11 @@ pub fn render_script_modal(
         return None;
     }
 
+    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+        state.open = false;
+        return None;
+    }
+
     let mut result = None;
     let title = if state.is_edit { "✏ Edit Custom Script" } else { "📜 New Custom Script" };
 
@@ -2114,8 +2129,14 @@ pub fn render_script_modal(
 
             // Action Buttons
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("Cancel").color(palette.text_secondary)).clicked() {
+                let btn_cancel = egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
+                    .fill(Color32::from_rgb(26, 29, 40))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
+                    .rounding(Rounding::same(6.0))
+                    .min_size(egui::vec2(75.0, 28.0));
+                if ui.add(btn_cancel).clicked() {
                     state.open = false;
+                    is_open = false;
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2142,6 +2163,7 @@ pub fn render_script_modal(
                                 host_id: state.host_id.clone(),
                             });
                             state.open = false;
+                            is_open = false;
                         }
                     }
                 });
@@ -2164,6 +2186,11 @@ pub fn render_command_modal(
     palette: &ThemePalette,
 ) -> Option<SavedCommand> {
     if !state.open {
+        return None;
+    }
+
+    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+        state.open = false;
         return None;
     }
 
@@ -2280,8 +2307,14 @@ pub fn render_command_modal(
 
             // Action Buttons
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("Cancel").color(palette.text_secondary)).clicked() {
+                let btn_cancel = egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
+                    .fill(Color32::from_rgb(26, 29, 40))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
+                    .rounding(Rounding::same(6.0))
+                    .min_size(egui::vec2(75.0, 28.0));
+                if ui.add(btn_cancel).clicked() {
                     state.open = false;
+                    is_open = false;
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2312,6 +2345,7 @@ pub fn render_command_modal(
                                 run_in_terminal: state.run_in_terminal,
                             });
                             state.open = false;
+                            is_open = false;
                         }
                     }
                 });
@@ -2349,6 +2383,11 @@ pub fn render_new_service_modal(
     palette: &ThemePalette,
 ) -> Option<NewServiceDefinition> {
     if !state.open {
+        return None;
+    }
+
+    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+        state.open = false;
         return None;
     }
 
@@ -2486,8 +2525,14 @@ pub fn render_new_service_modal(
 
             // Action Buttons
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("Cancel").color(palette.text_secondary)).clicked() {
+                let btn_cancel = egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
+                    .fill(Color32::from_rgb(26, 29, 40))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
+                    .rounding(Rounding::same(6.0))
+                    .min_size(egui::vec2(75.0, 28.0));
+                if ui.add(btn_cancel).clicked() {
                     state.open = false;
+                    is_open = false;
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2506,6 +2551,7 @@ pub fn render_new_service_modal(
                         } else {
                             result = Some(state.def.clone());
                             state.open = false;
+                            is_open = false;
                         }
                     }
                 });
@@ -2559,6 +2605,11 @@ pub fn render_remote_start_server_modal(
     palette: &ThemePalette,
 ) -> Option<RemoteStartServerRequest> {
     if !state.open {
+        return None;
+    }
+
+    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+        state.open = false;
         return None;
     }
 
@@ -2663,8 +2714,14 @@ pub fn render_remote_start_server_modal(
 
             // Buttons
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("Cancel").color(palette.text_secondary)).clicked() {
+                let btn_cancel = egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
+                    .fill(Color32::from_rgb(26, 29, 40))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
+                    .rounding(Rounding::same(6.0))
+                    .min_size(egui::vec2(75.0, 28.0));
+                if ui.add(btn_cancel).clicked() {
                     state.open = false;
+                    is_open = false;
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2700,6 +2757,7 @@ pub fn render_remote_start_server_modal(
                                 cwd: state.cwd.trim().to_string(),
                             });
                             state.open = false;
+                            is_open = false;
                         }
                     }
                 });
@@ -2927,6 +2985,7 @@ pub fn render_sudo_modal(
 
                     if ui.add(btn_cancel).clicked() {
                         is_open = false;
+                        state.open = false;
                     }
                 });
             });
@@ -2942,6 +3001,7 @@ pub fn render_sudo_modal(
                     Ok(()) => {
                         result = Some((script, None, state.password.clone()));
                         state.open = false;
+                        is_open = false;
                     }
                     Err(err) => {
                         state.error = Some(err);
@@ -2951,6 +3011,7 @@ pub fn render_sudo_modal(
                 // Remote script: pass password directly to remote SSH execution
                 result = Some((script, state.host_id.clone(), state.password.clone()));
                 state.open = false;
+                is_open = false;
             }
         }
     }
@@ -3026,6 +3087,15 @@ mod tests {
         modal.close();
         assert!(!modal.open);
         assert!(modal.script.is_none());
+    }
+
+    #[test]
+    fn test_ssh_host_modal_state_close() {
+        let mut modal = SshHostModalState::default();
+        modal.open = true;
+        modal.name = "My SSH".to_string();
+        modal.open = false;
+        assert!(!modal.open);
     }
 }
 

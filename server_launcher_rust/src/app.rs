@@ -3182,6 +3182,7 @@ impl eframe::App for LauncherApp {
         let modal_action = render_add_edit_modal(ctx, &mut self.add_edit_modal, &p);
         match modal_action {
             ModalAction::SaveServer(new_cfg, old_key) => {
+                self.add_edit_modal.open = false;
                 if let Some(old_k) = old_key {
                     if let Some(s) = self.find_service_mut(&old_k) {
                         s.config = new_cfg;
@@ -3192,6 +3193,7 @@ impl eframe::App for LauncherApp {
                 self.persist_config();
             }
             ModalAction::DeleteServer(k) => {
+                self.add_edit_modal.open = false;
                 if let Some(idx) = self.services.iter().position(|s| s.config.key == k) {
                     let mut s = self.services.remove(idx);
                     s.stop();
@@ -3269,6 +3271,7 @@ impl eframe::App for LauncherApp {
         let ssh_modal_action = render_ssh_host_modal(ctx, &mut self.ssh_host_modal, &p);
         match ssh_modal_action {
             ModalAction::SaveSshHost(new_host, old_id) => {
+                self.ssh_host_modal.open = false;
                 if let Some(old) = old_id {
                     if let Some(pos) = self.ssh_hosts.iter().position(|h| h.id == old) {
                         self.ssh_hosts[pos] = new_host.clone();
@@ -3283,6 +3286,7 @@ impl eframe::App for LauncherApp {
                 self.persist_config();
             }
             ModalAction::DeleteSshHost(id) => {
+                self.ssh_host_modal.open = false;
                 if let Some(pos) = self.ssh_hosts.iter().position(|h| h.id == id) {
                     self.ssh_hosts.remove(pos);
                     if self.selected_machine == id {
@@ -3295,6 +3299,7 @@ impl eframe::App for LauncherApp {
         }
 
         if let Some(script) = render_script_modal(ctx, &mut self.script_modal, &p) {
+            self.script_modal.open = false;
             if let Some(existing) = self.scripts.iter_mut().find(|s| s.id == script.id) {
                 *existing = script.clone();
             } else {
@@ -3304,10 +3309,12 @@ impl eframe::App for LauncherApp {
         }
 
         if let Some((script, host_id, password)) = render_sudo_modal(ctx, &mut self.sudo_modal, &p) {
+            self.sudo_modal.close();
             self.start_script_execution(&script, host_id.as_deref(), Some(&password));
         }
 
         if let Some(cmd) = render_command_modal(ctx, &mut self.command_modal, &p) {
+            self.command_modal.open = false;
             if let Some(existing) = self.saved_commands.iter_mut().find(|c| c.id == cmd.id) {
                 *existing = cmd.clone();
             } else {
@@ -3317,6 +3324,7 @@ impl eframe::App for LauncherApp {
         }
 
         if let Some(service_def) = render_new_service_modal(ctx, &mut self.systemd_modal, &p) {
+            self.systemd_modal.open = false;
             let is_remote = self.selected_machine != "local";
             if is_remote {
                 if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == self.selected_machine).cloned() {
@@ -3383,6 +3391,7 @@ impl eframe::App for LauncherApp {
         }
 
         if let Some(req) = render_remote_start_server_modal(ctx, &mut self.remote_start_server_modal, &p) {
+            self.remote_start_server_modal.open = false;
             if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == req.host_id).cloned() {
                 let full_cmd = if !req.cwd.is_empty() {
                     format!("cd \"{}\" 2>/dev/null || true; nohup {} >/dev/null 2>&1 & echo '[launcher] Started {}: {}'", req.cwd, req.command, req.name, req.command)

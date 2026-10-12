@@ -2,9 +2,9 @@ use crate::config::{ConfigFile, CustomScript, SavedCommand, ServerConfig, SshRem
 use crate::modals::{
     render_add_edit_modal, render_command_modal, render_command_palette,
     render_close_confirmation_modal, render_new_service_modal, render_script_modal,
-    render_ssh_host_modal, render_remote_start_server_modal, render_sudo_modal, AddEditModalState, CloseConfirmChoice,
+    render_ssh_host_modal, render_remote_start_server_modal, render_remote_reboot_modal, render_sudo_modal, AddEditModalState, CloseConfirmChoice,
     CommandPaletteState, ModalAction, NewServiceModalState, PaletteAction,
-    RemoteStartServerModalState, SshHostModalState, SudoModalState,
+    RemoteRebootModalState, RemoteStartServerModalState, SshHostModalState, SudoModalState,
 };
 use crate::scripts::{
     check_local_sudo_needs_password, execute_local_script, execute_remote_script,
@@ -212,6 +212,7 @@ pub struct LauncherApp {
     remote_connecting: Arc<Mutex<BTreeSet<String>>>,
     pub remote_stopped_servers: Arc<Mutex<HashMap<String, Vec<RemoteStoppedServer>>>>,
     pub remote_start_server_modal: RemoteStartServerModalState,
+    pub remote_reboot_modal: RemoteRebootModalState,
     pub theme: ThemeMode,
     pub last_applied_palette: Option<crate::theme::ThemePalette>,
     pub app_autostart: bool,
@@ -627,6 +628,7 @@ impl LauncherApp {
             remote_connecting,
             remote_stopped_servers: Arc::new(Mutex::new(HashMap::new())),
             remote_start_server_modal: RemoteStartServerModalState::default(),
+            remote_reboot_modal: RemoteRebootModalState::default(),
             theme,
             last_applied_palette: None,
             app_autostart,
@@ -3647,19 +3649,19 @@ impl eframe::App for LauncherApp {
                                 self.trigger_remote_scan(host);
                             }
 
-                            // Remote Server Controls: + Start Server, Stop All, Restart All
-                            let btn_add_server = egui::Button::new(
-                                RichText::new("+ Start Server")
+                            // Remote Host Controls: Restart Device (reboots remote machine with confirmation & sudo password)
+                            let btn_reboot = egui::Button::new(
+                                RichText::new(format!("{} Restart Device", crate::lucide::REFRESH_CW))
                                     .size(11.0)
                                     .strong()
-                                    .color(Color32::WHITE),
+                                    .color(Color32::from_rgb(254, 202, 202)),
                             )
-                            .fill(Color32::from_rgb(0x05, 0x96, 0x69))
-                            .stroke(Stroke::NONE)
+                            .fill(Color32::from_rgb(153, 27, 27))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(185, 28, 28)))
                             .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(98.0, 24.0));
-                            if ui.add(btn_add_server).on_hover_text("Start a new server or process on remote host").clicked() {
-                                self.remote_start_server_modal.open_for_host(host);
+                            .min_size(egui::vec2(116.0, 24.0));
+                            if ui.add(btn_reboot).on_hover_text("Restart remote device (requires confirmation & sudo password)").clicked() {
+                                self.remote_reboot_modal.open_for_host(host);
                             }
                         } else {
                             // LOCAL PC CONTROLS (+ Add Server, Quick Launch, Stop All, Start All, Search)
@@ -4089,6 +4091,35 @@ impl eframe::App for LauncherApp {
                 self.run_remote_ssh_command(&host, &full_cmd, Some(ctx.clone()));
                 self.schedule_remote_scan(&host, 1500, ctx.clone());
             }
+        }
+
+        if let Some((host, password)) = render_remote_reboot_modal(ctx, &mut self.remote_reboot_modal, &p) {
+            let host_clone = host.clone();
+            let pass_clone = password.clone();
+            let ctx_clone = ctx.clone();
+            let rem_status = self.remote_connection_status.clone();
+            let rem_conn = self.remote_connecting.clone();
+
+            std::thread::spawn(move || {
+                match crate::remote::reboot_remote_device(&host_clone, &pass_clone) {
+                    Ok(msg) => {
+                        println!("[reboot] {}", msg);
+                        rem_conn.lock().unwrap().insert(host_clone.id.clone());
+                        rem_status.lock().unwrap().insert(host_clone.id.clone(), Err("Rebooting device...".to_string()));
+                    }
+                    Err(err) => {
+                        eprintln!("[reboot error] {}", err);
+                        rem_status.lock().unwrap().insert(host_clone.id.clone(), Err(format!("Reboot failed: {}", err)));
+                    }
+                }
+                ctx_clone.request_repaint();
+            });
+
+            self.import_status_msg = Some((
+                format!("{} Reboot signal sent to {}", crate::lucide::REFRESH_CW, host.name),
+                false,
+                Instant::now(),
+            ));
         }
 
         self.render_sudo_popup(ctx, &p);

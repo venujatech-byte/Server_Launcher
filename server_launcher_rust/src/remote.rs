@@ -763,6 +763,48 @@ pub fn kill_remote_process_pid(host: &SshRemoteHost, pid: u32) -> Result<(), Str
     }
 }
 
+/// Reboot the remote SSH host device using sudo authorization.
+pub fn reboot_remote_device(host: &SshRemoteHost, sudo_password: &str) -> Result<String, String> {
+    let effective_pass = if !sudo_password.trim().is_empty() {
+        sudo_password.trim()
+    } else {
+        host.password.trim()
+    };
+
+    let reboot_cmd = if !effective_pass.is_empty() {
+        format!(
+            "(echo '{}' | sudo -S reboot 2>/dev/null) \
+             || (echo '{}' | sudo -S shutdown -r now 2>/dev/null) \
+             || (echo '{}' | sudo -S systemctl reboot 2>/dev/null) \
+             || (sudo -n reboot 2>/dev/null) \
+             || (sudo reboot 2>/dev/null) \
+             || reboot",
+            effective_pass, effective_pass, effective_pass
+        )
+    } else {
+        "(sudo -n reboot 2>/dev/null) \
+         || (sudo -n shutdown -r now 2>/dev/null) \
+         || (sudo reboot 2>/dev/null) \
+         || reboot".to_string()
+    };
+
+    let mut cmd = build_ssh_command(host, &reboot_cmd);
+    match cmd.output() {
+        Ok(out) => {
+            let err = String::from_utf8_lossy(&out.stderr);
+            // When a reboot is triggered, SSH immediately disconnects, which may yield exit code 255
+            if out.status.success() || out.status.code() == Some(255) || err.contains("closed by remote host") || err.contains("Connection to") || err.trim().is_empty() {
+                Ok("Reboot signal sent successfully. Remote device is restarting.".to_string())
+            } else if err.contains("incorrect password") || err.contains("Sorry, try again") {
+                Err("Authentication failed: Incorrect sudo password".to_string())
+            } else {
+                Err(format!("Reboot command failed: {}", err.trim()))
+            }
+        }
+        Err(e) => Err(format!("Failed to execute SSH reboot command: {}", e)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

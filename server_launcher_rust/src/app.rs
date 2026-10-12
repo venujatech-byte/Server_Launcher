@@ -7721,7 +7721,7 @@ impl LauncherApp {
             .id(window_id)
             .title_bar(false)
             .collapsible(false)
-            .resizable(true)
+            .resizable(false)
             .movable(false)
             .current_pos(screen.center() + drag_offset)
             .pivot(egui::Align2::CENTER_CENTER)
@@ -7822,22 +7822,34 @@ impl LauncherApp {
                         // Paths and command line recessed code wells
                         let render_path_well = |ui: &mut egui::Ui, title: &str, content: &str| {
                             if content.is_empty() { return; }
-                            ui.label(RichText::new(title).size(11.0).strong().color(palette.text_secondary));
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(title).size(11.0).strong().color(palette.text_secondary));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let btn = egui::Button::new(RichText::new(format!("{} Copy", crate::lucide::COPY)).size(10.0).color(palette.text_muted))
+                                        .fill(palette.bg_button)
+                                        .rounding(Rounding::same(4.0));
+                                    if ui.add(btn).on_hover_text("Copy to clipboard").clicked() {
+                                        ui.ctx().output_mut(|o| o.copied_text = content.to_string());
+                                    }
+                                });
+                            });
                             ui.add_space(2.0);
                             Frame::none()
                                 .fill(Color32::from_rgb(12, 14, 20))
                                 .stroke(Stroke::new(1.0_f32, palette.border.gamma_multiply(0.3)))
                                 .rounding(Rounding::same(6.0))
-                                .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                                 .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new(content).size(10.5).monospace().color(palette.text_primary));
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            if ui.button(RichText::new(crate::lucide::COPY).size(10.0).color(palette.text_muted)).on_hover_text("Copy to clipboard").clicked() {
-                                                ui.ctx().output_mut(|o| o.copied_text = content.to_string());
-                                            }
-                                        });
-                                    });
+                                    ui.set_max_width(ui.available_width());
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(content)
+                                                .size(10.5)
+                                                .monospace()
+                                                .color(palette.text_primary),
+                                        )
+                                        .wrap(),
+                                    );
                                 });
                             ui.add_space(6.0);
                         };
@@ -7898,7 +7910,7 @@ impl LauncherApp {
             .id(window_id)
             .title_bar(false)
             .collapsible(false)
-            .resizable(true)
+            .resizable(false)
             .movable(false)
             .current_pos(screen.center() + drag_offset)
             .pivot(egui::Align2::CENTER_CENTER)
@@ -7965,44 +7977,60 @@ impl LauncherApp {
                     ui.add_space(16.0);
                 } else if let Some(ref maps) = self.proc_maps_data {
                     let filter = self.proc_maps_search.trim().to_lowercase();
-                    ScrollArea::vertical().max_height(max_h - 130.0).show(ui, |ui| {
-                        egui::Grid::new("proc_maps_table_grid")
-                            .num_columns(5)
-                            .spacing(egui::vec2(12.0, 4.0))
-                            .striped(true)
-                            .show(ui, |ui| {
-                                ui.label(RichText::new("Address Range").size(11.0).strong().color(palette.text_secondary));
-                                ui.label(RichText::new("Perms").size(11.0).strong().color(palette.text_secondary));
-                                ui.label(RichText::new("Offset").size(11.0).strong().color(palette.text_secondary));
-                                ui.label(RichText::new("Device").size(11.0).strong().color(palette.text_secondary));
-                                ui.label(RichText::new("Mapping / Path").size(11.0).strong().color(palette.text_secondary));
-                                ui.end_row();
+                    let matching: Vec<&crate::procmgr::MemoryMapEntry> = maps
+                        .iter()
+                        .filter(|entry| {
+                            filter.is_empty()
+                                || entry.address.to_lowercase().contains(&filter)
+                                || entry.pathname.to_lowercase().contains(&filter)
+                                || entry.perms.contains(&filter)
+                        })
+                        .collect();
 
-                                for entry in maps {
-                                    if !filter.is_empty()
-                                        && !entry.address.to_lowercase().contains(&filter)
-                                        && !entry.pathname.to_lowercase().contains(&filter)
-                                        && !entry.perms.contains(&filter)
-                                    {
-                                        continue;
+                    if matching.is_empty() {
+                        ui.add_space(20.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(RichText::new("No matching memory mappings found.").size(11.5).color(palette.text_muted));
+                        });
+                        ui.add_space(20.0);
+                    } else {
+                        // Sticky Header
+                        ui.horizontal(|ui| {
+                            ui.add_sized([180.0, 18.0], egui::Label::new(RichText::new("Address Range").size(11.0).strong().color(palette.text_secondary)));
+                            ui.add_sized([50.0, 18.0], egui::Label::new(RichText::new("Perms").size(11.0).strong().color(palette.text_secondary)));
+                            ui.add_sized([70.0, 18.0], egui::Label::new(RichText::new("Offset").size(11.0).strong().color(palette.text_secondary)));
+                            ui.add_sized([55.0, 18.0], egui::Label::new(RichText::new("Device").size(11.0).strong().color(palette.text_secondary)));
+                            ui.label(RichText::new("Mapping / Path").size(11.0).strong().color(palette.text_secondary));
+                        });
+                        ui.separator();
+
+                        let row_height = 20.0_f32;
+                        let total_rows = matching.len();
+                        ScrollArea::vertical()
+                            .max_height(max_h - 140.0)
+                            .auto_shrink([false, false])
+                            .show_rows(ui, row_height, total_rows, |ui, row_range| {
+                                for idx in row_range {
+                                    if let Some(entry) = matching.get(idx) {
+                                        ui.horizontal(|ui| {
+                                            ui.add_sized([180.0, 18.0], egui::Label::new(RichText::new(&entry.address).size(10.5).monospace().color(palette.text_primary)));
+                                            let perms_color = if entry.perms.contains('x') {
+                                                Color32::from_rgb(52, 211, 153)
+                                            } else if entry.perms.contains('w') {
+                                                Color32::from_rgb(251, 191, 36)
+                                            } else {
+                                                palette.text_muted
+                                            };
+                                            ui.add_sized([50.0, 18.0], egui::Label::new(RichText::new(&entry.perms).size(10.5).monospace().color(perms_color)));
+                                            ui.add_sized([70.0, 18.0], egui::Label::new(RichText::new(&entry.offset).size(10.5).monospace().color(palette.text_muted)));
+                                            ui.add_sized([55.0, 18.0], egui::Label::new(RichText::new(&entry.dev).size(10.5).monospace().color(palette.text_muted)));
+                                            let path_display = if entry.pathname.is_empty() { "[anon]".to_string() } else { entry.pathname.clone() };
+                                            ui.add(egui::Label::new(RichText::new(path_display).size(10.5).monospace().color(palette.text_primary)).truncate());
+                                        });
                                     }
-                                    ui.label(RichText::new(&entry.address).size(10.5).monospace().color(palette.text_primary));
-                                    let perms_color = if entry.perms.contains('x') {
-                                        Color32::from_rgb(52, 211, 153)
-                                    } else if entry.perms.contains('w') {
-                                        Color32::from_rgb(251, 191, 36)
-                                    } else {
-                                        palette.text_muted
-                                    };
-                                    ui.label(RichText::new(&entry.perms).size(10.5).monospace().color(perms_color));
-                                    ui.label(RichText::new(&entry.offset).size(10.5).monospace().color(palette.text_muted));
-                                    ui.label(RichText::new(&entry.dev).size(10.5).monospace().color(palette.text_muted));
-                                    let path_display = if entry.pathname.is_empty() { "[anon]".to_string() } else { entry.pathname.clone() };
-                                    ui.label(RichText::new(path_display).size(10.5).monospace().color(palette.text_primary));
-                                    ui.end_row();
                                 }
                             });
-                    });
+                    }
                 }
 
                 ui.add_space(8.0);
@@ -8055,7 +8083,7 @@ impl LauncherApp {
             .id(window_id)
             .title_bar(false)
             .collapsible(false)
-            .resizable(true)
+            .resizable(false)
             .movable(false)
             .current_pos(screen.center() + drag_offset)
             .pivot(egui::Align2::CENTER_CENTER)
@@ -8121,26 +8149,45 @@ impl LauncherApp {
                     ui.add_space(16.0);
                 } else if let Some(ref files) = self.proc_open_files_data {
                     let filter = self.proc_open_files_search.trim().to_lowercase();
-                    ScrollArea::vertical().max_height(max_h - 130.0).show(ui, |ui| {
-                        egui::Grid::new("proc_open_files_table_grid")
-                            .num_columns(2)
-                            .spacing(egui::vec2(16.0, 4.0))
-                            .striped(true)
-                            .show(ui, |ui| {
-                                ui.label(RichText::new("FD").size(11.0).strong().color(palette.text_secondary));
-                                ui.label(RichText::new("Target Resource / Path").size(11.0).strong().color(palette.text_secondary));
-                                ui.end_row();
+                    let matching: Vec<&crate::procmgr::OpenFileEntry> = files
+                        .iter()
+                        .filter(|entry| {
+                            filter.is_empty()
+                                || entry.fd.contains(&filter)
+                                || entry.path.to_lowercase().contains(&filter)
+                        })
+                        .collect();
 
-                                for entry in files {
-                                    if !filter.is_empty() && !entry.fd.contains(&filter) && !entry.path.to_lowercase().contains(&filter) {
-                                        continue;
+                    if matching.is_empty() {
+                        ui.add_space(20.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(RichText::new("No matching open files found.").size(11.5).color(palette.text_muted));
+                        });
+                        ui.add_space(20.0);
+                    } else {
+                        // Sticky Header
+                        ui.horizontal(|ui| {
+                            ui.add_sized([45.0, 18.0], egui::Label::new(RichText::new("FD").size(11.0).strong().color(palette.text_secondary)));
+                            ui.label(RichText::new("Target Resource / Path").size(11.0).strong().color(palette.text_secondary));
+                        });
+                        ui.separator();
+
+                        let row_height = 20.0_f32;
+                        let total_rows = matching.len();
+                        ScrollArea::vertical()
+                            .max_height(max_h - 140.0)
+                            .auto_shrink([false, false])
+                            .show_rows(ui, row_height, total_rows, |ui, row_range| {
+                                for idx in row_range {
+                                    if let Some(entry) = matching.get(idx) {
+                                        ui.horizontal(|ui| {
+                                            ui.add_sized([45.0, 18.0], egui::Label::new(RichText::new(&entry.fd).size(10.5).monospace().color(palette.accent_light)));
+                                            ui.add(egui::Label::new(RichText::new(&entry.path).size(10.5).monospace().color(palette.text_primary)).truncate());
+                                        });
                                     }
-                                    ui.label(RichText::new(&entry.fd).size(10.5).monospace().color(palette.accent_light));
-                                    ui.label(RichText::new(&entry.path).size(10.5).monospace().color(palette.text_primary));
-                                    ui.end_row();
                                 }
                             });
-                    });
+                    }
                 }
 
                 ui.add_space(8.0);
@@ -10470,11 +10517,19 @@ impl LauncherApp {
                                 *rx.lock().unwrap() = Some((pid, res));
                                 ctx_clone.request_repaint();
                             });
+                        } else {
+                            self.proc_properties_loading = false;
+                            self.proc_properties_error = Some("SSH Host not found".to_string());
                         }
                     } else {
-                        let details = crate::procmgr::fetch_local_process_details(pid, &name, cpu, mem);
-                        self.proc_properties_data = Some(details);
-                        self.proc_properties_loading = false;
+                        let rx = self.proc_details_receiver.clone();
+                        let ctx_clone = ui.ctx().clone();
+                        let name_clone = name.clone();
+                        std::thread::spawn(move || {
+                            let details = crate::procmgr::fetch_local_process_details(pid, &name_clone, cpu, mem);
+                            *rx.lock().unwrap() = Some((pid, Ok(details)));
+                            ctx_clone.request_repaint();
+                        });
                     }
                 }
                 ProcAction::MemoryMaps { pid, name } => {
@@ -10495,18 +10550,18 @@ impl LauncherApp {
                                 *rx.lock().unwrap() = Some((pid, res));
                                 ctx_clone.request_repaint();
                             });
+                        } else {
+                            self.proc_maps_loading = false;
+                            self.proc_maps_error = Some("SSH Host not found".to_string());
                         }
                     } else {
-                        match crate::procmgr::fetch_local_memory_maps(pid) {
-                            Ok(maps) => {
-                                self.proc_maps_data = Some(maps);
-                                self.proc_maps_loading = false;
-                            }
-                            Err(e) => {
-                                self.proc_maps_error = Some(e);
-                                self.proc_maps_loading = false;
-                            }
-                        }
+                        let rx = self.proc_maps_receiver.clone();
+                        let ctx_clone = ui.ctx().clone();
+                        std::thread::spawn(move || {
+                            let res = crate::procmgr::fetch_local_memory_maps(pid);
+                            *rx.lock().unwrap() = Some((pid, res));
+                            ctx_clone.request_repaint();
+                        });
                     }
                 }
                 ProcAction::OpenFiles { pid, name } => {
@@ -10527,18 +10582,18 @@ impl LauncherApp {
                                 *rx.lock().unwrap() = Some((pid, res));
                                 ctx_clone.request_repaint();
                             });
+                        } else {
+                            self.proc_open_files_loading = false;
+                            self.proc_open_files_error = Some("SSH Host not found".to_string());
                         }
                     } else {
-                        match crate::procmgr::fetch_local_open_files(pid) {
-                            Ok(files) => {
-                                self.proc_open_files_data = Some(files);
-                                self.proc_open_files_loading = false;
-                            }
-                            Err(e) => {
-                                self.proc_open_files_error = Some(e);
-                                self.proc_open_files_loading = false;
-                            }
-                        }
+                        let rx = self.proc_open_files_receiver.clone();
+                        let ctx_clone = ui.ctx().clone();
+                        std::thread::spawn(move || {
+                            let res = crate::procmgr::fetch_local_open_files(pid);
+                            *rx.lock().unwrap() = Some((pid, res));
+                            ctx_clone.request_repaint();
+                        });
                     }
                 }
                 ProcAction::SetPriority { pid, nice } => {

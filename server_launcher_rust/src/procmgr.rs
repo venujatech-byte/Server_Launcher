@@ -271,40 +271,72 @@ print(json.dumps(res))
 }
 
 pub fn fetch_local_memory_maps(pid: u32) -> Result<Vec<MemoryMapEntry>, String> {
-    let content = std::fs::read_to_string(format!("/proc/{}/maps", pid))
-        .map_err(|e| format!("Failed to read /proc/{}/maps: {}", pid, e))?;
-    Ok(parse_memory_maps(&content))
+    match std::fs::read_to_string(format!("/proc/{}/maps", pid)) {
+        Ok(content) => Ok(parse_memory_maps(&content)),
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                Err(format!("Permission denied reading /proc/{}/maps. Process is owned by another user or root.", pid))
+            } else if e.kind() == std::io::ErrorKind::NotFound {
+                Err(format!("Process PID {} no longer exists.", pid))
+            } else {
+                Err(format!("Failed to read /proc/{}/maps: {}", pid, e))
+            }
+        }
+    }
 }
 
 pub fn fetch_remote_memory_maps(host: &SshRemoteHost, pid: u32) -> Result<Vec<MemoryMapEntry>, String> {
-    let script = format!("cat /proc/{}/maps 2>/dev/null", pid);
+    let script = format!("cat /proc/{}/maps 2>&1", pid);
     let mut cmd = build_ssh_command(host, &script);
     let out = cmd.output().map_err(|e| format!("SSH command error: {}", e))?;
     let content = String::from_utf8_lossy(&out.stdout);
+    if content.contains("Permission denied") {
+        return Err(format!("Permission denied reading /proc/{}/maps on remote host. Process is owned by another user or root.", pid));
+    }
+    if content.contains("No such file or directory") {
+        return Err(format!("Process PID {} no longer exists on remote host.", pid));
+    }
     Ok(parse_memory_maps(&content))
 }
 
 pub fn fetch_local_open_files(pid: u32) -> Result<Vec<OpenFileEntry>, String> {
     let mut entries = Vec::new();
     let fd_dir = format!("/proc/{}/fd", pid);
-    if let Ok(rd) = std::fs::read_dir(&fd_dir) {
-        for entry in rd.flatten() {
-            let fd = entry.file_name().to_string_lossy().to_string();
-            let path = std::fs::read_link(entry.path())
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| "Unknown".to_string());
-            entries.push(OpenFileEntry { fd, path });
+    match std::fs::read_dir(&fd_dir) {
+        Ok(rd) => {
+            for entry in rd.flatten() {
+                let fd = entry.file_name().to_string_lossy().to_string();
+                let path = std::fs::read_link(entry.path())
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| "Unknown".to_string());
+                entries.push(OpenFileEntry { fd, path });
+            }
+            entries.sort_by(|a, b| a.fd.parse::<u32>().unwrap_or(0).cmp(&b.fd.parse::<u32>().unwrap_or(0)));
+            Ok(entries)
+        }
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                Err(format!("Permission denied reading /proc/{}/fd. Process is owned by another user or root.", pid))
+            } else if e.kind() == std::io::ErrorKind::NotFound {
+                Err(format!("Process PID {} no longer exists.", pid))
+            } else {
+                Err(format!("Failed to read /proc/{}/fd: {}", pid, e))
+            }
         }
     }
-    entries.sort_by(|a, b| a.fd.parse::<u32>().unwrap_or(0).cmp(&b.fd.parse::<u32>().unwrap_or(0)));
-    Ok(entries)
 }
 
 pub fn fetch_remote_open_files(host: &SshRemoteHost, pid: u32) -> Result<Vec<OpenFileEntry>, String> {
-    let script = format!("ls -l /proc/{}/fd 2>/dev/null", pid);
+    let script = format!("ls -l /proc/{}/fd 2>&1", pid);
     let mut cmd = build_ssh_command(host, &script);
     let out = cmd.output().map_err(|e| format!("SSH command error: {}", e))?;
     let content = String::from_utf8_lossy(&out.stdout);
+    if content.contains("Permission denied") {
+        return Err(format!("Permission denied reading /proc/{}/fd on remote host. Process is owned by another user or root.", pid));
+    }
+    if content.contains("No such file or directory") {
+        return Err(format!("Process PID {} no longer exists on remote host.", pid));
+    }
     Ok(parse_open_files(&content))
 }
 

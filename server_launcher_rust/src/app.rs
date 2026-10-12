@@ -8707,18 +8707,50 @@ impl LauncherApp {
                                         let mut render_group_row = |ui: &mut Ui, grp: &ProcessGroupSummary, is_app_sec: bool| {
                                             let is_multi = grp.children.len() > 1;
                                             let is_expanded = self.sensors_top_apps_expanded_groups.contains(&grp.key);
-                                            let is_group_selected = grp.pids.iter().any(|pid| self.sensors_top_apps_selected_pid == Some(*pid));
+                                            let is_group_selected = self.sensors_top_apps_selected_pid == Some(grp.pids[0])
+                                                || (!is_expanded && grp.pids.iter().any(|pid| self.sensors_top_apps_selected_pid == Some(*pid)));
 
                                             let norm_cpu = grp.sum_cpu / norm_factor;
                                             let cpu_fill = get_tm_cpu_bg(norm_cpu);
                                             let mem_fill = get_tm_mem_bg(grp.sum_mem);
                                             let disk_fill = get_tm_disk_bg(grp.sum_disk_rate);
 
+                                            let row_w = col_name_w + COL_CPU_W + COL_MEM_W + COL_DISK_W + COL_NET_W + 4.0 * COL_SPACING;
+                                            let row_start_pos = ui.cursor().min;
+                                            let row_rect = egui::Rect::from_min_size(row_start_pos, egui::vec2(row_w, 22.0));
+                                            let is_row_hovered = ui.rect_contains_pointer(row_rect);
+
+                                            if is_row_hovered {
+                                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                            }
+
+                                            let row_bg = if is_group_selected {
+                                                Color32::from_rgba_unmultiplied(0, 120, 215, 60)
+                                            } else if is_row_hovered {
+                                                Color32::from_rgba_unmultiplied(255, 255, 255, 8)
+                                            } else {
+                                                Color32::TRANSPARENT
+                                            };
+
+                                            let mut row_clicked = false;
+
                                             // 1. Name & Expander
-                                            ui.allocate_ui_with_layout(egui::vec2(col_name_w, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                            let name_cell_resp = ui.allocate_ui_with_layout(egui::vec2(col_name_w, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                                 let cell_rect = ui.max_rect();
-                                                if is_group_selected {
-                                                    ui.painter().rect_filled(cell_rect, 3.0, Color32::from_rgba_unmultiplied(0, 120, 215, 45));
+                                                if row_bg != Color32::TRANSPARENT {
+                                                    let bg_rect = egui::Rect::from_min_max(cell_rect.min, egui::pos2(cell_rect.max.x + COL_SPACING, cell_rect.max.y));
+                                                    ui.painter().rect_filled(
+                                                        bg_rect,
+                                                        Rounding { nw: 4.0, sw: 4.0, ne: 0.0, se: 0.0 },
+                                                        row_bg,
+                                                    );
+                                                    if is_group_selected {
+                                                        ui.painter().rect_filled(
+                                                            egui::Rect::from_min_max(cell_rect.min, egui::pos2(cell_rect.min.x + 3.0, cell_rect.max.y)),
+                                                            Rounding { nw: 4.0, sw: 4.0, ne: 0.0, se: 0.0 },
+                                                            p.accent,
+                                                        );
+                                                    }
                                                 }
 
                                                 if is_multi {
@@ -8749,23 +8781,28 @@ impl LauncherApp {
                                                     disp_str.clone()
                                                 };
 
-                                                let mut resp = ui.label(
+                                                let label = ui.label(
                                                     RichText::new(short_disp)
                                                         .size(11.5)
                                                         .strong()
                                                         .color(if is_group_selected { p.accent_light } else { p.text_primary }),
                                                 );
                                                 if disp_str.len() > 34 {
-                                                    resp = resp.on_hover_text(&disp_str);
-                                                }
-
-                                                if ui.interact(resp.rect, resp.id.with("grp_click"), egui::Sense::click()).clicked() {
-                                                    select_target_pid = Some(grp.pids[0]);
+                                                    label.on_hover_text(&disp_str);
                                                 }
                                             });
 
+                                            let name_click = ui.interact(name_cell_resp.response.rect, egui::Id::new("grp_name_clk").with(&grp.key), egui::Sense::click()).clicked();
+                                            if name_click && toggle_group_expand.is_none() {
+                                                row_clicked = true;
+                                            }
+
                                             // 2. CPU (Heatmap tinted cell, strictly bounded, right aligned)
-                                            let (cpu_rect, cpu_resp) = ui.allocate_exact_size(egui::vec2(COL_CPU_W, 22.0), egui::Sense::hover());
+                                            let (cpu_rect, cpu_resp) = ui.allocate_exact_size(egui::vec2(COL_CPU_W, 22.0), egui::Sense::click());
+                                            if row_bg != Color32::TRANSPARENT {
+                                                let bg_rect = egui::Rect::from_min_max(cpu_rect.min, egui::pos2(cpu_rect.max.x + COL_SPACING, cpu_rect.max.y));
+                                                ui.painter().rect_filled(bg_rect, Rounding::ZERO, row_bg);
+                                            }
                                             if cpu_fill != Color32::TRANSPARENT {
                                                 ui.painter().rect_filled(cpu_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, cpu_fill);
                                             }
@@ -8782,10 +8819,17 @@ impl LauncherApp {
                                                 egui::FontId::monospace(11.0),
                                                 cpu_color,
                                             );
-                                            cpu_resp.on_hover_text(format!("{:.1}% Total System CPU ({:.1}% single-core raw)", norm_cpu, grp.sum_cpu));
+                                            let cpu_resp = cpu_resp.on_hover_text(format!("{:.1}% Total System CPU ({:.1}% single-core raw)", norm_cpu, grp.sum_cpu));
+                                            if cpu_resp.clicked() {
+                                                row_clicked = true;
+                                            }
 
-                                            // 4. Memory (Heatmap tinted cell, strictly bounded, right aligned)
-                                            let (mem_rect, _) = ui.allocate_exact_size(egui::vec2(COL_MEM_W, 22.0), egui::Sense::hover());
+                                            // 3. Memory (Heatmap tinted cell, strictly bounded, right aligned)
+                                            let (mem_rect, mem_resp) = ui.allocate_exact_size(egui::vec2(COL_MEM_W, 22.0), egui::Sense::click());
+                                            if row_bg != Color32::TRANSPARENT {
+                                                let bg_rect = egui::Rect::from_min_max(mem_rect.min, egui::pos2(mem_rect.max.x + COL_SPACING, mem_rect.max.y));
+                                                ui.painter().rect_filled(bg_rect, Rounding::ZERO, row_bg);
+                                            }
                                             if mem_fill != Color32::TRANSPARENT {
                                                 ui.painter().rect_filled(mem_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, mem_fill);
                                             }
@@ -8802,9 +8846,16 @@ impl LauncherApp {
                                                 egui::FontId::monospace(11.0),
                                                 mem_color,
                                             );
+                                            if mem_resp.clicked() {
+                                                row_clicked = true;
+                                            }
 
-                                            // 5. Disk (Heatmap tinted cell, strictly bounded, right aligned)
-                                            let (disk_rect, _) = ui.allocate_exact_size(egui::vec2(COL_DISK_W, 22.0), egui::Sense::hover());
+                                            // 4. Disk (Heatmap tinted cell, strictly bounded, right aligned)
+                                            let (disk_rect, disk_resp) = ui.allocate_exact_size(egui::vec2(COL_DISK_W, 22.0), egui::Sense::click());
+                                            if row_bg != Color32::TRANSPARENT {
+                                                let bg_rect = egui::Rect::from_min_max(disk_rect.min, egui::pos2(disk_rect.max.x + COL_SPACING, disk_rect.max.y));
+                                                ui.painter().rect_filled(bg_rect, Rounding::ZERO, row_bg);
+                                            }
                                             if disk_fill != Color32::TRANSPARENT {
                                                 ui.painter().rect_filled(disk_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, disk_fill);
                                             }
@@ -8821,9 +8872,19 @@ impl LauncherApp {
                                                 egui::FontId::monospace(11.0),
                                                 disk_color,
                                             );
+                                            if disk_resp.clicked() {
+                                                row_clicked = true;
+                                            }
 
-                                            // 6. Network (Strictly bounded, right aligned)
-                                            let (net_rect, _) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 22.0), egui::Sense::hover());
+                                            // 5. Network (Strictly bounded, right aligned)
+                                            let (net_rect, net_resp) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 22.0), egui::Sense::click());
+                                            if row_bg != Color32::TRANSPARENT {
+                                                ui.painter().rect_filled(
+                                                    net_rect,
+                                                    Rounding { nw: 0.0, sw: 0.0, ne: 4.0, se: 4.0 },
+                                                    row_bg,
+                                                );
+                                            }
                                             ui.painter().text(
                                                 egui::pos2(net_rect.right() - 8.0, net_rect.center().y),
                                                 egui::Align2::RIGHT_CENTER,
@@ -8831,6 +8892,13 @@ impl LauncherApp {
                                                 egui::FontId::monospace(11.0),
                                                 Color32::from_rgb(160, 165, 175),
                                             );
+                                            if net_resp.clicked() {
+                                                row_clicked = true;
+                                            }
+
+                                            if row_clicked {
+                                                select_target_pid = Some(grp.pids[0]);
+                                            }
                                             ui.end_row();
 
                                             // Expanded children subprocesses
@@ -8838,23 +8906,54 @@ impl LauncherApp {
                                                 for child in &grp.children {
                                                     let is_child_sel = self.sensors_top_apps_selected_pid == Some(child.pid);
                                                     let child_norm_cpu = child.cpu_usage / norm_factor;
+                                                    let mut child_clicked = false;
+
+                                                    let child_start_pos = ui.cursor().min;
+                                                    let child_row_rect = egui::Rect::from_min_size(child_start_pos, egui::vec2(row_w, 20.0));
+                                                    let is_child_hovered = ui.rect_contains_pointer(child_row_rect);
+
+                                                    if is_child_hovered {
+                                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                                    }
+
+                                                    let c_row_bg = if is_child_sel {
+                                                        Color32::from_rgba_unmultiplied(0, 120, 215, 60)
+                                                    } else if is_child_hovered {
+                                                        Color32::from_rgba_unmultiplied(255, 255, 255, 8)
+                                                    } else {
+                                                        Color32::TRANSPARENT
+                                                    };
 
                                                     // Child Name
-                                                    ui.allocate_ui_with_layout(egui::vec2(col_name_w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                    let c_name_resp = ui.allocate_ui_with_layout(egui::vec2(col_name_w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                                         let cell_rect = ui.max_rect();
-                                                        if is_child_sel {
-                                                            ui.painter().rect_filled(cell_rect, 3.0, Color32::from_rgba_unmultiplied(0, 120, 215, 45));
+                                                        if c_row_bg != Color32::TRANSPARENT {
+                                                            let bg_rect = egui::Rect::from_min_max(cell_rect.min, egui::pos2(cell_rect.max.x + COL_SPACING, cell_rect.max.y));
+                                                            ui.painter().rect_filled(bg_rect, Rounding { nw: 4.0, sw: 4.0, ne: 0.0, se: 0.0 }, c_row_bg);
+                                                            if is_child_sel {
+                                                                ui.painter().rect_filled(
+                                                                    egui::Rect::from_min_max(cell_rect.min, egui::pos2(cell_rect.min.x + 3.0, cell_rect.max.y)),
+                                                                    Rounding { nw: 4.0, sw: 4.0, ne: 0.0, se: 0.0 },
+                                                                    p.accent,
+                                                                );
+                                                            }
                                                         }
                                                         ui.add_space(36.0); // Indent under parent
                                                         let child_txt = format!("↳ PID {}", child.pid);
-                                                        let resp = ui.label(RichText::new(child_txt).size(10.5).monospace().color(if is_child_sel { p.accent_light } else { p.text_secondary }));
-                                                        if ui.interact(resp.rect, resp.id.with("child_clk"), egui::Sense::click()).clicked() {
-                                                            select_target_pid = Some(child.pid);
-                                                        }
+                                                        ui.label(RichText::new(child_txt).size(10.5).monospace().color(if is_child_sel { p.accent_light } else { p.text_secondary }));
                                                     });
 
+                                                    let c_name_click = ui.interact(c_name_resp.response.rect, egui::Id::new("child_row_clk").with(child.pid), egui::Sense::click()).clicked();
+                                                    if c_name_click {
+                                                        child_clicked = true;
+                                                    }
+
                                                     // Child CPU
-                                                    let (c_cpu_rect, _) = ui.allocate_exact_size(egui::vec2(COL_CPU_W, 20.0), egui::Sense::hover());
+                                                    let (c_cpu_rect, c_cpu_resp) = ui.allocate_exact_size(egui::vec2(COL_CPU_W, 20.0), egui::Sense::click());
+                                                    if c_row_bg != Color32::TRANSPARENT {
+                                                        let bg_rect = egui::Rect::from_min_max(c_cpu_rect.min, egui::pos2(c_cpu_rect.max.x + COL_SPACING, c_cpu_rect.max.y));
+                                                        ui.painter().rect_filled(bg_rect, Rounding::ZERO, c_row_bg);
+                                                    }
                                                     ui.painter().text(
                                                         egui::pos2(c_cpu_rect.right() - 8.0, c_cpu_rect.center().y),
                                                         egui::Align2::RIGHT_CENTER,
@@ -8862,9 +8961,16 @@ impl LauncherApp {
                                                         egui::FontId::monospace(10.5),
                                                         Color32::from_rgb(160, 165, 175),
                                                     );
+                                                    if c_cpu_resp.clicked() {
+                                                        child_clicked = true;
+                                                    }
 
                                                     // Child Memory
-                                                    let (c_mem_rect, _) = ui.allocate_exact_size(egui::vec2(COL_MEM_W, 20.0), egui::Sense::hover());
+                                                    let (c_mem_rect, c_mem_resp) = ui.allocate_exact_size(egui::vec2(COL_MEM_W, 20.0), egui::Sense::click());
+                                                    if c_row_bg != Color32::TRANSPARENT {
+                                                        let bg_rect = egui::Rect::from_min_max(c_mem_rect.min, egui::pos2(c_mem_rect.max.x + COL_SPACING, c_mem_rect.max.y));
+                                                        ui.painter().rect_filled(bg_rect, Rounding::ZERO, c_row_bg);
+                                                    }
                                                     ui.painter().text(
                                                         egui::pos2(c_mem_rect.right() - 8.0, c_mem_rect.center().y),
                                                         egui::Align2::RIGHT_CENTER,
@@ -8872,9 +8978,16 @@ impl LauncherApp {
                                                         egui::FontId::monospace(10.5),
                                                         Color32::from_rgb(160, 165, 175),
                                                     );
+                                                    if c_mem_resp.clicked() {
+                                                        child_clicked = true;
+                                                    }
 
                                                     // Child Disk
-                                                    let (c_disk_rect, _) = ui.allocate_exact_size(egui::vec2(COL_DISK_W, 20.0), egui::Sense::hover());
+                                                    let (c_disk_rect, c_disk_resp) = ui.allocate_exact_size(egui::vec2(COL_DISK_W, 20.0), egui::Sense::click());
+                                                    if c_row_bg != Color32::TRANSPARENT {
+                                                        let bg_rect = egui::Rect::from_min_max(c_disk_rect.min, egui::pos2(c_disk_rect.max.x + COL_SPACING, c_disk_rect.max.y));
+                                                        ui.painter().rect_filled(bg_rect, Rounding::ZERO, c_row_bg);
+                                                    }
                                                     ui.painter().text(
                                                         egui::pos2(c_disk_rect.right() - 8.0, c_disk_rect.center().y),
                                                         egui::Align2::RIGHT_CENTER,
@@ -8882,9 +8995,15 @@ impl LauncherApp {
                                                         egui::FontId::monospace(10.5),
                                                         Color32::from_rgb(160, 165, 175),
                                                     );
+                                                    if c_disk_resp.clicked() {
+                                                        child_clicked = true;
+                                                    }
 
                                                     // Child Network
-                                                    let (c_net_rect, _) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 20.0), egui::Sense::hover());
+                                                    let (c_net_rect, c_net_resp) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 20.0), egui::Sense::click());
+                                                    if c_row_bg != Color32::TRANSPARENT {
+                                                        ui.painter().rect_filled(c_net_rect, Rounding { nw: 0.0, sw: 0.0, ne: 4.0, se: 4.0 }, c_row_bg);
+                                                    }
                                                     ui.painter().text(
                                                         egui::pos2(c_net_rect.right() - 8.0, c_net_rect.center().y),
                                                         egui::Align2::RIGHT_CENTER,
@@ -8892,6 +9011,14 @@ impl LauncherApp {
                                                         egui::FontId::monospace(10.5),
                                                         Color32::from_rgb(140, 145, 155),
                                                     );
+                                                    if c_net_resp.clicked() {
+                                                        child_clicked = true;
+                                                    }
+
+                                                    if child_clicked {
+                                                        select_target_pid = Some(child.pid);
+                                                    }
+
                                                     ui.end_row();
                                                 }
                                             }

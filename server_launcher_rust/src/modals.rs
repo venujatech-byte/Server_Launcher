@@ -3698,6 +3698,237 @@ pub fn render_remote_reboot_modal(
     result
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct RemoteShutdownModalState {
+    pub open: bool,
+    pub host: Option<SshRemoteHost>,
+    pub password: String,
+    pub show_password: bool,
+    pub auto_focus_requested: bool,
+    pub error: Option<String>,
+}
+
+impl RemoteShutdownModalState {
+    pub fn open_for_host(&mut self, host: &SshRemoteHost) {
+        self.open = true;
+        self.host = Some(host.clone());
+        self.password = host.password.clone();
+        self.show_password = false;
+        self.auto_focus_requested = true;
+        self.error = None;
+    }
+
+    pub fn close(&mut self) {
+        self.open = false;
+        self.host = None;
+        self.password.clear();
+        self.error = None;
+    }
+}
+
+pub fn render_remote_shutdown_modal(
+    ctx: &Context,
+    state: &mut RemoteShutdownModalState,
+    palette: &ThemePalette,
+) -> Option<(SshRemoteHost, String)> {
+    if !state.open {
+        return None;
+    }
+
+    let host = match &state.host {
+        Some(h) => h.clone(),
+        None => return None,
+    };
+
+    let mut result = None;
+    let title = format!("{} Shut Down Remote Device", crate::lucide::POWER);
+
+    let screen = ctx.screen_rect();
+    let modal_w = 460.0_f32.min(screen.width() - 40.0).max(340.0);
+
+    let mut is_open = state.open;
+    let window_id = egui::Id::new("remote_shutdown_modal_dialog");
+    let drag_offset = ctx
+        .data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset")))
+        .unwrap_or_default();
+
+    let mut submit_requested = false;
+
+    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+        is_open = false;
+    }
+
+    Window::new(&title)
+        .id(window_id)
+        .title_bar(false)
+        .collapsible(false)
+        .resizable(false)
+        .movable(false)
+        .current_pos(screen.center() + drag_offset)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .min_width(modal_w)
+        .max_width(modal_w)
+        .frame(
+            egui::Frame::none()
+                .fill(Color32::from_rgb(17, 19, 27))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(55, 25, 30)))
+                .rounding(Rounding::same(16.0))
+                .shadow(egui::epaint::Shadow {
+                    offset: egui::vec2(0.0, 8.0),
+                    blur: 24.0,
+                    spread: 0.0,
+                    color: Color32::from_black_alpha(180),
+                })
+                .inner_margin(egui::Margin::symmetric(18.0, 16.0)),
+        )
+        .show(ctx, |ui| {
+            render_modal_titlebar(ui, &title, &mut is_open);
+            ui.add_space(10.0);
+
+            // Warning Banner (Deep crimson / danger)
+            egui::Frame::none()
+                .fill(Color32::from_rgb(38, 18, 24))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(120, 28, 40)))
+                .rounding(Rounding::same(10.0))
+                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(crate::lucide::ALERT_TRIANGLE).size(22.0).color(Color32::from_rgb(248, 113, 113)));
+                        ui.add_space(6.0);
+                        ui.vertical(|ui| {
+                            ui.label(
+                                RichText::new(format!("Power Off '{}'?", host.name))
+                                    .size(13.0)
+                                    .strong()
+                                    .color(Color32::WHITE),
+                            );
+                            ui.label(
+                                RichText::new(format!("ssh://{}@{}:{}", host.user, host.host, host.port))
+                                    .size(11.0)
+                                    .monospace()
+                                    .color(Color32::from_rgb(248, 113, 113)),
+                            );
+                        });
+                    });
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new("Warning: Shutting down will completely power off the remote system. You will not be able to reconnect remotely until it is manually turned back on or started via Wake-on-LAN.")
+                            .size(11.0)
+                            .color(Color32::from_rgb(203, 213, 225)),
+                    );
+                });
+
+            ui.add_space(12.0);
+
+            if let Some(err) = &state.error {
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(45, 18, 24))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(150, 30, 45)))
+                    .rounding(Rounding::same(8.0))
+                    .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(crate::lucide::X).size(12.0).color(palette.danger));
+                            ui.label(RichText::new(err).size(11.5).color(palette.danger));
+                        });
+                    });
+                ui.add_space(8.0);
+            }
+
+            ui.label(
+                RichText::new(format!("SSH / Sudo Password for {}:", host.user))
+                    .size(12.0)
+                    .strong()
+                    .color(palette.text_primary),
+            );
+            ui.add_space(4.0);
+
+            let text_edit_response = ui.horizontal(|ui| {
+                let avail_w = (ui.available_width() - 36.0).max(100.0);
+                let text_edit = egui::TextEdit::singleline(&mut state.password)
+                    .password(!state.show_password)
+                    .hint_text("Enter SSH / sudo password...")
+                    .desired_width(avail_w);
+                let resp = ui.add(text_edit);
+                if state.auto_focus_requested {
+                    resp.request_focus();
+                    state.auto_focus_requested = false;
+                }
+
+                let eye_btn = egui::Button::new(
+                    RichText::new(if state.show_password { crate::lucide::EYE_OFF } else { crate::lucide::EYE }).size(12.0),
+                )
+                .fill(Color32::from_rgb(30, 34, 48))
+                .rounding(Rounding::same(6.0));
+                if ui.add(eye_btn).on_hover_text("Toggle password visibility").clicked() {
+                    state.show_password = !state.show_password;
+                }
+
+                resp
+            }).inner;
+
+            if text_edit_response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                submit_requested = true;
+            }
+
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(format!("{} Password will be piped to sudo poweroff on the remote host.", crate::lucide::LOCK))
+                    .size(10.5)
+                    .color(palette.text_muted),
+            );
+
+            ui.add_space(16.0);
+
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let btn_submit = egui::Button::new(
+                        RichText::new(format!("{} Shut Down", crate::lucide::POWER))
+                            .size(12.0)
+                            .strong()
+                            .color(Color32::WHITE),
+                    )
+                    .fill(Color32::from_rgb(185, 28, 28))
+                    .rounding(Rounding::same(8.0))
+                    .min_size(egui::vec2(140.0, 30.0));
+
+                    if ui.add(btn_submit).on_hover_text("Power off the remote machine now").clicked() {
+                        submit_requested = true;
+                    }
+
+                    let btn_cancel = egui::Button::new(
+                        RichText::new("Cancel")
+                            .size(12.0)
+                            .color(palette.text_muted),
+                    )
+                    .fill(Color32::from_rgb(30, 34, 48))
+                    .rounding(Rounding::same(8.0))
+                    .min_size(egui::vec2(80.0, 30.0));
+
+                    if ui.add(btn_cancel).clicked() {
+                        is_open = false;
+                    }
+                });
+            });
+        });
+
+    if !is_open {
+        state.close();
+        return None;
+    }
+
+    if submit_requested {
+        if state.password.trim().is_empty() {
+            state.error = Some("Password is required to authorize sudo poweroff on remote device.".to_string());
+        } else {
+            result = Some((host, state.password.clone()));
+            state.close();
+        }
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3771,6 +4002,56 @@ mod tests {
         modal.name = "My SSH".to_string();
         modal.open = false;
         assert!(!modal.open);
+    }
+
+    #[test]
+    fn test_remote_reboot_modal_state() {
+        let mut modal = RemoteRebootModalState::default();
+        let host = SshRemoteHost {
+            id: "host-1".to_string(),
+            name: "My Server".to_string(),
+            user: "root".to_string(),
+            host: "192.168.1.100".to_string(),
+            port: 22,
+            key_path: "".to_string(),
+            password: "saved_pass".to_string(),
+            remote_cwd: "".to_string(),
+        };
+        modal.open_for_host(&host);
+        assert!(modal.open);
+        assert_eq!(modal.host.as_ref().map(|h| h.name.as_str()), Some("My Server"));
+        assert_eq!(modal.password, "saved_pass");
+        assert!(modal.auto_focus_requested);
+
+        modal.close();
+        assert!(!modal.open);
+        assert!(modal.host.is_none());
+        assert!(modal.password.is_empty());
+    }
+
+    #[test]
+    fn test_remote_shutdown_modal_state() {
+        let mut modal = RemoteShutdownModalState::default();
+        let host = SshRemoteHost {
+            id: "host-1".to_string(),
+            name: "My Server".to_string(),
+            user: "admin".to_string(),
+            host: "192.168.1.50".to_string(),
+            port: 22,
+            key_path: "".to_string(),
+            password: "saved_pass".to_string(),
+            remote_cwd: "".to_string(),
+        };
+        modal.open_for_host(&host);
+        assert!(modal.open);
+        assert_eq!(modal.host.as_ref().map(|h| h.name.as_str()), Some("My Server"));
+        assert_eq!(modal.password, "saved_pass");
+        assert!(modal.auto_focus_requested);
+
+        modal.close();
+        assert!(!modal.open);
+        assert!(modal.host.is_none());
+        assert!(modal.password.is_empty());
     }
 
     #[test]

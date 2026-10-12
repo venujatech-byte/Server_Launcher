@@ -181,6 +181,10 @@ pub struct SystemSensorsSnapshot {
     // Top Applications & Processes
     pub top_apps: Vec<ProcessSensorInfo>,
 
+    // OS info
+    pub os_name: String,
+    pub os_version: String,
+
     pub timestamp: Option<Instant>,
 }
 
@@ -568,6 +572,8 @@ impl SystemSensorsCollector {
             total_tx_bytes,
             temp_sensors,
             top_apps,
+            os_name: System::name().unwrap_or_default(),
+            os_version: System::os_version().unwrap_or_default(),
             timestamp: Some(now),
         }
     }
@@ -1662,6 +1668,25 @@ try:
 except:
     pass
 
+os_name = ""
+os_version = ""
+try:
+    with open("/etc/os-release") as f:
+        for line in f:
+            if line.startswith("NAME="):
+                os_name = line.split("=", 1)[1].strip().strip('"')
+            elif line.startswith("VERSION_ID="):
+                os_version = line.split("=", 1)[1].strip().strip('"')
+except:
+    pass
+if not os_name:
+    try:
+        import platform
+        os_name = platform.system()
+        os_version = platform.release()
+    except:
+        pass
+
 data = {
     "cpu_model": cpu_model,
     "cores": max(cores, 1),
@@ -1684,7 +1709,9 @@ data = {
         "ac_online": ac_online,
         "batteries": batteries
     },
-    "top_apps": top_apps
+    "top_apps": top_apps,
+    "os_name": os_name,
+    "os_version": os_version
 }
 print(json.dumps(data))
 '
@@ -1963,6 +1990,8 @@ print(json.dumps(data))
         total_tx_bytes,
         temp_sensors,
         top_apps,
+        os_name: parsed["os_name"].as_str().unwrap_or("").to_string(),
+        os_version: parsed["os_version"].as_str().unwrap_or("").to_string(),
         timestamp: Some(Instant::now()),
     })
 }

@@ -596,6 +596,9 @@ impl ThemePalette {
         visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, self.text_secondary);
         visuals.widgets.noninteractive.bg_stroke = Stroke::NONE;
         visuals.widgets.noninteractive.rounding = Rounding::same(8.0);
+        if self.is_dark {
+            visuals.widgets.noninteractive.weak_bg_fill = Color32::from_rgb(180, 185, 195);
+        }
 
         visuals.widgets.inactive.bg_fill = self.bg_button;
         visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, self.text_secondary);
@@ -620,6 +623,8 @@ impl ThemePalette {
         visuals.selection.stroke = Stroke::NONE;
 
         visuals.override_text_color = Some(self.text_primary);
+        // Make hint/placeholder text in TextEdit inputs a visible light grey
+        visuals.text_cursor.stroke = Stroke::new(1.0_f32, self.text_secondary);
         visuals.window_stroke = Stroke::NONE;
         visuals.window_rounding = Rounding::same(16.0);
 
@@ -635,9 +640,12 @@ mod tests {
     fn test_all_themes_generate_visuals() {
         for theme in ThemeMode::all() {
             let palette = theme.palette();
-            let _visuals = palette.egui_visuals();
+            let visuals = palette.egui_visuals();
             assert!(!theme.name().is_empty());
             assert!(!theme.emoji().is_empty());
+            if palette.is_dark {
+                assert!(visuals.weak_text_color().r() > 150);
+            }
         }
     }
 

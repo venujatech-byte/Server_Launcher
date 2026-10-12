@@ -1042,6 +1042,12 @@ pub fn render_modal_titlebar(
     title: &str,
     is_open: &mut bool,
 ) {
+    // In every popup dialog, ensure inputs have clean light grey text and clearly visible hint text
+    ui.visuals_mut().override_text_color = Some(Color32::from_rgb(215, 220, 230));
+    ui.visuals_mut().widgets.inactive.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 220));
+    ui.visuals_mut().widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 220));
+    ui.visuals_mut().widgets.noninteractive.weak_bg_fill = Color32::from_rgb(180, 185, 195);
+
     let titlebar_height = 28.0;
     let (rect, resp) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), titlebar_height),
@@ -1740,6 +1746,11 @@ pub fn render_command_palette(
         .default_height(400.0)
         .max_height(max_h)
         .show(ctx, |ui| {
+            ui.visuals_mut().override_text_color = Some(Color32::from_rgb(215, 220, 230));
+            ui.visuals_mut().widgets.inactive.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 220));
+            ui.visuals_mut().widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 220));
+            ui.visuals_mut().widgets.noninteractive.weak_bg_fill = Color32::from_rgb(180, 185, 195);
+
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(format!("{} Quick Launch", crate::lucide::ZAP))

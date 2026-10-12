@@ -7595,10 +7595,9 @@ impl LauncherApp {
                                     ui.label(RichText::new("•").size(11.0).color(p.text_muted));
                                     ui.label(RichText::new(format!("{} {} Total Storage", crate::lucide::STORAGE, crate::sensors::format_bytes(total_storage_bytes))).size(11.0).color(Color32::from_rgb(56, 189, 248)));
                                 }
-                                if let Some(os) = System::name() {
+                                if !snap.os_name.is_empty() {
                                     ui.label(RichText::new("•").size(11.0).color(p.text_muted));
-                                    let os_ver = System::os_version().unwrap_or_default();
-                                    let os_str = if !os_ver.is_empty() { format!("{} {}", os, os_ver) } else { os };
+                                    let os_str = if !snap.os_version.is_empty() { format!("{} {}", snap.os_name, snap.os_version) } else { snap.os_name.clone() };
                                     ui.label(RichText::new(format!("{} {}", crate::lucide::MONITOR, os_str)).size(11.0).color(p.text_secondary));
                                 }
                             });
@@ -8385,45 +8384,6 @@ impl LauncherApp {
                                     ui.selectable_value(&mut self.sensors_refresh_interval, 10, "10s (Low)");
                                     ui.selectable_value(&mut self.sensors_refresh_interval, 0, "Paused");
                                 });
-
-                            // Sort Pill ComboBox
-                            let sort_label = match self.sensors_top_apps_sort.as_str() {
-                                "name" => "Name",
-                                "cpu" => "CPU",
-                                "mem" => "RAM",
-                                "disk" => "Storage",
-                                "net" => "Network",
-                                _ => "CPU",
-                            };
-                            let dir_arrow = if self.sensors_top_apps_sort_desc { crate::lucide::ARROW_DOWN } else { crate::lucide::ARROW_UP };
-                            egui::ComboBox::from_id_salt("tm_sort_selector_combo")
-                                .selected_text(RichText::new(format!("Sort: {} {}", sort_label, dir_arrow)).size(11.0).color(p.text_secondary))
-                                .show_ui(ui, |ui| {
-                                    if ui.selectable_label(self.sensors_top_apps_sort == "name", "Name").clicked() {
-                                        self.sensors_top_apps_sort = "name".to_string();
-                                    }
-                                    if ui.selectable_label(self.sensors_top_apps_sort == "cpu", "CPU").clicked() {
-                                        self.sensors_top_apps_sort = "cpu".to_string();
-                                    }
-                                    if ui.selectable_label(self.sensors_top_apps_sort == "mem", "RAM (Memory)").clicked() {
-                                        self.sensors_top_apps_sort = "mem".to_string();
-                                    }
-                                    if ui.selectable_label(self.sensors_top_apps_sort == "disk", "Storage (Disk)").clicked() {
-                                        self.sensors_top_apps_sort = "disk".to_string();
-                                    }
-                                    if ui.selectable_label(self.sensors_top_apps_sort == "net", "Network").clicked() {
-                                        self.sensors_top_apps_sort = "net".to_string();
-                                    }
-                                    ui.separator();
-                                    let toggle_txt = if self.sensors_top_apps_sort_desc {
-                                        format!("Ascending {}", crate::lucide::ARROW_UP)
-                                    } else {
-                                        format!("Descending {}", crate::lucide::ARROW_DOWN)
-                                    };
-                                    if ui.button(toggle_txt).clicked() {
-                                        self.sensors_top_apps_sort_desc = !self.sensors_top_apps_sort_desc;
-                                    }
-                                });
                         });
                     });
                 });
@@ -8816,7 +8776,8 @@ impl LauncherApp {
                                                 }
                                             });
 
-                                            let name_click = ui.interact(name_cell_resp.response.rect, egui::Id::new("grp_name_clk").with(&grp.key), egui::Sense::click()).clicked();
+                                            let name_full_rect = egui::Rect::from_min_size(name_cell_resp.response.rect.min, egui::vec2(col_name_w, 22.0));
+                                            let name_click = ui.interact(name_full_rect, egui::Id::new("grp_name_clk").with(&grp.key), egui::Sense::click()).clicked();
                                             if name_click && toggle_group_expand.is_none() {
                                                 row_clicked = true;
                                             }
@@ -8920,6 +8881,11 @@ impl LauncherApp {
                                                 row_clicked = true;
                                             }
 
+                                            let row_resp = ui.interact(row_rect, egui::Id::new("grp_row_full_clk").with(&grp.key), egui::Sense::click());
+                                            if row_resp.clicked() && toggle_group_expand.is_none() {
+                                                row_clicked = true;
+                                            }
+
                                             if row_clicked {
                                                 select_target_pid = Some(grp.pids[0]);
                                             }
@@ -8967,7 +8933,8 @@ impl LauncherApp {
                                                         ui.label(RichText::new(child_txt).size(10.5).monospace().color(if is_child_sel { p.accent_light } else { p.text_secondary }));
                                                     });
 
-                                                    let c_name_click = ui.interact(c_name_resp.response.rect, egui::Id::new("child_row_clk").with(child.pid), egui::Sense::click()).clicked();
+                                                    let c_name_full_rect = egui::Rect::from_min_size(c_name_resp.response.rect.min, egui::vec2(col_name_w, 20.0));
+                                                    let c_name_click = ui.interact(c_name_full_rect, egui::Id::new("child_row_clk").with(child.pid), egui::Sense::click()).clicked();
                                                     if c_name_click {
                                                         child_clicked = true;
                                                     }
@@ -9039,10 +9006,14 @@ impl LauncherApp {
                                                         child_clicked = true;
                                                     }
 
+                                                    let c_row_resp = ui.interact(child_row_rect, egui::Id::new("child_row_full_clk").with(child.pid), egui::Sense::click());
+                                                    if c_row_resp.clicked() {
+                                                        child_clicked = true;
+                                                    }
+
                                                     if child_clicked {
                                                         select_target_pid = Some(child.pid);
                                                     }
-
                                                     ui.end_row();
                                                 }
                                             }

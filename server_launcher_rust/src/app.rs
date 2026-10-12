@@ -5029,17 +5029,23 @@ impl LauncherApp {
 
             ui.add_space(6.0);
 
-            // Category Filter Row
-            let mut categories = vec!["All".to_string()];
-            let mut unique_cats = BTreeSet::new();
+            // Category Filter Row: single-pass O(N) counting across saved commands
+            let mut cat_counts: BTreeMap<&str, usize> = BTreeMap::new();
+            let mut total_for_host = 0usize;
             for c in &self.saved_commands {
                 if c.host_id.as_deref() == host_id {
-                    unique_cats.insert(c.category.clone());
+                    total_for_host += 1;
+                    *cat_counts.entry(c.category.as_str()).or_insert(0) += 1;
                 }
             }
-            categories.extend(unique_cats);
 
-            if !categories.contains(&self.saved_command_category) {
+            let mut categories: Vec<(String, usize)> = Vec::with_capacity(cat_counts.len() + 1);
+            categories.push(("All".to_string(), total_for_host));
+            for (cat, count) in cat_counts {
+                categories.push((cat.to_string(), count));
+            }
+
+            if !categories.iter().any(|(cat, _)| cat == &self.saved_command_category) {
                 self.saved_command_category = "All".to_string();
             }
 
@@ -5047,23 +5053,18 @@ impl LauncherApp {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Category:").size(11.0).color(p.text_muted));
                 let cur_cat = &self.saved_command_category;
-                let count = if cur_cat == "All" {
-                    self.saved_commands.iter().filter(|c| c.host_id.as_deref() == host_id).count()
-                } else {
-                    self.saved_commands.iter().filter(|c| c.host_id.as_deref() == host_id && &c.category == cur_cat).count()
-                };
+                let count = categories
+                    .iter()
+                    .find(|(cat, _)| cat == cur_cat)
+                    .map(|(_, count)| *count)
+                    .unwrap_or(0);
                 let combo_label = format!("{} ({})", cur_cat, count);
 
                 egui::ComboBox::from_id_salt("cmd_cat_combo")
                     .selected_text(RichText::new(combo_label).size(11.0).strong().color(p.accent_light))
                     .width((ui.available_width() - 4.0).max(40.0))
                     .show_ui(ui, |ui| {
-                        for cat in &categories {
-                            let cat_count = if cat == "All" {
-                                self.saved_commands.iter().filter(|c| c.host_id.as_deref() == host_id).count()
-                            } else {
-                                self.saved_commands.iter().filter(|c| c.host_id.as_deref() == host_id && &c.category == cat).count()
-                            };
+                        for (cat, cat_count) in &categories {
                             let label = format!("{} ({})", cat, cat_count);
                             ui.selectable_value(&mut self.saved_command_category, cat.clone(), label);
                         }
@@ -5080,7 +5081,7 @@ impl LauncherApp {
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
-                        for cat in &categories {
+                        for (cat, _) in &categories {
                             let is_active = self.saved_command_category == *cat;
                             let bg = if is_active { p.accent } else { p.bg_button };
                             let fg = if is_active { p.accent_text } else { p.text_secondary };
@@ -5098,21 +5099,32 @@ impl LauncherApp {
 
             let q = self.saved_command_search.trim().to_lowercase();
             let cat_filter = &self.saved_command_category;
-            let commands: Vec<SavedCommand> = self
+            let q_empty = q.is_empty();
+
+            let filtered_indices: Vec<usize> = self
                 .saved_commands
                 .iter()
-                .filter(|c| {
-                    c.host_id.as_deref() == host_id
-                        && (cat_filter == "All" || &c.category == cat_filter)
-                        && (q.is_empty()
-                            || c.name.to_lowercase().contains(&q)
+                .enumerate()
+                .filter_map(|(idx, c)| {
+                    if c.host_id.as_deref() != host_id {
+                        return None;
+                    }
+                    if cat_filter != "All" && &c.category != cat_filter {
+                        return None;
+                    }
+                    if !q_empty {
+                        let matches = c.name.to_lowercase().contains(&q)
                             || c.command.to_lowercase().contains(&q)
-                            || c.description.to_lowercase().contains(&q))
+                            || c.description.to_lowercase().contains(&q);
+                        if !matches {
+                            return None;
+                        }
+                    }
+                    Some(idx)
                 })
-                .cloned()
                 .collect();
 
-            if commands.is_empty() {
+            if filtered_indices.is_empty() {
                 ui.add_space(20.0);
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("No saved commands found").size(12.0).color(p.text_muted));
@@ -5125,7 +5137,7 @@ impl LauncherApp {
             ScrollArea::vertical()
                 .id_salt("saved_commands_scroll")
                 .auto_shrink([false, false])
-                .show(ui, |ui| {
+                .show_rows(ui, 96.0, filtered_indices.len(), |ui, row_range| {
                     ui.set_width(ui.available_width());
                     ui.set_max_width(ui.available_width());
                     let mut to_run_cmd: Option<(String, bool)> = None;
@@ -5134,7 +5146,8 @@ impl LauncherApp {
 
                     let mut to_toggle_external: Option<(String, bool)> = None;
 
-                    for c in &commands {
+                    for idx in row_range {
+                        let c = &self.saved_commands[filtered_indices[idx]];
                         Frame::none()
                             .fill(p.bg_card)
                             .stroke(Stroke::NONE)

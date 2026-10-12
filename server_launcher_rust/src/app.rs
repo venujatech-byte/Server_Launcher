@@ -7452,7 +7452,8 @@ impl LauncherApp {
 
             ScrollArea::horizontal()
                 .id_salt("notebook_tabs_scroll")
-                .auto_shrink([false, false])
+                .auto_shrink([false, true])
+                .max_height(38.0)
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
                     ui.horizontal(|ui| {

@@ -10109,7 +10109,7 @@ impl LauncherApp {
             .fill(p.bg_card)
             .stroke(Stroke::new(1.0_f32, p.border))
             .rounding(Rounding::same(8.0))
-            .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+            .inner_margin(egui::Margin::symmetric(10.0, 5.0))
             .show(ui, |ui| {
                 // Row 1: Service name + Live Metrics ... Find toggle + Start/Stop/Restart
                 ui.horizontal(|ui| {
@@ -10208,11 +10208,11 @@ impl LauncherApp {
                     });
                 });
 
-                ui.add_space(6.0);
+                ui.add_space(3.0);
 
                 // Row 2: Secondary Tool Buttons & Service / Log Options
                 ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);
 
                     let vscode_btn = egui::Button::new(
                         RichText::new(format!("{} VS Code", crate::lucide::CODE))
@@ -10254,7 +10254,7 @@ impl LauncherApp {
                         }
                     }
 
-                    ui.add_space(4.0);
+                    ui.add_space(3.0);
 
                     let mut auto_scroll = self.auto_scroll.get(key).copied().unwrap_or(true);
                     if ui.checkbox(
@@ -10289,7 +10289,7 @@ impl LauncherApp {
 
                 // Quick Sub-command & Link Buttons Bar (if defined)
                 if !actions.is_empty() || !links.is_empty() {
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
                     ui.horizontal_wrapped(|ui| {
                         for act in &actions {
                             let act_btn = egui::Button::new(
@@ -10322,7 +10322,7 @@ impl LauncherApp {
                 // Collapsible Search Bar (Ctrl+F)
                 let search_is_open = self.search_open.get(key).copied().unwrap_or(false);
                 if search_is_open {
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
                     Frame::none()
                         .fill(p.bg_subtle)
                         .inner_margin(egui::Margin::symmetric(8.0, 4.0))
@@ -10353,7 +10353,7 @@ impl LauncherApp {
                 }
             });
 
-        ui.add_space(6.0);
+        ui.add_space(3.0);
 
         // ─────────────────────────────────────────────────────────────────────
         // Section B: Terminal Output Area (Recessed Monospace Code Well)
@@ -10378,50 +10378,57 @@ impl LauncherApp {
             .filter(|entry| !filter_active || entry.text.to_lowercase().contains(&q))
             .collect();
 
-        let bottom_dock_reserve = if is_running { 68.0 } else { 44.0 };
-        let terminal_available_height = (ui.available_height() - bottom_dock_reserve).max(120.0);
-        let inner_terminal_height = (terminal_available_height - 16.0).max(100.0);
+        let bottom_dock_reserve = if is_running { 92.0 } else { 58.0 };
+        let terminal_available_height = (ui.available_height() - bottom_dock_reserve).max(100.0);
+        let frame_v_margin = 8.0_f32;
+        let inner_terminal_height = (terminal_available_height - frame_v_margin).max(80.0);
         let auto_scroll_enabled = self.auto_scroll.get(key).copied().unwrap_or(true);
-        let row_height = 18.0_f32;
+        let row_height = 17.0_f32;
         let total_rows = filtered_logs.len();
 
         Frame::none()
             .fill(p.terminal_bg)
             .stroke(Stroke::new(1.0_f32, p.border.gamma_multiply(0.7)))
             .rounding(Rounding::same(8.0))
-            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+            .inner_margin(egui::Margin::symmetric(8.0, 4.0))
             .show(ui, |ui| {
-                ui.set_height(terminal_available_height);
-                ui.set_min_height(terminal_available_height);
+                ui.set_height(inner_terminal_height);
+                ui.set_max_height(inner_terminal_height);
+                ui.spacing_mut().item_spacing.y = 1.0;
                 ScrollArea::both()
                     .id_salt(format!("log_scroll_{}", key))
                     .stick_to_bottom(auto_scroll_enabled)
                     .auto_shrink([false, false])
                     .min_scrolled_height(inner_terminal_height)
                     .max_height(inner_terminal_height)
-                    .show_rows(ui, row_height, total_rows, |ui, row_range| {
+                    .show_rows(ui, row_height, total_rows + 1, |ui, row_range| {
                         ui.set_width(ui.available_width());
                         for idx in row_range {
-                            if let Some(entry) = filtered_logs.get(idx) {
-                                let base_color = match entry.kind {
-                                    LogKind::Launcher => p.log_launcher,
-                                    LogKind::Stdin => p.log_stdin,
-                                    LogKind::Stderr | LogKind::Error => p.log_stderr,
-                                    LogKind::Warning => p.log_warning,
-                                    LogKind::Stdout => p.log_stdout,
-                                };
+                            if idx < total_rows {
+                                if let Some(entry) = filtered_logs.get(idx) {
+                                    let base_color = match entry.kind {
+                                        LogKind::Launcher => p.log_launcher,
+                                        LogKind::Stdin => p.log_stdin,
+                                        LogKind::Stderr | LogKind::Error => p.log_stderr,
+                                        LogKind::Warning => p.log_warning,
+                                        LogKind::Stdout => p.log_stdout,
+                                    };
 
-                                let contains_query = !q.is_empty() && entry.text.to_lowercase().contains(&q);
-                                let mut rt = RichText::new(format!("[{}] {}", entry.timestamp, entry.text))
-                                    .color(base_color)
-                                    .monospace()
-                                    .size(11.0);
+                                    let contains_query = !q.is_empty() && entry.text.to_lowercase().contains(&q);
+                                    let mut rt = RichText::new(format!("[{}] {}", entry.timestamp, entry.text))
+                                        .color(base_color)
+                                        .monospace()
+                                        .size(11.0);
 
-                                if contains_query {
-                                    rt = rt.background_color(Color32::from_rgb(180, 80, 0)).color(Color32::WHITE);
+                                    if contains_query {
+                                        rt = rt.background_color(Color32::from_rgb(180, 80, 0)).color(Color32::WHITE);
+                                    }
+
+                                    ui.add(egui::Label::new(rt));
                                 }
-
-                                ui.add(egui::Label::new(rt));
+                            } else {
+                                // Bottom clearance spacer so the last terminal line is NEVER hidden by the horizontal scrollbar or bottom edge
+                                ui.add_space(20.0);
                             }
                         }
                     });
@@ -10596,18 +10603,18 @@ impl LauncherApp {
         // ─────────────────────────────────────────────────────────────────────
         // Section C: Bottom Command & Shortcuts Dock (Card)
         // ─────────────────────────────────────────────────────────────────────
-        ui.add_space(4.0);
+        ui.add_space(3.0);
 
         let resp = Frame::none()
             .fill(p.bg_card)
             .stroke(Stroke::new(1.0_f32, p.border))
             .rounding(Rounding::same(8.0))
-            .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+            .inner_margin(egui::Margin::symmetric(8.0, 4.0))
             .show(ui, |ui| {
                 // Quick Dev Server Shortcuts Toolbar (when running)
                 if is_running {
                     ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);
+                        ui.spacing_mut().item_spacing = egui::vec2(5.0, 2.0);
                         ui.label(RichText::new(format!("{} Shortcuts:", crate::lucide::ZAP)).size(11.0).color(p.text_muted));
                         let shortcuts = [
                             ("h (help)", "h", "Send 'h + enter' (show dev server help & shortcuts)"),
@@ -10629,7 +10636,7 @@ impl LauncherApp {
                             }
                         }
                     });
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
                 }
 
                 let edit_resp = ui.horizontal(|ui| {

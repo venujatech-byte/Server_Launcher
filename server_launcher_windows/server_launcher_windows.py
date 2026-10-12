@@ -659,6 +659,7 @@ class ManagedServer:
                 cmd,
                 cwd=str(working_dir),
                 env=env,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -725,6 +726,33 @@ class ManagedServer:
         self.stop()
         time.sleep(0.5)
         self.start()
+
+    def send_input(self, text: str):
+        with self.lock:
+            if self.proc and self.proc.stdin and self.status == "Running":
+                try:
+                    self.proc.stdin.write(text + "\n")
+                    self.proc.stdin.flush()
+                    self._append_log(f"> {text}\n")
+                except Exception as e:
+                    self._append_log(f"✕ Send failed: {e}\n")
+
+    def send_interrupt(self):
+        with self.lock:
+            if self.proc and self.status == "Running":
+                try:
+                    if IS_WINDOWS and self.pid:
+                        subprocess.run(f"powershell -Command \"[System.Diagnostics.Process]::GetProcessById({self.pid}).Kill()\"", shell=True, creationflags=CREATE_NO_WINDOW)
+                    else:
+                        import signal
+                        self.proc.send_signal(signal.SIGINT)
+                    self._append_log("^C\n")
+                except Exception as e:
+                    self._append_log(f"✕ Interrupt failed: {e}\n")
+
+    def clear_logs(self):
+        with self.lock:
+            self.logs.clear()
 
     def _append_log(self, text: str):
         clean = strip_ansi(text)
@@ -918,7 +946,7 @@ class ServerLauncherWindowsApp(tk.Tk):
 
     def _build_main_views(self):
         self.notebook = ttk.Notebook(self)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=6, pady=(3, 4))
 
         # Tab 1: Dev Servers
         self.tab_servers = tk.Frame(self.notebook, bg=Palette.BG_CANVAS)
@@ -1005,11 +1033,11 @@ class ServerLauncherWindowsApp(tk.Tk):
 
         # Right: Log Terminal Output Viewer
         right_frame = tk.Frame(self.tab_servers, bg=Palette.BG_CARD)
-        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, pady=4)
+        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=4, pady=2)
 
-        # Terminal Header
+        # 1. Terminal Header
         term_header = tk.Frame(right_frame, bg=Palette.BG_SURFACE)
-        term_header.pack(fill=tk.X, padx=8, pady=6)
+        term_header.pack(fill=tk.X, padx=6, pady=(4, 2))
 
         self.lbl_active_server = tk.Label(
             term_header,
@@ -1018,7 +1046,7 @@ class ServerLauncherWindowsApp(tk.Tk):
             bg=Palette.BG_SURFACE,
             fg=Palette.TEXT_PRIMARY,
         )
-        self.lbl_active_server.pack(side=tk.LEFT, padx=8)
+        self.lbl_active_server.pack(side=tk.LEFT, padx=6, pady=4)
 
         btn_clear_log = tk.Button(
             term_header,
@@ -1029,24 +1057,145 @@ class ServerLauncherWindowsApp(tk.Tk):
             relief=tk.FLAT,
             command=self._clear_active_logs,
         )
-        btn_clear_log.pack(side=tk.RIGHT, padx=6)
+        btn_clear_log.pack(side=tk.RIGHT, padx=6, pady=4)
 
-        # Terminal Monospace Text Well
+        # 2. Bottom Command & Shortcuts Dock (PACKED FIRST SO IT SITS FIRMLY ELEVATED AT BOTTOM!)
+        dock_frame = tk.Frame(right_frame, bg=Palette.BG_SURFACE)
+        dock_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=4, pady=(2, 6))
+
+        # Shortcuts row
+        sc_bar = tk.Frame(dock_frame, bg=Palette.BG_SURFACE)
+        sc_bar.pack(fill=tk.X, padx=6, pady=(4, 2))
+
+        tk.Label(
+            sc_bar,
+            text="⚡ Shortcuts:",
+            font=("Segoe UI", 9, "bold"),
+            bg=Palette.BG_SURFACE,
+            fg=Palette.TEXT_MUTED,
+        ).pack(side=tk.LEFT, padx=(0, 4))
+
+        shortcuts = [
+            ("h (help)", "h"),
+            ("r (restart)", "r"),
+            ("o (open)", "o"),
+            ("u (url)", "u"),
+            ("c (clear)", "c"),
+            ("q (quit)", "q"),
+        ]
+        for sc_lbl, sc_cmd in shortcuts:
+            btn_sc = tk.Button(
+                sc_bar,
+                text=sc_lbl,
+                font=("Consolas", 8),
+                bg=Palette.BG_BUTTON,
+                fg=Palette.CYAN,
+                relief=tk.FLAT,
+                cursor="hand2",
+                command=lambda cmd=sc_cmd: self._send_active_server_input(cmd),
+                padx=5,
+                pady=1,
+            )
+            btn_sc.pack(side=tk.LEFT, padx=2)
+
+        # Input row
+        inp_bar = tk.Frame(dock_frame, bg=Palette.BG_SURFACE)
+        inp_bar.pack(fill=tk.X, padx=6, pady=(2, 4))
+
+        tk.Label(
+            inp_bar,
+            text=">",
+            font=("Consolas", 11, "bold"),
+            bg=Palette.BG_SURFACE,
+            fg=Palette.ACCENT,
+        ).pack(side=tk.LEFT, padx=(2, 4))
+
+        self.entry_server_cmd = tk.Entry(
+            inp_bar,
+            font=("Consolas", 10),
+            bg=Palette.BG_INPUT,
+            fg=Palette.TEXT_PRIMARY,
+            insertbackground=Palette.TEXT_PRIMARY,
+            relief=tk.FLAT,
+        )
+        self.entry_server_cmd.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4, ipady=3)
+        self.entry_server_cmd.bind("<Return>", lambda e: self._send_active_server_input_from_entry())
+
+        btn_send = tk.Button(
+            inp_bar,
+            text="Send",
+            font=("Segoe UI", 9, "bold"),
+            bg=Palette.ACCENT,
+            fg=Palette.ACCENT_TEXT,
+            relief=tk.FLAT,
+            cursor="hand2",
+            command=self._send_active_server_input_from_entry,
+            padx=8,
+            pady=1,
+        )
+        btn_send.pack(side=tk.LEFT, padx=3)
+
+        btn_ctrlc = tk.Button(
+            inp_bar,
+            text="Ctrl+C",
+            font=("Segoe UI", 8, "bold"),
+            bg=Palette.WARNING_BG,
+            fg=Palette.WARNING_TEXT,
+            relief=tk.FLAT,
+            cursor="hand2",
+            command=self._interrupt_active_server,
+            padx=6,
+            pady=1,
+        )
+        btn_ctrlc.pack(side=tk.LEFT, padx=3)
+
+        btn_clear = tk.Button(
+            inp_bar,
+            text="Clear",
+            font=("Segoe UI", 8),
+            bg=Palette.BG_BUTTON,
+            fg=Palette.TEXT_MUTED,
+            relief=tk.FLAT,
+            cursor="hand2",
+            command=self._clear_active_logs,
+            padx=6,
+            pady=1,
+        )
+        btn_clear.pack(side=tk.LEFT, padx=3)
+
+        btn_console = tk.Button(
+            inp_bar,
+            text="Console",
+            font=("Segoe UI", 8),
+            bg=Palette.BG_BUTTON,
+            fg=Palette.CYAN,
+            relief=tk.FLAT,
+            cursor="hand2",
+            command=self._open_active_server_console,
+            padx=6,
+            pady=1,
+        )
+        btn_console.pack(side=tk.LEFT, padx=3)
+
+        # 3. Middle Terminal Monospace Text Well (EXPANDS TO FILL REMAINING SPACE)
+        term_middle = tk.Frame(right_frame, bg=Palette.BG_CANVAS)
+        term_middle.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=4, pady=2)
+
         self.log_text = tk.Text(
-            right_frame,
+            term_middle,
             bg=Palette.BG_CANVAS,
             fg=Palette.TEXT_PRIMARY,
             font=("Consolas", 10),
             wrap=tk.WORD,
             borderwidth=0,
             padx=12,
-            pady=8,
+            pady=(8, 24), # 24px bottom clearance so bottom lines are never cut off
         )
-        log_scroll = ttk.Scrollbar(right_frame, orient="vertical", command=self.log_text.yview)
+        log_scroll = ttk.Scrollbar(term_middle, orient="vertical", command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=log_scroll.set)
 
-        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4, pady=4)
-        log_scroll.pack(side=tk.RIGHT, fill=tk.Y, pady=4)
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        log_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
         self._render_server_cards()
 
@@ -1199,7 +1348,34 @@ class ServerLauncherWindowsApp(tk.Tk):
         self.log_text.delete("1.0", tk.END)
         srv = next((s for s in self.servers if s.config.name == self.active_server_name), None)
         if srv:
-            srv.logs.clear()
+            srv.clear_logs()
+
+    def _send_active_server_input(self, text: str):
+        if not text:
+            return
+        srv = next((s for s in self.servers if s.config.name == self.active_server_name), None)
+        if srv:
+            srv.send_input(text)
+
+    def _send_active_server_input_from_entry(self):
+        val = self.entry_server_cmd.get().strip()
+        if not val:
+            return
+        self.entry_server_cmd.delete(0, tk.END)
+        self._send_active_server_input(val)
+
+    def _interrupt_active_server(self):
+        srv = next((s for s in self.servers if s.config.name == self.active_server_name), None)
+        if srv:
+            srv.send_interrupt()
+
+    def _open_active_server_console(self):
+        srv = next((s for s in self.servers if s.config.name == self.active_server_name), None)
+        if srv and srv.config.dir:
+            if IS_WINDOWS:
+                subprocess.Popen(["cmd.exe", "/K"], cwd=srv.config.dir, creationflags=CREATE_NEW_CONSOLE)
+            else:
+                subprocess.Popen(["sh"], cwd=srv.config.dir)
 
     def _start_all_servers(self):
         for srv in self.servers:
@@ -1762,17 +1938,17 @@ class ServerLauncherWindowsApp(tk.Tk):
 
     def _build_powershell_tab(self):
         container = tk.Frame(self.tab_powershell, bg=Palette.BG_CANVAS)
-        container.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
+        container.pack(fill=tk.BOTH, expand=True, padx=6, pady=2)
 
         # Left: Interactive PowerShell REPL
         left_repl = tk.Frame(container, bg=Palette.BG_CARD, width=740)
-        left_repl.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6))
+        left_repl.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 4))
 
         r_hdr = tk.Frame(left_repl, bg=Palette.BG_SURFACE)
-        r_hdr.pack(fill=tk.X, padx=8, pady=6)
+        r_hdr.pack(fill=tk.X, padx=6, pady=(4, 2))
 
         lbl_ps = tk.Label(r_hdr, text="⚡ Windows PowerShell Interactive REPL Console", font=("Segoe UI", 11, "bold"), bg=Palette.BG_SURFACE, fg=Palette.TEXT_PRIMARY)
-        lbl_ps.pack(side=tk.LEFT, padx=6)
+        lbl_ps.pack(side=tk.LEFT, padx=6, pady=4)
 
         self.var_ps_elevated = tk.BooleanVar(value=is_admin())
         chk_elev = tk.Checkbutton(
@@ -1786,28 +1962,11 @@ class ServerLauncherWindowsApp(tk.Tk):
             activebackground=Palette.BG_SURFACE,
             activeforeground=Palette.CYAN,
         )
-        chk_elev.pack(side=tk.RIGHT, padx=6)
+        chk_elev.pack(side=tk.RIGHT, padx=6, pady=4)
 
-        # Console Text Output
-        self.ps_text = tk.Text(
-            left_repl,
-            bg=Palette.BG_CANVAS,
-            fg=Palette.TEXT_PRIMARY,
-            font=("Consolas", 10),
-            wrap=tk.WORD,
-            borderwidth=0,
-            padx=10,
-            pady=8,
-        )
-        ps_scroll = ttk.Scrollbar(left_repl, orient="vertical", command=self.ps_text.yview)
-        self.ps_text.configure(yscrollcommand=ps_scroll.set)
-
-        self.ps_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4, pady=4)
-        ps_scroll.pack(side=tk.RIGHT, fill=tk.Y, pady=4)
-
-        # Bottom Command Entry
+        # Bottom Command Entry (PACKED FIRST SO IT SITS FIRMLY ELEVATED AT BOTTOM!)
         input_bar = tk.Frame(left_repl, bg=Palette.BG_SURFACE)
-        input_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=4, pady=4)
+        input_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=4, pady=(2, 6))
 
         lbl_prompt = tk.Label(input_bar, text="PS >", font=("Consolas", 11, "bold"), bg=Palette.BG_SURFACE, fg=Palette.ACCENT)
         lbl_prompt.pack(side=tk.LEFT, padx=(8, 4))
@@ -1820,7 +1979,7 @@ class ServerLauncherWindowsApp(tk.Tk):
             insertbackground=Palette.TEXT_PRIMARY,
             relief=tk.FLAT,
         )
-        self.entry_ps_cmd.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4, pady=6)
+        self.entry_ps_cmd.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4, ipady=3)
         self.entry_ps_cmd.bind("<Return>", self._send_ps_command)
 
         btn_run = tk.Button(
@@ -1833,9 +1992,29 @@ class ServerLauncherWindowsApp(tk.Tk):
             cursor="hand2",
             command=self._send_ps_command,
             padx=10,
-            pady=2,
+            pady=1,
         )
         btn_run.pack(side=tk.RIGHT, padx=6)
+
+        # Middle Console Text Output Well (FILLS REMAINING SPACE)
+        ps_middle = tk.Frame(left_repl, bg=Palette.BG_CANVAS)
+        ps_middle.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=4, pady=2)
+
+        self.ps_text = tk.Text(
+            ps_middle,
+            bg=Palette.BG_CANVAS,
+            fg=Palette.TEXT_PRIMARY,
+            font=("Consolas", 10),
+            wrap=tk.WORD,
+            borderwidth=0,
+            padx=10,
+            pady=(8, 24), # 24px bottom clearance so bottom lines are never cut off
+        )
+        ps_scroll = ttk.Scrollbar(ps_middle, orient="vertical", command=self.ps_text.yview)
+        self.ps_text.configure(yscrollcommand=ps_scroll.set)
+
+        self.ps_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        ps_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
         # Right: Preset Windows Administrative Commands Catalog
         right_presets = tk.Frame(container, bg=Palette.BG_CARD, width=420)
@@ -2208,3 +2387,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

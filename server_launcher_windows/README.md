@@ -79,3 +79,4 @@ pyinstaller --noconfirm --onedir --windowed --name "ServerLauncherWindows" --add
 ```
 
 The compiled standalone executable will be located in `dist\ServerLauncherWindows\ServerLauncherWindows.exe`.
+

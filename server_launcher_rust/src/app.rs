@@ -5092,6 +5092,8 @@ impl LauncherApp {
                     let mut to_edit = None;
                     let mut to_delete = None;
 
+                    let mut to_toggle_external: Option<(String, bool)> = None;
+
                     for c in &commands {
                         Frame::none()
                             .fill(p.bg_card)
@@ -5102,8 +5104,16 @@ impl LauncherApp {
                                 ui.set_width(ui.available_width());
                                 ui.set_max_width(ui.available_width());
                                 ui.horizontal(|ui| {
-                                    let cat_w = 60.0;
-                                    let name_w = (ui.available_width() - cat_w).max(40.0);
+                                    let cat_text = format!("[{}]", c.category);
+                                    let cat_w = ui.fonts(|f| {
+                                        f.layout_no_wrap(
+                                            cat_text.clone(),
+                                            egui::FontId::proportional(10.5),
+                                            p.text_muted,
+                                        ).size().x
+                                    }) + 14.0;
+                                    let avail = ui.available_width();
+                                    let name_w = (avail - cat_w).max(40.0);
 
                                     ui.add_sized(
                                         [name_w, 16.0],
@@ -5111,19 +5121,10 @@ impl LauncherApp {
                                     );
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.label(
-                                            RichText::new(format!("[{}]", c.category))
+                                            RichText::new(cat_text)
                                                 .size(10.5)
                                                 .color(p.text_muted),
                                         );
-                                        if c.run_in_terminal {
-                                            ui.add_space(4.0);
-                                            ui.label(
-                                                RichText::new(format!("{} External", crate::lucide::MONITOR))
-                                                    .size(10.0)
-                                                    .strong()
-                                                    .color(p.info),
-                                            );
-                                        }
                                     });
                                 });
 
@@ -5154,34 +5155,42 @@ impl LauncherApp {
                                     );
                                 }
 
-                                ui.add_space(4.0);
+                                ui.add_space(5.0);
 
                                 ui.horizontal(|ui| {
-                                    let run_label = if c.run_in_terminal {
-                                        format!("{} Run (Terminal)", crate::lucide::PLAY)
-                                    } else {
-                                        format!("{} Run", crate::lucide::PLAY)
-                                    };
-                                    let run_bg = if c.run_in_terminal { Color32::from_rgb(0x02, 0x84, 0xc7) } else { Color32::from_rgb(16, 185, 129) };
+                                    let mut run_in_ext = c.run_in_terminal;
+
+                                    // Button is only "Run"
                                     let btn_run = egui::Button::new(
-                                        RichText::new(run_label).size(10.5).color(Color32::WHITE),
+                                        RichText::new(format!("{} Run", crate::lucide::PLAY)).size(10.5).strong().color(Color32::WHITE),
                                     )
-                                    .fill(run_bg)
-                                    .rounding(Rounding::same(4.0));
-                                    if ui.add(btn_run).on_hover_text(if c.run_in_terminal { "Execute in external desktop terminal window" } else { "Execute in terminal" }).clicked() {
-                                        to_run_cmd = Some((c.command.clone(), c.run_in_terminal));
+                                    .fill(Color32::from_rgb(16, 185, 129))
+                                    .rounding(Rounding::same(4.0))
+                                    .min_size(egui::vec2(52.0, 22.0));
+
+                                    let run_hover = if run_in_ext {
+                                        "Execute in external desktop terminal window"
+                                    } else {
+                                        "Execute in terminal"
+                                    };
+
+                                    if ui.add(btn_run).on_hover_text(run_hover).clicked() {
+                                        to_run_cmd = Some((c.command.clone(), run_in_ext));
                                     }
 
-                                    if !c.run_in_terminal {
-                                        let btn_ext = egui::Button::new(
-                                            RichText::new(format!("{} External", crate::lucide::EXTERNAL_LINK)).size(10.0).color(p.accent_light),
-                                        )
-                                        .fill(p.bg_button)
-                                        .stroke(Stroke::NONE)
-                                        .rounding(Rounding::same(4.0));
-                                        if ui.add(btn_ext).on_hover_text("Execute in external desktop terminal window").clicked() {
-                                            to_run_cmd = Some((c.command.clone(), true));
-                                        }
+                                    ui.add_space(6.0);
+
+                                    // Run in external terminal tick / checkbox inside the container
+                                    let label_color = if run_in_ext { p.info } else { p.text_secondary };
+                                    let cb = ui.checkbox(
+                                        &mut run_in_ext,
+                                        RichText::new("Run in external terminal")
+                                            .size(10.5)
+                                            .color(label_color),
+                                    ).on_hover_text("When ticked, this command executes in an external desktop terminal window");
+
+                                    if cb.changed() {
+                                        to_toggle_external = Some((c.id.clone(), run_in_ext));
                                     }
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -5240,6 +5249,13 @@ impl LauncherApp {
                     if let Some(id) = to_delete {
                         self.saved_commands.retain(|c| c.id != id);
                         self.persist_config();
+                    }
+
+                    if let Some((id, val)) = to_toggle_external {
+                        if let Some(cmd) = self.saved_commands.iter_mut().find(|c| c.id == id) {
+                            cmd.run_in_terminal = val;
+                            self.persist_config();
+                        }
                     }
                 });
         });

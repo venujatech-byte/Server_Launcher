@@ -7497,9 +7497,9 @@ impl LauncherApp {
                                 };
                                 ui.label(RichText::new(title).size(14.5).strong().color(p.text_primary));
                                 if self.sensors_refresh_interval > 0 {
-                                    ui.label(RichText::new(format!("● Live ({}s refresh)", self.sensors_refresh_interval)).size(11.0).color(Color32::from_rgb(16, 185, 129)));
+                                    ui.label(RichText::new(format!("{} Live ({}s refresh)", crate::lucide::CIRCLE_DOT, self.sensors_refresh_interval)).size(11.0).color(Color32::from_rgb(16, 185, 129)));
                                 } else {
-                                    ui.label(RichText::new("○ Manual refresh").size(11.0).color(p.text_muted));
+                                    ui.label(RichText::new(format!("{} Manual refresh", crate::lucide::CIRCLE)).size(11.0).color(p.text_muted));
                                 }
                             });
                             ui.add_space(2.0);
@@ -8228,107 +8228,123 @@ impl LauncherApp {
                             ui.label(RichText::new(count_text).size(10.5).color(p.text_muted));
                         });
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // 1. End Task Button (Enabled only when a process is selected)
-                        let has_selection = self.sensors_top_apps_selected_pid.is_some();
-                        let btn_end = if has_selection {
-                            let sel_pid = self.sensors_top_apps_selected_pid.unwrap();
-                            egui::Button::new(
-                                RichText::new(format!("{} End task (PID {})", crate::lucide::X, sel_pid))
-                                    .size(11.0)
-                                    .strong()
-                                    .color(Color32::WHITE),
-                            )
-                            .fill(p.danger)
-                            .rounding(Rounding::same(999.0))
-                        } else {
-                            egui::Button::new(
-                                RichText::new(format!("{} End task", crate::lucide::X))
-                                    .size(11.0)
-                                    .color(p.text_muted),
-                            )
-                            .fill(p.bg_button)
-                            .rounding(Rounding::same(999.0))
-                        };
-                        let btn_end_resp = ui.add(btn_end).on_hover_text("Select a process from the list below, then click End task to terminate it");
-                        if has_selection && btn_end_resp.clicked() {
-                            kill_target_pid = self.sensors_top_apps_selected_pid;
-                        }
+                    // Flexible space pushing toolbar actions to the right without ever overlapping left items
+                    let has_selection = self.sensors_top_apps_selected_pid.is_some();
+                    let end_btn_w = if has_selection { 140.0 } else { 90.0 };
+                    let search_w = 140.0 + if self.sensors_search_query.is_empty() { 0.0 } else { 22.0 };
+                    let interval_w = 95.0;
+                    let sort_w = 115.0;
+                    let right_total_w = end_btn_w + search_w + interval_w + sort_w + 30.0;
 
-                        ui.add_space(6.0);
+                    let avail = ui.available_width();
+                    if avail > right_total_w {
+                        ui.add_space(avail - right_total_w);
+                    } else {
+                        ui.add_space(8.0);
+                    }
 
-                        // 2. Clear search filter button
-                        if !self.sensors_search_query.is_empty() {
-                            if ui.button(RichText::new(crate::lucide::X).size(10.5).color(p.text_muted)).on_hover_text("Clear search filter").clicked() {
-                                self.sensors_search_query.clear();
+                    // 1. Sort By Dropdown (Name, CPU, RAM, Storage, Network)
+                    let sort_label = match self.sensors_top_apps_sort.as_str() {
+                        "name" => "Name",
+                        "cpu" => "CPU",
+                        "mem" => "RAM",
+                        "disk" => "Storage",
+                        "net" => "Network",
+                        _ => "CPU",
+                    };
+                    let dir_arrow = if self.sensors_top_apps_sort_desc { crate::lucide::ARROW_DOWN } else { crate::lucide::ARROW_UP };
+                    egui::ComboBox::from_id_salt("tm_sort_selector_combo")
+                        .selected_text(RichText::new(format!("Sort: {} {}", sort_label, dir_arrow)).size(11.0).color(p.text_secondary))
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_label(self.sensors_top_apps_sort == "name", "Name").clicked() {
+                                self.sensors_top_apps_sort = "name".to_string();
                             }
+                            if ui.selectable_label(self.sensors_top_apps_sort == "cpu", "CPU").clicked() {
+                                self.sensors_top_apps_sort = "cpu".to_string();
+                            }
+                            if ui.selectable_label(self.sensors_top_apps_sort == "mem", "RAM (Memory)").clicked() {
+                                self.sensors_top_apps_sort = "mem".to_string();
+                            }
+                            if ui.selectable_label(self.sensors_top_apps_sort == "disk", "Storage (Disk)").clicked() {
+                                self.sensors_top_apps_sort = "disk".to_string();
+                            }
+                            if ui.selectable_label(self.sensors_top_apps_sort == "net", "Network").clicked() {
+                                self.sensors_top_apps_sort = "net".to_string();
+                            }
+                            ui.separator();
+                            let toggle_txt = if self.sensors_top_apps_sort_desc {
+                                format!("Ascending {}", crate::lucide::ARROW_UP)
+                            } else {
+                                format!("Descending {}", crate::lucide::ARROW_DOWN)
+                            };
+                            if ui.button(toggle_txt).clicked() {
+                                self.sensors_top_apps_sort_desc = !self.sensors_top_apps_sort_desc;
+                            }
+                        });
+
+                    ui.add_space(6.0);
+
+                    // 2. Update Interval Dropdown (Default 5s)
+                    let interval_label = match self.sensors_refresh_interval {
+                        0 => "Paused".to_string(),
+                        1 => "1s (High)".to_string(),
+                        2 => "2s (Fast)".to_string(),
+                        5 => "5s (Default)".to_string(),
+                        10 => "10s (Low)".to_string(),
+                        n => format!("{}s", n),
+                    };
+                    egui::ComboBox::from_id_salt("tm_refresh_interval_combo")
+                        .selected_text(RichText::new(format!("⏱ {}", interval_label)).size(11.0).color(p.text_secondary))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.sensors_refresh_interval, 1, "1s (High)");
+                            ui.selectable_value(&mut self.sensors_refresh_interval, 2, "2s (Fast)");
+                            ui.selectable_value(&mut self.sensors_refresh_interval, 5, "5s (Default)");
+                            ui.selectable_value(&mut self.sensors_refresh_interval, 10, "10s (Low)");
+                            ui.selectable_value(&mut self.sensors_refresh_interval, 0, "Paused");
+                        });
+
+                    ui.add_space(6.0);
+
+                    // 3. Search box
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.sensors_search_query)
+                            .hint_text(format!("{} Search by name or PID...", crate::lucide::SEARCH))
+                            .desired_width(140.0),
+                    );
+
+                    // 4. Clear search filter button
+                    if !self.sensors_search_query.is_empty() {
+                        if ui.button(RichText::new(crate::lucide::X).size(10.5).color(p.text_muted)).on_hover_text("Clear search filter").clicked() {
+                            self.sensors_search_query.clear();
                         }
+                    }
 
-                        // 3. Search box
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.sensors_search_query)
-                                .hint_text(format!("{} Search by name or PID...", crate::lucide::SEARCH))
-                                .desired_width(170.0),
-                        );
+                    ui.add_space(6.0);
 
-                        ui.add_space(6.0);
-
-                        // 4. Update Interval Dropdown (Default 5s)
-                        let interval_label = match self.sensors_refresh_interval {
-                            0 => "Paused".to_string(),
-                            1 => "1s (High)".to_string(),
-                            2 => "2s (Fast)".to_string(),
-                            5 => "5s (Default)".to_string(),
-                            10 => "10s (Low)".to_string(),
-                            n => format!("{}s", n),
-                        };
-                        egui::ComboBox::from_id_salt("tm_refresh_interval_combo")
-                            .selected_text(RichText::new(format!("⏱ {}", interval_label)).size(11.0).color(p.text_secondary))
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut self.sensors_refresh_interval, 1, "1s (High)");
-                                ui.selectable_value(&mut self.sensors_refresh_interval, 2, "2s (Fast)");
-                                ui.selectable_value(&mut self.sensors_refresh_interval, 5, "5s (Default)");
-                                ui.selectable_value(&mut self.sensors_refresh_interval, 10, "10s (Low)");
-                                ui.selectable_value(&mut self.sensors_refresh_interval, 0, "Paused");
-                            });
-
-                        ui.add_space(6.0);
-
-                        // 5. Sort By Dropdown (Name, CPU, RAM, Storage, Network)
-                        let sort_label = match self.sensors_top_apps_sort.as_str() {
-                            "name" => "Name",
-                            "cpu" => "CPU",
-                            "mem" => "RAM",
-                            "disk" => "Storage",
-                            "net" => "Network",
-                            _ => "CPU",
-                        };
-                        let dir_arrow = if self.sensors_top_apps_sort_desc { "↓" } else { "↑" };
-                        egui::ComboBox::from_id_salt("tm_sort_selector_combo")
-                            .selected_text(RichText::new(format!("Sort: {} {}", sort_label, dir_arrow)).size(11.0).color(p.text_secondary))
-                            .show_ui(ui, |ui| {
-                                if ui.selectable_label(self.sensors_top_apps_sort == "name", "Name").clicked() {
-                                    self.sensors_top_apps_sort = "name".to_string();
-                                }
-                                if ui.selectable_label(self.sensors_top_apps_sort == "cpu", "CPU").clicked() {
-                                    self.sensors_top_apps_sort = "cpu".to_string();
-                                }
-                                if ui.selectable_label(self.sensors_top_apps_sort == "mem", "RAM (Memory)").clicked() {
-                                    self.sensors_top_apps_sort = "mem".to_string();
-                                }
-                                if ui.selectable_label(self.sensors_top_apps_sort == "disk", "Storage (Disk)").clicked() {
-                                    self.sensors_top_apps_sort = "disk".to_string();
-                                }
-                                if ui.selectable_label(self.sensors_top_apps_sort == "net", "Network").clicked() {
-                                    self.sensors_top_apps_sort = "net".to_string();
-                                }
-                                ui.separator();
-                                let toggle_txt = if self.sensors_top_apps_sort_desc { "Ascending ↑" } else { "Descending ↓" };
-                                if ui.button(toggle_txt).clicked() {
-                                    self.sensors_top_apps_sort_desc = !self.sensors_top_apps_sort_desc;
-                                }
-                            });
-                    });
+                    // 5. End Task Button (Enabled only when a process is selected)
+                    let btn_end = if has_selection {
+                        let sel_pid = self.sensors_top_apps_selected_pid.unwrap();
+                        egui::Button::new(
+                            RichText::new(format!("{} End task (PID {})", crate::lucide::X, sel_pid))
+                                .size(11.0)
+                                .strong()
+                                .color(Color32::WHITE),
+                        )
+                        .fill(p.danger)
+                        .rounding(Rounding::same(999.0))
+                    } else {
+                        egui::Button::new(
+                            RichText::new(format!("{} End task", crate::lucide::X))
+                                .size(11.0)
+                                .color(p.text_muted),
+                        )
+                        .fill(p.bg_button)
+                        .rounding(Rounding::same(999.0))
+                    };
+                    let btn_end_resp = ui.add(btn_end).on_hover_text("Select a process from the list below, then click End task to terminate it");
+                    if has_selection && btn_end_resp.clicked() {
+                        kill_target_pid = self.sensors_top_apps_selected_pid;
+                    }
                 });
 
                 // Status message (e.g. process terminated)

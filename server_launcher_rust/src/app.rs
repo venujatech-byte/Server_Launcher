@@ -5851,9 +5851,6 @@ impl LauncherApp {
             // Header Row: Title & Manual Refresh
             ui.horizontal(|ui| {
                 ui.label(RichText::new("HARDWARE SENSORS").size(12.0).strong().color(p.text_muted));
-                if is_fetching {
-                    ui.label(RichText::new("⟳ Updating...").size(10.5).color(p.info));
-                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_ref = egui::Button::new(RichText::new("🔄").size(11.0).color(p.text_secondary))
                         .fill(p.bg_button);
@@ -6231,16 +6228,14 @@ impl LauncherApp {
                     ui.horizontal(|ui| {
                         ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                             ui.horizontal_wrapped(|ui| {
-                                ui.label(RichText::new("🌡").size(20.0));
+                                ui.label(RichText::new("📊").size(20.0));
                                 let title = if let Some(hid) = host_id {
                                     format!("Hardware Sensors Monitor — Remote Host ({})", hid)
                                 } else {
                                     "Hardware Sensors & System Resource Monitor".to_string()
                                 };
                                 ui.label(RichText::new(title).size(14.5).strong().color(p.text_primary));
-                                if is_fetching {
-                                    ui.label(RichText::new("● Updating remote metrics...").size(11.0).color(p.info));
-                                } else if self.sensors_refresh_interval > 0 {
+                                if self.sensors_refresh_interval > 0 {
                                     ui.label(RichText::new(format!("● Live ({}s refresh)", self.sensors_refresh_interval)).size(11.0).color(Color32::from_rgb(16, 185, 129)));
                                 } else {
                                     ui.label(RichText::new("○ Manual refresh").size(11.0).color(p.text_muted));

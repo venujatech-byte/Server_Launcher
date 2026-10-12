@@ -4600,50 +4600,85 @@ impl LauncherApp {
                 .rounding(Rounding::same(14.0))
                 .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                 .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(crate::lucide::TERMINAL).size(18.0).color(p.accent));
-                        ui.vertical(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(&title).size(13.5).strong().color(p.text_primary));
-                                ui.label(
+                    ui.vertical(|ui| {
+                        // Row 1: Title and Action Buttons (No overlap possible)
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(crate::lucide::TERMINAL).size(18.0).color(p.accent));
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(&title).size(13.5).strong().color(p.text_primary),
+                                )
+                                .truncate(),
+                            );
+
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let btn_clear = egui::Button::new(
+                                    RichText::new(format!("{} Clear (Ctrl+L)", crate::lucide::TRASH))
+                                        .size(11.0)
+                                        .color(p.text_secondary),
+                                )
+                                .fill(p.bg_button);
+                                if ui.add(btn_clear).clicked() {
+                                    term.clear();
+                                    term.request_focus = true;
+                                }
+
+                                if is_running {
+                                    let btn_stop = egui::Button::new(
+                                        RichText::new(format!("{} Interrupt (Ctrl+C)", crate::lucide::STOP))
+                                            .size(11.0)
+                                            .strong()
+                                            .color(Color32::WHITE),
+                                    )
+                                    .fill(p.danger)
+                                    .rounding(Rounding::same(4.0));
+                                    if ui.add(btn_stop).clicked() {
+                                        term.interrupt();
+                                        term.request_focus = true;
+                                    }
+                                } else if host_opt.is_none() {
+                                    let btn_ext = egui::Button::new(
+                                        RichText::new(format!("{} Native Terminal", crate::lucide::EXTERNAL_LINK))
+                                            .size(11.0)
+                                            .color(p.text_secondary),
+                                    )
+                                    .fill(p.bg_button);
+                                    if ui
+                                        .add(btn_ext)
+                                        .on_hover_text("Open native system terminal window in current directory")
+                                        .clicked()
+                                    {
+                                        let _ = crate::commands::open_system_terminal(&term.cwd);
+                                    }
+                                }
+                            });
+                        });
+
+                        ui.add_space(3.0);
+
+                        // Row 2: Status & Current Directory Sub-bar (Full width available)
+                        ui.horizontal(|ui| {
+                            ui.add_space(26.0); // Align with title text past terminal icon
+                            ui.label(
+                                RichText::new(&stat_msg)
+                                    .size(11.0)
+                                    .color(if is_running {
+                                        Color32::from_rgb(16, 185, 129)
+                                    } else {
+                                        p.text_muted
+                                    }),
+                            );
+                            ui.label(RichText::new("•").size(11.0).color(p.text_muted));
+                            ui.add(
+                                egui::Label::new(
                                     RichText::new(format!("{} {}", crate::lucide::FOLDER, cwd_display))
                                         .size(11.0)
                                         .color(Color32::from_rgb(147, 197, 253))
                                         .monospace(),
-                                );
-                            });
-                            ui.label(
-                                RichText::new(&stat_msg)
-                                    .size(11.0)
-                                    .color(if is_running { Color32::from_rgb(16, 185, 129) } else { p.text_muted }),
-                            );
-                        });
-
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let btn_clear = egui::Button::new(RichText::new(format!("{} Clear (Ctrl+L)", crate::lucide::TRASH)).size(11.0).color(p.text_secondary))
-                                .fill(p.bg_button);
-                            if ui.add(btn_clear).clicked() {
-                                term.clear();
-                                term.request_focus = true;
-                            }
-
-                            if is_running {
-                                let btn_stop = egui::Button::new(
-                                    RichText::new(format!("{} Interrupt (Ctrl+C)", crate::lucide::STOP)).size(11.0).strong().color(Color32::WHITE),
                                 )
-                                .fill(p.danger)
-                                .rounding(Rounding::same(4.0));
-                                if ui.add(btn_stop).clicked() {
-                                    term.interrupt();
-                                    term.request_focus = true;
-                                }
-                            } else if host_opt.is_none() {
-                                let btn_ext = egui::Button::new(RichText::new(format!("{} Native Terminal", crate::lucide::EXTERNAL_LINK)).size(11.0).color(p.text_secondary))
-                                    .fill(p.bg_button);
-                                if ui.add(btn_ext).on_hover_text("Open native system terminal window in current directory").clicked() {
-                                    let _ = crate::commands::open_system_terminal(&term.cwd);
-                                }
-                            }
+                                .truncate(),
+                            )
+                            .on_hover_text(&cwd_display);
                         });
                     });
                 });

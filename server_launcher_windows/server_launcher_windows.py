@@ -784,6 +784,10 @@ class ServerLauncherWindowsApp(tk.Tk):
         self.active_tab_name = "servers"
         self.sensors_subtab = "system"  # 'system' or 'top_apps'
         self.top_apps_visited = False
+        self.top_apps_sort_col = "cpu"
+        self.top_apps_sort_desc = True
+        self.last_top_apps: List[ProcessInfo] = []
+        self.top_apps_search_var = tk.StringVar(value="")
         self.search_query = tk.StringVar(value="")
         self.services_filter_status = tk.StringVar(value="All")
         self.services_filter_startup = tk.StringVar(value="All")
@@ -1823,11 +1827,21 @@ class ServerLauncherWindowsApp(tk.Tk):
         top_bar = tk.Frame(card, bg=Palette.BG_CARD)
         top_bar.pack(fill=tk.X, padx=12, pady=10)
 
-        lbl_t = tk.Label(top_bar, text="⚡ Top Resource-Consuming Processes (Top Apps)", font=("Segoe UI", 11, "bold"), bg=Palette.BG_CARD, fg=Palette.TEXT_PRIMARY)
+        lbl_t = tk.Label(top_bar, text="⚡ Processes (Task Manager)", font=("Segoe UI", 11, "bold"), bg=Palette.BG_CARD, fg=Palette.TEXT_PRIMARY)
         lbl_t.pack(side=tk.LEFT)
 
         self.lbl_top_apps_count = tk.Label(top_bar, text="0 processes", font=("Segoe UI", 9), bg=Palette.BG_BUTTON, fg=Palette.TEXT_SECONDARY, padx=8, pady=2)
         self.lbl_top_apps_count.pack(side=tk.LEFT, padx=10)
+
+        # End Task Button (Windows Task Manager style)
+        btn_end = tk.Button(top_bar, text="✕ End task", font=("Segoe UI", 9, "bold"), bg=Palette.DANGER, fg=Palette.WHITE, padx=10, pady=2, relief=tk.FLAT, cursor="hand2", command=self._kill_selected_top_app)
+        btn_end.pack(side=tk.RIGHT, padx=6)
+
+        # Search Entry
+        ent_search = tk.Entry(top_bar, textvariable=self.top_apps_search_var, font=("Segoe UI", 9), bg=Palette.BG_BUTTON, fg=Palette.TEXT_PRIMARY, insertbackground=Palette.TEXT_PRIMARY, width=22)
+        ent_search.pack(side=tk.RIGHT, padx=4)
+        tk.Label(top_bar, text="🔍", font=("Segoe UI", 9), bg=Palette.BG_CARD, fg=Palette.TEXT_MUTED).pack(side=tk.RIGHT)
+        self.top_apps_search_var.trace_add("write", lambda *_: self._render_top_apps_list())
 
         # Permanent column width Treeview for Top Apps
         tree_frame = tk.Frame(card, bg=Palette.BG_CARD)
@@ -1836,11 +1850,11 @@ class ServerLauncherWindowsApp(tk.Tk):
         cols = ("pid", "name", "status", "cpu", "mem")
         self.top_apps_tree = ttk.Treeview(tree_frame, columns=cols, show="headings", selectmode="browse")
 
-        self.top_apps_tree.heading("pid", text="PID")
-        self.top_apps_tree.heading("name", text="Application Name")
-        self.top_apps_tree.heading("status", text="Status")
-        self.top_apps_tree.heading("cpu", text="CPU Total Time / Load")
-        self.top_apps_tree.heading("mem", text="Memory (Working Set RAM)")
+        self.top_apps_tree.heading("pid", text="PID", command=lambda: self._sort_top_apps("pid"))
+        self.top_apps_tree.heading("name", text="Application Name", command=lambda: self._sort_top_apps("name"))
+        self.top_apps_tree.heading("status", text="Status", command=lambda: self._sort_top_apps("status"))
+        self.top_apps_tree.heading("cpu", text="CPU Time / Load ▼", command=lambda: self._sort_top_apps("cpu"))
+        self.top_apps_tree.heading("mem", text="Memory (RAM)", command=lambda: self._sort_top_apps("mem"))
 
         # Exact permanent column widths: Never jumps or resizes
         self.top_apps_tree.column("pid", width=80, anchor="center")
@@ -1856,6 +1870,73 @@ class ServerLauncherWindowsApp(tk.Tk):
         self.top_apps_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         tree_scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
         tree_scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
+
+    def _kill_selected_top_app(self):
+        sel = self.top_apps_tree.selection()
+        if not sel:
+            messagebox.showinfo("Task Manager", "Please click a process in the table to select it before clicking End task.", parent=self.root)
+            return
+        pid_str = sel[0]
+        try:
+            pid = int(pid_str)
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True)
+            else:
+                os.kill(pid, signal.SIGKILL)
+            self.top_apps_tree.delete(pid_str)
+            self.last_top_apps = [a for a in self.last_top_apps if a.pid != pid]
+            messagebox.showinfo("Task Manager", f"Process {pid} has been terminated.", parent=self.root)
+        except Exception as e:
+            messagebox.showerror("Task Manager Error", f"Failed to terminate process {pid_str}: {e}", parent=self.root)
+
+    def _sort_top_apps(self, col: str):
+        if self.top_apps_sort_col == col:
+            self.top_apps_sort_desc = not self.top_apps_sort_desc
+        else:
+            self.top_apps_sort_col = col
+            self.top_apps_sort_desc = (col != "name")
+        self._render_top_apps_list()
+
+    def _render_top_apps_list(self):
+        if not self.last_top_apps:
+            return
+        q = self.top_apps_search_var.get().strip().lower()
+        filtered = [a for a in self.last_top_apps if not q or q in a.name.lower() or q in str(a.pid) or q in a.status.lower()]
+        col = self.top_apps_sort_col
+        desc = self.top_apps_sort_desc
+        if col == "pid":
+            filtered.sort(key=lambda a: a.pid, reverse=desc)
+        elif col == "name":
+            filtered.sort(key=lambda a: a.name.lower(), reverse=desc)
+        elif col == "status":
+            filtered.sort(key=lambda a: a.status.lower(), reverse=desc)
+        elif col == "mem":
+            filtered.sort(key=lambda a: a.memory_bytes, reverse=desc)
+        else: # cpu
+            filtered.sort(key=lambda a: a.cpu_pct, reverse=desc)
+
+        arrow = " ▼" if desc else " ▲"
+        headers = {
+            "pid": "PID",
+            "name": "Application Name",
+            "status": "Status",
+            "cpu": "CPU Time / Load",
+            "mem": "Memory (RAM)",
+        }
+        for c, t in headers.items():
+            self.top_apps_tree.heading(c, text=t + (arrow if c == col else ""))
+
+        self.lbl_top_apps_count.configure(text=f"{len(filtered)} processes")
+        self.top_apps_tree.delete(*self.top_apps_tree.get_children())
+        for app in filtered[:100]:
+            cpu_str = f"{app.cpu_pct:.1f}s" if app.cpu_pct > 0 else "0.0s"
+            mem_str = format_bytes(app.memory_bytes)
+            self.top_apps_tree.insert(
+                "",
+                tk.END,
+                iid=str(app.pid),
+                values=(app.pid, app.name, app.status, cpu_str, mem_str),
+            )
 
     def _refresh_sensors_view(self):
         include_top = (self.sensors_subtab == "top_apps" and self.top_apps_visited)
@@ -1920,17 +2001,8 @@ class ServerLauncherWindowsApp(tk.Tk):
 
         # 3. Update Top Apps Table (if visited and populated)
         if self.sensors_subtab == "top_apps" and snap.top_apps:
-            self.lbl_top_apps_count.configure(text=f"{len(snap.top_apps)} processes")
-            self.top_apps_tree.delete(*self.top_apps_tree.get_children())
-            for app in snap.top_apps:
-                cpu_str = f"{app.cpu_pct:.1f}s" if app.cpu_pct > 0 else "0.0s"
-                mem_str = format_bytes(app.memory_bytes)
-                self.top_apps_tree.insert(
-                    "",
-                    tk.END,
-                    iid=str(app.pid),
-                    values=(app.pid, app.name, app.status, cpu_str, mem_str),
-                )
+            self.last_top_apps = snap.top_apps
+            self._render_top_apps_list()
 
     # ----------------------------------------------------------------------
     # TAB 4: PowerShell Console & Diagnostic Commands Catalog

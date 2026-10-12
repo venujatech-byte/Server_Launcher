@@ -513,7 +513,7 @@ impl SystemSensorsCollector {
                     .unwrap_or(std::cmp::Ordering::Equal)
                     .then_with(|| b.memory_bytes.cmp(&a.memory_bytes))
             });
-            top_apps.truncate(50);
+            top_apps.truncate(150);
         }
 
         SystemSensorsSnapshot {

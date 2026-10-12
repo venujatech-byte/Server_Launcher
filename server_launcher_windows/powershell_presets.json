@@ -1,0 +1,86 @@
+[
+  {
+    "category": "Network & Connectivity",
+    "name": "Flush DNS Cache",
+    "command": "Clear-DnsClientCache",
+    "description": "Clears and resets the contents of the DNS client resolver cache.",
+    "requires_admin": true
+  },
+  {
+    "category": "Network & Connectivity",
+    "name": "Show TCP Listening Ports",
+    "command": "Get-NetTCPConnection -State Listen | Select-Object LocalAddress, LocalPort, OwningProcess, @{Name='Process';Expression={(Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName}} | Sort-Object LocalPort",
+    "description": "Lists all active listening TCP ports along with process names and PIDs.",
+    "requires_admin": false
+  },
+  {
+    "category": "Network & Connectivity",
+    "name": "Full IP Configuration",
+    "command": "ipconfig /all",
+    "description": "Displays detailed network configuration for all network adapters.",
+    "requires_admin": false
+  },
+  {
+    "category": "Network & Connectivity",
+    "name": "Reset Winsock Catalog",
+    "command": "netsh winsock reset",
+    "description": "Resets the Windows Socket API catalog to clean state (reboot recommended).",
+    "requires_admin": true
+  },
+  {
+    "category": "System Health & Repair",
+    "name": "System File Checker (SFC)",
+    "command": "sfc /scannow",
+    "description": "Scans integrity of all protected system files and repairs damaged files.",
+    "requires_admin": true
+  },
+  {
+    "category": "System Health & Repair",
+    "name": "DISM Component Store Health Check",
+    "command": "DISM /Online /Cleanup-Image /ScanHealth",
+    "description": "Scans Windows image for component store corruption without repairing.",
+    "requires_admin": true
+  },
+  {
+    "category": "System Health & Repair",
+    "name": "Clean Windows Temp Files",
+    "command": "Remove-Item -Path $env:TEMP\\* -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -Path 'C:\\Windows\\Temp\\*' -Recurse -Force -ErrorAction SilentlyContinue; Write-Output 'Temp files cleaned successfully.'",
+    "description": "Safely clears temporary files from user and Windows system temp folders.",
+    "requires_admin": true
+  },
+  {
+    "category": "Windows Services Maintenance",
+    "name": "Restart Print Spooler",
+    "command": "Restart-Service -Name Spooler -Force; Get-Service -Name Spooler",
+    "description": "Restarts the Windows Print Spooler service to clear stuck print jobs.",
+    "requires_admin": true
+  },
+  {
+    "category": "Windows Services Maintenance",
+    "name": "Restart Windows Update Service",
+    "command": "Stop-Service -Name wuauserv -Force; Start-Service -Name wuauserv; Get-Service -Name wuauserv",
+    "description": "Restarts the Windows Update (wuauserv) background service.",
+    "requires_admin": true
+  },
+  {
+    "category": "Developer Utilities",
+    "name": "Shutdown WSL Instances",
+    "command": "wsl --shutdown; Write-Output 'WSL virtual machine instances cleanly shut down.'",
+    "description": "Terminates all running Windows Subsystem for Linux distributions.",
+    "requires_admin": false
+  },
+  {
+    "category": "Developer Utilities",
+    "name": "Developer Environment Version Check",
+    "command": "Write-Output '=== Installed Tools ==='; if (Get-Command node -ErrorAction SilentlyContinue) { node -v | ForEach-Object { \"Node.js: $_\" } }; if (Get-Command npm -ErrorAction SilentlyContinue) { npm -v | ForEach-Object { \"npm: $_\" } }; if (Get-Command python -ErrorAction SilentlyContinue) { python --version }; if (Get-Command git -ErrorAction SilentlyContinue) { git --version }; if (Get-Command rustc -ErrorAction SilentlyContinue) { rustc --version }; if (Get-Command docker -ErrorAction SilentlyContinue) { docker --version }",
+    "description": "Displays version info for Node.js, npm, Python, Git, Rust, and Docker.",
+    "requires_admin": false
+  },
+  {
+    "category": "Developer Utilities",
+    "name": "Check Docker Desktop Service",
+    "command": "Get-Service *docker* -ErrorAction SilentlyContinue | Format-Table -AutoSize",
+    "description": "Checks status of Docker Desktop Windows backend services.",
+    "requires_admin": false
+  }
+]

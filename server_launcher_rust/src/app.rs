@@ -130,6 +130,18 @@ impl Default for SudoPopupState {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct ProcessGroupSummary {
+    pub key: String,
+    pub display_name: String,
+    pub sum_cpu: f32,
+    pub sum_mem: u64,
+    pub sum_disk_rate: f64,
+    pub is_app: bool,
+    pub pids: Vec<u32>,
+    pub children: Vec<crate::sensors::ProcessSensorInfo>,
+}
+
 pub struct LauncherApp {
     pub active_sidebar_tab: SidebarTab,
     pub scripts: Vec<CustomScript>,
@@ -267,9 +279,11 @@ pub struct LauncherApp {
     pub systemd_deps_filter: String,
     pub systemd_deps_view_mode: usize,
 
-    // Sensors State
-    pub sensors_collector: crate::sensors::SystemSensorsCollector,
-    pub sensors_snapshot: crate::sensors::SystemSensorsSnapshot,
+    // Sensors State (Asynchronous background polling for zero UI lag)
+    pub sensors_collector: Arc<Mutex<crate::sensors::SystemSensorsCollector>>,
+    pub sensors_in_flight: Arc<std::sync::atomic::AtomicBool>,
+    pub sensors_shared_snapshot: Arc<Mutex<crate::sensors::SystemSensorsSnapshot>>,
+    pub sensors_snapshot: Arc<crate::sensors::SystemSensorsSnapshot>,
     pub sensors_refresh_interval: u32,
     pub last_sensors_refresh: Instant,
     pub remote_sensors_snapshots: Arc<Mutex<HashMap<String, crate::sensors::SystemSensorsSnapshot>>>,
@@ -291,6 +305,14 @@ pub struct LauncherApp {
     pub sensors_top_apps_visited: bool,
     pub sensors_top_apps_section_apps_expanded: bool,
     pub sensors_top_apps_section_bg_expanded: bool,
+
+    // Cached grouped processes for Top Apps tab (prevents re-filtering and sorting every frame)
+    pub sensors_cached_apps_groups: Vec<ProcessGroupSummary>,
+    pub sensors_cached_bg_groups: Vec<ProcessGroupSummary>,
+    pub sensors_cached_snap_timestamp: Option<Instant>,
+    pub sensors_cached_search: String,
+    pub sensors_cached_sort: String,
+    pub sensors_cached_sort_desc: bool,
 
     // Sudo popup for local system-level systemd operations
     pub sudo_popup: SudoPopupState,
@@ -624,8 +646,10 @@ impl LauncherApp {
             systemd_deps_filter: String::new(),
             systemd_deps_view_mode: 0,
 
-            sensors_collector: crate::sensors::SystemSensorsCollector::new(),
-            sensors_snapshot: crate::sensors::SystemSensorsSnapshot::default(),
+            sensors_collector: Arc::new(Mutex::new(crate::sensors::SystemSensorsCollector::new())),
+            sensors_in_flight: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            sensors_shared_snapshot: Arc::new(Mutex::new(crate::sensors::SystemSensorsSnapshot::default())),
+            sensors_snapshot: Arc::new(crate::sensors::SystemSensorsSnapshot::default()),
             sensors_refresh_interval: 5,
             last_sensors_refresh: Instant::now() - Duration::from_secs(10),
             remote_sensors_snapshots: Arc::new(Mutex::new(HashMap::new())),
@@ -645,6 +669,12 @@ impl LauncherApp {
             sensors_top_apps_visited: false,
             sensors_top_apps_section_apps_expanded: true,
             sensors_top_apps_section_bg_expanded: true,
+            sensors_cached_apps_groups: Vec::new(),
+            sensors_cached_bg_groups: Vec::new(),
+            sensors_cached_snap_timestamp: None,
+            sensors_cached_search: String::new(),
+            sensors_cached_sort: String::new(),
+            sensors_cached_sort_desc: false,
             sudo_popup: SudoPopupState::default(),
             local_sudo_password: String::new(),
             import_status_msg: None,
@@ -679,6 +709,31 @@ impl LauncherApp {
                 }
             }
             in_flight_arc.lock().unwrap().remove(&hid);
+        });
+    }
+
+    pub fn trigger_local_sensors_query(&self, include_top: bool, ctx: Option<egui::Context>) {
+        if self.sensors_in_flight.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+
+        let collector_arc = Arc::clone(&self.sensors_collector);
+        let in_flight_arc = Arc::clone(&self.sensors_in_flight);
+        let shared_snap_arc = Arc::clone(&self.sensors_shared_snapshot);
+
+        std::thread::spawn(move || {
+            let snap = if let Ok(mut coll) = collector_arc.lock() {
+                coll.collect_with_top_apps(include_top)
+            } else {
+                crate::sensors::SystemSensorsSnapshot::default()
+            };
+            if let Ok(mut shared) = shared_snap_arc.lock() {
+                *shared = snap;
+            }
+            in_flight_arc.store(false, std::sync::atomic::Ordering::SeqCst);
+            if let Some(c) = ctx {
+                c.request_repaint();
+            }
         });
     }
 
@@ -2857,6 +2912,13 @@ fn read_proc_cmd_and_cwd(pid: u32) -> (Option<String>, Option<String>) {
 
 impl eframe::App for LauncherApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        // Sync background sensors snapshot if newly available
+        if let Ok(shared) = self.sensors_shared_snapshot.try_lock() {
+            if shared.timestamp != self.sensors_snapshot.timestamp && shared.timestamp.is_some() {
+                self.sensors_snapshot = Arc::new(shared.clone());
+            }
+        }
+
         // ── Close Confirmation ──────────────────────────────────────────────
         let any_running = self.services.iter().any(|s| {
             s.state == ServiceState::Running || s.state == ServiceState::Starting || s.restart_at.is_some()
@@ -7034,10 +7096,10 @@ impl LauncherApp {
         } else {
             if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
                 let include_top = self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited;
-                self.sensors_snapshot = self.sensors_collector.collect_with_top_apps(include_top);
+                self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
                 self.last_sensors_refresh = Instant::now();
             }
-            self.sensors_snapshot.clone()
+            (*self.sensors_snapshot).clone()
         };
 
         ui.vertical(|ui| {
@@ -7057,7 +7119,7 @@ impl LauncherApp {
                             }
                         } else {
                             let include_top = self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited;
-                            self.sensors_snapshot = self.sensors_collector.collect_with_top_apps(include_top);
+                            self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
                             self.last_sensors_refresh = Instant::now();
                         }
                     }
@@ -7112,7 +7174,7 @@ impl LauncherApp {
                             self.sensors_subtab = SensorsSubTab::TopApps;
                             self.sensors_top_apps_visited = true;
                             if self.selected_machine == "local" && self.sensors_snapshot.top_apps.is_empty() {
-                                self.sensors_snapshot = self.sensors_collector.collect_with_top_apps(true);
+                                self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
                                 self.last_sensors_refresh = Instant::now();
                             }
                         } else {
@@ -7197,7 +7259,7 @@ impl LauncherApp {
                                             self.sensors_subtab = SensorsSubTab::TopApps;
                                             self.sensors_top_apps_visited = true;
                                             if self.selected_machine == "local" && self.sensors_snapshot.top_apps.is_empty() {
-                                                self.sensors_snapshot = self.sensors_collector.collect_with_top_apps(true);
+                                                self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
                                                 self.last_sensors_refresh = Instant::now();
                                             }
                                         }
@@ -7457,10 +7519,10 @@ impl LauncherApp {
         } else {
             if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
                 let include_top = self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited;
-                self.sensors_snapshot = self.sensors_collector.collect_with_top_apps(include_top);
+                self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
                 self.last_sensors_refresh = Instant::now();
             }
-            self.sensors_snapshot.clone()
+            (*self.sensors_snapshot).clone()
         };
 
         let filter_cat = self.sensors_category_filter.clone();
@@ -7556,7 +7618,7 @@ impl LauncherApp {
                                     }
                                 } else {
                                     let include_top = self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited;
-                                    self.sensors_snapshot = self.sensors_collector.collect_with_top_apps(include_top);
+                                    self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
                                     self.last_sensors_refresh = Instant::now();
                                 }
                             }
@@ -7610,7 +7672,7 @@ impl LauncherApp {
                         if tab == SensorsSubTab::TopApps {
                             self.sensors_top_apps_visited = true;
                             if self.selected_machine == "local" && self.sensors_snapshot.top_apps.is_empty() {
-                                self.sensors_snapshot = self.sensors_collector.collect_with_top_apps(true);
+                                self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
                                 self.last_sensors_refresh = Instant::now();
                             }
                         }
@@ -8363,18 +8425,154 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // Filter processes
+                // Filter and group processes with intelligent caching to avoid redundant sorting and allocations
                 let search_q = self.sensors_search_query.trim().to_lowercase();
-                let mut filtered_apps = snap.top_apps.clone();
-                if !search_q.is_empty() {
-                    filtered_apps.retain(|a| {
-                        a.name.to_lowercase().contains(&search_q)
-                            || a.pid.to_string().contains(&search_q)
-                            || a.status.to_lowercase().contains(&search_q)
-                    });
+                let cache_valid = self.sensors_cached_snap_timestamp == snap.timestamp
+                    && self.sensors_cached_search == search_q
+                    && self.sensors_cached_sort == self.sensors_top_apps_sort
+                    && self.sensors_cached_sort_desc == self.sensors_top_apps_sort_desc;
+
+                if !cache_valid {
+                    let mut filtered_apps: Vec<&crate::sensors::ProcessSensorInfo> = snap.top_apps.iter().collect();
+                    if !search_q.is_empty() {
+                        filtered_apps.retain(|a| {
+                            a.name.to_lowercase().contains(&search_q)
+                                || a.pid.to_string().contains(&search_q)
+                                || a.status.to_lowercase().contains(&search_q)
+                        });
+                    }
+
+                    let is_foreground = |name_lower: &str| -> bool {
+                        if name_lower.starts_with('[')
+                            || name_lower.starts_with("kworker")
+                            || name_lower.starts_with("irq/")
+                            || name_lower.starts_with("ksoftirqd")
+                            || name_lower.starts_with("rcu_")
+                            || name_lower.starts_with("migration")
+                            || name_lower.starts_with("kswapd")
+                            || name_lower.starts_with("jbd2")
+                            || name_lower.starts_with("cpuhp")
+                            || name_lower.starts_with("khugepaged")
+                            || name_lower.starts_with("kcompactd")
+                            || name_lower.starts_with("kdevtmpfs")
+                            || name_lower.starts_with("kauditd")
+                            || name_lower.starts_with("threadpool")
+                            || name_lower.starts_with("dedicatedworker")
+                            || name_lower.starts_with("chrome_")
+                            || name_lower.starts_with("perfetto")
+                            || name_lower.starts_with("compositor")
+                            || name_lower.starts_with("js helper")
+                            || name_lower.starts_with("v8 ")
+                            || name_lower.starts_with("crashpad")
+                            || name_lower.starts_with("sandbox")
+                            || name_lower.starts_with("gmain")
+                            || name_lower.starts_with("gdbus")
+                        {
+                            return false;
+                        }
+                        const BG_KEYWORDS: &[&str] = &[
+                            "systemd", "dbus", "polkit", "accounts-daemon", "upower", "udevd", "cron", "crond",
+                            "syslog", "rsyslog", "networkmanager", "wpa_supplicant", "bluetoothd", "cupsd",
+                            "avahi-daemon", "colord", "boltd", "thermald", "auditd", "atd", "smartd", "gdm",
+                            "lightdm", "sddm", "pipewire", "wireplumber", "pulseaudio", "rtkit-daemon",
+                            "packagekitd", "kerneloops", "whoopsie", "unattended-upgr", "snapd", "containerd",
+                            "dockerd", "libvirtd", "libinput-debug", "systemd-oomd", "systemd-resolved",
+                            "systemd-journald", "systemd-logind", "systemd-udevd", "systemd-timesyncd",
+                            "irqbalance", "acpid", "mcelog", "gssproxy", "rpcbind", "sshd"
+                        ];
+                        for kw in BG_KEYWORDS {
+                            if name_lower.contains(kw) {
+                                return false;
+                            }
+                        }
+                        true
+                    };
+
+                    let mut groups_map: std::collections::BTreeMap<String, (String, bool, Vec<crate::sensors::ProcessSensorInfo>)> = std::collections::BTreeMap::new();
+                    for app in filtered_apps {
+                        let key = app.name.trim().to_lowercase();
+                        let is_app = is_foreground(&key);
+                        let entry = groups_map.entry(key).or_insert_with(|| (app.name.clone(), is_app, Vec::new()));
+                        entry.2.push(app.clone());
+                    }
+
+                    let mut all_groups: Vec<ProcessGroupSummary> = groups_map.into_iter().map(|(key, (disp_name, is_app, mut list))| {
+                        list.sort_by(|a, b| {
+                            b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap_or(std::cmp::Ordering::Equal)
+                                .then_with(|| b.memory_bytes.cmp(&a.memory_bytes))
+                                .then_with(|| a.pid.cmp(&b.pid))
+                        });
+                        let sum_cpu: f32 = list.iter().map(|p| p.cpu_usage).sum();
+                        let sum_mem: u64 = list.iter().map(|p| p.memory_bytes).sum();
+                        let sum_disk_rate: f64 = list.iter().map(|p| p.disk_rate_bps).sum();
+                        let pids: Vec<u32> = list.iter().map(|p| p.pid).collect();
+                        ProcessGroupSummary {
+                            key,
+                            display_name: disp_name,
+                            sum_cpu,
+                            sum_mem,
+                            sum_disk_rate,
+                            is_app,
+                            pids,
+                            children: list,
+                        }
+                    }).collect();
+
+                    let desc = self.sensors_top_apps_sort_desc;
+                    match self.sensors_top_apps_sort.as_str() {
+                        "mem" => all_groups.sort_by(|a, b| {
+                            let ord = if desc { b.sum_mem.cmp(&a.sum_mem) } else { a.sum_mem.cmp(&b.sum_mem) };
+                            ord.then_with(|| b.sum_cpu.partial_cmp(&a.sum_cpu).unwrap_or(std::cmp::Ordering::Equal))
+                                .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
+                        }),
+                        "disk" => all_groups.sort_by(|a, b| {
+                            let ord = if desc {
+                                b.sum_disk_rate.partial_cmp(&a.sum_disk_rate).unwrap_or(std::cmp::Ordering::Equal)
+                            } else {
+                                a.sum_disk_rate.partial_cmp(&b.sum_disk_rate).unwrap_or(std::cmp::Ordering::Equal)
+                            };
+                            ord.then_with(|| b.sum_cpu.partial_cmp(&a.sum_cpu).unwrap_or(std::cmp::Ordering::Equal))
+                                .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
+                        }),
+                        "name" => all_groups.sort_by(|a, b| {
+                            if desc {
+                                b.display_name.to_lowercase().cmp(&a.display_name.to_lowercase())
+                            } else {
+                                a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase())
+                            }
+                        }),
+                        "net" => all_groups.sort_by(|a, b| {
+                            if desc {
+                                b.display_name.to_lowercase().cmp(&a.display_name.to_lowercase())
+                            } else {
+                                a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase())
+                            }
+                        }),
+                        _ => all_groups.sort_by(|a, b| {
+                            let ord = if desc {
+                                b.sum_cpu.partial_cmp(&a.sum_cpu).unwrap_or(std::cmp::Ordering::Equal)
+                            } else {
+                                a.sum_cpu.partial_cmp(&b.sum_cpu).unwrap_or(std::cmp::Ordering::Equal)
+                            };
+                            ord.then_with(|| b.sum_mem.cmp(&a.sum_mem))
+                                .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
+                        }),
+                    }
+
+                    let (apps_groups, bg_groups): (Vec<ProcessGroupSummary>, Vec<ProcessGroupSummary>) = all_groups.into_iter().partition(|g| g.is_app);
+
+                    self.sensors_cached_apps_groups = apps_groups;
+                    self.sensors_cached_bg_groups = bg_groups;
+                    self.sensors_cached_snap_timestamp = snap.timestamp;
+                    self.sensors_cached_search = search_q;
+                    self.sensors_cached_sort = self.sensors_top_apps_sort.clone();
+                    self.sensors_cached_sort_desc = self.sensors_top_apps_sort_desc;
                 }
 
-                if filtered_apps.is_empty() {
+                let apps_groups = &self.sensors_cached_apps_groups;
+                let bg_groups = &self.sensors_cached_bg_groups;
+
+                if apps_groups.is_empty() && bg_groups.is_empty() {
                     ui.add_space(24.0);
                     ui.vertical_centered(|ui| {
                         if !self.sensors_top_apps_visited {
@@ -8388,142 +8586,6 @@ impl LauncherApp {
                     ui.add_space(24.0);
                     return;
                 }
-
-                // ═════════════════════════════════════════════════════════════
-                // PROCESS CLASSIFICATION & GROUPING
-                // ═════════════════════════════════════════════════════════════
-                let is_foreground = |name: &str| -> bool {
-                    let lower = name.to_lowercase();
-                    if lower.starts_with('[')
-                        || lower.starts_with("kworker")
-                        || lower.starts_with("irq/")
-                        || lower.starts_with("ksoftirqd")
-                        || lower.starts_with("rcu_")
-                        || lower.starts_with("migration")
-                        || lower.starts_with("kswapd")
-                        || lower.starts_with("jbd2")
-                        || lower.starts_with("cpuhp")
-                        || lower.starts_with("khugepaged")
-                        || lower.starts_with("kcompactd")
-                        || lower.starts_with("kdevtmpfs")
-                        || lower.starts_with("kauditd")
-                        // Chromium / Node / Electron internal workers & thread pools
-                        || lower.starts_with("threadpool")
-                        || lower.starts_with("dedicatedworker")
-                        || lower.starts_with("chrome_")
-                        || lower.starts_with("perfetto")
-                        || lower.starts_with("compositor")
-                        || lower.starts_with("js helper")
-                        || lower.starts_with("v8 ")
-                        || lower.starts_with("crashpad")
-                        || lower.starts_with("sandbox")
-                        || lower.starts_with("gmain")
-                        || lower.starts_with("gdbus")
-                    {
-                        return false;
-                    }
-                    let bg_keywords = [
-                        "systemd", "dbus", "polkit", "accounts-daemon", "upower", "udevd", "cron", "crond",
-                        "syslog", "rsyslog", "networkmanager", "wpa_supplicant", "bluetoothd", "cupsd",
-                        "avahi-daemon", "colord", "boltd", "thermald", "auditd", "atd", "smartd", "gdm",
-                        "lightdm", "sddm", "pipewire", "wireplumber", "pulseaudio", "rtkit-daemon",
-                        "packagekitd", "kerneloops", "whoopsie", "unattended-upgr", "snapd", "containerd",
-                        "dockerd", "libvirtd", "libinput-debug", "systemd-oomd", "systemd-resolved",
-                        "systemd-journald", "systemd-logind", "systemd-udevd", "systemd-timesyncd",
-                        "irqbalance", "acpid", "mcelog", "gssproxy", "rpcbind", "sshd"
-                    ];
-                    for kw in &bg_keywords {
-                        if lower.contains(kw) {
-                            return false;
-                        }
-                    }
-                    true
-                };
-
-                struct GroupSummary {
-                    key: String,
-                    display_name: String,
-                    sum_cpu: f32,
-                    sum_mem: u64,
-                    sum_disk_rate: f64,
-                    is_app: bool,
-                    pids: Vec<u32>,
-                    children: Vec<crate::sensors::ProcessSensorInfo>,
-                }
-
-                let mut groups_map: std::collections::BTreeMap<String, (String, bool, Vec<crate::sensors::ProcessSensorInfo>)> = std::collections::BTreeMap::new();
-                for app in filtered_apps {
-                    let key = app.name.trim().to_lowercase();
-                    let is_app = is_foreground(&app.name);
-                    let entry = groups_map.entry(key).or_insert_with(|| (app.name.clone(), is_app, Vec::new()));
-                    entry.2.push(app);
-                }
-
-                let mut all_groups: Vec<GroupSummary> = groups_map.into_iter().map(|(key, (disp_name, is_app, mut list))| {
-                    list.sort_by(|a, b| {
-                        b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap_or(std::cmp::Ordering::Equal)
-                            .then_with(|| b.memory_bytes.cmp(&a.memory_bytes))
-                            .then_with(|| a.pid.cmp(&b.pid))
-                    });
-                    let sum_cpu: f32 = list.iter().map(|p| p.cpu_usage).sum();
-                    let sum_mem: u64 = list.iter().map(|p| p.memory_bytes).sum();
-                    let sum_disk_rate: f64 = list.iter().map(|p| p.disk_rate_bps).sum();
-                    let pids: Vec<u32> = list.iter().map(|p| p.pid).collect();
-                    GroupSummary {
-                        key,
-                        display_name: disp_name,
-                        sum_cpu,
-                        sum_mem,
-                        sum_disk_rate,
-                        is_app,
-                        pids,
-                        children: list,
-                    }
-                }).collect();
-
-                // Sort groups deterministically (Name, CPU, RAM, Storage, Network) with stable secondary tie-breakers
-                let desc = self.sensors_top_apps_sort_desc;
-                match self.sensors_top_apps_sort.as_str() {
-                    "mem" => all_groups.sort_by(|a, b| {
-                        let ord = if desc { b.sum_mem.cmp(&a.sum_mem) } else { a.sum_mem.cmp(&b.sum_mem) };
-                        ord.then_with(|| b.sum_cpu.partial_cmp(&a.sum_cpu).unwrap_or(std::cmp::Ordering::Equal))
-                            .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
-                    }),
-                    "disk" => all_groups.sort_by(|a, b| {
-                        let ord = if desc {
-                            b.sum_disk_rate.partial_cmp(&a.sum_disk_rate).unwrap_or(std::cmp::Ordering::Equal)
-                        } else {
-                            a.sum_disk_rate.partial_cmp(&b.sum_disk_rate).unwrap_or(std::cmp::Ordering::Equal)
-                        };
-                        ord.then_with(|| b.sum_cpu.partial_cmp(&a.sum_cpu).unwrap_or(std::cmp::Ordering::Equal))
-                            .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
-                    }),
-                    "name" => all_groups.sort_by(|a, b| {
-                        if desc {
-                            b.display_name.to_lowercase().cmp(&a.display_name.to_lowercase())
-                        } else {
-                            a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase())
-                        }
-                    }),
-                    "net" => all_groups.sort_by(|a, b| {
-                        if desc {
-                            b.display_name.to_lowercase().cmp(&a.display_name.to_lowercase())
-                        } else {
-                            a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase())
-                        }
-                    }),
-                    _ => all_groups.sort_by(|a, b| {
-                        let ord = if desc {
-                            b.sum_cpu.partial_cmp(&a.sum_cpu).unwrap_or(std::cmp::Ordering::Equal)
-                        } else {
-                            a.sum_cpu.partial_cmp(&b.sum_cpu).unwrap_or(std::cmp::Ordering::Equal)
-                        };
-                        ord.then_with(|| b.sum_mem.cmp(&a.sum_mem))
-                            .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
-                    }),
-                }
-
-                let (apps_groups, bg_groups): (Vec<GroupSummary>, Vec<GroupSummary>) = all_groups.into_iter().partition(|g| g.is_app);
 
                 // Responsive Name column width accounting for all column widths and gaps
                 let avail_w = ui.available_width();
@@ -8642,7 +8704,7 @@ impl LauncherApp {
                                         }
 
                                         // Helper closure to render a process group
-                                        let mut render_group_row = |ui: &mut Ui, grp: &GroupSummary, is_app_sec: bool| {
+                                        let mut render_group_row = |ui: &mut Ui, grp: &ProcessGroupSummary, is_app_sec: bool| {
                                             let is_multi = grp.children.len() > 1;
                                             let is_expanded = self.sensors_top_apps_expanded_groups.contains(&grp.key);
                                             let is_group_selected = grp.pids.iter().any(|pid| self.sensors_top_apps_selected_pid == Some(*pid));

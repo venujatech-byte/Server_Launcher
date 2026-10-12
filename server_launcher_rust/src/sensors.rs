@@ -206,8 +206,9 @@ impl Default for SystemSensorsCollector {
 
 impl SystemSensorsCollector {
     pub fn new() -> Self {
-        let mut sys = System::new_all();
-        sys.refresh_all();
+        let mut sys = System::new();
+        sys.refresh_cpu_all();
+        sys.refresh_memory();
         let disks = Disks::new_with_refreshed_list();
         let networks = Networks::new_with_refreshed_list();
         let components = Components::new_with_refreshed_list();
@@ -470,7 +471,14 @@ impl SystemSensorsCollector {
         // 9. Top Applications & Resource Consumers
         let mut top_apps = Vec::new();
         if include_top_apps {
-            self.sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
+            self.sys.refresh_processes_specifics(
+                sysinfo::ProcessesToUpdate::All,
+                sysinfo::ProcessRefreshKind::new()
+                    .with_cpu()
+                    .with_memory()
+                    .with_disk_usage()
+                    .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
+            );
             let mut current_proc_disk = HashMap::new();
 
             for (pid, proc) in self.sys.processes() {
@@ -755,27 +763,19 @@ pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32
         loop {
             let p_scaling = format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", core_idx);
             let p_cur = format!("/sys/devices/system/cpu/cpu{}/cpufreq/cpuinfo_cur_freq", core_idx);
-            let path_scaling = Path::new(&p_scaling);
-            let path_cur = Path::new(&p_cur);
 
-            let khz_opt = if path_scaling.exists() {
-                fs::read_to_string(path_scaling).ok().and_then(|s| s.trim().parse::<u64>().ok())
-            } else if path_cur.exists() {
-                fs::read_to_string(path_cur).ok().and_then(|s| s.trim().parse::<u64>().ok())
-            } else {
-                None
-            };
+            let khz_opt = fs::read_to_string(&p_scaling)
+                .or_else(|_| fs::read_to_string(&p_cur))
+                .ok()
+                .and_then(|s| s.trim().parse::<u64>().ok());
 
             if let Some(khz) = khz_opt {
                 freqs.push(khz / 1000);
-            } else {
-                // Break if cpufreq not found for this core index
-                if !path_scaling.exists() && !path_cur.exists() && core_idx > 0 {
-                    break;
-                }
+            } else if core_idx > 0 || !Path::new(&format!("/sys/devices/system/cpu/cpu{}", core_idx)).exists() {
+                break;
             }
             core_idx += 1;
-            if core_idx > 256 {
+            if core_idx > 128 {
                 break;
             }
         }
@@ -1040,46 +1040,53 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
     }
 }
 
+static HAS_NVIDIA_SMI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
 fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
     let mut gpus = Vec::new();
 
-    // 1. Check NVIDIA via nvidia-smi
-    let nvidia_out = Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=name,temperature.gpu,utilization.gpu,utilization.memory,memory.used,memory.total,clocks.current.graphics,clocks.current.memory,power.draw,power.limit",
-            "--format=csv,noheader,nounits"
-        ])
-        .output();
+    // 1. Check NVIDIA via nvidia-smi if available
+    if HAS_NVIDIA_SMI.load(std::sync::atomic::Ordering::Relaxed) {
+        let nvidia_out = Command::new("nvidia-smi")
+            .args([
+                "--query-gpu=name,temperature.gpu,utilization.gpu,utilization.memory,memory.used,memory.total,clocks.current.graphics,clocks.current.memory,power.draw,power.limit",
+                "--format=csv,noheader,nounits"
+            ])
+            .output();
 
-    if let Ok(out) = nvidia_out {
-        if out.status.success() {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            for line in stdout.lines() {
-                let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
-                if parts.len() >= 6 {
-                    let name = parts[0].to_string();
-                    let temp = parts[1].parse::<f32>().ok();
-                    let load_pct = parts[2].parse::<f32>().ok();
-                    let mem_used = parts[4].parse::<u64>().ok();
-                    let mem_total = parts[5].parse::<u64>().ok();
-                    let clock_mhz = parts.get(6).and_then(|s| s.parse::<u32>().ok());
-                    let mem_clock_mhz = parts.get(7).and_then(|s| s.parse::<u32>().ok());
-                    let power_watts = parts.get(8).and_then(|s| s.parse::<f32>().ok());
-                    let power_limit_watts = parts.get(9).and_then(|s| s.parse::<f32>().ok());
+        match nvidia_out {
+            Ok(out) if out.status.success() => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                for line in stdout.lines() {
+                    let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+                    if parts.len() >= 6 {
+                        let name = parts[0].to_string();
+                        let temp = parts[1].parse::<f32>().ok();
+                        let load_pct = parts[2].parse::<f32>().ok();
+                        let mem_used = parts[4].parse::<u64>().ok();
+                        let mem_total = parts[5].parse::<u64>().ok();
+                        let clock_mhz = parts.get(6).and_then(|s| s.parse::<u32>().ok());
+                        let mem_clock_mhz = parts.get(7).and_then(|s| s.parse::<u32>().ok());
+                        let power_watts = parts.get(8).and_then(|s| s.parse::<f32>().ok());
+                        let power_limit_watts = parts.get(9).and_then(|s| s.parse::<f32>().ok());
 
-                    gpus.push(GpuSensorInfo {
-                        name,
-                        load_pct,
-                        temp,
-                        mem_used_mb: mem_used,
-                        mem_total_mb: mem_total,
-                        clock_mhz,
-                        mem_clock_mhz,
-                        power_watts,
-                        power_limit_watts,
-                        driver: "NVIDIA Proprietary".to_string(),
-                    });
+                        gpus.push(GpuSensorInfo {
+                            name,
+                            load_pct,
+                            temp,
+                            mem_used_mb: mem_used,
+                            mem_total_mb: mem_total,
+                            clock_mhz,
+                            mem_clock_mhz,
+                            power_watts,
+                            power_limit_watts,
+                            driver: "NVIDIA Proprietary".to_string(),
+                        });
+                    }
                 }
+            }
+            _ => {
+                HAS_NVIDIA_SMI.store(false, std::sync::atomic::Ordering::Relaxed);
             }
         }
     }

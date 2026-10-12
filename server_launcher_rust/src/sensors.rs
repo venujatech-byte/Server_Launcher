@@ -474,8 +474,20 @@ impl SystemSensorsCollector {
             let mut current_proc_disk = HashMap::new();
 
             for (pid, proc) in self.sys.processes() {
+                // Filter out OS-level threads so only actual processes are listed!
+                // On Linux, sysinfo returns all kernel tasks/threads with thread_kind == Some(Userland).
+                // Threads share the same address space (memory) and their CPU is already accounted for in the main process.
+                if proc.thread_kind().is_some() {
+                    continue;
+                }
+
                 let pid_u32 = pid.as_u32();
-                let name = proc.name().to_string_lossy().to_string();
+                let mut name = proc.name().to_string_lossy().to_string();
+                if (name == "exe" || name.is_empty()) && proc.exe().is_some() {
+                    if let Some(exe_file) = proc.exe().unwrap().file_name() {
+                        name = exe_file.to_string_lossy().to_string();
+                    }
+                }
                 let cpu_usage = proc.cpu_usage();
                 let memory_bytes = proc.memory();
                 let disk_usage = proc.disk_usage();

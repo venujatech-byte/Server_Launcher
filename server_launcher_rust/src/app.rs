@@ -323,6 +323,43 @@ pub struct LauncherApp {
 
     // Settings window open state
     pub settings_modal_open: bool,
+
+    // Process Diagnostics & Control Modals (Properties, Memory Maps, Open Files, Set Affinity)
+    pub proc_properties_modal_open: bool,
+    pub proc_properties_pid: u32,
+    pub proc_properties_name: String,
+    pub proc_properties_data: Option<crate::procmgr::ProcessDetails>,
+    pub proc_properties_error: Option<String>,
+    pub proc_properties_loading: bool,
+    pub proc_details_receiver: Arc<Mutex<Option<(u32, Result<crate::procmgr::ProcessDetails, String>)>>>,
+
+    pub proc_maps_modal_open: bool,
+    pub proc_maps_pid: u32,
+    pub proc_maps_name: String,
+    pub proc_maps_data: Option<Vec<crate::procmgr::MemoryMapEntry>>,
+    pub proc_maps_error: Option<String>,
+    pub proc_maps_search: String,
+    pub proc_maps_loading: bool,
+    pub proc_maps_receiver: Arc<Mutex<Option<(u32, Result<Vec<crate::procmgr::MemoryMapEntry>, String>)>>>,
+
+    pub proc_open_files_modal_open: bool,
+    pub proc_open_files_pid: u32,
+    pub proc_open_files_name: String,
+    pub proc_open_files_data: Option<Vec<crate::procmgr::OpenFileEntry>>,
+    pub proc_open_files_error: Option<String>,
+    pub proc_open_files_search: String,
+    pub proc_open_files_loading: bool,
+    pub proc_open_files_receiver: Arc<Mutex<Option<(u32, Result<Vec<crate::procmgr::OpenFileEntry>, String>)>>>,
+
+    pub proc_affinity_modal_open: bool,
+    pub proc_affinity_pid: u32,
+    pub proc_affinity_name: String,
+    pub proc_affinity_host_id: Option<String>,
+    pub proc_affinity_cores: Vec<bool>,
+    pub proc_affinity_total_cores: usize,
+    pub proc_affinity_error: Option<String>,
+    pub proc_affinity_loading: bool,
+    pub proc_affinity_receiver: Arc<Mutex<Option<(u32, Result<Vec<usize>, String>)>>>,
 }
 
 pub struct ExternalTerminalSession {
@@ -679,6 +716,42 @@ impl LauncherApp {
             local_sudo_password: String::new(),
             import_status_msg: None,
             settings_modal_open: false,
+
+            proc_properties_modal_open: false,
+            proc_properties_pid: 0,
+            proc_properties_name: String::new(),
+            proc_properties_data: None,
+            proc_properties_error: None,
+            proc_properties_loading: false,
+            proc_details_receiver: Arc::new(Mutex::new(None)),
+
+            proc_maps_modal_open: false,
+            proc_maps_pid: 0,
+            proc_maps_name: String::new(),
+            proc_maps_data: None,
+            proc_maps_error: None,
+            proc_maps_search: String::new(),
+            proc_maps_loading: false,
+            proc_maps_receiver: Arc::new(Mutex::new(None)),
+
+            proc_open_files_modal_open: false,
+            proc_open_files_pid: 0,
+            proc_open_files_name: String::new(),
+            proc_open_files_data: None,
+            proc_open_files_error: None,
+            proc_open_files_search: String::new(),
+            proc_open_files_loading: false,
+            proc_open_files_receiver: Arc::new(Mutex::new(None)),
+
+            proc_affinity_modal_open: false,
+            proc_affinity_pid: 0,
+            proc_affinity_name: String::new(),
+            proc_affinity_host_id: None,
+            proc_affinity_cores: Vec::new(),
+            proc_affinity_total_cores: 0,
+            proc_affinity_error: None,
+            proc_affinity_loading: false,
+            proc_affinity_receiver: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -3741,6 +3814,10 @@ impl eframe::App for LauncherApp {
 
         self.render_sudo_popup(ctx, &p);
         self.render_settings_modal(ctx, &p);
+        self.render_proc_properties_modal(ctx, &p);
+        self.render_proc_memory_maps_modal(ctx, &p);
+        self.render_proc_open_files_modal(ctx, &p);
+        self.render_proc_affinity_modal(ctx, &p);
 
         let is_scanning = self.scanner.is_scanning.lock().map(|s| *s).unwrap_or(false);
         let has_remote_bg_work = {
@@ -3767,6 +3844,156 @@ impl eframe::App for LauncherApp {
             ctx.request_repaint_after(std::time::Duration::from_secs(4));
         }
     }
+}
+
+#[derive(Debug, Clone)]
+enum ProcAction {
+    Properties { pid: u32, name: String, cpu: f32, mem: u64 },
+    MemoryMaps { pid: u32, name: String },
+    OpenFiles { pid: u32, name: String },
+    SetPriority { pid: u32, nice: i32 },
+    SetAffinity { pid: u32, name: String },
+    Stop { pid: u32 },
+    Resume { pid: u32 },
+    Terminate { pid: u32 },
+    ForceStop { pid: u32 },
+}
+
+fn render_process_context_menu(
+    ui: &mut egui::Ui,
+    pid: u32,
+    name: &str,
+    cpu: f32,
+    mem: u64,
+    proc_action: &mut Option<ProcAction>,
+    p: &crate::theme::ThemePalette,
+) {
+    ui.scope(|ui| {
+        ui.visuals_mut().widgets.inactive.bg_fill = Color32::TRANSPARENT;
+        ui.visuals_mut().widgets.hovered.bg_fill = Color32::from_rgba_unmultiplied(255, 255, 255, 18);
+        ui.visuals_mut().widgets.hovered.rounding = Rounding::same(4.0);
+        ui.visuals_mut().widgets.active.bg_fill = Color32::from_rgba_unmultiplied(255, 255, 255, 28);
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
+
+        let item = |ui: &mut egui::Ui, label: &str, shortcut: &str| -> egui::Response {
+            let desired_size = egui::vec2(210.0, 24.0);
+            let (rect, resp) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+            if resp.hovered() {
+                ui.painter().rect_filled(rect, Rounding::same(4.0), Color32::from_rgba_unmultiplied(255, 255, 255, 18));
+            }
+            ui.painter().text(
+                egui::pos2(rect.left() + 10.0, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                label,
+                egui::FontId::proportional(12.0),
+                p.text_primary,
+            );
+            if !shortcut.is_empty() {
+                ui.painter().text(
+                    egui::pos2(rect.right() - 10.0, rect.center().y),
+                    egui::Align2::RIGHT_CENTER,
+                    shortcut,
+                    egui::FontId::proportional(11.0),
+                    p.text_muted,
+                );
+            }
+            resp
+        };
+
+        // 1. Properties (Alt+Return)
+        if item(ui, "Properties", "Alt+Return").clicked() {
+            *proc_action = Some(ProcAction::Properties {
+                pid,
+                name: name.to_string(),
+                cpu,
+                mem,
+            });
+            ui.close_menu();
+        }
+
+        ui.add_space(2.0);
+        ui.separator();
+        ui.add_space(2.0);
+
+        // 2. Memory Maps (Ctrl+M)
+        if item(ui, "Memory Maps", "Ctrl+M").clicked() {
+            *proc_action = Some(ProcAction::MemoryMaps {
+                pid,
+                name: name.to_string(),
+            });
+            ui.close_menu();
+        }
+
+        // 3. Open Files (Ctrl+O)
+        if item(ui, "Open Files", "Ctrl+O").clicked() {
+            *proc_action = Some(ProcAction::OpenFiles {
+                pid,
+                name: name.to_string(),
+            });
+            ui.close_menu();
+        }
+
+        ui.add_space(2.0);
+        ui.separator();
+        ui.add_space(2.0);
+
+        // 4. Change Priority (Submenu)
+        ui.menu_button(RichText::new("Change Priority").size(12.0).color(p.text_primary), |ui| {
+            ui.set_min_width(170.0);
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
+            let prios = [
+                ("Realtime (-20)", -20),
+                ("High (-10)", -10),
+                ("Above Normal (-5)", -5),
+                ("Normal (0)", 0),
+                ("Below Normal (5)", 5),
+                ("Low / Idle (19)", 19),
+            ];
+            for (p_label, nice) in prios {
+                if item(ui, p_label, "").clicked() {
+                    *proc_action = Some(ProcAction::SetPriority { pid, nice });
+                    ui.close_menu();
+                }
+            }
+        });
+
+        // 5. Set Affinity... (Alt+S)
+        if item(ui, "Set Affinity...", "Alt+S").clicked() {
+            *proc_action = Some(ProcAction::SetAffinity {
+                pid,
+                name: name.to_string(),
+            });
+            ui.close_menu();
+        }
+
+        ui.add_space(2.0);
+        ui.separator();
+        ui.add_space(2.0);
+
+        // 6. Stop... (Ctrl+S)
+        if item(ui, "Stop...", "Ctrl+S").clicked() {
+            *proc_action = Some(ProcAction::Stop { pid });
+            ui.close_menu();
+        }
+
+        // 7. Resume (Ctrl+C)
+        if item(ui, "Resume", "Ctrl+C").clicked() {
+            *proc_action = Some(ProcAction::Resume { pid });
+            ui.close_menu();
+        }
+
+        // 8. Terminate... (Ctrl+T)
+        if item(ui, "Terminate...", "Ctrl+T").clicked() {
+            *proc_action = Some(ProcAction::Terminate { pid });
+            ui.close_menu();
+        }
+
+        // 9. Force Stop... (Ctrl+K)
+        if item(ui, "Force Stop...", "Ctrl+K").clicked() {
+            *proc_action = Some(ProcAction::ForceStop { pid });
+            ui.close_menu();
+        }
+    });
 }
 
 impl LauncherApp {
@@ -7065,6 +7292,670 @@ impl LauncherApp {
     }
 
     // ═════════════════════════════════════════════════════════════════════════
+    // PROCESS MODALS: Properties, Memory Maps, Open Files, Set Affinity
+    // ═════════════════════════════════════════════════════════════════════════
+    fn render_proc_properties_modal(&mut self, ctx: &Context, palette: &crate::theme::ThemePalette) {
+        if let Some((pid, res)) = self.proc_details_receiver.lock().unwrap().take() {
+            if self.proc_properties_pid == pid {
+                self.proc_properties_loading = false;
+                match res {
+                    Ok(data) => self.proc_properties_data = Some(data),
+                    Err(e) => self.proc_properties_error = Some(e),
+                }
+            }
+        }
+
+        if !self.proc_properties_modal_open {
+            return;
+        }
+
+        if ctx.input(|i| i.key_pressed(Key::Escape)) {
+            self.proc_properties_modal_open = false;
+            return;
+        }
+
+        let mut is_open = self.proc_properties_modal_open;
+        let screen = ctx.screen_rect();
+        let modal_w = 560.0_f32.min(screen.width() - 40.0).max(380.0);
+        let max_h = (screen.height() - 60.0).max(420.0);
+
+        let window_id = egui::Id::new("proc_properties_modal_dialog");
+        let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
+
+        egui::Window::new("Process Properties")
+            .id(window_id)
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(true)
+            .movable(false)
+            .current_pos(screen.center() + drag_offset)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .min_width(modal_w)
+            .max_width(modal_w)
+            .default_height(480.0)
+            .max_height(max_h)
+            .frame(
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(17, 19, 27))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                    .rounding(Rounding::same(16.0))
+                    .shadow(egui::epaint::Shadow {
+                        offset: egui::vec2(0.0, 8.0),
+                        blur: 24.0,
+                        spread: 0.0,
+                        color: Color32::from_black_alpha(160),
+                    })
+                    .inner_margin(egui::Margin::symmetric(16.0, 12.0)),
+            )
+            .show(ctx, |ui| {
+                crate::modals::render_modal_titlebar(ui, &format!("Properties: {} (PID {})", self.proc_properties_name, self.proc_properties_pid), &mut is_open);
+                ui.add_space(8.0);
+
+                ScrollArea::vertical().max_height(max_h - 100.0).show(ui, |ui| {
+                    if self.proc_properties_loading {
+                        ui.add_space(40.0);
+                        ui.vertical_centered(|ui| {
+                            ui.spinner();
+                            ui.add_space(8.0);
+                            ui.label(RichText::new("Reading process metadata...").size(12.0).color(palette.text_muted));
+                        });
+                        ui.add_space(40.0);
+                    } else if let Some(ref err) = self.proc_properties_error {
+                        ui.add_space(16.0);
+                        ui.label(RichText::new(format!("Error: {}", err)).size(12.0).color(palette.danger));
+                        ui.add_space(16.0);
+                    } else if let Some(ref details) = self.proc_properties_data {
+                        // Summary status chips
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+                            let (state_color, state_bg) = if details.state.starts_with('R') || details.state == "Running" {
+                                (Color32::from_rgb(52, 211, 153), Color32::from_rgba_unmultiplied(16, 185, 129, 30))
+                            } else if details.state.starts_with('T') || details.state.contains("stopped") {
+                                (Color32::from_rgb(251, 191, 36), Color32::from_rgba_unmultiplied(245, 158, 11, 30))
+                            } else {
+                                (palette.text_secondary, palette.bg_button)
+                            };
+                            Frame::none().fill(state_bg).rounding(Rounding::same(999.0)).inner_margin(egui::Margin::symmetric(10.0, 3.5)).show(ui, |ui| {
+                                ui.label(RichText::new(&details.state).size(11.0).strong().color(state_color));
+                            });
+
+                            Frame::none().fill(palette.bg_button).rounding(Rounding::same(999.0)).inner_margin(egui::Margin::symmetric(10.0, 3.5)).show(ui, |ui| {
+                                ui.label(RichText::new(format!("PID {}", details.pid)).size(11.0).color(palette.text_primary));
+                            });
+
+                            if !details.user.is_empty() {
+                                Frame::none().fill(palette.bg_button).rounding(Rounding::same(999.0)).inner_margin(egui::Margin::symmetric(10.0, 3.5)).show(ui, |ui| {
+                                    ui.label(RichText::new(&details.user).size(11.0).color(palette.text_secondary));
+                                });
+                            }
+
+                            Frame::none().fill(palette.bg_button).rounding(Rounding::same(999.0)).inner_margin(egui::Margin::symmetric(10.0, 3.5)).show(ui, |ui| {
+                                ui.label(RichText::new(format!("{} threads", details.threads)).size(11.0).color(palette.text_secondary));
+                            });
+                        });
+
+                        ui.add_space(10.0);
+
+                        // Key metrics table
+                        Frame::none()
+                            .fill(Color32::from_rgb(22, 25, 35))
+                            .stroke(Stroke::new(1.0_f32, palette.border.gamma_multiply(0.4)))
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                            .show(ui, |ui| {
+                                egui::Grid::new("proc_props_details_grid")
+                                    .num_columns(2)
+                                    .spacing(egui::vec2(20.0, 6.0))
+                                    .show(ui, |ui| {
+                                        let mut prop_row = |name: &str, val: &str| {
+                                            ui.label(RichText::new(name).size(11.5).color(palette.text_muted));
+                                            ui.label(RichText::new(val).size(11.5).monospace().color(palette.text_primary));
+                                            ui.end_row();
+                                        };
+                                        prop_row("Parent Process (PPID)", &details.ppid.map_or("-".to_string(), |p| p.to_string()));
+                                        prop_row("Priority (Nice)", &details.nice.to_string());
+                                        prop_row("CPU Usage", &format!("{:.1}%", details.cpu_usage));
+                                        prop_row("Memory (RSS)", &crate::sensors::format_bytes(details.rss_bytes));
+                                        if details.vsz_bytes > 0 {
+                                            prop_row("Virtual Memory (VSZ)", &crate::sensors::format_bytes(details.vsz_bytes));
+                                        }
+                                    });
+                            });
+
+                        ui.add_space(10.0);
+
+                        // Paths and command line recessed code wells
+                        let render_path_well = |ui: &mut egui::Ui, title: &str, content: &str| {
+                            if content.is_empty() { return; }
+                            ui.label(RichText::new(title).size(11.0).strong().color(palette.text_secondary));
+                            ui.add_space(2.0);
+                            Frame::none()
+                                .fill(Color32::from_rgb(12, 14, 20))
+                                .stroke(Stroke::new(1.0_f32, palette.border.gamma_multiply(0.3)))
+                                .rounding(Rounding::same(6.0))
+                                .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(content).size(10.5).monospace().color(palette.text_primary));
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            if ui.button(RichText::new(crate::lucide::COPY).size(10.0).color(palette.text_muted)).on_hover_text("Copy to clipboard").clicked() {
+                                                ui.ctx().output_mut(|o| o.copied_text = content.to_string());
+                                            }
+                                        });
+                                    });
+                                });
+                            ui.add_space(6.0);
+                        };
+
+                        render_path_well(ui, "Command Line", &details.cmdline);
+                        render_path_well(ui, "Executable Binary", &details.exe_path);
+                        render_path_well(ui, "Working Directory", &details.cwd);
+                    }
+                });
+
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let btn = egui::Button::new(RichText::new("Close").size(11.5).color(palette.text_primary))
+                            .fill(palette.bg_button)
+                            .rounding(Rounding::same(999.0))
+                            .stroke(Stroke::new(1.0_f32, palette.border.gamma_multiply(0.4)))
+                            .min_size(egui::vec2(80.0, 26.0));
+                        if ui.add(btn).clicked() {
+                            is_open = false;
+                        }
+                    });
+                });
+            });
+
+        self.proc_properties_modal_open = is_open;
+    }
+
+    fn render_proc_memory_maps_modal(&mut self, ctx: &Context, palette: &crate::theme::ThemePalette) {
+        if let Some((pid, res)) = self.proc_maps_receiver.lock().unwrap().take() {
+            if self.proc_maps_pid == pid {
+                self.proc_maps_loading = false;
+                match res {
+                    Ok(maps) => self.proc_maps_data = Some(maps),
+                    Err(e) => self.proc_maps_error = Some(e),
+                }
+            }
+        }
+
+        if !self.proc_maps_modal_open {
+            return;
+        }
+
+        if ctx.input(|i| i.key_pressed(Key::Escape)) {
+            self.proc_maps_modal_open = false;
+            return;
+        }
+
+        let mut is_open = self.proc_maps_modal_open;
+        let screen = ctx.screen_rect();
+        let modal_w = 780.0_f32.min(screen.width() - 40.0).max(450.0);
+        let max_h = (screen.height() - 60.0).max(460.0);
+
+        let window_id = egui::Id::new("proc_maps_modal_dialog");
+        let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
+
+        egui::Window::new("Memory Maps")
+            .id(window_id)
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(true)
+            .movable(false)
+            .current_pos(screen.center() + drag_offset)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .min_width(modal_w)
+            .max_width(modal_w)
+            .default_height(520.0)
+            .max_height(max_h)
+            .frame(
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(17, 19, 27))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                    .rounding(Rounding::same(16.0))
+                    .shadow(egui::epaint::Shadow {
+                        offset: egui::vec2(0.0, 8.0),
+                        blur: 24.0,
+                        spread: 0.0,
+                        color: Color32::from_black_alpha(160),
+                    })
+                    .inner_margin(egui::Margin::symmetric(16.0, 12.0)),
+            )
+            .show(ctx, |ui| {
+                crate::modals::render_modal_titlebar(ui, &format!("Memory Maps: {} (PID {})", self.proc_maps_name, self.proc_maps_pid), &mut is_open);
+                ui.add_space(8.0);
+
+                // Search & Counter bar
+                ui.horizontal(|ui| {
+                    Frame::none()
+                        .fill(Color32::from_rgb(22, 25, 35))
+                        .stroke(Stroke::new(1.0_f32, palette.border.gamma_multiply(0.4)))
+                        .rounding(Rounding::same(999.0))
+                        .inner_margin(egui::Margin::symmetric(10.0, 4.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(crate::lucide::SEARCH).size(11.0).color(palette.text_muted));
+                                ui.add(egui::TextEdit::singleline(&mut self.proc_maps_search).hint_text("Filter address, permissions, or library...").desired_width(240.0).frame(false));
+                                if !self.proc_maps_search.is_empty() {
+                                    if ui.add(egui::Button::new(RichText::new(crate::lucide::X).size(10.0).color(palette.text_muted)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE)).clicked() {
+                                        self.proc_maps_search.clear();
+                                    }
+                                }
+                            });
+                        });
+
+                    if let Some(ref maps) = self.proc_maps_data {
+                        Frame::none().fill(palette.bg_button).rounding(Rounding::same(999.0)).inner_margin(egui::Margin::symmetric(9.0, 3.5)).show(ui, |ui| {
+                            ui.label(RichText::new(format!("{} mappings", maps.len())).size(10.5).color(palette.text_muted));
+                        });
+                    }
+                });
+
+                ui.add_space(8.0);
+
+                if self.proc_maps_loading {
+                    ui.add_space(40.0);
+                    ui.vertical_centered(|ui| {
+                        ui.spinner();
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("Reading memory mappings...").size(12.0).color(palette.text_muted));
+                    });
+                    ui.add_space(40.0);
+                } else if let Some(ref err) = self.proc_maps_error {
+                    ui.add_space(16.0);
+                    ui.label(RichText::new(format!("Error: {}", err)).size(12.0).color(palette.danger));
+                    ui.add_space(16.0);
+                } else if let Some(ref maps) = self.proc_maps_data {
+                    let filter = self.proc_maps_search.trim().to_lowercase();
+                    ScrollArea::vertical().max_height(max_h - 130.0).show(ui, |ui| {
+                        egui::Grid::new("proc_maps_table_grid")
+                            .num_columns(5)
+                            .spacing(egui::vec2(12.0, 4.0))
+                            .striped(true)
+                            .show(ui, |ui| {
+                                ui.label(RichText::new("Address Range").size(11.0).strong().color(palette.text_secondary));
+                                ui.label(RichText::new("Perms").size(11.0).strong().color(palette.text_secondary));
+                                ui.label(RichText::new("Offset").size(11.0).strong().color(palette.text_secondary));
+                                ui.label(RichText::new("Device").size(11.0).strong().color(palette.text_secondary));
+                                ui.label(RichText::new("Mapping / Path").size(11.0).strong().color(palette.text_secondary));
+                                ui.end_row();
+
+                                for entry in maps {
+                                    if !filter.is_empty()
+                                        && !entry.address.to_lowercase().contains(&filter)
+                                        && !entry.pathname.to_lowercase().contains(&filter)
+                                        && !entry.perms.contains(&filter)
+                                    {
+                                        continue;
+                                    }
+                                    ui.label(RichText::new(&entry.address).size(10.5).monospace().color(palette.text_primary));
+                                    let perms_color = if entry.perms.contains('x') {
+                                        Color32::from_rgb(52, 211, 153)
+                                    } else if entry.perms.contains('w') {
+                                        Color32::from_rgb(251, 191, 36)
+                                    } else {
+                                        palette.text_muted
+                                    };
+                                    ui.label(RichText::new(&entry.perms).size(10.5).monospace().color(perms_color));
+                                    ui.label(RichText::new(&entry.offset).size(10.5).monospace().color(palette.text_muted));
+                                    ui.label(RichText::new(&entry.dev).size(10.5).monospace().color(palette.text_muted));
+                                    let path_display = if entry.pathname.is_empty() { "[anon]".to_string() } else { entry.pathname.clone() };
+                                    ui.label(RichText::new(path_display).size(10.5).monospace().color(palette.text_primary));
+                                    ui.end_row();
+                                }
+                            });
+                    });
+                }
+
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let btn = egui::Button::new(RichText::new("Close").size(11.5).color(palette.text_primary))
+                            .fill(palette.bg_button)
+                            .rounding(Rounding::same(999.0))
+                            .stroke(Stroke::new(1.0_f32, palette.border.gamma_multiply(0.4)))
+                            .min_size(egui::vec2(80.0, 26.0));
+                        if ui.add(btn).clicked() {
+                            is_open = false;
+                        }
+                    });
+                });
+            });
+
+        self.proc_maps_modal_open = is_open;
+    }
+
+    fn render_proc_open_files_modal(&mut self, ctx: &Context, palette: &crate::theme::ThemePalette) {
+        if let Some((pid, res)) = self.proc_open_files_receiver.lock().unwrap().take() {
+            if self.proc_open_files_pid == pid {
+                self.proc_open_files_loading = false;
+                match res {
+                    Ok(files) => self.proc_open_files_data = Some(files),
+                    Err(e) => self.proc_open_files_error = Some(e),
+                }
+            }
+        }
+
+        if !self.proc_open_files_modal_open {
+            return;
+        }
+
+        if ctx.input(|i| i.key_pressed(Key::Escape)) {
+            self.proc_open_files_modal_open = false;
+            return;
+        }
+
+        let mut is_open = self.proc_open_files_modal_open;
+        let screen = ctx.screen_rect();
+        let modal_w = 680.0_f32.min(screen.width() - 40.0).max(420.0);
+        let max_h = (screen.height() - 60.0).max(440.0);
+
+        let window_id = egui::Id::new("proc_open_files_modal_dialog");
+        let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
+
+        egui::Window::new("Open Files")
+            .id(window_id)
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(true)
+            .movable(false)
+            .current_pos(screen.center() + drag_offset)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .min_width(modal_w)
+            .max_width(modal_w)
+            .default_height(480.0)
+            .max_height(max_h)
+            .frame(
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(17, 19, 27))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                    .rounding(Rounding::same(16.0))
+                    .shadow(egui::epaint::Shadow {
+                        offset: egui::vec2(0.0, 8.0),
+                        blur: 24.0,
+                        spread: 0.0,
+                        color: Color32::from_black_alpha(160),
+                    })
+                    .inner_margin(egui::Margin::symmetric(16.0, 12.0)),
+            )
+            .show(ctx, |ui| {
+                crate::modals::render_modal_titlebar(ui, &format!("Open Files: {} (PID {})", self.proc_open_files_name, self.proc_open_files_pid), &mut is_open);
+                ui.add_space(8.0);
+
+                ui.horizontal(|ui| {
+                    Frame::none()
+                        .fill(Color32::from_rgb(22, 25, 35))
+                        .stroke(Stroke::new(1.0_f32, palette.border.gamma_multiply(0.4)))
+                        .rounding(Rounding::same(999.0))
+                        .inner_margin(egui::Margin::symmetric(10.0, 4.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(crate::lucide::SEARCH).size(11.0).color(palette.text_muted));
+                                ui.add(egui::TextEdit::singleline(&mut self.proc_open_files_search).hint_text("Filter file descriptor or path...").desired_width(240.0).frame(false));
+                                if !self.proc_open_files_search.is_empty() {
+                                    if ui.add(egui::Button::new(RichText::new(crate::lucide::X).size(10.0).color(palette.text_muted)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE)).clicked() {
+                                        self.proc_open_files_search.clear();
+                                    }
+                                }
+                            });
+                        });
+
+                    if let Some(ref files) = self.proc_open_files_data {
+                        Frame::none().fill(palette.bg_button).rounding(Rounding::same(999.0)).inner_margin(egui::Margin::symmetric(9.0, 3.5)).show(ui, |ui| {
+                            ui.label(RichText::new(format!("{} open files", files.len())).size(10.5).color(palette.text_muted));
+                        });
+                    }
+                });
+
+                ui.add_space(8.0);
+
+                if self.proc_open_files_loading {
+                    ui.add_space(40.0);
+                    ui.vertical_centered(|ui| {
+                        ui.spinner();
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("Reading open file descriptors...").size(12.0).color(palette.text_muted));
+                    });
+                    ui.add_space(40.0);
+                } else if let Some(ref err) = self.proc_open_files_error {
+                    ui.add_space(16.0);
+                    ui.label(RichText::new(format!("Error: {}", err)).size(12.0).color(palette.danger));
+                    ui.add_space(16.0);
+                } else if let Some(ref files) = self.proc_open_files_data {
+                    let filter = self.proc_open_files_search.trim().to_lowercase();
+                    ScrollArea::vertical().max_height(max_h - 130.0).show(ui, |ui| {
+                        egui::Grid::new("proc_open_files_table_grid")
+                            .num_columns(2)
+                            .spacing(egui::vec2(16.0, 4.0))
+                            .striped(true)
+                            .show(ui, |ui| {
+                                ui.label(RichText::new("FD").size(11.0).strong().color(palette.text_secondary));
+                                ui.label(RichText::new("Target Resource / Path").size(11.0).strong().color(palette.text_secondary));
+                                ui.end_row();
+
+                                for entry in files {
+                                    if !filter.is_empty() && !entry.fd.contains(&filter) && !entry.path.to_lowercase().contains(&filter) {
+                                        continue;
+                                    }
+                                    ui.label(RichText::new(&entry.fd).size(10.5).monospace().color(palette.accent_light));
+                                    ui.label(RichText::new(&entry.path).size(10.5).monospace().color(palette.text_primary));
+                                    ui.end_row();
+                                }
+                            });
+                    });
+                }
+
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let btn = egui::Button::new(RichText::new("Close").size(11.5).color(palette.text_primary))
+                            .fill(palette.bg_button)
+                            .rounding(Rounding::same(999.0))
+                            .stroke(Stroke::new(1.0_f32, palette.border.gamma_multiply(0.4)))
+                            .min_size(egui::vec2(80.0, 26.0));
+                        if ui.add(btn).clicked() {
+                            is_open = false;
+                        }
+                    });
+                });
+            });
+
+        self.proc_open_files_modal_open = is_open;
+    }
+
+    fn render_proc_affinity_modal(&mut self, ctx: &Context, palette: &crate::theme::ThemePalette) {
+        if let Some((pid, res)) = self.proc_affinity_receiver.lock().unwrap().take() {
+            if self.proc_affinity_pid == pid {
+                self.proc_affinity_loading = false;
+                match res {
+                    Ok(cores) => {
+                        let mut mask = vec![false; self.proc_affinity_total_cores];
+                        for c in cores {
+                            if c < self.proc_affinity_total_cores {
+                                mask[c] = true;
+                            }
+                        }
+                        if mask.iter().any(|&b| b) {
+                            self.proc_affinity_cores = mask;
+                        }
+                    }
+                    Err(e) => self.proc_affinity_error = Some(e),
+                }
+            }
+        }
+
+        if !self.proc_affinity_modal_open {
+            return;
+        }
+
+        if ctx.input(|i| i.key_pressed(Key::Escape)) {
+            self.proc_affinity_modal_open = false;
+            return;
+        }
+
+        let mut is_open = self.proc_affinity_modal_open;
+        let mut apply_affinity = false;
+        let screen = ctx.screen_rect();
+        let modal_w = 480.0_f32.min(screen.width() - 40.0).max(360.0);
+        let max_h = (screen.height() - 60.0).max(400.0);
+
+        let window_id = egui::Id::new("proc_affinity_modal_dialog");
+        let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
+
+        egui::Window::new("Set CPU Affinity")
+            .id(window_id)
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            .movable(false)
+            .current_pos(screen.center() + drag_offset)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .min_width(modal_w)
+            .max_width(modal_w)
+            .default_height(380.0)
+            .max_height(max_h)
+            .frame(
+                egui::Frame::none()
+                    .fill(Color32::from_rgb(17, 19, 27))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                    .rounding(Rounding::same(16.0))
+                    .shadow(egui::epaint::Shadow {
+                        offset: egui::vec2(0.0, 8.0),
+                        blur: 24.0,
+                        spread: 0.0,
+                        color: Color32::from_black_alpha(160),
+                    })
+                    .inner_margin(egui::Margin::symmetric(16.0, 12.0)),
+            )
+            .show(ctx, |ui| {
+                crate::modals::render_modal_titlebar(ui, &format!("Set Affinity: {} (PID {})", self.proc_affinity_name, self.proc_affinity_pid), &mut is_open);
+                ui.add_space(8.0);
+
+                ui.label(RichText::new("Select which CPU cores this process is permitted to execute on:").size(11.5).color(palette.text_secondary));
+                ui.add_space(6.0);
+
+                // Quick buttons
+                ui.horizontal(|ui| {
+                    let btn_all = egui::Button::new(RichText::new("Select All").size(10.5).color(palette.text_primary))
+                        .fill(palette.bg_button)
+                        .rounding(Rounding::same(999.0))
+                        .stroke(Stroke::new(1.0_f32, palette.border.gamma_multiply(0.4)));
+                    if ui.add(btn_all).clicked() {
+                        for c in &mut self.proc_affinity_cores {
+                            *c = true;
+                        }
+                    }
+
+                    let btn_none = egui::Button::new(RichText::new("Deselect All").size(10.5).color(palette.text_muted))
+                        .fill(palette.bg_button)
+                        .rounding(Rounding::same(999.0))
+                        .stroke(Stroke::new(1.0_f32, palette.border.gamma_multiply(0.4)));
+                    if ui.add(btn_none).clicked() {
+                        for c in &mut self.proc_affinity_cores {
+                            *c = false;
+                        }
+                    }
+                });
+
+                ui.add_space(8.0);
+
+                if self.proc_affinity_loading {
+                    ui.add_space(30.0);
+                    ui.vertical_centered(|ui| {
+                        ui.spinner();
+                        ui.add_space(6.0);
+                        ui.label(RichText::new("Reading affinity mask...").size(11.5).color(palette.text_muted));
+                    });
+                    ui.add_space(30.0);
+                } else {
+                    Frame::none()
+                        .fill(Color32::from_rgb(22, 25, 35))
+                        .stroke(Stroke::new(1.0_f32, palette.border.gamma_multiply(0.4)))
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                        .show(ui, |ui| {
+                            ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                                let total = self.proc_affinity_cores.len();
+                                let cols = if total > 8 { 4 } else { 2 };
+                                egui::Grid::new("proc_affinity_grid").num_columns(cols).spacing(egui::vec2(16.0, 8.0)).show(ui, |ui| {
+                                    for i in 0..total {
+                                        ui.checkbox(&mut self.proc_affinity_cores[i], format!("CPU {}", i));
+                                        if (i + 1) % cols == 0 {
+                                            ui.end_row();
+                                        }
+                                    }
+                                });
+                            });
+                        });
+                }
+
+                if let Some(ref err) = self.proc_affinity_error {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(format!("Error: {}", err)).size(11.0).color(palette.danger));
+                }
+
+                ui.add_space(12.0);
+
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let btn_apply = egui::Button::new(RichText::new("Apply Affinity").size(11.5).strong().color(palette.accent_text))
+                            .fill(palette.accent)
+                            .rounding(Rounding::same(999.0))
+                            .stroke(Stroke::NONE)
+                            .min_size(egui::vec2(110.0, 28.0));
+                        if ui.add(btn_apply).clicked() {
+                            apply_affinity = true;
+                        }
+
+                        let btn_cancel = egui::Button::new(RichText::new("Cancel").size(11.5).color(palette.text_secondary))
+                            .fill(palette.bg_button)
+                            .rounding(Rounding::same(999.0))
+                            .stroke(Stroke::new(1.0_f32, palette.border.gamma_multiply(0.4)))
+                            .min_size(egui::vec2(80.0, 28.0));
+                        if ui.add(btn_cancel).clicked() {
+                            is_open = false;
+                        }
+                    });
+                });
+            });
+
+        self.proc_affinity_modal_open = is_open;
+
+        if apply_affinity {
+            let sel_cores: Vec<usize> = self.proc_affinity_cores.iter().enumerate().filter(|(_, &b)| b).map(|(i, _)| i).collect();
+            if sel_cores.is_empty() {
+                self.proc_affinity_error = Some("At least one CPU core must be selected".to_string());
+            } else {
+                let pid = self.proc_affinity_pid;
+                if let Some(ref hid) = self.proc_affinity_host_id {
+                    if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == *hid).cloned() {
+                        let host_name = host.name.clone();
+                        let cores_clone = sel_cores.clone();
+                        std::thread::spawn(move || {
+                            let _ = crate::procmgr::set_remote_affinity(&host, pid, &cores_clone);
+                        });
+                        self.sensors_top_apps_status_msg = Some((format!("Applied CPU affinity for PID {} on {}", pid, host_name), false, Instant::now()));
+                    }
+                } else {
+                    match crate::procmgr::set_local_affinity(pid, &sel_cores) {
+                        Ok(_) => {
+                            self.sensors_top_apps_status_msg = Some((format!("Applied CPU affinity for PID {}", pid), false, Instant::now()));
+                        }
+                        Err(e) => {
+                            self.sensors_top_apps_status_msg = Some((format!("Failed to set affinity: {}", e), true, Instant::now()));
+                        }
+                    }
+                }
+                self.proc_affinity_modal_open = false;
+            }
+        }
+    }
+
+
+    // ═════════════════════════════════════════════════════════════════════════
     // SENSORS TAB: Left Sidebar (Quick Overview Cards & Category Filters)
     // ═════════════════════════════════════════════════════════════════════════
     fn render_sensors_left_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
@@ -8166,6 +9057,44 @@ impl LauncherApp {
         });
     }
 
+    fn execute_proc_signal(&mut self, pid: u32, sig: &str, action_desc: &str, host_id: Option<&str>) {
+        if let Some(hid) = host_id {
+            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                let host_name = host.name.clone();
+                let hid_clone = hid.to_string();
+                let sig_str = sig.to_string();
+                let snapshots_arc = self.remote_sensors_snapshots.clone();
+                let last_fetch_arc = self.remote_sensors_last_fetch.clone();
+                let errors_arc = self.remote_sensors_errors.clone();
+
+                std::thread::spawn(move || {
+                    let _ = crate::procmgr::send_remote_signal(&host, pid, &sig_str);
+                    std::thread::sleep(std::time::Duration::from_millis(400));
+                    if let Ok(snap) = crate::sensors::query_remote_sensors(&host) {
+                        snapshots_arc.lock().unwrap().insert(hid_clone.clone(), snap);
+                        last_fetch_arc.lock().unwrap().insert(hid_clone.clone(), Instant::now());
+                        errors_arc.lock().unwrap().remove(&hid_clone);
+                    }
+                });
+                self.sensors_top_apps_status_msg = Some((format!("{} remote process PID {} on {} (sudo)", action_desc, pid, host_name), false, Instant::now()));
+            }
+        } else {
+            match crate::procmgr::send_local_signal(pid, sig) {
+                Ok(_) => {
+                    self.sensors_top_apps_status_msg = Some((format!("{} process PID {}", action_desc, pid), false, Instant::now()));
+                }
+                Err(e) => {
+                    self.sensors_top_apps_status_msg = Some((format!("Failed to send signal: {}", e), true, Instant::now()));
+                }
+            }
+        }
+        if sig == "TERM" || sig == "KILL" {
+            if self.sensors_top_apps_selected_pid == Some(pid) {
+                self.sensors_top_apps_selected_pid = None;
+            }
+        }
+    }
+
     fn render_sensors_top_apps_tab(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
 
@@ -8263,6 +9192,8 @@ impl LauncherApp {
         let mut kill_target_pid = None;
         let mut toggle_group_expand = None;
         let mut select_target_pid = None;
+        let mut right_clicked_pid = None;
+        let mut proc_action: Option<ProcAction> = None;
 
         Frame::none()
             .fill(p.bg_card)
@@ -8783,7 +9714,7 @@ impl LauncherApp {
                                             }
 
                                             // 2. CPU (Heatmap tinted cell, strictly bounded, right aligned)
-                                            let (cpu_rect, cpu_resp) = ui.allocate_exact_size(egui::vec2(COL_CPU_W, 22.0), egui::Sense::click());
+                                            let (cpu_rect, cpu_resp) = ui.allocate_exact_size(egui::vec2(COL_CPU_W, 22.0), egui::Sense::hover());
                                             if row_bg != Color32::TRANSPARENT {
                                                 let bg_rect = egui::Rect::from_min_max(cpu_rect.min, egui::pos2(cpu_rect.max.x + COL_SPACING, cpu_rect.max.y));
                                                 ui.painter().rect_filled(bg_rect, Rounding::ZERO, row_bg);
@@ -8804,13 +9735,10 @@ impl LauncherApp {
                                                 egui::FontId::monospace(11.0),
                                                 cpu_color,
                                             );
-                                            let cpu_resp = cpu_resp.on_hover_text(format!("{:.1}% Total System CPU ({:.1}% single-core raw)", norm_cpu, grp.sum_cpu));
-                                            if cpu_resp.clicked() {
-                                                row_clicked = true;
-                                            }
+                                            let _ = cpu_resp.on_hover_text(format!("{:.1}% Total System CPU ({:.1}% single-core raw)", norm_cpu, grp.sum_cpu));
 
                                             // 3. Memory (Heatmap tinted cell, strictly bounded, right aligned)
-                                            let (mem_rect, mem_resp) = ui.allocate_exact_size(egui::vec2(COL_MEM_W, 22.0), egui::Sense::click());
+                                            let (mem_rect, _mem_resp) = ui.allocate_exact_size(egui::vec2(COL_MEM_W, 22.0), egui::Sense::hover());
                                             if row_bg != Color32::TRANSPARENT {
                                                 let bg_rect = egui::Rect::from_min_max(mem_rect.min, egui::pos2(mem_rect.max.x + COL_SPACING, mem_rect.max.y));
                                                 ui.painter().rect_filled(bg_rect, Rounding::ZERO, row_bg);
@@ -8831,12 +9759,9 @@ impl LauncherApp {
                                                 egui::FontId::monospace(11.0),
                                                 mem_color,
                                             );
-                                            if mem_resp.clicked() {
-                                                row_clicked = true;
-                                            }
 
                                             // 4. Disk (Heatmap tinted cell, strictly bounded, right aligned)
-                                            let (disk_rect, disk_resp) = ui.allocate_exact_size(egui::vec2(COL_DISK_W, 22.0), egui::Sense::click());
+                                            let (disk_rect, _disk_resp) = ui.allocate_exact_size(egui::vec2(COL_DISK_W, 22.0), egui::Sense::hover());
                                             if row_bg != Color32::TRANSPARENT {
                                                 let bg_rect = egui::Rect::from_min_max(disk_rect.min, egui::pos2(disk_rect.max.x + COL_SPACING, disk_rect.max.y));
                                                 ui.painter().rect_filled(bg_rect, Rounding::ZERO, row_bg);
@@ -8857,12 +9782,9 @@ impl LauncherApp {
                                                 egui::FontId::monospace(11.0),
                                                 disk_color,
                                             );
-                                            if disk_resp.clicked() {
-                                                row_clicked = true;
-                                            }
 
                                             // 5. Network (Strictly bounded, right aligned)
-                                            let (net_rect, net_resp) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 22.0), egui::Sense::click());
+                                            let (net_rect, _net_resp) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 22.0), egui::Sense::hover());
                                             if row_bg != Color32::TRANSPARENT {
                                                 ui.painter().rect_filled(
                                                     net_rect,
@@ -8877,14 +9799,17 @@ impl LauncherApp {
                                                 egui::FontId::monospace(11.0),
                                                 Color32::from_rgb(160, 165, 175),
                                             );
-                                            if net_resp.clicked() {
-                                                row_clicked = true;
-                                            }
 
                                             let row_resp = ui.interact(row_rect, egui::Id::new("grp_row_full_clk").with(&grp.key), egui::Sense::click());
                                             if row_resp.clicked() && toggle_group_expand.is_none() {
                                                 row_clicked = true;
                                             }
+                                            if row_resp.secondary_clicked() {
+                                                right_clicked_pid = Some(grp.pids[0]);
+                                            }
+                                            row_resp.context_menu(|ui| {
+                                                render_process_context_menu(ui, grp.pids[0], &grp.display_name, norm_cpu, grp.sum_mem, &mut proc_action, &p);
+                                            });
 
                                             if row_clicked {
                                                 select_target_pid = Some(grp.pids[0]);
@@ -8940,7 +9865,7 @@ impl LauncherApp {
                                                     }
 
                                                     // Child CPU
-                                                    let (c_cpu_rect, c_cpu_resp) = ui.allocate_exact_size(egui::vec2(COL_CPU_W, 20.0), egui::Sense::click());
+                                                    let (c_cpu_rect, _c_cpu_resp) = ui.allocate_exact_size(egui::vec2(COL_CPU_W, 20.0), egui::Sense::hover());
                                                     if c_row_bg != Color32::TRANSPARENT {
                                                         let bg_rect = egui::Rect::from_min_max(c_cpu_rect.min, egui::pos2(c_cpu_rect.max.x + COL_SPACING, c_cpu_rect.max.y));
                                                         ui.painter().rect_filled(bg_rect, Rounding::ZERO, c_row_bg);
@@ -8952,12 +9877,9 @@ impl LauncherApp {
                                                         egui::FontId::monospace(10.5),
                                                         Color32::from_rgb(160, 165, 175),
                                                     );
-                                                    if c_cpu_resp.clicked() {
-                                                        child_clicked = true;
-                                                    }
 
                                                     // Child Memory
-                                                    let (c_mem_rect, c_mem_resp) = ui.allocate_exact_size(egui::vec2(COL_MEM_W, 20.0), egui::Sense::click());
+                                                    let (c_mem_rect, _c_mem_resp) = ui.allocate_exact_size(egui::vec2(COL_MEM_W, 20.0), egui::Sense::hover());
                                                     if c_row_bg != Color32::TRANSPARENT {
                                                         let bg_rect = egui::Rect::from_min_max(c_mem_rect.min, egui::pos2(c_mem_rect.max.x + COL_SPACING, c_mem_rect.max.y));
                                                         ui.painter().rect_filled(bg_rect, Rounding::ZERO, c_row_bg);
@@ -8969,12 +9891,9 @@ impl LauncherApp {
                                                         egui::FontId::monospace(10.5),
                                                         Color32::from_rgb(160, 165, 175),
                                                     );
-                                                    if c_mem_resp.clicked() {
-                                                        child_clicked = true;
-                                                    }
 
                                                     // Child Disk
-                                                    let (c_disk_rect, c_disk_resp) = ui.allocate_exact_size(egui::vec2(COL_DISK_W, 20.0), egui::Sense::click());
+                                                    let (c_disk_rect, _c_disk_resp) = ui.allocate_exact_size(egui::vec2(COL_DISK_W, 20.0), egui::Sense::hover());
                                                     if c_row_bg != Color32::TRANSPARENT {
                                                         let bg_rect = egui::Rect::from_min_max(c_disk_rect.min, egui::pos2(c_disk_rect.max.x + COL_SPACING, c_disk_rect.max.y));
                                                         ui.painter().rect_filled(bg_rect, Rounding::ZERO, c_row_bg);
@@ -8986,12 +9905,9 @@ impl LauncherApp {
                                                         egui::FontId::monospace(10.5),
                                                         Color32::from_rgb(160, 165, 175),
                                                     );
-                                                    if c_disk_resp.clicked() {
-                                                        child_clicked = true;
-                                                    }
 
                                                     // Child Network
-                                                    let (c_net_rect, c_net_resp) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 20.0), egui::Sense::click());
+                                                    let (c_net_rect, _c_net_resp) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 20.0), egui::Sense::hover());
                                                     if c_row_bg != Color32::TRANSPARENT {
                                                         ui.painter().rect_filled(c_net_rect, Rounding { nw: 0.0, sw: 0.0, ne: 4.0, se: 4.0 }, c_row_bg);
                                                     }
@@ -9002,14 +9918,17 @@ impl LauncherApp {
                                                         egui::FontId::monospace(10.5),
                                                         Color32::from_rgb(140, 145, 155),
                                                     );
-                                                    if c_net_resp.clicked() {
-                                                        child_clicked = true;
-                                                    }
 
                                                     let c_row_resp = ui.interact(child_row_rect, egui::Id::new("child_row_full_clk").with(child.pid), egui::Sense::click());
                                                     if c_row_resp.clicked() {
                                                         child_clicked = true;
                                                     }
+                                                    if c_row_resp.secondary_clicked() {
+                                                        right_clicked_pid = Some(child.pid);
+                                                    }
+                                                    c_row_resp.context_menu(|ui| {
+                                                        render_process_context_menu(ui, child.pid, &grp.display_name, child_norm_cpu, child.memory_bytes, &mut proc_action, &p);
+                                                    });
 
                                                     if child_clicked {
                                                         select_target_pid = Some(child.pid);
@@ -9083,6 +10002,37 @@ impl LauncherApp {
                     });
             });
 
+        // Global shortcuts for selected process when not typing into a search text field
+        if let Some(sel_pid) = self.sensors_top_apps_selected_pid {
+            let wants_keyboard = ui.ctx().wants_keyboard_input();
+            if !wants_keyboard {
+                let alt = ui.ctx().input(|i| i.modifiers.alt);
+                let ctrl = ui.ctx().input(|i| i.modifiers.ctrl || i.modifiers.command);
+                let sel_proc = snap.top_apps.iter().find(|p| p.pid == sel_pid);
+                let sel_name = sel_proc.map(|p| p.name.clone()).unwrap_or_else(|| format!("PID {}", sel_pid));
+                let sel_cpu = sel_proc.map(|p| p.cpu_usage).unwrap_or(0.0);
+                let sel_mem = sel_proc.map(|p| p.memory_bytes).unwrap_or(0);
+
+                if alt && ui.ctx().input(|i| i.key_pressed(Key::Enter)) {
+                    proc_action = Some(ProcAction::Properties { pid: sel_pid, name: sel_name, cpu: sel_cpu, mem: sel_mem });
+                } else if ctrl && ui.ctx().input(|i| i.key_pressed(Key::M)) {
+                    proc_action = Some(ProcAction::MemoryMaps { pid: sel_pid, name: sel_name });
+                } else if ctrl && ui.ctx().input(|i| i.key_pressed(Key::O)) {
+                    proc_action = Some(ProcAction::OpenFiles { pid: sel_pid, name: sel_name });
+                } else if alt && ui.ctx().input(|i| i.key_pressed(Key::S)) {
+                    proc_action = Some(ProcAction::SetAffinity { pid: sel_pid, name: sel_name });
+                } else if ctrl && ui.ctx().input(|i| i.key_pressed(Key::S)) {
+                    proc_action = Some(ProcAction::Stop { pid: sel_pid });
+                } else if ctrl && ui.ctx().input(|i| i.key_pressed(Key::C)) {
+                    proc_action = Some(ProcAction::Resume { pid: sel_pid });
+                } else if ctrl && ui.ctx().input(|i| i.key_pressed(Key::T)) {
+                    proc_action = Some(ProcAction::Terminate { pid: sel_pid });
+                } else if ctrl && ui.ctx().input(|i| i.key_pressed(Key::K)) {
+                    proc_action = Some(ProcAction::ForceStop { pid: sel_pid });
+                }
+            }
+        }
+
         // Apply state updates outside borrow closures
         if let Some(key) = toggle_group_expand {
             if self.sensors_top_apps_expanded_groups.contains(&key) {
@@ -9092,39 +10042,184 @@ impl LauncherApp {
             }
         }
 
-        if let Some(pid) = select_target_pid {
+        if let Some(pid) = right_clicked_pid {
+            self.sensors_top_apps_selected_pid = Some(pid);
+        } else if let Some(pid) = select_target_pid {
             if self.sensors_top_apps_selected_pid == Some(pid) {
-                self.sensors_top_apps_selected_pid = None; // toggle deselect
+                self.sensors_top_apps_selected_pid = None; // toggle deselect on left-click
             } else {
                 self.sensors_top_apps_selected_pid = Some(pid);
             }
         }
 
         if let Some(pid) = kill_target_pid {
-            if let Some(hid) = host_id {
-                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                    let host_name = host.name.clone();
-                    let hid_clone = hid.to_string();
-                    let snapshots_arc = self.remote_sensors_snapshots.clone();
-                    let last_fetch_arc = self.remote_sensors_last_fetch.clone();
-                    let errors_arc = self.remote_sensors_errors.clone();
+            proc_action = Some(ProcAction::Terminate { pid });
+        }
 
-                    std::thread::spawn(move || {
-                        let _ = crate::remote::kill_remote_process_pid(&host, pid);
-                        std::thread::sleep(std::time::Duration::from_millis(400));
-                        if let Ok(snap) = crate::sensors::query_remote_sensors(&host) {
-                            snapshots_arc.lock().unwrap().insert(hid_clone.clone(), snap);
-                            last_fetch_arc.lock().unwrap().insert(hid_clone.clone(), Instant::now());
-                            errors_arc.lock().unwrap().remove(&hid_clone);
+        if let Some(action) = proc_action {
+            match action {
+                ProcAction::Properties { pid, name, cpu, mem } => {
+                    self.proc_properties_modal_open = true;
+                    self.proc_properties_pid = pid;
+                    self.proc_properties_name = name.clone();
+                    self.proc_properties_data = None;
+                    self.proc_properties_error = None;
+                    self.proc_properties_loading = true;
+
+                    if let Some(hid) = host_id {
+                        if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                            let rx = self.proc_details_receiver.clone();
+                            let ctx_clone = ui.ctx().clone();
+                            std::thread::spawn(move || {
+                                let res = crate::procmgr::fetch_remote_process_details(&host, pid, &name, cpu, mem);
+                                *rx.lock().unwrap() = Some((pid, res));
+                                ctx_clone.request_repaint();
+                            });
                         }
-                    });
-                    self.sensors_top_apps_selected_pid = None;
-                    self.sensors_top_apps_status_msg = Some((format!("Terminated remote process PID {} on {} (sudo)", pid, host_name), false, Instant::now()));
+                    } else {
+                        let details = crate::procmgr::fetch_local_process_details(pid, &name, cpu, mem);
+                        self.proc_properties_data = Some(details);
+                        self.proc_properties_loading = false;
+                    }
                 }
-            } else {
-                crate::scanner::kill_process_pid(pid);
-                self.sensors_top_apps_selected_pid = None;
-                self.sensors_top_apps_status_msg = Some((format!("Terminated process PID {}", pid), false, Instant::now()));
+                ProcAction::MemoryMaps { pid, name } => {
+                    self.proc_maps_modal_open = true;
+                    self.proc_maps_pid = pid;
+                    self.proc_maps_name = name;
+                    self.proc_maps_data = None;
+                    self.proc_maps_error = None;
+                    self.proc_maps_search.clear();
+                    self.proc_maps_loading = true;
+
+                    if let Some(hid) = host_id {
+                        if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                            let rx = self.proc_maps_receiver.clone();
+                            let ctx_clone = ui.ctx().clone();
+                            std::thread::spawn(move || {
+                                let res = crate::procmgr::fetch_remote_memory_maps(&host, pid);
+                                *rx.lock().unwrap() = Some((pid, res));
+                                ctx_clone.request_repaint();
+                            });
+                        }
+                    } else {
+                        match crate::procmgr::fetch_local_memory_maps(pid) {
+                            Ok(maps) => {
+                                self.proc_maps_data = Some(maps);
+                                self.proc_maps_loading = false;
+                            }
+                            Err(e) => {
+                                self.proc_maps_error = Some(e);
+                                self.proc_maps_loading = false;
+                            }
+                        }
+                    }
+                }
+                ProcAction::OpenFiles { pid, name } => {
+                    self.proc_open_files_modal_open = true;
+                    self.proc_open_files_pid = pid;
+                    self.proc_open_files_name = name;
+                    self.proc_open_files_data = None;
+                    self.proc_open_files_error = None;
+                    self.proc_open_files_search.clear();
+                    self.proc_open_files_loading = true;
+
+                    if let Some(hid) = host_id {
+                        if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                            let rx = self.proc_open_files_receiver.clone();
+                            let ctx_clone = ui.ctx().clone();
+                            std::thread::spawn(move || {
+                                let res = crate::procmgr::fetch_remote_open_files(&host, pid);
+                                *rx.lock().unwrap() = Some((pid, res));
+                                ctx_clone.request_repaint();
+                            });
+                        }
+                    } else {
+                        match crate::procmgr::fetch_local_open_files(pid) {
+                            Ok(files) => {
+                                self.proc_open_files_data = Some(files);
+                                self.proc_open_files_loading = false;
+                            }
+                            Err(e) => {
+                                self.proc_open_files_error = Some(e);
+                                self.proc_open_files_loading = false;
+                            }
+                        }
+                    }
+                }
+                ProcAction::SetPriority { pid, nice } => {
+                    if let Some(hid) = host_id {
+                        if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                            let host_name = host.name.clone();
+                            std::thread::spawn(move || {
+                                let _ = crate::procmgr::set_remote_priority(&host, pid, nice);
+                            });
+                            self.sensors_top_apps_status_msg = Some((format!("Set priority (nice {}) for PID {} on {} (sudo)", nice, pid, host_name), false, Instant::now()));
+                        }
+                    } else {
+                        match crate::procmgr::set_local_priority(pid, nice) {
+                            Ok(_) => {
+                                self.sensors_top_apps_status_msg = Some((format!("Set priority (nice {}) for PID {}", nice, pid), false, Instant::now()));
+                            }
+                            Err(e) => {
+                                self.sensors_top_apps_status_msg = Some((format!("Failed to set priority: {}", e), true, Instant::now()));
+                            }
+                        }
+                    }
+                }
+                ProcAction::SetAffinity { pid, name } => {
+                    let total_cores = snap.cpu_cores_logical.max(1);
+                    self.proc_affinity_modal_open = true;
+                    self.proc_affinity_pid = pid;
+                    self.proc_affinity_name = name;
+                    self.proc_affinity_host_id = host_id.map(|s| s.to_string());
+                    self.proc_affinity_total_cores = total_cores;
+                    self.proc_affinity_cores = vec![true; total_cores];
+                    self.proc_affinity_error = None;
+                    self.proc_affinity_loading = true;
+
+                    if let Some(hid) = host_id {
+                        if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                            let rx = self.proc_affinity_receiver.clone();
+                            let ctx_clone = ui.ctx().clone();
+                            std::thread::spawn(move || {
+                                let res = crate::procmgr::get_remote_affinity(&host, pid);
+                                *rx.lock().unwrap() = Some((pid, res));
+                                ctx_clone.request_repaint();
+                            });
+                        }
+                    } else {
+                        match crate::procmgr::get_local_affinity(pid) {
+                            Ok(cores) => {
+                                let mut mask = vec![false; total_cores];
+                                for c in cores {
+                                    if c < total_cores {
+                                        mask[c] = true;
+                                    }
+                                }
+                                if mask.iter().any(|&b| b) {
+                                    self.proc_affinity_cores = mask;
+                                }
+                                self.proc_affinity_loading = false;
+                            }
+                            Err(e) => {
+                                self.proc_affinity_error = Some(e);
+                                self.proc_affinity_loading = false;
+                            }
+                        }
+                    }
+                }
+                ProcAction::Stop { pid } => {
+                    self.execute_proc_signal(pid, "STOP", "Paused (SIGSTOP)", host_id);
+                }
+                ProcAction::Resume { pid } => {
+                    self.execute_proc_signal(pid, "CONT", "Resumed (SIGCONT)", host_id);
+                }
+                ProcAction::Terminate { pid } => {
+                    self.execute_proc_signal(pid, "TERM", "Terminated (SIGTERM)", host_id);
+                }
+                ProcAction::ForceStop { pid } => {
+                    self.execute_proc_signal(pid, "KILL", "Force stopped (SIGKILL)", host_id);
+                }
             }
         }
     }

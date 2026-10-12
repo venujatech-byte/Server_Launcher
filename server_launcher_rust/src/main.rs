@@ -7,6 +7,7 @@ mod service;
 pub mod autostart;
 pub mod commands;
 pub mod lucide;
+pub mod procmgr;
 pub mod scripts;
 pub mod sensors;
 pub mod systemd;

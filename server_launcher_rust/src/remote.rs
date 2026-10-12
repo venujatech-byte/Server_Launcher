@@ -724,6 +724,7 @@ pub fn parse_ssh_config_str(content: &str, home: &std::path::Path) -> Vec<SshRem
 }
 
 /// Terminate a process on a remote SSH host using sudo if available, falling back to kill -9
+#[allow(dead_code)]
 pub fn kill_remote_process_pid(host: &SshRemoteHost, pid: u32) -> Result<(), String> {
     let has_pass = !host.password.trim().is_empty();
     let kill_cmd = if has_pass {

@@ -235,6 +235,7 @@ pub struct LauncherApp {
     pub remote_terminals: HashMap<String, TerminalSession>,
     pub saved_command_search: String,
     pub saved_command_category: String,
+    pub saved_command_status_msg: Option<(String, bool, Instant)>,
 
     // SystemMD State
     pub systemd_modal: NewServiceModalState,
@@ -646,6 +647,7 @@ impl LauncherApp {
             remote_terminals: HashMap::new(),
             saved_command_search: String::new(),
             saved_command_category: "All".to_string(),
+            saved_command_status_msg: None,
 
             systemd_modal: NewServiceModalState::default(),
             local_services: Vec::new(),
@@ -905,6 +907,132 @@ impl LauncherApp {
                 }
             }
         }
+    }
+
+    pub fn export_commands_to_file_dialog(&mut self, host_id: Option<&str>) {
+        let file_opt = rfd::FileDialog::new()
+            .set_title("Export Saved Commands")
+            .set_file_name("saved_commands.json")
+            .add_filter("JSON Files (*.json)", &["json"])
+            .save_file();
+
+        if let Some(path) = file_opt {
+            let to_export: Vec<SavedCommand> = if let Some(hid) = host_id {
+                let filtered: Vec<_> = self.saved_commands.iter().filter(|c| c.host_id.as_deref() == Some(hid)).cloned().collect();
+                if filtered.is_empty() { self.saved_commands.clone() } else { filtered }
+            } else {
+                let filtered: Vec<_> = self.saved_commands.iter().filter(|c| c.host_id.is_none()).cloned().collect();
+                if filtered.is_empty() { self.saved_commands.clone() } else { filtered }
+            };
+
+            match serde_json::to_string_pretty(&to_export) {
+                Ok(json_str) => match std::fs::write(&path, json_str) {
+                    Ok(_) => {
+                        let fname = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "saved_commands.json".to_string());
+                        self.saved_command_status_msg = Some((
+                            format!("{} Exported {} command(s) to {}", crate::lucide::CHECK, to_export.len(), fname),
+                            false,
+                            Instant::now(),
+                        ));
+                    }
+                    Err(e) => {
+                        self.saved_command_status_msg = Some((
+                            format!("Export error: {}", e),
+                            true,
+                            Instant::now(),
+                        ));
+                    }
+                },
+                Err(e) => {
+                    self.saved_command_status_msg = Some((
+                        format!("Serialization error: {}", e),
+                        true,
+                        Instant::now(),
+                    ));
+                }
+            }
+        }
+    }
+
+    pub fn import_commands_from_file_dialog(&mut self, host_id: Option<&str>) {
+        let file_opt = rfd::FileDialog::new()
+            .set_title("Import Saved Commands")
+            .add_filter("JSON Files (*.json)", &["json"])
+            .pick_file();
+
+        if let Some(path) = file_opt {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => match self.import_commands_from_json_str(&content, host_id) {
+                    Ok((imported, updated)) => {
+                        self.persist_config();
+                        self.saved_command_status_msg = Some((
+                            format!("{} Imported {} new, {} updated command(s)", crate::lucide::CHECK, imported, updated),
+                            false,
+                            Instant::now(),
+                        ));
+                    }
+                    Err(err) => {
+                        self.saved_command_status_msg = Some((
+                            format!("Import error: {}", err),
+                            true,
+                            Instant::now(),
+                        ));
+                    }
+                },
+                Err(err) => {
+                    self.saved_command_status_msg = Some((
+                        format!("Failed to read file: {}", err),
+                        true,
+                        Instant::now(),
+                    ));
+                }
+            }
+        }
+    }
+
+    pub fn import_commands_from_json_str(&mut self, content: &str, target_host: Option<&str>) -> Result<(usize, usize), String> {
+        let trimmed = content.trim();
+        if trimmed.is_empty() {
+            return Err("File is empty".to_string());
+        }
+
+        let parsed_commands: Vec<SavedCommand> = if let Ok(cmds) = serde_json::from_str::<Vec<SavedCommand>>(trimmed) {
+            cmds
+        } else if let Ok(wrapper) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            if let Some(arr) = wrapper.get("commands").or_else(|| wrapper.get("saved_commands")) {
+                serde_json::from_value(arr.clone()).map_err(|e| format!("Failed to parse commands array: {}", e))?
+            } else {
+                return Err("Expected JSON array of commands or object with 'commands' key".to_string());
+            }
+        } else {
+            return Err("Invalid JSON structure".to_string());
+        };
+
+        if parsed_commands.is_empty() {
+            return Err("No valid commands found in file".to_string());
+        }
+
+        let mut imported_count = 0;
+        let mut updated_count = 0;
+
+        for mut cmd in parsed_commands {
+            if cmd.id.trim().is_empty() {
+                cmd.id = format!("cmd_{}_{}", chrono::Utc::now().timestamp_millis(), imported_count + updated_count);
+            }
+            if cmd.host_id.is_none() && target_host.is_some() {
+                cmd.host_id = target_host.map(|s| s.to_string());
+            }
+
+            if let Some(idx) = self.saved_commands.iter().position(|c| c.id == cmd.id || (c.name == cmd.name && c.command == cmd.command && c.host_id == cmd.host_id)) {
+                self.saved_commands[idx] = cmd;
+                updated_count += 1;
+            } else {
+                self.saved_commands.push(cmd);
+                imported_count += 1;
+            }
+        }
+
+        Ok((imported_count, updated_count))
     }
 
     pub fn import_from_json_str(&mut self, content: &str) -> Result<(usize, usize), String> {
@@ -4758,11 +4886,50 @@ impl LauncherApp {
                     )
                     .fill(p.accent)
                     .rounding(Rounding::same(4.0));
-                    if ui.add(btn_new).clicked() {
+                    if ui.add(btn_new).on_hover_text("Save a new custom command snippet").clicked() {
                         self.command_modal.open_create(host_id.map(|s| s.to_string()));
+                    }
+
+                    // Export Button (left of Save Command)
+                    let btn_export = egui::Button::new(
+                        RichText::new(format!("{} Export", crate::lucide::DOWNLOAD))
+                            .size(11.0)
+                            .color(p.text_secondary),
+                    )
+                    .fill(p.bg_button)
+                    .rounding(Rounding::same(4.0));
+                    if ui.add(btn_export).on_hover_text("Export saved commands as a JSON file").clicked() {
+                        self.export_commands_to_file_dialog(host_id);
+                    }
+
+                    // Import Button (left of Export)
+                    let btn_import = egui::Button::new(
+                        RichText::new(format!("{} Import", crate::lucide::UPLOAD))
+                            .size(11.0)
+                            .color(p.text_secondary),
+                    )
+                    .fill(p.bg_button)
+                    .rounding(Rounding::same(4.0));
+                    if ui.add(btn_import).on_hover_text("Import commands from a JSON file").clicked() {
+                        self.import_commands_from_file_dialog(host_id);
                     }
                 });
             });
+
+            if let Some((ref msg, is_err, ref time)) = self.saved_command_status_msg {
+                if time.elapsed().as_secs() < 4 {
+                    ui.add_space(4.0);
+                    let bg = if is_err { p.danger_subtle } else { p.success_subtle };
+                    let fg = if is_err { p.danger } else { p.success };
+                    Frame::none()
+                        .fill(bg)
+                        .rounding(Rounding::same(6.0))
+                        .inner_margin(egui::Margin::symmetric(8.0, 3.5))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(msg).size(11.0).color(fg));
+                        });
+                }
+            }
 
             ui.add_space(6.0);
 

@@ -3,3 +3,5 @@ servers.json
 *.pyc
 target/
 **/target/
+fedora_commands.json
+ubuntu_commands.json

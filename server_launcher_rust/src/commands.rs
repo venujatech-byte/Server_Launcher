@@ -860,4 +860,29 @@ mod tests {
         assert_eq!(state.category, "Git");
         assert!(state.run_in_terminal);
     }
+
+    #[test]
+    fn test_parse_command_json_files() {
+        let fedora_path = std::path::Path::new("../fedora_commands.json");
+        if fedora_path.exists() {
+            let content = std::fs::read_to_string(fedora_path).expect("Read fedora_commands.json");
+            let cmds: Vec<SavedCommand> = serde_json::from_str(&content).expect("Parse fedora_commands.json");
+            assert!(!cmds.is_empty(), "fedora_commands.json should have commands");
+            for c in &cmds {
+                assert!(!c.name.is_empty());
+                assert!(c.command.starts_with("cd "), "Command '{}' should direct to specific location", c.name);
+            }
+        }
+
+        let ubuntu_path = std::path::Path::new("../ubuntu_commands.json");
+        if ubuntu_path.exists() {
+            let content = std::fs::read_to_string(ubuntu_path).expect("Read ubuntu_commands.json");
+            let cmds: Vec<SavedCommand> = serde_json::from_str(&content).expect("Parse ubuntu_commands.json");
+            assert!(!cmds.is_empty(), "ubuntu_commands.json should have commands");
+            for c in &cmds {
+                assert!(!c.name.is_empty());
+                assert!(c.command.starts_with("cd "), "Command '{}' should direct to specific location", c.name);
+            }
+        }
+    }
 }

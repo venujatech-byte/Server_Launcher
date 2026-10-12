@@ -228,12 +228,16 @@ pub struct LauncherApp {
     pub local_services: Vec<SystemdService>,
     pub local_services_user: bool,
     pub local_services_loaded: bool,
+    pub local_services_cache: Arc<Mutex<HashMap<bool, Vec<SystemdService>>>>,
+    pub local_services_in_flight: Arc<Mutex<HashSet<bool>>>,
     pub remote_services: Arc<Mutex<HashMap<String, Vec<SystemdService>>>>,
     pub remote_services_in_flight: Arc<Mutex<HashSet<String>>>,
     pub remote_services_errors: Arc<Mutex<HashMap<String, String>>>,
     pub remote_services_user: HashMap<String, bool>,
     pub selected_service: Option<String>,
     pub service_journal_logs: String,
+    pub local_journal_logs: Arc<Mutex<HashMap<String, String>>>,
+    pub local_journal_in_flight: Arc<Mutex<HashSet<String>>>,
     pub remote_journal_logs: Arc<Mutex<HashMap<String, String>>>,
     pub remote_journal_in_flight: Arc<Mutex<HashSet<String>>>,
     pub remote_service_action_in_flight: Arc<Mutex<HashSet<String>>>,
@@ -246,7 +250,10 @@ pub struct LauncherApp {
 
     // SystemMD Tabs & Files / Dependencies state:
     pub systemd_tab: SystemdTab,
-    pub systemd_files_cache: HashMap<String, (crate::systemd::UnitFilesInfo, Instant)>,
+    pub systemd_files_cache: Arc<Mutex<HashMap<String, (crate::systemd::UnitFilesInfo, Instant)>>>,
+    pub systemd_files_in_flight: Arc<Mutex<HashSet<String>>>,
+    pub systemd_file_content_cache: Arc<Mutex<HashMap<String, String>>>,
+    pub systemd_file_content_in_flight: Arc<Mutex<HashSet<String>>>,
     pub systemd_selected_file: Option<String>,
     pub systemd_file_content: String,
     pub systemd_file_original: String,
@@ -254,7 +261,8 @@ pub struct LauncherApp {
     pub systemd_new_dropin_open: bool,
     pub systemd_new_dropin_name: String,
     pub systemd_new_dropin_template: usize,
-    pub systemd_deps_cache: HashMap<String, (crate::systemd::UnitDependenciesInfo, Instant)>,
+    pub systemd_deps_cache: Arc<Mutex<HashMap<String, (crate::systemd::UnitDependenciesInfo, Instant)>>>,
+    pub systemd_deps_in_flight: Arc<Mutex<HashSet<String>>>,
     pub systemd_deps_history: Vec<String>,
     pub systemd_deps_filter: String,
     pub systemd_deps_view_mode: usize,
@@ -568,12 +576,16 @@ impl LauncherApp {
             local_services: Vec::new(),
             local_services_user: true,
             local_services_loaded: false,
+            local_services_cache: Arc::new(Mutex::new(HashMap::new())),
+            local_services_in_flight: Arc::new(Mutex::new(HashSet::new())),
             remote_services: Arc::new(Mutex::new(HashMap::new())),
             remote_services_in_flight: Arc::new(Mutex::new(HashSet::new())),
             remote_services_errors: Arc::new(Mutex::new(HashMap::new())),
             remote_services_user: HashMap::new(),
             selected_service: None,
             service_journal_logs: String::new(),
+            local_journal_logs: Arc::new(Mutex::new(HashMap::new())),
+            local_journal_in_flight: Arc::new(Mutex::new(HashSet::new())),
             remote_journal_logs: Arc::new(Mutex::new(HashMap::new())),
             remote_journal_in_flight: Arc::new(Mutex::new(HashSet::new())),
             remote_service_action_in_flight: Arc::new(Mutex::new(HashSet::new())),
@@ -585,7 +597,10 @@ impl LauncherApp {
             last_journal_refresh: Instant::now(),
 
             systemd_tab: SystemdTab::Status,
-            systemd_files_cache: HashMap::new(),
+            systemd_files_cache: Arc::new(Mutex::new(HashMap::new())),
+            systemd_files_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            systemd_file_content_cache: Arc::new(Mutex::new(HashMap::new())),
+            systemd_file_content_in_flight: Arc::new(Mutex::new(HashSet::new())),
             systemd_selected_file: None,
             systemd_file_content: String::new(),
             systemd_file_original: String::new(),
@@ -593,7 +608,8 @@ impl LauncherApp {
             systemd_new_dropin_open: false,
             systemd_new_dropin_name: "override.conf".to_string(),
             systemd_new_dropin_template: 0,
-            systemd_deps_cache: HashMap::new(),
+            systemd_deps_cache: Arc::new(Mutex::new(HashMap::new())),
+            systemd_deps_in_flight: Arc::new(Mutex::new(HashSet::new())),
             systemd_deps_history: Vec::new(),
             systemd_deps_filter: String::new(),
             systemd_deps_view_mode: 0,
@@ -1510,6 +1526,177 @@ impl LauncherApp {
                 in_flight.remove(&key_clone);
             }
         });
+    }
+
+    pub fn trigger_local_services_list(&self, user_mode: bool) {
+        {
+            let mut in_flight = self.local_services_in_flight.lock().unwrap();
+            if in_flight.contains(&user_mode) {
+                return;
+            }
+            in_flight.insert(user_mode);
+        }
+
+        let cache_arc = self.local_services_cache.clone();
+        let in_flight_arc = self.local_services_in_flight.clone();
+
+        std::thread::spawn(move || {
+            if let Ok(s) = list_local_services(user_mode) {
+                if let Ok(mut map) = cache_arc.lock() {
+                    map.insert(user_mode, s);
+                }
+            }
+            if let Ok(mut in_flight) = in_flight_arc.lock() {
+                in_flight.remove(&user_mode);
+            }
+        });
+    }
+
+    pub fn trigger_local_journal_fetch(&self, unit: &str, user_mode: bool, sudo_password: Option<&str>) {
+        let key = format!("{}:{}", unit, if user_mode { "user" } else { "system" });
+        {
+            let mut in_flight = self.local_journal_in_flight.lock().unwrap();
+            if in_flight.contains(&key) {
+                return;
+            }
+            in_flight.insert(key.clone());
+        }
+
+        let unit_clone = unit.to_string();
+        let key_clone = key.clone();
+        let pass_clone = sudo_password.map(|p| p.to_string());
+        let logs_arc = self.local_journal_logs.clone();
+        let in_flight_arc = self.local_journal_in_flight.clone();
+
+        std::thread::spawn(move || {
+            let logs = fetch_local_journal(&unit_clone, user_mode, 100, pass_clone.as_deref()).unwrap_or_default();
+            if let Ok(mut map) = logs_arc.lock() {
+                map.insert(key_clone.clone(), logs);
+            }
+            if let Ok(mut in_flight) = in_flight_arc.lock() {
+                in_flight.remove(&key_clone);
+            }
+        });
+    }
+
+    pub fn trigger_systemd_unit_files_fetch(&self, unit: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) {
+        let cache_key = format!("{}:{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), unit, user_mode);
+        {
+            let mut in_flight = self.systemd_files_in_flight.lock().unwrap();
+            if in_flight.contains(&cache_key) {
+                return;
+            }
+            in_flight.insert(cache_key.clone());
+        }
+
+        let unit_clone = unit.to_string();
+        let host_clone = host_opt.cloned();
+        let cache_key_clone = cache_key.clone();
+        let files_arc = self.systemd_files_cache.clone();
+        let in_flight_arc = self.systemd_files_in_flight.clone();
+
+        std::thread::spawn(move || {
+            let info = if let Some(host) = &host_clone {
+                crate::systemd::get_remote_unit_files(host, &unit_clone, user_mode).unwrap_or_default()
+            } else {
+                crate::systemd::get_local_unit_files(&unit_clone, user_mode)
+            };
+            if let Ok(mut map) = files_arc.lock() {
+                map.insert(cache_key_clone.clone(), (info, Instant::now()));
+            }
+            if let Ok(mut in_flight) = in_flight_arc.lock() {
+                in_flight.remove(&cache_key_clone);
+            }
+        });
+    }
+
+    pub fn trigger_systemd_file_read(&self, path: &str, _user_mode: bool, host_opt: Option<&SshRemoteHost>, sudo_pass: Option<&str>) {
+        let cache_key = format!("{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), path);
+        {
+            let mut in_flight = self.systemd_file_content_in_flight.lock().unwrap();
+            if in_flight.contains(&cache_key) {
+                return;
+            }
+            in_flight.insert(cache_key.clone());
+        }
+
+        let path_clone = path.to_string();
+        let host_clone = host_opt.cloned();
+        let pass_clone = sudo_pass.map(|p| p.to_string());
+        let cache_key_clone = cache_key.clone();
+        let content_arc = self.systemd_file_content_cache.clone();
+        let in_flight_arc = self.systemd_file_content_in_flight.clone();
+
+        std::thread::spawn(move || {
+            let content = if let Some(host) = &host_clone {
+                crate::systemd::read_remote_unit_file(host, &path_clone).unwrap_or_default()
+            } else {
+                crate::systemd::read_local_unit_file(&path_clone, pass_clone.as_deref()).unwrap_or_default()
+            };
+            if let Ok(mut map) = content_arc.lock() {
+                map.insert(cache_key_clone.clone(), content);
+            }
+            if let Ok(mut in_flight) = in_flight_arc.lock() {
+                in_flight.remove(&cache_key_clone);
+            }
+        });
+    }
+
+    pub fn trigger_systemd_unit_dependencies_fetch(&self, unit: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) {
+        let cache_key = format!("{}:{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), unit, user_mode);
+        {
+            let mut in_flight = self.systemd_deps_in_flight.lock().unwrap();
+            if in_flight.contains(&cache_key) {
+                return;
+            }
+            in_flight.insert(cache_key.clone());
+        }
+
+        let unit_clone = unit.to_string();
+        let host_clone = host_opt.cloned();
+        let cache_key_clone = cache_key.clone();
+        let deps_arc = self.systemd_deps_cache.clone();
+        let in_flight_arc = self.systemd_deps_in_flight.clone();
+
+        std::thread::spawn(move || {
+            let deps = if let Some(host) = &host_clone {
+                crate::systemd::get_remote_unit_dependencies(host, &unit_clone, user_mode).unwrap_or_default()
+            } else {
+                crate::systemd::get_local_unit_dependencies(&unit_clone, user_mode)
+            };
+            if let Ok(mut map) = deps_arc.lock() {
+                map.insert(cache_key_clone.clone(), (deps, Instant::now()));
+            }
+            if let Ok(mut in_flight) = in_flight_arc.lock() {
+                in_flight.remove(&cache_key_clone);
+            }
+        });
+    }
+
+    pub fn select_systemd_unit(&mut self, unit: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) {
+        self.selected_service = Some(unit.to_string());
+        self.service_action_msg = None;
+        self.systemd_selected_file = None;
+        self.systemd_file_content.clear();
+        self.systemd_file_original.clear();
+        self.systemd_file_status_msg = None;
+        self.last_journal_refresh = Instant::now();
+
+        // 1. Asynchronously fetch journalctl logs
+        if let Some(host) = host_opt {
+            self.trigger_remote_journal_fetch(host, unit, user_mode);
+        } else {
+            let pass_opt = if !user_mode && !self.local_sudo_password.is_empty() {
+                Some(self.local_sudo_password.as_str())
+            } else {
+                None
+            };
+            self.trigger_local_journal_fetch(unit, user_mode, pass_opt);
+        }
+
+        // 2. Pre-fetch unit files & dependencies in the background for zero-lag tab switches!
+        self.trigger_systemd_unit_files_fetch(unit, user_mode, host_opt);
+        self.trigger_systemd_unit_dependencies_fetch(unit, user_mode, host_opt);
     }
 
     fn trigger_remote_service_action(&self, host: &SshRemoteHost, unit: &str, action: &'static str, user_mode: bool) {
@@ -3424,9 +3611,7 @@ impl eframe::App for LauncherApp {
                     match create_local_service(&service_def, pass_opt) {
                         Ok(msg) => {
                             self.service_action_msg = Some(msg);
-                            if let Ok(services) = list_local_services(service_def.is_user) {
-                                self.local_services = services;
-                            }
+                            self.trigger_local_services_list(service_def.is_user);
                         }
                         Err(err) => {
                             if !service_def.is_user && (err.contains("Sudo password needed") || err.contains("authentication") || err.contains("Incorrect sudo password")) {
@@ -4724,9 +4909,7 @@ impl LauncherApp {
                         }
                     } else {
                         self.local_services_user = true;
-                        if let Ok(s) = list_local_services(true) {
-                            self.local_services = s;
-                        }
+                        self.trigger_local_services_list(true);
                     }
                 }
 
@@ -4745,9 +4928,7 @@ impl LauncherApp {
                         }
                     } else {
                         self.local_services_user = false;
-                        if let Ok(s) = list_local_services(false) {
-                            self.local_services = s;
-                        }
+                        self.trigger_local_services_list(false);
                     }
                 }
 
@@ -4770,9 +4951,7 @@ impl LauncherApp {
                                 self.trigger_remote_services_list(host, user_mode);
                             }
                         } else {
-                            if let Ok(s) = list_local_services(user_mode) {
-                                self.local_services = s;
-                            }
+                            self.trigger_local_services_list(user_mode);
                         }
                     }
                 });
@@ -4783,14 +4962,21 @@ impl LauncherApp {
             // Auto-load services on first open
             if host_id.is_none() && !self.local_services_loaded {
                 self.local_services_loaded = true;
-                if let Ok(s) = list_local_services(self.local_services_user) {
-                    self.local_services = s;
-                }
+                self.trigger_local_services_list(self.local_services_user);
             } else if let (Some(host), Some(ref key)) = (&host_opt, &s_key) {
                 let has_cached = self.remote_services.lock().map(|m| m.contains_key(key)).unwrap_or(false);
                 let is_in_flight = self.remote_services_in_flight.lock().map(|s| s.contains(key)).unwrap_or(false);
                 if !has_cached && !is_in_flight {
                     self.trigger_remote_services_list(host, user_mode);
+                }
+            }
+
+            // Sync local services cache if available
+            if host_id.is_none() {
+                if let Ok(cache) = self.local_services_cache.lock() {
+                    if let Some(list) = cache.get(&user_mode) {
+                        self.local_services = list.clone();
+                    }
                 }
             }
 
@@ -4807,12 +4993,14 @@ impl LauncherApp {
             let services_list: Vec<SystemdService> = if let Some(ref key) = s_key {
                 self.remote_services.lock().map(|m| m.get(key).cloned().unwrap_or_default()).unwrap_or_default()
             } else {
-                self.local_services.clone()
+                self.local_services_cache.lock().map(|m| m.get(&user_mode).cloned().unwrap_or_default()).unwrap_or_else(|_| self.local_services.clone())
             };
 
-            let is_services_loading = s_key.as_ref().map(|k| {
+            let is_services_loading = if let Some(ref k) = s_key {
                 self.remote_services_in_flight.lock().map(|s| s.contains(k)).unwrap_or(false)
-            }).unwrap_or(false);
+            } else {
+                self.local_services_in_flight.lock().map(|s| s.contains(&user_mode)).unwrap_or(false)
+            };
 
             let filtered_services: Vec<SystemdService> = services_list
                 .into_iter()
@@ -4830,7 +5018,7 @@ impl LauncherApp {
                     if is_services_loading {
                         ui.spinner();
                         ui.add_space(6.0);
-                        ui.label(RichText::new("Loading systemd services over SSH...").size(12.0).color(p.text_muted));
+                        ui.label(RichText::new("Loading systemd services...").size(12.0).color(p.text_muted));
                     } else if let Some(ref key) = s_key {
                         let err_opt = self.remote_services_errors.lock().ok()
                             .and_then(|e| e.get(key).cloned())
@@ -4858,12 +5046,13 @@ impl LauncherApp {
             ScrollArea::vertical()
                 .id_salt("systemd_services_scroll")
                 .auto_shrink([false, false])
-                .show(ui, |ui| {
+                .show_rows(ui, 54.0, filtered_services.len(), |ui, row_range| {
                     ui.set_width(ui.available_width());
                     ui.set_max_width(ui.available_width());
                     let mut selected = None;
 
-                    for s in &filtered_services {
+                    for idx in row_range {
+                        let s = &filtered_services[idx];
                         let is_active = s.is_active();
                         let is_failed = s.is_failed();
                         let is_selected = self.selected_service.as_deref() == Some(&s.name);
@@ -4954,24 +5143,7 @@ impl LauncherApp {
                     }
 
                     if let Some(unit) = selected {
-                        self.selected_service = Some(unit.clone());
-                        self.service_action_msg = None;
-                        self.systemd_selected_file = None;
-                        self.systemd_file_content.clear();
-                        self.systemd_file_original.clear();
-                        self.systemd_file_status_msg = None;
-                        // Fetch journalctl asynchronously
-                        if let Some(host) = &host_opt {
-                            self.trigger_remote_journal_fetch(host, &unit, user_mode);
-                        } else {
-                            let pass_opt = if !user_mode && !self.local_sudo_password.is_empty() {
-                                Some(self.local_sudo_password.as_str())
-                            } else {
-                                None
-                            };
-                            self.service_journal_logs = fetch_local_journal(&unit, user_mode, 100, pass_opt).unwrap_or_default();
-                        }
-                        self.last_journal_refresh = Instant::now();
+                        self.select_systemd_unit(&unit, user_mode, host_opt.as_ref());
                     }
                 });
         });
@@ -5017,16 +5189,33 @@ impl LauncherApp {
                     self.remote_service_action_in_flight.lock().map(|set| set.contains(k)).unwrap_or(false)
                 }).unwrap_or(false);
 
+                let local_j_key = format!("{}:{}", s.name, if user_mode { "user" } else { "system" });
+                let is_local_journal_in_flight = self.local_journal_in_flight.lock().map(|set| set.contains(&local_j_key)).unwrap_or(false);
+
                 let j_key = host_id.map(|hid| format!("{}:{}:{}", hid, s.name, if user_mode { "user" } else { "system" }));
-                let is_journal_in_flight = j_key.as_ref().map(|k| {
-                    self.remote_journal_in_flight.lock().map(|set| set.contains(k)).unwrap_or(false)
-                }).unwrap_or(false);
+                let is_journal_in_flight = if host_id.is_some() {
+                    j_key.as_ref().map(|k| {
+                        self.remote_journal_in_flight.lock().map(|set| set.contains(k)).unwrap_or(false)
+                    }).unwrap_or(false)
+                } else {
+                    is_local_journal_in_flight
+                };
 
                 // Auto-fetch journal logs on first selection if not yet loaded
                 if let (Some(host), Some(ref jk)) = (&host_opt, &j_key) {
                     let has_logs = self.remote_journal_logs.lock().map(|m| m.contains_key(jk)).unwrap_or(false);
                     if !has_logs && !is_journal_in_flight {
                         self.trigger_remote_journal_fetch(host, &s.name, user_mode);
+                    }
+                } else if host_id.is_none() {
+                    let has_logs = self.local_journal_logs.lock().map(|m| m.contains_key(&local_j_key)).unwrap_or(false);
+                    if !has_logs && !is_journal_in_flight {
+                        let pass_opt = if !user_mode && !self.local_sudo_password.is_empty() {
+                            Some(self.local_sudo_password.as_str())
+                        } else {
+                            None
+                        };
+                        self.trigger_local_journal_fetch(&s.name, user_mode, pass_opt);
                     }
                 }
 
@@ -5196,15 +5385,13 @@ impl LauncherApp {
                                                 }
                                             }
                                         }
-                                        if let Ok(services) = list_local_services(user_mode) {
-                                            self.local_services = services;
-                                        }
+                                        self.trigger_local_services_list(user_mode);
                                         let pass_for_journal = if !user_mode && !self.local_sudo_password.is_empty() {
                                             Some(self.local_sudo_password.as_str())
                                         } else {
                                             None
                                         };
-                                        self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100, pass_for_journal).unwrap_or_default();
+                                        self.trigger_local_journal_fetch(&s.name, user_mode, pass_for_journal);
                                     }
                                 }
                             }
@@ -5281,7 +5468,7 @@ impl LauncherApp {
                                             } else {
                                                 None
                                             };
-                                            self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100, pass_for_journal).unwrap_or_default();
+                                            self.trigger_local_journal_fetch(&s.name, user_mode, pass_for_journal);
                                         }
                                         self.last_journal_refresh = Instant::now();
                                     }
@@ -5296,7 +5483,7 @@ impl LauncherApp {
                                         .selected_text(RichText::new(interval_label).size(11.0).color(p.text_primary))
                                         .width(105.0)
                                         .show_ui(ui, |ui| {
-                                            ui.selectable_value(&mut self.journal_refresh_interval, 0, "Off (Manual)");
+                                             ui.selectable_value(&mut self.journal_refresh_interval, 0, "Off (Manual)");
                                             ui.selectable_value(&mut self.journal_refresh_interval, 1, "Every 1s");
                                             ui.selectable_value(&mut self.journal_refresh_interval, 2, "Every 2s");
                                             ui.selectable_value(&mut self.journal_refresh_interval, 5, "Every 5s");
@@ -5324,7 +5511,7 @@ impl LauncherApp {
                                         } else {
                                             None
                                         };
-                                        self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100, pass_for_journal).unwrap_or_default();
+                                        self.trigger_local_journal_fetch(&s.name, user_mode, pass_for_journal);
                                     }
                                 }
                             }
@@ -5340,7 +5527,16 @@ impl LauncherApp {
                                     }
                                 })
                             } else {
-                                self.service_journal_logs.clone()
+                                let local_key = format!("{}:{}", s.name, if user_mode { "user" } else { "system" });
+                                self.local_journal_logs.lock().map(|m| m.get(&local_key).cloned()).unwrap_or(None).unwrap_or_else(|| {
+                                    if is_journal_in_flight {
+                                        "Fetching journal logs in background...".to_string()
+                                    } else if !self.service_journal_logs.is_empty() {
+                                        self.service_journal_logs.clone()
+                                    } else {
+                                        format!("No journal logs recorded yet. Click '{} Refresh Logs'.", crate::lucide::REFRESH_CW)
+                                    }
+                                })
                             };
 
                             let log_h = (ui.available_height() - 20.0).max(180.0);
@@ -5393,36 +5589,42 @@ impl LauncherApp {
         }
     }
 
-    fn load_systemd_unit_files(&mut self, unit: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) -> crate::systemd::UnitFilesInfo {
+    fn load_systemd_unit_files(&mut self, unit: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) -> (crate::systemd::UnitFilesInfo, bool) {
         let cache_key = format!("{}:{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), unit, user_mode);
-        if let Some((info, time)) = self.systemd_files_cache.get(&cache_key) {
-            if time.elapsed() < Duration::from_secs(10) {
-                return info.clone();
+        let cached = self.systemd_files_cache.lock().ok().and_then(|c| c.get(&cache_key).cloned());
+        let in_flight = self.systemd_files_in_flight.lock().map(|s| s.contains(&cache_key)).unwrap_or(false);
+        if let Some((info, time)) = cached {
+            if time.elapsed() < Duration::from_secs(30) {
+                return (info, false);
             }
+            if !in_flight {
+                self.trigger_systemd_unit_files_fetch(unit, user_mode, host_opt);
+            }
+            return (info, true);
         }
-        let info = if let Some(host) = host_opt {
-            crate::systemd::get_remote_unit_files(host, unit, user_mode).unwrap_or_default()
-        } else {
-            crate::systemd::get_local_unit_files(unit, user_mode)
-        };
-        self.systemd_files_cache.insert(cache_key, (info.clone(), Instant::now()));
-        info
+        if !in_flight {
+            self.trigger_systemd_unit_files_fetch(unit, user_mode, host_opt);
+        }
+        (crate::systemd::UnitFilesInfo::default(), true)
     }
 
-    fn load_systemd_unit_dependencies(&mut self, unit: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) -> crate::systemd::UnitDependenciesInfo {
+    fn load_systemd_unit_dependencies(&mut self, unit: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) -> (crate::systemd::UnitDependenciesInfo, bool) {
         let cache_key = format!("{}:{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), unit, user_mode);
-        if let Some((deps, time)) = self.systemd_deps_cache.get(&cache_key) {
-            if time.elapsed() < Duration::from_secs(15) {
-                return deps.clone();
+        let cached = self.systemd_deps_cache.lock().ok().and_then(|c| c.get(&cache_key).cloned());
+        let in_flight = self.systemd_deps_in_flight.lock().map(|s| s.contains(&cache_key)).unwrap_or(false);
+        if let Some((deps, time)) = cached {
+            if time.elapsed() < Duration::from_secs(45) {
+                return (deps, false);
             }
+            if !in_flight {
+                self.trigger_systemd_unit_dependencies_fetch(unit, user_mode, host_opt);
+            }
+            return (deps, true);
         }
-        let deps = if let Some(host) = host_opt {
-            crate::systemd::get_remote_unit_dependencies(host, unit, user_mode).unwrap_or_default()
-        } else {
-            crate::systemd::get_local_unit_dependencies(unit, user_mode)
-        };
-        self.systemd_deps_cache.insert(cache_key, (deps.clone(), Instant::now()));
-        deps
+        if !in_flight {
+            self.trigger_systemd_unit_dependencies_fetch(unit, user_mode, host_opt);
+        }
+        (crate::systemd::UnitDependenciesInfo::default(), true)
     }
 
     fn render_systemd_files_tab(
@@ -5433,7 +5635,7 @@ impl LauncherApp {
         host_opt: Option<&SshRemoteHost>,
     ) {
         let p = self.theme.palette();
-        let files_info = self.load_systemd_unit_files(&s.name, user_mode, host_opt);
+        let (files_info, is_files_loading) = self.load_systemd_unit_files(&s.name, user_mode, host_opt);
 
         // Determine available files
         let mut available_paths = Vec::new();
@@ -5448,24 +5650,38 @@ impl LauncherApp {
         if self.systemd_selected_file.is_none() && !available_paths.is_empty() {
             let (first_path, _, _) = &available_paths[0];
             self.systemd_selected_file = Some(first_path.clone());
-            let content = if let Some(host) = host_opt {
-                crate::systemd::read_remote_unit_file(host, first_path).unwrap_or_default()
-            } else {
-                let pass = if !user_mode && !self.local_sudo_password.is_empty() {
-                    Some(self.local_sudo_password.as_str())
-                } else {
-                    None
-                };
-                crate::systemd::read_local_unit_file(first_path, pass).unwrap_or_default()
-            };
-            self.systemd_file_content = content.clone();
-            self.systemd_file_original = content;
+        }
+
+        let cur_path = self.systemd_selected_file.clone().unwrap_or_default();
+        let file_cache_key = format!("{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), cur_path);
+        let is_content_in_flight = self.systemd_file_content_in_flight.lock().map(|s| s.contains(&file_cache_key)).unwrap_or(false);
+
+        // Auto-read selected file into editor if cached or trigger async read
+        if !cur_path.is_empty() {
+            if let Ok(cache) = self.systemd_file_content_cache.lock() {
+                if let Some(content) = cache.get(&file_cache_key) {
+                    if self.systemd_file_original.is_empty() && self.systemd_file_content.is_empty() {
+                        self.systemd_file_content = content.clone();
+                        self.systemd_file_original = content.clone();
+                    }
+                } else if !is_content_in_flight {
+                    let pass = if !user_mode && !self.local_sudo_password.is_empty() {
+                        Some(self.local_sudo_password.as_str())
+                    } else {
+                        None
+                    };
+                    self.trigger_systemd_file_read(&cur_path, user_mode, host_opt, pass);
+                }
+            }
         }
 
         // Sub-toolbar: File Selector Pills & Actions
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
             ui.label(RichText::new("Unit Files:").size(11.5).strong().color(p.text_muted));
+            if is_files_loading {
+                ui.spinner();
+            }
 
             let mut switch_to_path = None;
             for (path, is_dropin, label) in &available_paths {
@@ -5487,19 +5703,22 @@ impl LauncherApp {
 
             if let Some(new_p) = switch_to_path {
                 self.systemd_selected_file = Some(new_p.clone());
-                let content = if let Some(host) = host_opt {
-                    crate::systemd::read_remote_unit_file(host, &new_p).unwrap_or_default()
+                self.systemd_file_status_msg = None;
+                let target_file_cache_key = format!("{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), new_p);
+                let cached_opt = self.systemd_file_content_cache.lock().ok().and_then(|c| c.get(&target_file_cache_key).cloned());
+                if let Some(content) = cached_opt {
+                    self.systemd_file_content = content.clone();
+                    self.systemd_file_original = content;
                 } else {
+                    self.systemd_file_content.clear();
+                    self.systemd_file_original.clear();
                     let pass = if !user_mode && !self.local_sudo_password.is_empty() {
                         Some(self.local_sudo_password.as_str())
                     } else {
                         None
                     };
-                    crate::systemd::read_local_unit_file(&new_p, pass).unwrap_or_default()
-                };
-                self.systemd_file_content = content.clone();
-                self.systemd_file_original = content;
-                self.systemd_file_status_msg = None;
+                    self.trigger_systemd_file_read(&new_p, user_mode, host_opt, pass);
+                }
             }
 
             // + New Drop-In Button
@@ -5518,8 +5737,16 @@ impl LauncherApp {
                 .rounding(Rounding::same(999.0));
             if ui.add(btn_ref).on_hover_text("Reload files and re-read from disk").clicked() {
                 let cache_key = format!("{}:{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), s.name, user_mode);
-                self.systemd_files_cache.remove(&cache_key);
+                if let Ok(mut c) = self.systemd_files_cache.lock() {
+                    c.remove(&cache_key);
+                }
+                if let Ok(mut c) = self.systemd_file_content_cache.lock() {
+                    c.clear();
+                }
                 self.systemd_selected_file = None;
+                self.systemd_file_content.clear();
+                self.systemd_file_original.clear();
+                self.trigger_systemd_unit_files_fetch(&s.name, user_mode, host_opt);
             }
         });
 
@@ -5608,7 +5835,9 @@ impl LauncherApp {
                                         self.systemd_file_original = initial_content;
                                         self.systemd_new_dropin_open = false;
                                         let cache_key = format!("{}:{}:{}", host.id, s.name, user_mode);
-                                        self.systemd_files_cache.remove(&cache_key);
+                                        if let Ok(mut c) = self.systemd_files_cache.lock() {
+                                            c.remove(&cache_key);
+                                        }
                                     }
                                     Err(e) => self.systemd_file_status_msg = Some((e, true)),
                                 }
@@ -5639,7 +5868,9 @@ impl LauncherApp {
                                             self.systemd_file_original = initial_content;
                                             self.systemd_new_dropin_open = false;
                                             let cache_key = format!("local:{}:{}", s.name, user_mode);
-                                            self.systemd_files_cache.remove(&cache_key);
+                                            if let Ok(mut c) = self.systemd_files_cache.lock() {
+                                                c.remove(&cache_key);
+                                            }
                                         }
                                         Err(e) => self.systemd_file_status_msg = Some((e, true)),
                                     }
@@ -5705,7 +5936,9 @@ impl LauncherApp {
                                         Ok(msg) => {
                                             self.systemd_file_status_msg = Some((msg, false));
                                             self.systemd_selected_file = None;
-                                            self.systemd_files_cache.clear();
+                                            if let Ok(mut c) = self.systemd_files_cache.lock() {
+                                                c.clear();
+                                            }
                                         }
                                         Err(e) => self.systemd_file_status_msg = Some((e, true)),
                                     }
@@ -5730,7 +5963,9 @@ impl LauncherApp {
                                             Ok(msg) => {
                                                 self.systemd_file_status_msg = Some((msg, false));
                                                 self.systemd_selected_file = None;
-                                                self.systemd_files_cache.clear();
+                                                if let Ok(mut c) = self.systemd_files_cache.lock() {
+                                                    c.clear();
+                                                }
                                             }
                                             Err(e) => self.systemd_file_status_msg = Some((e, true)),
                                         }
@@ -5845,7 +6080,7 @@ impl LauncherApp {
         services_list: &[SystemdService],
     ) {
         let p = self.theme.palette();
-        let deps = self.load_systemd_unit_dependencies(&s.name, user_mode, host_opt);
+        let (deps, is_deps_loading) = self.load_systemd_unit_dependencies(&s.name, user_mode, host_opt);
 
         let mut navigate_to_unit: Option<String> = None;
 
@@ -5860,9 +6095,13 @@ impl LauncherApp {
                 .rounding(Rounding::same(999.0));
                 if ui.add(btn_back).on_hover_text("Navigate back to previously viewed unit").clicked() {
                     let prev_unit = self.systemd_deps_history.pop().unwrap();
-                    self.selected_service = Some(prev_unit);
+                    self.select_systemd_unit(&prev_unit, user_mode, host_opt);
                     return;
                 }
+            }
+
+            if is_deps_loading {
+                ui.spinner();
             }
 
             // Filter box
@@ -5898,12 +6137,25 @@ impl LauncherApp {
                     .rounding(Rounding::same(999.0));
                 if ui.add(btn_ref).on_hover_text("Refresh dependencies").clicked() {
                     let cache_key = format!("{}:{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), s.name, user_mode);
-                    self.systemd_deps_cache.remove(&cache_key);
+                    if let Ok(mut c) = self.systemd_deps_cache.lock() {
+                        c.remove(&cache_key);
+                    }
+                    self.trigger_systemd_unit_dependencies_fetch(&s.name, user_mode, host_opt);
                 }
             });
         });
 
         ui.add_space(6.0);
+
+        if is_deps_loading && deps.requires.is_empty() && deps.wants.is_empty() && deps.after.is_empty() && deps.tree_output.is_empty() {
+            ui.add_space(20.0);
+            ui.vertical_centered(|ui| {
+                ui.spinner();
+                ui.add_space(6.0);
+                ui.label(RichText::new("Resolving systemd dependency graph...").size(12.0).color(p.text_muted));
+            });
+            return;
+        }
 
         if self.systemd_deps_view_mode == 0 {
             // Categorized View
@@ -6029,12 +6281,7 @@ impl LauncherApp {
 
         if let Some(target_unit) = navigate_to_unit {
             self.systemd_deps_history.push(s.name.clone());
-            self.selected_service = Some(target_unit);
-            self.service_action_msg = None;
-            self.systemd_selected_file = None;
-            self.systemd_file_content.clear();
-            self.systemd_file_original.clear();
-            self.systemd_file_status_msg = None;
+            self.select_systemd_unit(&target_unit, user_mode, host_opt);
         }
     }
 
@@ -6058,15 +6305,13 @@ impl LauncherApp {
                         self.sudo_popup.password_input.clear();
                         self.sudo_popup.error = None;
                         self.service_action_msg = Some(msg);
-                        if let Ok(services) = list_local_services(user_mode) {
-                            self.local_services = services;
-                        }
+                        self.trigger_local_services_list(user_mode);
                         let pass_opt = if !self.local_sudo_password.is_empty() {
                             Some(self.local_sudo_password.as_str())
                         } else {
                             None
                         };
-                        self.service_journal_logs = fetch_local_journal(&unit, user_mode, 100, pass_opt).unwrap_or_default();
+                        self.trigger_local_journal_fetch(&unit, user_mode, pass_opt);
                     }
                     Err(e) => {
                         self.local_sudo_password.clear();
@@ -6089,9 +6334,7 @@ impl LauncherApp {
                         self.sudo_popup.password_input.clear();
                         self.sudo_popup.error = None;
                         self.service_action_msg = Some(msg);
-                        if let Ok(services) = list_local_services(def.is_user) {
-                            self.local_services = services;
-                        }
+                        self.trigger_local_services_list(def.is_user);
                     }
                     Err(e) => {
                         self.local_sudo_password.clear();
@@ -6115,7 +6358,9 @@ impl LauncherApp {
                         self.sudo_popup.error = None;
                         self.systemd_file_original = content.clone();
                         self.systemd_file_status_msg = Some((msg, false));
-                        self.systemd_files_cache.clear();
+                        if let Ok(mut c) = self.systemd_files_cache.lock() {
+                            c.clear();
+                        }
                     }
                     Err(e) => {
                         self.local_sudo_password.clear();
@@ -6141,7 +6386,9 @@ impl LauncherApp {
                         self.systemd_file_content.clear();
                         self.systemd_file_original.clear();
                         self.systemd_file_status_msg = Some((msg, false));
-                        self.systemd_files_cache.clear();
+                        if let Ok(mut c) = self.systemd_files_cache.lock() {
+                            c.clear();
+                        }
                     }
                     Err(e) => {
                         self.local_sudo_password.clear();

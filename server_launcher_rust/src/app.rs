@@ -187,6 +187,7 @@ pub struct LauncherApp {
     expanded_listeners: BTreeSet<u16>,
 
     // App header icon texture
+    #[allow(dead_code)]
     icon_texture: Option<egui::TextureHandle>,
 
     // External listeners resource monitoring toggle (CPU & RAM)
@@ -544,7 +545,12 @@ impl LauncherApp {
                 Some(cc.egui_ctx.load_texture(
                     "app_header_icon",
                     color_image,
-                    egui::TextureOptions::LINEAR,
+                    egui::TextureOptions {
+                        magnification: egui::TextureFilter::Linear,
+                        minification: egui::TextureFilter::Linear,
+                        wrap_mode: egui::TextureWrapMode::ClampToEdge,
+                        mipmap_mode: Some(egui::TextureFilter::Linear),
+                    },
                 ))
             } else {
                 None
@@ -2933,6 +2939,156 @@ fn render_group_badge(ui: &mut Ui, text: &str) {
         });
 }
 
+/// Renders the official Server Launcher brand logo with subpixel vector precision.
+/// Renders with mathematical crispness at any DPI scale factor (1x, 1.25x, 1.5x, 2x, 4x)
+/// with zero pixelation, texture aliasing, or edge artifacts.
+pub fn render_app_logo(ui: &mut Ui, size: f32, bg_mask: Color32) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return resp;
+    }
+
+    let painter = ui.painter();
+    let min = rect.min;
+    let s = rect.width();
+
+    // 1. Base Squircle Container
+    // Deep nocturnal slate/indigo dark body
+    let card_rounding = Rounding::same(s * 0.22);
+    painter.rect_filled(
+        rect,
+        card_rounding,
+        Color32::from_rgb(17, 22, 44),
+    );
+    // Subtle inner depth fill
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            rect.min + egui::vec2(1.0, 1.0),
+            rect.max - egui::vec2(1.0, 1.0),
+        ),
+        Rounding::same(s * 0.20),
+        Color32::from_rgb(20, 26, 52),
+    );
+    // Crisp subtle border stroke
+    painter.rect_stroke(
+        rect,
+        card_rounding,
+        Stroke::new(1.0_f32, Color32::from_rgb(33, 44, 76)),
+    );
+
+    // 2. Three Server Blade Slots
+    let blade_pad_x = s * 0.14;
+    let blade_w = s * 0.72;
+    let blade_y_start = s * 0.16;
+    let total_blade_span = s * 0.60;
+    let gap = s * 0.045;
+    let blade_h = (total_blade_span - 2.0 * gap) / 3.0;
+    let blade_rounding = Rounding::same((blade_h * 0.35).max(1.5));
+
+    for i in 0..3 {
+        let b_top = min.y + blade_y_start + i as f32 * (blade_h + gap);
+        let b_rect = egui::Rect::from_min_size(
+            egui::pos2(min.x + blade_pad_x, b_top),
+            egui::vec2(blade_w, blade_h),
+        );
+
+        // Blade chassis card
+        painter.rect_filled(
+            b_rect,
+            blade_rounding,
+            Color32::from_rgb(31, 40, 64),
+        );
+        painter.rect_stroke(
+            b_rect,
+            blade_rounding,
+            Stroke::new(0.5_f32, Color32::from_rgb(46, 59, 90)),
+        );
+
+        let cy = b_rect.center().y;
+        let led_radius = (blade_h * 0.22).max(1.1);
+
+        // Green status LED (Left dot)
+        let led1_x = b_rect.min.x + blade_h * 0.48;
+        painter.circle_filled(
+            egui::pos2(led1_x, cy),
+            led_radius,
+            Color32::from_rgb(16, 185, 129),
+        );
+
+        // Second status LED
+        let led2_x = led1_x + led_radius * 2.6;
+        let led2_col = if i < 2 {
+            Color32::from_rgb(56, 189, 248)
+        } else {
+            Color32::from_rgb(100, 116, 139)
+        };
+        painter.circle_filled(
+            egui::pos2(led2_x, cy),
+            led_radius,
+            led2_col,
+        );
+
+        // Activity vent lines (Right side)
+        let line_x_start = led2_x + led_radius * 2.8;
+        let line_w1 = (b_rect.max.x - line_x_start - blade_h * 0.3).max(2.0);
+        let line_h = (blade_h * 0.16).max(1.0);
+        let line_y = cy;
+
+        // Top line
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(line_x_start, line_y - line_h * 0.5),
+                egui::vec2(line_w1, line_h),
+            ),
+            Rounding::same(line_h * 0.5),
+            Color32::from_rgba_premultiplied(148, 163, 184, 90),
+        );
+    }
+
+    // 3. Floating Play Badge (Bottom-Right)
+    let badge_center = egui::pos2(min.x + s * 0.72, min.y + s * 0.72);
+    let badge_radius = s * 0.22;
+    let cutout_radius = badge_radius + (s * 0.045).max(1.2);
+
+    // Dark cutout rim (cuts cleanly through squircle and blades, matching header background)
+    painter.circle_filled(
+        badge_center,
+        cutout_radius,
+        bg_mask,
+    );
+
+    // Vibrant Cyan / Azure Play Circle
+    painter.circle_filled(
+        badge_center,
+        badge_radius,
+        Color32::from_rgb(14, 165, 233),
+    );
+
+    // Inner subtle gradient ring / depth stroke
+    painter.circle_stroke(
+        badge_center,
+        badge_radius,
+        Stroke::new(0.5_f32, Color32::from_rgb(56, 189, 248)),
+    );
+
+    // Sharp, centered white equilateral play triangle
+    let tri_size = badge_radius * 0.72;
+    let tri_cx = badge_center.x + tri_size * 0.10; // optical center shift to the right
+    let tri_cy = badge_center.y;
+
+    let p1 = egui::pos2(tri_cx - tri_size * 0.42, tri_cy - tri_size * 0.50);
+    let p2 = egui::pos2(tri_cx - tri_size * 0.42, tri_cy + tri_size * 0.50);
+    let p3 = egui::pos2(tri_cx + tri_size * 0.55, tri_cy);
+
+    painter.add(egui::epaint::PathShape::convex_polygon(
+        vec![p1, p2, p3],
+        Color32::WHITE,
+        Stroke::NONE,
+    ));
+
+    resp
+}
+
 #[allow(dead_code)]
 fn render_metric_pill(ui: &mut Ui, icon: &str, label: &str, text_color: Color32) {
     let bg_color = ui.visuals().widgets.inactive.bg_fill;
@@ -3170,13 +3326,8 @@ impl eframe::App for LauncherApp {
                     };
 
                     // Left: App Icon + Server Launcher / Host title & status line
-                    if let Some(texture) = &self.icon_texture {
-                        ui.add(
-                            egui::Image::from_texture(texture)
-                                .fit_to_exact_size(egui::vec2(28.0, 28.0)),
-                        );
-                        ui.add_space(6.0);
-                    }
+                    render_app_logo(ui, 28.0, p.bg_header);
+                    ui.add_space(6.0);
 
                     if let Some(ref host) = remote_host_opt {
                         let (status, is_connecting) = {

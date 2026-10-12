@@ -18,8 +18,283 @@ pub struct ServerTemplate {
 }
 
 pub const SERVER_TEMPLATES: &[ServerTemplate] = &[
+    // --- Cloud Emulators & Local BaaS ---
+    ServerTemplate {
+        name: "Firebase Emulator Suite",
+        command: "firebase emulators:start",
+        stop_command: "",
+        port: 4000,
+        group: "Emulators",
+        env: &[],
+        actions: &[
+            ("Export Data", "firebase emulators:export ./firebase-export"),
+            ("Import & Start", "firebase emulators:start --import ./firebase-export"),
+        ],
+        links: &[
+            ("Emulator UI", "http://localhost:4000"),
+            ("Auth (9099)", "http://localhost:9099"),
+            ("Firestore (8080)", "http://localhost:8080"),
+            ("Functions (5001)", "http://localhost:5001"),
+            ("Storage (9199)", "http://localhost:9199"),
+        ],
+    },
+    ServerTemplate {
+        name: "Supabase (Local CLI)",
+        command: "npx supabase start",
+        stop_command: "npx supabase stop",
+        port: 54323,
+        group: "Emulators",
+        env: &[],
+        actions: &[
+            ("Status", "npx supabase status"),
+            ("DB Reset", "npx supabase db reset"),
+            ("DB Diff", "npx supabase db diff"),
+        ],
+        links: &[
+            ("Studio UI", "http://localhost:54323"),
+            ("API Gateway", "http://localhost:54321"),
+            ("Inbucket Mail", "http://localhost:54324"),
+        ],
+    },
+    ServerTemplate {
+        name: "LocalStack (AWS Emulator)",
+        command: "localstack start",
+        stop_command: "localstack stop",
+        port: 4566,
+        group: "Emulators",
+        env: &[("SERVICES", "s3,dynamodb,sqs,sns,lambda")],
+        actions: &[
+            ("Status", "localstack status"),
+            ("Health", "curl http://localhost:4566/_localstack/health"),
+        ],
+        links: &[("Health Check", "http://localhost:4566/_localstack/health")],
+    },
+    ServerTemplate {
+        name: "Azurite (Azure Emulator)",
+        command: "npx azurite --location ./azurite-data --silent",
+        stop_command: "",
+        port: 10000,
+        group: "Emulators",
+        env: &[],
+        actions: &[("Blob Only", "npx azurite-blob --silent")],
+        links: &[("Blob Service", "http://localhost:10000")],
+    },
+
+    // --- Databases & Stores ---
+    ServerTemplate {
+        name: "PostgreSQL",
+        command: "postgres -D ./data",
+        stop_command: "pg_ctl stop -D ./data -m fast",
+        port: 5432,
+        group: "Database",
+        env: &[("PGDATA", "./data")],
+        actions: &[
+            ("Init DB", "initdb -D ./data"),
+            ("Status", "pg_ctl status -D ./data"),
+            ("Docker Run", "docker run -d --name local-postgres -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:alpine"),
+        ],
+        links: &[("pgAdmin", "http://localhost:5050")],
+    },
+    ServerTemplate {
+        name: "MySQL",
+        command: "mysqld --console",
+        stop_command: "mysqladmin -u root shutdown",
+        port: 3306,
+        group: "Database",
+        env: &[],
+        actions: &[
+            ("Ping", "mysqladmin -u root ping"),
+            ("Docker Run", "docker run -d --name local-mysql -p 3306:3306 -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=app mysql:latest"),
+        ],
+        links: &[("phpMyAdmin", "http://localhost:8080")],
+    },
+    ServerTemplate {
+        name: "MariaDB",
+        command: "mariadbd --console",
+        stop_command: "mariadb-admin -u root shutdown",
+        port: 3306,
+        group: "Database",
+        env: &[],
+        actions: &[
+            ("Ping", "mariadb-admin -u root ping"),
+            ("Docker Run", "docker run -d --name local-mariadb -p 3306:3306 -e MARIADB_ROOT_PASSWORD=root mariadb:latest"),
+        ],
+        links: &[("phpMyAdmin", "http://localhost:8080")],
+    },
+    ServerTemplate {
+        name: "Redis",
+        command: "redis-server",
+        stop_command: "redis-cli shutdown",
+        port: 6379,
+        group: "Database",
+        env: &[],
+        actions: &[
+            ("Ping", "redis-cli ping"),
+            ("Monitor", "redis-cli monitor"),
+            ("Docker Run", "docker run -d --name local-redis -p 6379:6379 redis:alpine"),
+        ],
+        links: &[("Redis Insight", "http://localhost:5540")],
+    },
+    ServerTemplate {
+        name: "MongoDB",
+        command: "mongod --dbpath ./data/db",
+        stop_command: "mongod --shutdown",
+        port: 27017,
+        group: "Database",
+        env: &[],
+        actions: &[
+            ("Docker Run", "docker run -d --name local-mongo -p 27017:27017 mongo:latest"),
+        ],
+        links: &[("Mongo Express", "http://localhost:8081")],
+    },
+    ServerTemplate {
+        name: "PocketBase",
+        command: "./pocketbase serve --http 0.0.0.0:8090",
+        stop_command: "",
+        port: 8090,
+        group: "Database",
+        env: &[],
+        actions: &[("Superuser", "./pocketbase superuser create")],
+        links: &[
+            ("Admin UI", "http://localhost:8090/_/"),
+            ("API Docs", "http://localhost:8090/api/"),
+        ],
+    },
+    ServerTemplate {
+        name: "MeiliSearch",
+        command: "meilisearch --db-path ./meili_data",
+        stop_command: "",
+        port: 7700,
+        group: "Database",
+        env: &[("MEILI_ENV", "development")],
+        actions: &[("Health", "curl http://localhost:7700/health")],
+        links: &[("Health Check", "http://localhost:7700/health")],
+    },
+    ServerTemplate {
+        name: "Elasticsearch",
+        command: "./bin/elasticsearch",
+        stop_command: "",
+        port: 9200,
+        group: "Database",
+        env: &[],
+        actions: &[("Cluster Health", "curl http://localhost:9200/_cluster/health")],
+        links: &[
+            ("Cluster Info", "http://localhost:9200"),
+            ("Kibana", "http://localhost:5601"),
+        ],
+    },
+
+    // --- Local AI / LLM Tools ---
+    ServerTemplate {
+        name: "Ollama (Local AI/LLM)",
+        command: "ollama serve",
+        stop_command: "",
+        port: 11434,
+        group: "AI/LLM",
+        env: &[("OLLAMA_HOST", "0.0.0.0:11434")],
+        actions: &[
+            ("Pull Llama3", "ollama pull llama3"),
+            ("Pull Mistral", "ollama pull mistral"),
+            ("List Models", "ollama list"),
+        ],
+        links: &[
+            ("API Tags", "http://localhost:11434/api/tags"),
+            ("Open WebUI", "http://localhost:3000"),
+        ],
+    },
+    ServerTemplate {
+        name: "LiteLLM Proxy",
+        command: "litellm --port 4000",
+        stop_command: "",
+        port: 4000,
+        group: "AI/LLM",
+        env: &[],
+        actions: &[("Health", "curl http://localhost:4000/health")],
+        links: &[("Proxy UI / Docs", "http://localhost:4000")],
+    },
+
+    // --- Developer Utilities & Infrastructure ---
+    ServerTemplate {
+        name: "MinIO (S3 Object Storage)",
+        command: "minio server ./data --console-address :9001",
+        stop_command: "",
+        port: 9001,
+        group: "Tools",
+        env: &[
+            ("MINIO_ROOT_USER", "admin"),
+            ("MINIO_ROOT_PASSWORD", "password123"),
+        ],
+        actions: &[("Docker Run", "docker run -d --name local-minio -p 9000:9000 -p 9001:9001 minio/minio server /data --console-address :9001")],
+        links: &[
+            ("Console UI", "http://localhost:9001"),
+            ("S3 API", "http://localhost:9000"),
+        ],
+    },
+    ServerTemplate {
+        name: "Mailpit (SMTP Testing)",
+        command: "mailpit",
+        stop_command: "",
+        port: 8025,
+        group: "Tools",
+        env: &[
+            ("MP_UI_BIND_ADDR", "0.0.0.0:8025"),
+            ("MP_SMTP_BIND_ADDR", "0.0.0.0:1025"),
+        ],
+        actions: &[("Docker Run", "docker run -d --name local-mailpit -p 8025:8025 -p 1025:1025 axllent/mailpit")],
+        links: &[("Webmail UI", "http://localhost:8025")],
+    },
+    ServerTemplate {
+        name: "RabbitMQ",
+        command: "rabbitmq-server",
+        stop_command: "rabbitmqctl stop",
+        port: 15672,
+        group: "Tools",
+        env: &[],
+        actions: &[
+            ("Status", "rabbitmqctl status"),
+            ("Docker Run", "docker run -d --name local-rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management"),
+        ],
+        links: &[("Management UI", "http://localhost:15672")],
+    },
+    ServerTemplate {
+        name: "Docker Compose",
+        command: "docker compose up",
+        stop_command: "docker compose down",
+        port: 8080,
+        group: "Tools",
+        env: &[],
+        actions: &[
+            ("Build & Up", "docker compose up --build"),
+            ("Down", "docker compose down"),
+            ("Logs", "docker compose logs -f"),
+            ("Status", "docker compose ps"),
+        ],
+        links: &[("Localhost", "http://localhost:8080")],
+    },
+    ServerTemplate {
+        name: "Caddy Web Server",
+        command: "caddy run --config ./Caddyfile",
+        stop_command: "caddy stop",
+        port: 80,
+        group: "Tools",
+        env: &[],
+        actions: &[("Reload", "caddy reload")],
+        links: &[("Localhost", "http://localhost")],
+    },
+
+    // --- Frontend Frameworks ---
     ServerTemplate {
         name: "React (Vite)",
+        command: "npm run dev",
+        stop_command: "",
+        port: 5173,
+        group: "Frontend",
+        env: &[],
+        actions: &[("Build", "npm run build"), ("Install", "npm install")],
+        links: &[("Localhost", "http://localhost:5173")],
+    },
+    ServerTemplate {
+        name: "Vue (Vite)",
         command: "npm run dev",
         stop_command: "",
         port: 5173,
@@ -38,6 +313,222 @@ pub const SERVER_TEMPLATES: &[ServerTemplate] = &[
         actions: &[("Build", "npm run build"), ("Install", "npm install")],
         links: &[("Localhost", "http://localhost:3000")],
     },
+    ServerTemplate {
+        name: "Nuxt",
+        command: "npx nuxi dev",
+        stop_command: "",
+        port: 3000,
+        group: "Frontend",
+        env: &[],
+        actions: &[("Build", "npx nuxi build"), ("Install", "npm install")],
+        links: &[("Localhost", "http://localhost:3000")],
+    },
+    ServerTemplate {
+        name: "SvelteKit",
+        command: "npm run dev",
+        stop_command: "",
+        port: 5173,
+        group: "Frontend",
+        env: &[],
+        actions: &[("Build", "npm run build"), ("Check", "npm run check")],
+        links: &[("Localhost", "http://localhost:5173")],
+    },
+    ServerTemplate {
+        name: "Angular",
+        command: "ng serve",
+        stop_command: "",
+        port: 4200,
+        group: "Frontend",
+        env: &[],
+        actions: &[("Build", "ng build"), ("Test", "ng test")],
+        links: &[("Localhost", "http://localhost:4200")],
+    },
+    ServerTemplate {
+        name: "Astro",
+        command: "npm run dev",
+        stop_command: "",
+        port: 4321,
+        group: "Frontend",
+        env: &[],
+        actions: &[("Build", "npm run build"), ("Check", "npx astro check")],
+        links: &[("Localhost", "http://localhost:4321")],
+    },
+    ServerTemplate {
+        name: "Storybook",
+        command: "npm run storybook",
+        stop_command: "",
+        port: 6006,
+        group: "Frontend",
+        env: &[],
+        actions: &[("Build Storybook", "npm run build-storybook")],
+        links: &[("Storybook UI", "http://localhost:6006")],
+    },
+
+    // --- Backend Frameworks ---
+    ServerTemplate {
+        name: "FastAPI (Uvicorn)",
+        command: "uvicorn main:app --reload --port 8000",
+        stop_command: "",
+        port: 8000,
+        group: "Backend",
+        env: &[],
+        actions: &[("Install Reqs", "pip install -r requirements.txt")],
+        links: &[
+            ("Swagger Docs", "http://localhost:8000/docs"),
+            ("ReDoc", "http://localhost:8000/redoc"),
+        ],
+    },
+    ServerTemplate {
+        name: "Flask",
+        command: "flask run --port 5000 --debug",
+        stop_command: "",
+        port: 5000,
+        group: "Backend",
+        env: &[("FLASK_ENV", "development"), ("FLASK_DEBUG", "1")],
+        actions: &[("Install Reqs", "pip install -r requirements.txt")],
+        links: &[("Localhost", "http://localhost:5000")],
+    },
+    ServerTemplate {
+        name: "Django",
+        command: "python manage.py runserver 0.0.0.0:8000",
+        stop_command: "",
+        port: 8000,
+        group: "Backend",
+        env: &[],
+        actions: &[
+            ("Migrate", "python manage.py migrate"),
+            ("Make Migrations", "python manage.py makemigrations"),
+            ("Shell", "python manage.py shell"),
+        ],
+        links: &[("Admin Panel", "http://localhost:8000/admin")],
+    },
+    ServerTemplate {
+        name: "Node / Express",
+        command: "node server.js",
+        stop_command: "",
+        port: 3000,
+        group: "Backend",
+        env: &[],
+        actions: &[("Install", "npm install")],
+        links: &[("Localhost", "http://localhost:3000")],
+    },
+    ServerTemplate {
+        name: "NestJS",
+        command: "npm run start:dev",
+        stop_command: "",
+        port: 3000,
+        group: "Backend",
+        env: &[],
+        actions: &[("Build", "npm run build"), ("Test", "npm run test")],
+        links: &[
+            ("Localhost", "http://localhost:3000"),
+            ("Swagger Docs", "http://localhost:3000/api"),
+        ],
+    },
+    ServerTemplate {
+        name: "Spring Boot (Maven)",
+        command: "./mvnw spring-boot:run",
+        stop_command: "",
+        port: 8080,
+        group: "Backend",
+        env: &[],
+        actions: &[("Test", "./mvnw test"), ("Package", "./mvnw clean package")],
+        links: &[
+            ("Localhost", "http://localhost:8080"),
+            ("Actuator Health", "http://localhost:8080/actuator/health"),
+        ],
+    },
+    ServerTemplate {
+        name: "Go (Air Live Reload)",
+        command: "air",
+        stop_command: "",
+        port: 8080,
+        group: "Backend",
+        env: &[],
+        actions: &[("Go Run", "go run ."), ("Go Test", "go test ./...")],
+        links: &[("Localhost", "http://localhost:8080")],
+    },
+    ServerTemplate {
+        name: "Rust (Cargo Watch)",
+        command: "cargo watch -x run",
+        stop_command: "",
+        port: 8080,
+        group: "Backend",
+        env: &[("RUST_LOG", "debug")],
+        actions: &[("Cargo Check", "cargo check"), ("Cargo Test", "cargo test")],
+        links: &[("Localhost", "http://localhost:8080")],
+    },
+    ServerTemplate {
+        name: "Laravel (Artisan)",
+        command: "php artisan serve --port 8000",
+        stop_command: "",
+        port: 8000,
+        group: "Backend",
+        env: &[],
+        actions: &[
+            ("Migrate", "php artisan migrate"),
+            ("Queue Work", "php artisan queue:work"),
+            ("Route List", "php artisan route:list"),
+        ],
+        links: &[("Localhost", "http://localhost:8000")],
+    },
+    ServerTemplate {
+        name: "Ruby on Rails",
+        command: "bin/rails server -p 3000",
+        stop_command: "",
+        port: 3000,
+        group: "Backend",
+        env: &[],
+        actions: &[
+            ("DB Migrate", "bin/rails db:migrate"),
+            ("Rails Console", "bin/rails console"),
+        ],
+        links: &[("Localhost", "http://localhost:3000")],
+    },
+    ServerTemplate {
+        name: "ASP.NET Core (dotnet watch)",
+        command: "dotnet watch run",
+        stop_command: "",
+        port: 5000,
+        group: "Backend",
+        env: &[("ASPNETCORE_ENVIRONMENT", "Development")],
+        actions: &[("Build", "dotnet build"), ("Test", "dotnet test")],
+        links: &[
+            ("Localhost", "http://localhost:5000"),
+            ("Swagger Docs", "http://localhost:5000/swagger"),
+        ],
+    },
+    ServerTemplate {
+        name: "Phoenix (Elixir)",
+        command: "mix phx.server",
+        stop_command: "",
+        port: 4000,
+        group: "Backend",
+        env: &[],
+        actions: &[
+            ("Ecto Migrate", "mix ecto.migrate"),
+            ("IEx Server", "iex -S mix phx.server"),
+        ],
+        links: &[
+            ("Localhost", "http://localhost:4000"),
+            ("LiveDashboard", "http://localhost:4000/dashboard"),
+        ],
+    },
+    ServerTemplate {
+        name: "Strapi CMS",
+        command: "npm run develop",
+        stop_command: "",
+        port: 1337,
+        group: "Backend",
+        env: &[],
+        actions: &[("Build", "npm run build"), ("Install", "npm install")],
+        links: &[
+            ("Admin Panel", "http://localhost:1337/admin"),
+            ("API", "http://localhost:1337/api"),
+        ],
+    },
+
+    // --- Mobile Frameworks ---
     ServerTemplate {
         name: "React Native (Metro)",
         command: "npx react-native start",
@@ -70,76 +561,6 @@ pub const SERVER_TEMPLATES: &[ServerTemplate] = &[
             ("Install", "npx expo install"),
         ],
         links: &[("Metro Bundler", "http://localhost:8081")],
-    },
-    ServerTemplate {
-        name: "FastAPI (Uvicorn)",
-        command: "uvicorn main:app --reload --port 8000",
-        stop_command: "",
-        port: 8000,
-        group: "Backend",
-        env: &[],
-        actions: &[("Install reqs", "pip install -r requirements.txt")],
-        links: &[("Swagger Docs", "http://localhost:8000/docs")],
-    },
-    ServerTemplate {
-        name: "Flask",
-        command: "flask run --port 5000 --debug",
-        stop_command: "",
-        port: 5000,
-        group: "Backend",
-        env: &[("FLASK_ENV", "development"), ("FLASK_DEBUG", "1")],
-        actions: &[("Install reqs", "pip install -r requirements.txt")],
-        links: &[("Localhost", "http://localhost:5000")],
-    },
-    ServerTemplate {
-        name: "Django",
-        command: "python manage.py runserver 0.0.0.0:8000",
-        stop_command: "",
-        port: 8000,
-        group: "Backend",
-        env: &[],
-        actions: &[("Migrate", "python manage.py migrate")],
-        links: &[("Admin Panel", "http://localhost:8000/admin")],
-    },
-    ServerTemplate {
-        name: "Node / Express",
-        command: "node server.js",
-        stop_command: "",
-        port: 3000,
-        group: "Backend",
-        env: &[],
-        actions: &[("Install", "npm install")],
-        links: &[("Localhost", "http://localhost:3000")],
-    },
-    ServerTemplate {
-        name: "PostgreSQL",
-        command: "postgres -D ./data",
-        stop_command: "pg_ctl stop -D ./data",
-        port: 5432,
-        group: "DB",
-        env: &[],
-        actions: &[],
-        links: &[],
-    },
-    ServerTemplate {
-        name: "Redis",
-        command: "redis-server",
-        stop_command: "redis-cli shutdown",
-        port: 6379,
-        group: "DB",
-        env: &[],
-        actions: &[],
-        links: &[],
-    },
-    ServerTemplate {
-        name: "MongoDB",
-        command: "mongod --dbpath ./data/db",
-        stop_command: "",
-        port: 27017,
-        group: "DB",
-        env: &[],
-        actions: &[],
-        links: &[],
     },
 ];
 
@@ -3096,6 +3517,58 @@ mod tests {
         modal.name = "My SSH".to_string();
         modal.open = false;
         assert!(!modal.open);
+    }
+
+    #[test]
+    fn test_server_templates_catalog() {
+        assert!(
+            SERVER_TEMPLATES.len() >= 30,
+            "Template catalog should have at least 30 templates, found {}",
+            SERVER_TEMPLATES.len()
+        );
+
+        let names: Vec<&str> = SERVER_TEMPLATES.iter().map(|t| t.name).collect();
+        assert!(
+            names.iter().any(|n| n.contains("Firebase")),
+            "Catalog must contain Firebase template"
+        );
+        assert!(
+            names.iter().any(|n| n.contains("PostgreSQL")),
+            "Catalog must contain PostgreSQL template"
+        );
+        assert!(
+            names.iter().any(|n| n.contains("MySQL")),
+            "Catalog must contain MySQL template"
+        );
+        assert!(
+            names.iter().any(|n| n.contains("MariaDB")),
+            "Catalog must contain MariaDB template"
+        );
+
+        for (idx, tpl) in SERVER_TEMPLATES.iter().enumerate() {
+            assert!(!tpl.name.trim().is_empty(), "Template name cannot be empty at {}", idx);
+            assert!(!tpl.command.trim().is_empty(), "Template command cannot be empty for {}", tpl.name);
+            assert!(!tpl.group.trim().is_empty(), "Template group cannot be empty for {}", tpl.name);
+
+            let mut modal = AddEditModalState::default();
+            modal.open_new();
+            modal.apply_template(idx + 1);
+
+            assert_eq!(modal.name, tpl.name);
+            assert_eq!(modal.command, tpl.command);
+            assert_eq!(modal.stop_command, tpl.stop_command);
+            assert_eq!(modal.port_str, tpl.port.to_string());
+            assert_eq!(modal.group, tpl.group);
+            assert!(!modal.key.is_empty(), "Key must not be empty after template apply: {}", tpl.name);
+
+            let config_res = modal.to_server_config();
+            assert!(
+                config_res.is_ok(),
+                "Template {} must convert to a valid ServerConfig: {:?}",
+                tpl.name,
+                config_res.err()
+            );
+        }
     }
 }
 

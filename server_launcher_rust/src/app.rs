@@ -626,7 +626,7 @@ impl LauncherApp {
 
             sensors_collector: crate::sensors::SystemSensorsCollector::new(),
             sensors_snapshot: crate::sensors::SystemSensorsSnapshot::default(),
-            sensors_refresh_interval: 2,
+            sensors_refresh_interval: 5,
             last_sensors_refresh: Instant::now() - Duration::from_secs(10),
             remote_sensors_snapshots: Arc::new(Mutex::new(HashMap::new())),
             remote_sensors_in_flight: Arc::new(Mutex::new(HashSet::new())),
@@ -8228,7 +8228,7 @@ impl LauncherApp {
                         });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // End Task Button (Enabled only when a process is selected)
+                        // 1. End Task Button (Enabled only when a process is selected)
                         let has_selection = self.sensors_top_apps_selected_pid.is_some();
                         let btn_end = if has_selection {
                             let sel_pid = self.sensors_top_apps_selected_pid.unwrap();
@@ -8254,21 +8254,79 @@ impl LauncherApp {
                             kill_target_pid = self.sensors_top_apps_selected_pid;
                         }
 
-                        ui.add_space(8.0);
+                        ui.add_space(6.0);
 
-                        // Clear search filter button
+                        // 2. Clear search filter button
                         if !self.sensors_search_query.is_empty() {
                             if ui.button(RichText::new(crate::lucide::X).size(10.5).color(p.text_muted)).on_hover_text("Clear search filter").clicked() {
                                 self.sensors_search_query.clear();
                             }
                         }
 
-                        // Search box
+                        // 3. Search box
                         ui.add(
                             egui::TextEdit::singleline(&mut self.sensors_search_query)
                                 .hint_text(format!("{} Search by name or PID...", crate::lucide::SEARCH))
-                                .desired_width(190.0),
+                                .desired_width(170.0),
                         );
+
+                        ui.add_space(6.0);
+
+                        // 4. Update Interval Dropdown (Default 5s)
+                        let interval_label = match self.sensors_refresh_interval {
+                            0 => "Paused".to_string(),
+                            1 => "1s (High)".to_string(),
+                            2 => "2s (Fast)".to_string(),
+                            5 => "5s (Default)".to_string(),
+                            10 => "10s (Low)".to_string(),
+                            n => format!("{}s", n),
+                        };
+                        egui::ComboBox::from_id_salt("tm_refresh_interval_combo")
+                            .selected_text(RichText::new(format!("⏱ {}", interval_label)).size(11.0).color(p.text_secondary))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut self.sensors_refresh_interval, 1, "1s (High)");
+                                ui.selectable_value(&mut self.sensors_refresh_interval, 2, "2s (Fast)");
+                                ui.selectable_value(&mut self.sensors_refresh_interval, 5, "5s (Default)");
+                                ui.selectable_value(&mut self.sensors_refresh_interval, 10, "10s (Low)");
+                                ui.selectable_value(&mut self.sensors_refresh_interval, 0, "Paused");
+                            });
+
+                        ui.add_space(6.0);
+
+                        // 5. Sort By Dropdown (Name, CPU, RAM, Storage, Network)
+                        let sort_label = match self.sensors_top_apps_sort.as_str() {
+                            "name" => "Name",
+                            "cpu" => "CPU",
+                            "mem" => "RAM",
+                            "disk" => "Storage",
+                            "net" => "Network",
+                            _ => "CPU",
+                        };
+                        let dir_arrow = if self.sensors_top_apps_sort_desc { "↓" } else { "↑" };
+                        egui::ComboBox::from_id_salt("tm_sort_selector_combo")
+                            .selected_text(RichText::new(format!("Sort: {} {}", sort_label, dir_arrow)).size(11.0).color(p.text_secondary))
+                            .show_ui(ui, |ui| {
+                                if ui.selectable_label(self.sensors_top_apps_sort == "name", "Name").clicked() {
+                                    self.sensors_top_apps_sort = "name".to_string();
+                                }
+                                if ui.selectable_label(self.sensors_top_apps_sort == "cpu", "CPU").clicked() {
+                                    self.sensors_top_apps_sort = "cpu".to_string();
+                                }
+                                if ui.selectable_label(self.sensors_top_apps_sort == "mem", "RAM (Memory)").clicked() {
+                                    self.sensors_top_apps_sort = "mem".to_string();
+                                }
+                                if ui.selectable_label(self.sensors_top_apps_sort == "disk", "Storage (Disk)").clicked() {
+                                    self.sensors_top_apps_sort = "disk".to_string();
+                                }
+                                if ui.selectable_label(self.sensors_top_apps_sort == "net", "Network").clicked() {
+                                    self.sensors_top_apps_sort = "net".to_string();
+                                }
+                                ui.separator();
+                                let toggle_txt = if self.sensors_top_apps_sort_desc { "Ascending ↑" } else { "Descending ↓" };
+                                if ui.button(toggle_txt).clicked() {
+                                    self.sensors_top_apps_sort_desc = !self.sensors_top_apps_sort_desc;
+                                }
+                            });
                     });
                 });
 
@@ -8333,6 +8391,18 @@ impl LauncherApp {
                         || lower.starts_with("kcompactd")
                         || lower.starts_with("kdevtmpfs")
                         || lower.starts_with("kauditd")
+                        // Chromium / Node / Electron internal workers & thread pools
+                        || lower.starts_with("threadpool")
+                        || lower.starts_with("dedicatedworker")
+                        || lower.starts_with("chrome_")
+                        || lower.starts_with("perfetto")
+                        || lower.starts_with("compositor")
+                        || lower.starts_with("js helper")
+                        || lower.starts_with("v8 ")
+                        || lower.starts_with("crashpad")
+                        || lower.starts_with("sandbox")
+                        || lower.starts_with("gmain")
+                        || lower.starts_with("gdbus")
                     {
                         return false;
                     }
@@ -8391,12 +8461,13 @@ impl LauncherApp {
                     }
                 }).collect();
 
-                // Sort groups
+                // Sort groups (Name, CPU, RAM, Storage, Network)
                 let desc = self.sensors_top_apps_sort_desc;
                 match self.sensors_top_apps_sort.as_str() {
                     "mem" => all_groups.sort_by(|a, b| if desc { b.sum_mem.cmp(&a.sum_mem) } else { a.sum_mem.cmp(&b.sum_mem) }),
                     "disk" => all_groups.sort_by(|a, b| if desc { b.sum_disk_rate.partial_cmp(&a.sum_disk_rate).unwrap_or(std::cmp::Ordering::Equal) } else { a.sum_disk_rate.partial_cmp(&b.sum_disk_rate).unwrap_or(std::cmp::Ordering::Equal) }),
                     "name" => all_groups.sort_by(|a, b| if desc { b.display_name.to_lowercase().cmp(&a.display_name.to_lowercase()) } else { a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()) }),
+                    "net" => all_groups.sort_by(|a, b| if desc { b.display_name.cmp(&a.display_name) } else { a.display_name.cmp(&b.display_name) }),
                     _ => all_groups.sort_by(|a, b| if desc { b.sum_cpu.partial_cmp(&a.sum_cpu).unwrap_or(std::cmp::Ordering::Equal) } else { a.sum_cpu.partial_cmp(&b.sum_cpu).unwrap_or(std::cmp::Ordering::Equal) }),
                 }
 
@@ -8429,7 +8500,7 @@ impl LauncherApp {
                                         // 1. Name
                                         ui.allocate_ui_with_layout(egui::vec2(col_name_w, 36.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                             let is_sel = self.sensors_top_apps_sort == "name";
-                                            let arrow = if is_sel { if self.sensors_top_apps_sort_desc { " ▼" } else { " ▲" } } else { "" };
+                                            let arrow = if is_sel { if self.sensors_top_apps_sort_desc { " ↓" } else { " ↑" } } else { "" };
                                             let btn = egui::Button::new(
                                                 RichText::new(format!("Name{}", arrow))
                                                     .size(11.5)
@@ -8446,7 +8517,7 @@ impl LauncherApp {
                                         // 2. Status
                                         ui.allocate_ui_with_layout(egui::vec2(COL_STATUS_W, 36.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                             let is_sel = self.sensors_top_apps_sort == "status";
-                                            let arrow = if is_sel { if self.sensors_top_apps_sort_desc { " ▼" } else { " ▲" } } else { "" };
+                                            let arrow = if is_sel { if self.sensors_top_apps_sort_desc { " ↓" } else { " ↑" } } else { "" };
                                             let btn = egui::Button::new(
                                                 RichText::new(format!("Status{}", arrow))
                                                     .size(11.5)
@@ -8463,7 +8534,7 @@ impl LauncherApp {
                                         // 3. CPU (Stacked: Total % top, CPU bottom)
                                         ui.allocate_ui_with_layout(egui::vec2(COL_CPU_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
                                             let is_sel = self.sensors_top_apps_sort == "cpu";
-                                            let arrow = if is_sel { if self.sensors_top_apps_sort_desc { " ▼" } else { " ▲" } } else { "" };
+                                            let arrow = if is_sel { if self.sensors_top_apps_sort_desc { " ↓" } else { " ↑" } } else { "" };
                                             let btn1 = ui.add(egui::Button::new(RichText::new(format!("{:.0}%", snap.cpu_global_usage)).size(11.5).strong().color(if is_sel { p.accent_light } else { p.text_primary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                             let btn2 = ui.add(egui::Button::new(RichText::new(format!("CPU{}", arrow)).size(10.0).color(p.text_secondary)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                             if btn1.clicked() || btn2.clicked() {
@@ -8474,7 +8545,7 @@ impl LauncherApp {
                                         // 4. Memory (Stacked: Total % top, Memory bottom)
                                         ui.allocate_ui_with_layout(egui::vec2(COL_MEM_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
                                             let is_sel = self.sensors_top_apps_sort == "mem";
-                                            let arrow = if is_sel { if self.sensors_top_apps_sort_desc { " ▼" } else { " ▲" } } else { "" };
+                                            let arrow = if is_sel { if self.sensors_top_apps_sort_desc { " ↓" } else { " ↑" } } else { "" };
                                             let btn1 = ui.add(egui::Button::new(RichText::new(format!("{:.0}%", mem_total_pct)).size(11.5).strong().color(if is_sel { p.accent_light } else { p.text_primary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                             let btn2 = ui.add(egui::Button::new(RichText::new(format!("Memory{}", arrow)).size(10.0).color(p.text_secondary)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                             if btn1.clicked() || btn2.clicked() {
@@ -8485,7 +8556,7 @@ impl LauncherApp {
                                         // 5. Disk (Stacked: Rate % top, Disk bottom)
                                         ui.allocate_ui_with_layout(egui::vec2(COL_DISK_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
                                             let is_sel = self.sensors_top_apps_sort == "disk";
-                                            let arrow = if is_sel { if self.sensors_top_apps_sort_desc { " ▼" } else { " ▲" } } else { "" };
+                                            let arrow = if is_sel { if self.sensors_top_apps_sort_desc { " ↓" } else { " ↑" } } else { "" };
                                             let btn1 = ui.add(egui::Button::new(RichText::new(&disk_header_pct).size(11.5).strong().color(if is_sel { p.accent_light } else { p.text_primary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                             let btn2 = ui.add(egui::Button::new(RichText::new(format!("Disk{}", arrow)).size(10.0).color(p.text_secondary)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                             if btn1.clicked() || btn2.clicked() {
@@ -8493,10 +8564,15 @@ impl LauncherApp {
                                             }
                                         });
 
-                                        // 6. Network
+                                        // 6. Network (Stacked: 0% top, Network bottom)
                                         ui.allocate_ui_with_layout(egui::vec2(COL_NET_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
-                                            ui.label(RichText::new("0%").size(11.5).strong().color(p.text_primary));
-                                            ui.label(RichText::new("Network").size(10.0).color(p.text_secondary));
+                                            let is_sel = self.sensors_top_apps_sort == "net";
+                                            let arrow = if is_sel { if self.sensors_top_apps_sort_desc { " ↓" } else { " ↑" } } else { "" };
+                                            let btn1 = ui.add(egui::Button::new(RichText::new("0%").size(11.5).strong().color(if is_sel { p.accent_light } else { p.text_primary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                            let btn2 = ui.add(egui::Button::new(RichText::new(format!("Network{}", arrow)).size(10.0).color(p.text_secondary)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                            if btn1.clicked() || btn2.clicked() {
+                                                new_sort = Some("net");
+                                            }
                                         });
                                         ui.end_row();
 
@@ -8522,18 +8598,21 @@ impl LauncherApp {
 
                                             // 1. Name & Expander
                                             ui.allocate_ui_with_layout(egui::vec2(col_name_w, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                                let cell_rect = ui.available_rect_before_wrap();
+                                                let cell_rect = ui.max_rect();
                                                 if is_group_selected {
                                                     ui.painter().rect_filled(cell_rect, 3.0, Color32::from_rgba_unmultiplied(0, 120, 215, 45));
                                                 }
 
                                                 if is_multi {
                                                     let chev = if is_expanded { crate::lucide::CHEVRON_DOWN } else { crate::lucide::CHEVRON_RIGHT };
-                                                    if ui.button(RichText::new(chev).size(10.5).color(p.text_muted)).clicked() {
+                                                    let btn = egui::Button::new(RichText::new(chev).size(10.5).color(p.text_muted))
+                                                        .fill(Color32::TRANSPARENT)
+                                                        .stroke(Stroke::NONE);
+                                                    if ui.add(btn).clicked() {
                                                         toggle_group_expand = Some(grp.key.clone());
                                                     }
                                                 } else {
-                                                    ui.add_space(15.0);
+                                                    ui.add_space(18.0);
                                                 }
 
                                                 let icon = if is_app_sec { crate::lucide::MONITOR } else { crate::lucide::CPU };
@@ -8576,7 +8655,7 @@ impl LauncherApp {
 
                                             // 3. CPU (Heatmap tinted cell, right aligned)
                                             ui.allocate_ui_with_layout(egui::vec2(COL_CPU_W, 22.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                let cell_rect = ui.available_rect_before_wrap();
+                                                let cell_rect = ui.max_rect();
                                                 if cpu_fill != Color32::TRANSPARENT {
                                                     ui.painter().rect_filled(cell_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, cpu_fill);
                                                 }
@@ -8592,7 +8671,7 @@ impl LauncherApp {
 
                                             // 4. Memory (Heatmap tinted cell, right aligned)
                                             ui.allocate_ui_with_layout(egui::vec2(COL_MEM_W, 22.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                let cell_rect = ui.available_rect_before_wrap();
+                                                let cell_rect = ui.max_rect();
                                                 if mem_fill != Color32::TRANSPARENT {
                                                     ui.painter().rect_filled(cell_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, mem_fill);
                                                 }
@@ -8607,7 +8686,7 @@ impl LauncherApp {
 
                                             // 5. Disk (Heatmap tinted cell, right aligned)
                                             ui.allocate_ui_with_layout(egui::vec2(COL_DISK_W, 22.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                let cell_rect = ui.available_rect_before_wrap();
+                                                let cell_rect = ui.max_rect();
                                                 if disk_fill != Color32::TRANSPARENT {
                                                     ui.painter().rect_filled(cell_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, disk_fill);
                                                 }
@@ -8634,11 +8713,11 @@ impl LauncherApp {
 
                                                     // Child Name
                                                     ui.allocate_ui_with_layout(egui::vec2(col_name_w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                                        let cell_rect = ui.available_rect_before_wrap();
+                                                        let cell_rect = ui.max_rect();
                                                         if is_child_sel {
                                                             ui.painter().rect_filled(cell_rect, 3.0, Color32::from_rgba_unmultiplied(0, 120, 215, 45));
                                                         }
-                                                        ui.add_space(32.0); // Indent under parent
+                                                        ui.add_space(36.0); // Indent under parent
                                                         let child_txt = format!("↳ PID {}", child.pid);
                                                         let resp = ui.label(RichText::new(child_txt).size(10.5).monospace().color(if is_child_sel { p.accent_light } else { p.text_secondary }));
                                                         if ui.interact(resp.rect, resp.id.with("child_clk"), egui::Sense::click()).clicked() {

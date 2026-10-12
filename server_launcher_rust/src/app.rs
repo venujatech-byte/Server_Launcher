@@ -3458,8 +3458,8 @@ impl eframe::App for LauncherApp {
                     };
 
                     // Left: App Icon + Server Launcher / Host title & status line
-                    render_app_logo(ui, 26.0, p.bg_header);
-                    ui.add_space(5.0);
+                    render_app_logo(ui, 36.0, p.bg_header);
+                    ui.add_space(8.0);
 
                     if let Some(ref host) = remote_host_opt {
                         let (status, is_connecting) = {
@@ -11233,13 +11233,23 @@ impl LauncherApp {
 
                                     ui.add_space(8.0);
 
-                                    // Row 5: Checkboxes (autostart on left, auto-restart on right)
+                                    // Row 5: Checkboxes (autostart & run in external terminal on left, auto-restart on right)
                                     ui.horizontal(|ui| {
                                         let cb_color = Color32::from_rgb(0x94, 0xa3, 0xb8);
                                         if ui.checkbox(
                                             &mut s.config.autostart,
                                             RichText::new("autostart").size(11.0).color(cb_color),
                                         ).on_hover_text("Automatically start this server when Server Launcher opens").changed() {
+                                            to_save_config = true;
+                                        }
+
+                                        ui.add_space(8.0);
+
+                                        let ext_color = if s.config.own_console { p.info } else { cb_color };
+                                        if ui.checkbox(
+                                            &mut s.config.own_console,
+                                            RichText::new("run in external terminal").size(11.0).color(ext_color),
+                                        ).on_hover_text("Launch this server in an external desktop terminal window").changed() {
                                             to_save_config = true;
                                         }
 
@@ -11615,6 +11625,7 @@ impl LauncherApp {
                 let mut to_delete: Option<String> = None;
                 let mut to_toggle_autostart: Option<(usize, bool)> = None;
                 let mut to_toggle_autorestart: Option<(usize, bool)> = None;
+                let mut to_toggle_own_console: Option<(usize, bool)> = None;
 
                 for &idx in &managed_indices {
                     let s = &self.services[idx];
@@ -12014,7 +12025,7 @@ impl LauncherApp {
 
                             ui.add_space(8.0);
 
-                            // Row 5: Checkboxes (autostart on left, auto-restart on right)
+                            // Row 5: Checkboxes (autostart & run in external terminal on left, auto-restart on right)
                             ui.horizontal(|ui| {
                                 let cb_color = Color32::from_rgb(0x94, 0xa3, 0xb8);
                                 let mut autostart_val = s.config.autostart;
@@ -12023,6 +12034,17 @@ impl LauncherApp {
                                     RichText::new("autostart").size(11.0).color(cb_color),
                                 ).on_hover_text("Automatically start this server when Server Launcher opens").changed() {
                                     to_toggle_autostart = Some((idx, autostart_val));
+                                }
+
+                                ui.add_space(8.0);
+
+                                let mut own_console_val = s.config.own_console;
+                                let ext_color = if own_console_val { p.info } else { cb_color };
+                                if ui.checkbox(
+                                    &mut own_console_val,
+                                    RichText::new("run in external terminal").size(11.0).color(ext_color),
+                                ).on_hover_text("Launch this server in an external desktop terminal window").changed() {
+                                    to_toggle_own_console = Some((idx, own_console_val));
                                 }
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -12065,6 +12087,10 @@ impl LauncherApp {
                 }
                 if let Some((idx, val)) = to_toggle_autorestart {
                     self.services[idx].config.auto_restart = val;
+                    self.persist_config();
+                }
+                if let Some((idx, val)) = to_toggle_own_console {
+                    self.services[idx].config.own_console = val;
                     self.persist_config();
                 }
 

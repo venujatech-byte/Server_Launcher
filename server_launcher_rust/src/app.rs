@@ -2,12 +2,13 @@ use crate::config::{ConfigFile, CustomScript, SavedCommand, ServerConfig, SshRem
 use crate::modals::{
     render_add_edit_modal, render_command_modal, render_command_palette,
     render_close_confirmation_modal, render_new_service_modal, render_script_modal,
-    render_ssh_host_modal, render_remote_start_server_modal, AddEditModalState, CloseConfirmChoice,
+    render_ssh_host_modal, render_remote_start_server_modal, render_sudo_modal, AddEditModalState, CloseConfirmChoice,
     CommandPaletteState, ModalAction, NewServiceModalState, PaletteAction,
-    RemoteStartServerModalState, SshHostModalState,
+    RemoteStartServerModalState, SshHostModalState, SudoModalState,
 };
 use crate::scripts::{
-    execute_local_script, execute_remote_script, ScriptExecution, ScriptModalState, ScriptRunStatus,
+    check_local_sudo_needs_password, execute_local_script, execute_remote_script,
+    script_requires_sudo, ScriptExecution, ScriptModalState, ScriptRunStatus,
 };
 use crate::commands::{CommandModalState, TerminalCommandStatus, TerminalSession};
 use crate::systemd::{
@@ -194,6 +195,7 @@ pub struct LauncherApp {
     // Scripts State
     pub script_executions: HashMap<String, ScriptExecution>,
     pub script_modal: ScriptModalState,
+    pub sudo_modal: SudoModalState,
     pub selected_script_id: Option<String>,
     pub script_search_query: String,
 
@@ -458,7 +460,7 @@ impl LauncherApp {
         for sc in &scripts {
             if sc.autostart && sc.host_id.is_none() {
                 let mut exec = ScriptExecution::new(sc.id.clone());
-                execute_local_script(sc, &mut exec);
+                execute_local_script(sc, &mut exec, None);
                 script_executions.insert(sc.id.clone(), exec);
             }
         }
@@ -517,6 +519,7 @@ impl LauncherApp {
 
             script_executions,
             script_modal: ScriptModalState::default(),
+            sudo_modal: SudoModalState::default(),
             selected_script_id: None,
             script_search_query: String::new(),
 
@@ -1884,7 +1887,7 @@ impl LauncherApp {
                     if sc.autostart && sc.host_id.as_deref() == Some(&host.id) {
                         if !self.script_executions.contains_key(&sc.id) {
                             let mut exec = ScriptExecution::new(sc.id.clone());
-                            execute_remote_script(&host, sc, &mut exec);
+                            execute_remote_script(&host, sc, &mut exec, None);
                             self.script_executions.insert(sc.id.clone(), exec);
                         }
                     }
@@ -3300,6 +3303,10 @@ impl eframe::App for LauncherApp {
             self.persist_config();
         }
 
+        if let Some((script, host_id, password)) = render_sudo_modal(ctx, &mut self.sudo_modal, &p) {
+            self.start_script_execution(&script, host_id.as_deref(), Some(&password));
+        }
+
         if let Some(cmd) = render_command_modal(ctx, &mut self.command_modal, &p) {
             if let Some(existing) = self.saved_commands.iter_mut().find(|c| c.id == cmd.id) {
                 *existing = cmd.clone();
@@ -3596,6 +3603,54 @@ impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     // SCRIPTS TAB: Left Sidebar (List & Create) + Right Console Output
     // ═════════════════════════════════════════════════════════════════════════
+    fn request_run_script(&mut self, script: &CustomScript, host_id: Option<String>) {
+        self.selected_script_id = Some(script.id.clone());
+        let needs_sudo = script_requires_sudo(&script.script);
+
+        if needs_sudo {
+            if let Some(ref hid) = host_id {
+                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == *hid).cloned() {
+                    if !host.password.trim().is_empty() {
+                        self.start_script_execution(script, Some(hid), Some(&host.password));
+                    } else {
+                        self.sudo_modal.open_for_script(script.clone(), Some(&host));
+                    }
+                } else {
+                    self.start_script_execution(script, host_id.as_deref(), None);
+                }
+            } else {
+                if check_local_sudo_needs_password() {
+                    self.sudo_modal.open_for_script(script.clone(), None);
+                } else {
+                    self.start_script_execution(script, None, None);
+                }
+            }
+        } else {
+            self.start_script_execution(script, host_id.as_deref(), None);
+        }
+    }
+
+    fn start_script_execution(
+        &mut self,
+        script: &CustomScript,
+        host_id: Option<&str>,
+        sudo_password: Option<&str>,
+    ) {
+        let mut exec = self
+            .script_executions
+            .remove(&script.id)
+            .unwrap_or_else(|| ScriptExecution::new(script.id.clone()));
+
+        if let Some(hid) = host_id {
+            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                execute_remote_script(&host, script, &mut exec, sudo_password);
+            }
+        } else {
+            execute_local_script(script, &mut exec, sudo_password);
+        }
+        self.script_executions.insert(script.id.clone(), exec);
+    }
+
     fn render_scripts_left_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
         let p = self.theme.palette();
         ui.set_width(ui.available_width());
@@ -3776,20 +3831,7 @@ impl LauncherApp {
                     }
 
                     if let Some(s) = to_run {
-                        self.selected_script_id = Some(s.id.clone());
-                        let mut exec = self
-                            .script_executions
-                            .remove(&s.id)
-                            .unwrap_or_else(|| ScriptExecution::new(s.id.clone()));
-
-                        if let Some(hid) = host_id {
-                            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                execute_remote_script(&host, &s, &mut exec);
-                            }
-                        } else {
-                            execute_local_script(&s, &mut exec);
-                        }
-                        self.script_executions.insert(s.id.clone(), exec);
+                        self.request_run_script(&s, host_id.map(|h| h.to_string()));
                     }
 
                     if let Some(id) = to_stop {
@@ -3906,19 +3948,7 @@ impl LauncherApp {
                                         .fill(Color32::from_rgb(16, 185, 129))
                                         .rounding(Rounding::same(4.0));
                                         if ui.add(btn_run).clicked() {
-                                            let mut exec = self
-                                                .script_executions
-                                                .remove(&s.id)
-                                                .unwrap_or_else(|| ScriptExecution::new(s.id.clone()));
-
-                                            if let Some(hid) = host_id {
-                                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                                    execute_remote_script(&host, &s, &mut exec);
-                                                }
-                                            } else {
-                                                execute_local_script(&s, &mut exec);
-                                            }
-                                            self.script_executions.insert(s.id.clone(), exec);
+                                            self.request_run_script(&s, host_id.map(|h| h.to_string()));
                                         }
                                     }
                                 });

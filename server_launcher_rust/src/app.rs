@@ -238,6 +238,7 @@ pub struct LauncherApp {
     pub remote_sensors_errors: Arc<Mutex<HashMap<String, String>>>,
     pub sensors_search_query: String,
     pub sensors_category_filter: String,
+    pub sensors_top_apps_sort: String,
 
     // Sudo popup for local system-level systemd operations
     pub sudo_popup: SudoPopupState,
@@ -559,6 +560,7 @@ impl LauncherApp {
             remote_sensors_errors: Arc::new(Mutex::new(HashMap::new())),
             sensors_search_query: String::new(),
             sensors_category_filter: "All".to_string(),
+            sensors_top_apps_sort: "cpu".to_string(),
             sudo_popup: SudoPopupState::default(),
             local_sudo_password: String::new(),
             import_status_msg: None,
@@ -2753,6 +2755,25 @@ impl eframe::App for LauncherApp {
                 });
             });
 
+        // Periodically refresh hardware telemetry snapshot for global top header bar
+        if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval.max(1) as u64) {
+            if self.selected_machine == "local" {
+                self.sensors_snapshot = self.sensors_collector.collect();
+                self.last_sensors_refresh = Instant::now();
+            }
+        }
+
+        let header_snap = if self.selected_machine != "local" {
+            self.remote_sensors_snapshots
+                .lock()
+                .unwrap()
+                .get(&self.selected_machine)
+                .cloned()
+                .unwrap_or_else(|| self.sensors_snapshot.clone())
+        } else {
+            self.sensors_snapshot.clone()
+        };
+
         // ═════════════════════════════════════════════════════════════════════
         // TOP HEADER BAR (App Toolbar: Logo, search, action buttons)
         // ═════════════════════════════════════════════════════════════════════
@@ -3072,6 +3093,108 @@ impl eframe::App for LauncherApp {
                                         }
                                     });
                                 });
+                        }
+
+                        // ── Live Hardware Telemetry Strip (CPU Clock & Power, GPU, Storage Live Speed, Top Apps) ──
+                        ui.add_space(6.0);
+
+                        // 4. Top Apps Chip
+                        if let Some(top_app) = header_snap.top_apps.first() {
+                            let top_name_short = if top_app.name.len() > 10 {
+                                format!("{}…", &top_app.name[..8])
+                            } else {
+                                top_app.name.clone()
+                            };
+                            let top_text = format!("⚡ {}: {:.0}%", top_name_short, top_app.cpu_usage);
+                            let top_resp = Frame::none()
+                                .fill(p.bg_card)
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(999.0))
+                                .inner_margin(egui::Margin::symmetric(9.0, 4.0))
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new(top_text).size(10.5).strong().color(Color32::from_rgb(250, 204, 21)));
+                                });
+                            let top_interact = ui.interact(top_resp.response.rect, ui.id().with("hdr_telemetry_top_app"), egui::Sense::click());
+                            if top_interact.on_hover_text(format!("Top Resource Consumer: {}\nPID: {}\nCPU: {:.1}%\nMemory: {}\nDisk Speed: {}\n\nClick to view Top Applications", top_app.name, top_app.pid, top_app.cpu_usage, crate::sensors::format_bytes(top_app.memory_bytes), crate::sensors::format_rate(top_app.disk_rate_bps))).clicked() {
+                                self.active_sidebar_tab = SidebarTab::Sensors;
+                                self.sensors_category_filter = "Top Apps".to_string();
+                            }
+                        }
+
+                        // 3. Storage Live Using Speed Chip
+                        let d_read = header_snap.total_disk_read_rate_bps;
+                        let d_write = header_snap.total_disk_write_rate_bps;
+                        let stor_text = format!("💾 ▼ {} ▲ {}", crate::sensors::format_rate(d_read), crate::sensors::format_rate(d_write));
+                        let stor_resp = Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(999.0))
+                            .inner_margin(egui::Margin::symmetric(9.0, 4.0))
+                            .show(ui, |ui| {
+                                ui.label(RichText::new(stor_text).size(10.5).monospace().color(Color32::from_rgb(56, 189, 248)));
+                            });
+                        let stor_interact = ui.interact(stor_resp.response.rect, ui.id().with("hdr_telemetry_storage"), egui::Sense::click());
+                        if stor_interact.on_hover_text(format!("Storage Using Speed:\nRead Rate: {}\nWrite Rate: {}\n\nClick to view Storage & Disks", crate::sensors::format_rate(d_read), crate::sensors::format_rate(d_write))).clicked() {
+                            self.active_sidebar_tab = SidebarTab::Sensors;
+                            self.sensors_category_filter = "Storage".to_string();
+                        }
+
+                        // 2. GPU Chip (Clock & Power)
+                        if let Some(gpu) = header_snap.gpus.first() {
+                            let mut parts = Vec::new();
+                            if let Some(clk) = gpu.clock_mhz {
+                                parts.push(format!("{}MHz", clk));
+                            }
+                            if let Some(w) = gpu.power_watts {
+                                parts.push(format!("{:.1}W", w));
+                            }
+                            let gpu_text = if !parts.is_empty() {
+                                format!("🎮 {}", parts.join(" • "))
+                            } else {
+                                format!("🎮 {:.0}%", gpu.load_pct.unwrap_or(0.0))
+                            };
+                            let gpu_resp = Frame::none()
+                                .fill(p.bg_card)
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(999.0))
+                                .inner_margin(egui::Margin::symmetric(9.0, 4.0))
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new(gpu_text).size(10.5).monospace().color(p.info));
+                                });
+                            let gpu_interact = ui.interact(gpu_resp.response.rect, ui.id().with("hdr_telemetry_gpu"), egui::Sense::click());
+                            if gpu_interact.on_hover_text(format!("GPU: {}\nClock: {} MHz\nPower: {:.1} W\n\nClick to view GPU Sensors", gpu.name, gpu.clock_mhz.unwrap_or(0), gpu.power_watts.unwrap_or(0.0))).clicked() {
+                                self.active_sidebar_tab = SidebarTab::Sensors;
+                                self.sensors_category_filter = "GPU".to_string();
+                            }
+                        }
+
+                        // 1. CPU Chip (Clock Speed & Power Usage & Load)
+                        let mut cpu_parts = Vec::new();
+                        if header_snap.cpu_frequency_mhz > 0 {
+                            let clk_str = if header_snap.cpu_frequency_mhz >= 1000 {
+                                format!("{:.2}GHz", header_snap.cpu_frequency_mhz as f64 / 1000.0)
+                            } else {
+                                format!("{}MHz", header_snap.cpu_frequency_mhz)
+                            };
+                            cpu_parts.push(clk_str);
+                        }
+                        if let Some(w) = header_snap.cpu_power_watts {
+                            cpu_parts.push(format!("{:.1}W", w));
+                        }
+                        cpu_parts.push(format!("{:.0}%", header_snap.cpu_global_usage));
+                        let cpu_text = format!("🖥 {}", cpu_parts.join(" • "));
+                        let cpu_resp = Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(999.0))
+                            .inner_margin(egui::Margin::symmetric(9.0, 4.0))
+                            .show(ui, |ui| {
+                                ui.label(RichText::new(cpu_text).size(10.5).monospace().color(p.text_primary));
+                            });
+                        let cpu_interact = ui.interact(cpu_resp.response.rect, ui.id().with("hdr_telemetry_cpu"), egui::Sense::click());
+                        if cpu_interact.on_hover_text(format!("CPU: {}\nClock Speed: {} MHz\nPower Draw: {:.1} W\nGlobal Usage: {:.1}%\n\nClick to view CPU & Hardware Sensors", header_snap.cpu_brand, header_snap.cpu_frequency_mhz, header_snap.cpu_power_watts.unwrap_or(0.0), header_snap.cpu_global_usage)).clicked() {
+                            self.active_sidebar_tab = SidebarTab::Sensors;
+                            self.sensors_category_filter = "CPU".to_string();
                         }
                     });
                 });
@@ -5970,7 +6093,7 @@ impl LauncherApp {
             // Category Filter Pills
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-                let categories = ["All", "CPU", "RAM", "GPU", "Power", "Storage", "Network", "Temps"];
+                let categories = ["All", "Top Apps", "CPU", "RAM", "GPU", "Power", "Storage", "Network", "Temps"];
                 for cat in categories {
                     let is_active = self.sensors_category_filter == cat;
                     let bg = if is_active { p.accent } else { p.bg_button };
@@ -6041,6 +6164,50 @@ impl LauncherApp {
                         });
 
                     ui.add_space(6.0);
+
+                    // Card 1b: Top Apps Quick Card
+                    if !snap.top_apps.is_empty() {
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("⚡ Top Apps").size(12.0).strong().color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let btn_all = egui::Button::new(RichText::new("View all ↗").size(10.0).color(p.accent))
+                                            .frame(false);
+                                        if ui.add(btn_all).clicked() {
+                                            self.sensors_category_filter = "Top Apps".to_string();
+                                        }
+                                    });
+                                });
+                                ui.add_space(3.0);
+                                for app in snap.top_apps.iter().take(3) {
+                                    ui.horizontal(|ui| {
+                                        let short_name = if app.name.len() > 14 {
+                                            format!("{}…", &app.name[..12])
+                                        } else {
+                                            app.name.clone()
+                                        };
+                                        ui.label(RichText::new(short_name).size(10.5).color(p.text_secondary));
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            let col = if app.cpu_usage >= 50.0 { p.danger }
+                                                else if app.cpu_usage >= 15.0 { Color32::from_rgb(250, 204, 21) }
+                                                else { p.text_primary };
+                                            ui.label(RichText::new(format!("{:.1}%", app.cpu_usage)).size(10.5).strong().monospace().color(col));
+                                            if app.disk_rate_bps > 1024.0 {
+                                                ui.label(RichText::new(crate::sensors::format_rate(app.disk_rate_bps)).size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                            }
+                                        });
+                                    });
+                                    ui.add_space(2.0);
+                                }
+                            });
+
+                        ui.add_space(6.0);
+                    }
 
                     // Card 2: RAM Quick Card
                     Frame::none()
@@ -6278,6 +6445,7 @@ impl LauncherApp {
         let filter_cat = self.sensors_category_filter.clone();
         let search_q = self.sensors_search_query.trim().to_lowercase();
 
+        let show_top_apps = filter_cat == "All" || filter_cat == "Top Apps";
         let show_cpu = filter_cat == "All" || filter_cat == "CPU";
         let show_ram = filter_cat == "All" || filter_cat == "RAM";
         let show_gpu = filter_cat == "All" || filter_cat == "GPU";
@@ -6332,11 +6500,27 @@ impl LauncherApp {
                                     ui.label(RichText::new("•").size(11.0).color(p.text_muted));
                                     ui.label(RichText::new(format!("⚡ {:.1} W", w)).size(11.0).strong().color(Color32::from_rgb(250, 204, 21)));
                                 }
+                                if let Some(gpu) = snap.gpus.first() {
+                                    ui.label(RichText::new("•").size(11.0).color(p.text_muted));
+                                    let mut g_parts = Vec::new();
+                                    if let Some(clk) = gpu.clock_mhz {
+                                        g_parts.push(format!("⏱ {} MHz", clk));
+                                    }
+                                    if let Some(w) = gpu.power_watts {
+                                        g_parts.push(format!("⚡ {:.1} W", w));
+                                    }
+                                    let g_desc = if !g_parts.is_empty() {
+                                        format!("🎮 GPU: {}", g_parts.join(" • "))
+                                    } else {
+                                        format!("🎮 GPU: {}", gpu.name)
+                                    };
+                                    ui.label(RichText::new(g_desc).size(11.0).color(p.info));
+                                }
                                 ui.label(RichText::new("•").size(11.0).color(p.text_muted));
                                 ui.label(RichText::new(format!("{} Total RAM", crate::sensors::format_bytes(snap.mem_total_bytes))).size(11.0).color(p.success));
                                 if snap.total_disk_read_rate_bps > 0.0 || snap.total_disk_write_rate_bps > 0.0 {
                                     ui.label(RichText::new("•").size(11.0).color(p.text_muted));
-                                    ui.label(RichText::new(format!("💾 I/O: ▼ {}  ▲ {}", crate::sensors::format_rate(snap.total_disk_read_rate_bps), crate::sensors::format_rate(snap.total_disk_write_rate_bps))).size(11.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new(format!("💾 Live Storage Speed: ▼ {}  ▲ {}", crate::sensors::format_rate(snap.total_disk_read_rate_bps), crate::sensors::format_rate(snap.total_disk_write_rate_bps))).size(11.0).monospace().color(Color32::from_rgb(56, 189, 248)));
                                 }
                             });
                         });
@@ -6503,6 +6687,139 @@ impl LauncherApp {
                                     let swap_used = crate::sensors::format_bytes(snap.swap_used_bytes);
                                     let swap_total = crate::sensors::format_bytes(snap.swap_total_bytes);
                                     ui.add(egui::ProgressBar::new(swap_pct).text(format!("Swap: {:.1}% ({} / {})", snap.swap_usage_pct, swap_used, swap_total)).animate(false));
+                                }
+                            });
+
+                        ui.add_space(8.0);
+                    }
+
+                    // SECTION: TOP APPLICATIONS & RESOURCE CONSUMERS
+                    if show_top_apps && !snap.top_apps.is_empty() {
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(format!("⚡ Top Applications & Resource Consumers ({})", snap.top_apps.len())).size(13.5).strong().color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let sort_opts = [
+                                            ("cpu", "⚡ CPU %"),
+                                            ("mem", "🧠 Memory"),
+                                            ("disk", "💾 Disk Speed"),
+                                            ("name", "🏷 Name"),
+                                            ("pid", "# PID"),
+                                        ];
+                                        for (val, label) in sort_opts.iter().rev() {
+                                            let is_active = self.sensors_top_apps_sort == *val;
+                                            let bg = if is_active { p.accent } else { p.bg_button };
+                                            let fg = if is_active { p.accent_text } else { p.text_secondary };
+                                            let btn = egui::Button::new(RichText::new(*label).size(10.0).strong().color(fg))
+                                                .fill(bg)
+                                                .stroke(Stroke::NONE)
+                                                .rounding(Rounding::same(999.0));
+                                            if ui.add(btn).clicked() {
+                                                self.sensors_top_apps_sort = val.to_string();
+                                            }
+                                        }
+                                        ui.label(RichText::new("Sort:").size(10.5).color(p.text_muted));
+                                    });
+                                });
+
+                                ui.add_space(8.0);
+
+                                let mut sorted_apps = snap.top_apps.clone();
+                                if !search_q.is_empty() {
+                                    sorted_apps.retain(|a| {
+                                        a.name.to_lowercase().contains(&search_q)
+                                            || a.pid.to_string().contains(&search_q)
+                                            || a.status.to_lowercase().contains(&search_q)
+                                    });
+                                }
+
+                                match self.sensors_top_apps_sort.as_str() {
+                                    "mem" => sorted_apps.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes)),
+                                    "disk" => sorted_apps.sort_by(|a, b| b.disk_rate_bps.partial_cmp(&a.disk_rate_bps).unwrap_or(std::cmp::Ordering::Equal)),
+                                    "name" => sorted_apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+                                    "pid" => sorted_apps.sort_by_key(|a| a.pid),
+                                    _ => sorted_apps.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap_or(std::cmp::Ordering::Equal)),
+                                }
+
+                                if sorted_apps.is_empty() {
+                                    ui.add_space(8.0);
+                                    ui.vertical_centered(|ui| {
+                                        ui.label(RichText::new("No active processes match the search query.").size(11.5).color(p.text_muted));
+                                    });
+                                } else {
+                                    egui::Grid::new("top_apps_right_grid")
+                                        .num_columns(7)
+                                        .striped(true)
+                                        .spacing(egui::vec2(12.0, 6.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new("PID").size(11.0).strong().color(p.text_muted));
+                                            ui.label(RichText::new("Application").size(11.0).strong().color(p.text_muted));
+                                            ui.label(RichText::new("Status").size(11.0).strong().color(p.text_muted));
+                                            ui.label(RichText::new("CPU Usage").size(11.0).strong().color(p.text_muted));
+                                            ui.label(RichText::new("Memory (RAM)").size(11.0).strong().color(p.text_muted));
+                                            ui.label(RichText::new("Storage Live Speed").size(11.0).strong().color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new("Lifetime Disk I/O").size(11.0).strong().color(p.text_muted));
+                                            ui.end_row();
+
+                                            for app in sorted_apps.iter().take(40) {
+                                                ui.label(RichText::new(format!("{}", app.pid)).size(11.0).monospace().color(p.text_muted));
+
+                                                let app_name = if app.name.is_empty() { format!("PID {}", app.pid) } else { app.name.clone() };
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new("⚡").size(11.0).color(p.accent));
+                                                    ui.label(RichText::new(app_name).size(11.5).strong().color(p.text_primary));
+                                                });
+
+                                                let (st_color, st_bg) = match app.status.to_lowercase().as_str() {
+                                                    "run" | "running" => (Color32::from_rgb(16, 185, 129), Color32::from_rgba_premultiplied(16, 185, 129, 25)),
+                                                    "idle" | "sleep" | "sleeping" => (p.text_secondary, p.bg_button),
+                                                    _ => (Color32::from_rgb(56, 189, 248), Color32::from_rgba_premultiplied(56, 189, 248, 25)),
+                                                };
+                                                Frame::none()
+                                                    .fill(st_bg)
+                                                    .stroke(Stroke::NONE)
+                                                    .rounding(Rounding::same(999.0))
+                                                    .inner_margin(egui::Margin::symmetric(6.0, 1.5))
+                                                    .show(ui, |ui| {
+                                                        ui.label(RichText::new(&app.status).size(9.5).color(st_color));
+                                                    });
+
+                                                let cpu_frac = (app.cpu_usage / 100.0).clamp(0.0, 1.0);
+                                                let cpu_col = if app.cpu_usage >= 50.0 { p.danger }
+                                                    else if app.cpu_usage >= 15.0 { Color32::from_rgb(250, 204, 21) }
+                                                    else { p.accent };
+                                                ui.horizontal(|ui| {
+                                                    ui.add(egui::ProgressBar::new(cpu_frac).desired_width(70.0).animate(false));
+                                                    ui.label(RichText::new(format!("{:.1}%", app.cpu_usage)).size(11.0).strong().monospace().color(cpu_col));
+                                                });
+
+                                                let mem_str = crate::sensors::format_bytes(app.memory_bytes);
+                                                let mem_pct = if snap.mem_total_bytes > 0 {
+                                                    (app.memory_bytes as f32 / snap.mem_total_bytes as f32) * 100.0
+                                                } else {
+                                                    0.0
+                                                };
+                                                ui.label(RichText::new(format!("{} ({:.1}%)", mem_str, mem_pct)).size(11.0).monospace().color(p.text_secondary));
+
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new("▼").size(10.5).color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new(crate::sensors::format_rate(app.disk_read_rate_bps)).size(10.5).monospace().color(p.text_primary));
+                                                    ui.add_space(3.0);
+                                                    ui.label(RichText::new("▲").size(10.5).color(Color32::from_rgb(168, 85, 247)));
+                                                    ui.label(RichText::new(crate::sensors::format_rate(app.disk_write_rate_bps)).size(10.5).monospace().color(p.text_primary));
+                                                });
+
+                                                let lt_str = format!("R: {} / W: {}", crate::sensors::format_bytes(app.disk_read_bytes), crate::sensors::format_bytes(app.disk_written_bytes));
+                                                ui.label(RichText::new(lt_str).size(10.0).color(p.text_muted));
+
+                                                ui.end_row();
+                                            }
+                                        });
                                 }
                             });
 

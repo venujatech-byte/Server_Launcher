@@ -3443,10 +3443,10 @@ impl eframe::App for LauncherApp {
                 Frame::none()
                     .fill(p.bg_header)
                     .inner_margin(egui::Margin {
-                        left: 14.0,
-                        right: 14.0,
+                        left: 10.0,
+                        right: 10.0,
                         top: 4.0,
-                        bottom: 5.0,
+                        bottom: 4.0,
                     }),
             )
             .show(ctx, |ui| {
@@ -3458,8 +3458,8 @@ impl eframe::App for LauncherApp {
                     };
 
                     // Left: App Icon + Server Launcher / Host title & status line
-                    render_app_logo(ui, 28.0, p.bg_header);
-                    ui.add_space(6.0);
+                    render_app_logo(ui, 26.0, p.bg_header);
+                    ui.add_space(5.0);
 
                     if let Some(ref host) = remote_host_opt {
                         let (status, is_connecting) = {
@@ -3472,50 +3472,61 @@ impl eframe::App for LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.label(
                                     RichText::new(&host.name)
-                                        .size(19.0)
+                                        .size(17.5)
                                         .strong()
                                         .color(p.text_primary),
                                 );
-                                ui.add_space(6.0);
+                                ui.add_space(5.0);
                                 if is_connecting {
                                     Frame::none()
                                         .fill(p.warning_subtle)
                                         .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(999.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 2.5))
+                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                         .show(ui, |ui| {
-                                            ui.label(RichText::new("○ Connecting...").size(10.5).color(p.warning));
+                                            ui.label(RichText::new("○ Connecting...").size(10.0).color(p.warning));
                                         });
                                 } else if let Some(Ok(ref info)) = status {
                                     Frame::none()
                                         .fill(p.success_subtle)
                                         .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(999.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 2.5))
+                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                         .show(ui, |ui| {
-                                            ui.label(RichText::new(format!("● Online ({})", info)).size(10.5).strong().color(p.success));
+                                            let badge_lbl = ui.label(
+                                                RichText::new("● Online").size(10.0).strong().color(p.success),
+                                            );
+                                            badge_lbl.on_hover_text(format!("Online: {}", info));
                                         });
                                 } else if let Some(Err(ref err)) = status {
                                     Frame::none()
                                         .fill(p.danger_subtle)
                                         .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(999.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 2.5))
+                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                         .show(ui, |ui| {
-                                            ui.label(RichText::new(format!("● Error: {}", err)).size(10.5).color(p.danger));
+                                            let err_short = if err.len() > 24 {
+                                                format!("{}...", &err[..21])
+                                            } else {
+                                                err.clone()
+                                            };
+                                            let badge_lbl = ui.label(
+                                                RichText::new(format!("● Error: {}", err_short)).size(10.0).color(p.danger),
+                                            );
+                                            badge_lbl.on_hover_text(format!("Connection Error:\n{}", err));
                                         });
                                 } else {
                                     Frame::none()
                                         .fill(p.bg_subtle)
                                         .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(999.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 2.5))
+                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                         .show(ui, |ui| {
-                                            ui.label(RichText::new("○ Idle").size(10.5).color(p.text_muted));
+                                            ui.label(RichText::new("○ Idle").size(10.0).color(p.text_muted));
                                         });
                                 }
                             });
-                            ui.add_space(2.0);
+                            ui.add_space(1.0);
                             let target_desc = format!(
                                 "ssh://{}@{}:{} {}",
                                 host.user,
@@ -3529,7 +3540,7 @@ impl eframe::App for LauncherApp {
                             );
                             ui.label(
                                 RichText::new(target_desc)
-                                    .size(11.0)
+                                    .size(10.5)
                                     .color(p.text_muted),
                             );
                         });
@@ -3573,17 +3584,17 @@ impl eframe::App for LauncherApp {
 
                     // Right: Actions buttons in modern pill layout
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 8.0;
-
+                        ui.spacing_mut().item_spacing.x = 5.0;
+                        ui.spacing_mut().button_padding = egui::vec2(6.0, 2.0);
 
                         // Settings Button (Pill icon button)
                         let btn_settings = egui::Button::new(
-                            RichText::new(crate::lucide::SETTINGS).size(13.0).color(p.text_secondary),
+                            RichText::new(crate::lucide::SETTINGS).size(12.0).color(p.text_secondary),
                         )
                         .fill(p.bg_button)
                         .stroke(Stroke::NONE)
                         .rounding(Rounding::same(999.0))
-                        .min_size(egui::vec2(30.0, 24.0));
+                        .min_size(egui::vec2(26.0, 22.0));
                         if ui.add(btn_settings).on_hover_text("Settings & Preferences (Ctrl+,)").clicked() {
                             self.settings_modal_open = true;
                         }
@@ -3597,41 +3608,41 @@ impl eframe::App for LauncherApp {
 
                             let btn_edit = egui::Button::new(
                                 RichText::new(format!("{} Edit", crate::lucide::SETTINGS))
-                                    .size(11.0)
+                                    .size(10.5)
                                     .color(p.text_secondary),
                             )
                             .fill(p.bg_button)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(64.0, 24.0));
+                            .min_size(egui::vec2(52.0, 22.0));
                             if ui.add(btn_edit).clicked() {
                                 self.ssh_host_modal.open_edit(host);
                             }
 
                             let btn_reconnect = egui::Button::new(
                                 RichText::new(format!("{} Reconnect", crate::lucide::REFRESH_CW))
-                                    .size(11.0)
+                                    .size(10.5)
                                     .color(p.text_secondary),
                             )
                             .fill(p.bg_button)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(90.0, 24.0));
+                            .min_size(egui::vec2(78.0, 22.0));
                             if ui.add(btn_reconnect).clicked() {
                                 self.test_remote_host(host);
                                 self.trigger_remote_scan(host);
                             }
 
                             let btn_ext = egui::Button::new(
-                                RichText::new(format!("{} External Terminal", crate::lucide::EXTERNAL_LINK))
-                                    .size(11.0)
+                                RichText::new(format!("{} Terminal", crate::lucide::EXTERNAL_LINK))
+                                    .size(10.5)
                                     .strong()
                                     .color(p.info),
                             )
                             .fill(p.info_subtle)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(130.0, 24.0));
+                            .min_size(egui::vec2(76.0, 22.0));
                             if ui.add(btn_ext).on_hover_text("Open desktop terminal connected via SSH").clicked() {
                                 let _ = launch_external_ssh_terminal(host);
                             }
@@ -3639,14 +3650,14 @@ impl eframe::App for LauncherApp {
                             let scan_label = if is_scanning { "Scanning..." } else { "Scan Ports" };
                             let btn_scan = egui::Button::new(
                                 RichText::new(scan_label)
-                                    .size(11.0)
+                                    .size(10.5)
                                     .strong()
                                     .color(p.accent),
                             )
                             .fill(p.bg_button)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(84.0, 24.0));
+                            .min_size(egui::vec2(70.0, 22.0));
                             if ui.add(btn_scan).clicked() {
                                 self.trigger_remote_scan(host);
                             }
@@ -3655,28 +3666,28 @@ impl eframe::App for LauncherApp {
                             // In right-to-left layout: adding shutdown first then reboot renders: [Restart Device] [Shut Down]
                             let btn_shutdown = egui::Button::new(
                                 RichText::new(format!("{} Shut Down", crate::lucide::POWER))
-                                    .size(11.0)
+                                    .size(10.5)
                                     .strong()
                                     .color(Color32::from_rgb(254, 202, 202)),
                             )
                             .fill(Color32::from_rgb(153, 27, 27))
                             .stroke(Stroke::new(1.0_f32, Color32::from_rgb(185, 28, 28)))
                             .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(104.0, 24.0));
+                            .min_size(egui::vec2(86.0, 22.0));
                             if ui.add(btn_shutdown).on_hover_text("Shut down remote device (requires confirmation & sudo password)").clicked() {
                                 self.remote_shutdown_modal.open_for_host(host);
                             }
 
                             let btn_reboot = egui::Button::new(
                                 RichText::new(format!("{} Restart Device", crate::lucide::REFRESH_CW))
-                                    .size(11.0)
+                                    .size(10.5)
                                     .strong()
                                     .color(Color32::from_rgb(254, 243, 199)),
                             )
                             .fill(Color32::from_rgb(146, 64, 14))
                             .stroke(Stroke::new(1.0_f32, Color32::from_rgb(180, 83, 9)))
                             .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(116.0, 24.0));
+                            .min_size(egui::vec2(98.0, 22.0));
                             if ui.add(btn_reboot).on_hover_text("Restart remote device (requires confirmation & sudo password)").clicked() {
                                 self.remote_reboot_modal.open_for_host(host);
                             }

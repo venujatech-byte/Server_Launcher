@@ -8111,12 +8111,13 @@ impl LauncherApp {
     fn render_sensors_top_apps_tab(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot) {
         let p = self.theme.palette();
 
-        // Fixed column widths matching Windows 11 Task Manager
-        const COL_STATUS_W: f32 = 70.0;
-        const COL_CPU_W: f32 = 80.0;
-        const COL_MEM_W: f32 = 100.0;
-        const COL_DISK_W: f32 = 90.0;
-        const COL_NET_W: f32 = 80.0;
+        // Fixed column widths with generous spacing matching Windows 11 Task Manager
+        const COL_STATUS_W: f32 = 65.0;
+        const COL_CPU_W: f32 = 88.0;
+        const COL_MEM_W: f32 = 110.0;
+        const COL_DISK_W: f32 = 105.0;
+        const COL_NET_W: f32 = 95.0;
+        const COL_SPACING: f32 = 16.0;
 
         let num_logical_cores = snap.cpu_cores_logical.max(1) as f32;
         // Total system CPU % normalization: 0 - 100% total system CPU matching Windows Task Manager
@@ -8509,9 +8510,25 @@ impl LauncherApp {
 
                 let (apps_groups, bg_groups): (Vec<GroupSummary>, Vec<GroupSummary>) = all_groups.into_iter().partition(|g| g.is_app);
 
-                // Responsive Name column width
+                // Responsive Name column width accounting for all column widths and gaps
                 let avail_w = ui.available_width();
-                let col_name_w = (avail_w - COL_STATUS_W - COL_CPU_W - COL_MEM_W - COL_DISK_W - COL_NET_W - 50.0).max(240.0);
+                let total_fixed_w = COL_STATUS_W + COL_CPU_W + COL_MEM_W + COL_DISK_W + COL_NET_W + 5.0 * COL_SPACING + 40.0;
+                let col_name_w = (avail_w - total_fixed_w).max(220.0);
+
+                // Helper to return crisp Lucide arrow or empty string for sort indicators
+                let current_sort = self.sensors_top_apps_sort.clone();
+                let current_desc = self.sensors_top_apps_sort_desc;
+                let get_sort_arrow = move |col: &str| -> &str {
+                    if current_sort == col {
+                        if current_desc {
+                            crate::lucide::ARROW_DOWN
+                        } else {
+                            crate::lucide::ARROW_UP
+                        }
+                    } else {
+                        ""
+                    }
+                };
 
                 // ═════════════════════════════════════════════════════════════
                 // WINDOWS TASK MANAGER PROCESS TABLE
@@ -8526,7 +8543,7 @@ impl LauncherApp {
                             .show(ui, |ui| {
                                 egui::Grid::new("top_apps_task_manager_grid")
                                     .num_columns(6)
-                                    .spacing(egui::vec2(8.0, 3.0))
+                                    .spacing(egui::vec2(COL_SPACING, 4.0))
                                     .show(ui, |ui| {
                                         // ═════════════════════════════════════
                                         // STACKED TWO-TIER COLUMN HEADERS (Image 2)
@@ -8536,9 +8553,10 @@ impl LauncherApp {
                                         // 1. Name
                                         ui.allocate_ui_with_layout(egui::vec2(col_name_w, 36.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                             let is_sel = self.sensors_top_apps_sort == "name";
-                                            let arrow = if is_sel { if self.sensors_top_apps_sort_desc { " ↓" } else { " ↑" } } else { "" };
+                                            let arr = get_sort_arrow("name");
+                                            let title = if arr.is_empty() { "Name".to_string() } else { format!("Name {}", arr) };
                                             let btn = egui::Button::new(
-                                                RichText::new(format!("Name{}", arrow))
+                                                RichText::new(title)
                                                     .size(11.5)
                                                     .strong()
                                                     .color(if is_sel { p.accent_light } else { p.text_secondary }),
@@ -8553,9 +8571,10 @@ impl LauncherApp {
                                         // 2. Status
                                         ui.allocate_ui_with_layout(egui::vec2(COL_STATUS_W, 36.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                             let is_sel = self.sensors_top_apps_sort == "status";
-                                            let arrow = if is_sel { if self.sensors_top_apps_sort_desc { " ↓" } else { " ↑" } } else { "" };
+                                            let arr = get_sort_arrow("status");
+                                            let title = if arr.is_empty() { "Status".to_string() } else { format!("Status {}", arr) };
                                             let btn = egui::Button::new(
-                                                RichText::new(format!("Status{}", arrow))
+                                                RichText::new(title)
                                                     .size(11.5)
                                                     .strong()
                                                     .color(if is_sel { p.accent_light } else { p.text_secondary }),
@@ -8570,9 +8589,10 @@ impl LauncherApp {
                                         // 3. CPU (Stacked: Total % top, CPU bottom)
                                         ui.allocate_ui_with_layout(egui::vec2(COL_CPU_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
                                             let is_sel = self.sensors_top_apps_sort == "cpu";
-                                            let arrow = if is_sel { if self.sensors_top_apps_sort_desc { " ↓" } else { " ↑" } } else { "" };
+                                            let arr = get_sort_arrow("cpu");
+                                            let title = if arr.is_empty() { "CPU".to_string() } else { format!("CPU {}", arr) };
                                             let btn1 = ui.add(egui::Button::new(RichText::new(format!("{:.0}%", snap.cpu_global_usage)).size(11.5).strong().color(if is_sel { p.accent_light } else { p.text_primary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
-                                            let btn2 = ui.add(egui::Button::new(RichText::new(format!("CPU{}", arrow)).size(10.0).color(p.text_secondary)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                            let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(p.text_secondary)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                             if btn1.clicked() || btn2.clicked() {
                                                 new_sort = Some("cpu");
                                             }
@@ -8581,9 +8601,10 @@ impl LauncherApp {
                                         // 4. Memory (Stacked: Total % top, Memory bottom)
                                         ui.allocate_ui_with_layout(egui::vec2(COL_MEM_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
                                             let is_sel = self.sensors_top_apps_sort == "mem";
-                                            let arrow = if is_sel { if self.sensors_top_apps_sort_desc { " ↓" } else { " ↑" } } else { "" };
+                                            let arr = get_sort_arrow("mem");
+                                            let title = if arr.is_empty() { "Memory".to_string() } else { format!("Memory {}", arr) };
                                             let btn1 = ui.add(egui::Button::new(RichText::new(format!("{:.0}%", mem_total_pct)).size(11.5).strong().color(if is_sel { p.accent_light } else { p.text_primary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
-                                            let btn2 = ui.add(egui::Button::new(RichText::new(format!("Memory{}", arrow)).size(10.0).color(p.text_secondary)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                            let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(p.text_secondary)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                             if btn1.clicked() || btn2.clicked() {
                                                 new_sort = Some("mem");
                                             }
@@ -8592,9 +8613,10 @@ impl LauncherApp {
                                         // 5. Disk (Stacked: Rate % top, Disk bottom)
                                         ui.allocate_ui_with_layout(egui::vec2(COL_DISK_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
                                             let is_sel = self.sensors_top_apps_sort == "disk";
-                                            let arrow = if is_sel { if self.sensors_top_apps_sort_desc { " ↓" } else { " ↑" } } else { "" };
+                                            let arr = get_sort_arrow("disk");
+                                            let title = if arr.is_empty() { "Disk".to_string() } else { format!("Disk {}", arr) };
                                             let btn1 = ui.add(egui::Button::new(RichText::new(&disk_header_pct).size(11.5).strong().color(if is_sel { p.accent_light } else { p.text_primary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
-                                            let btn2 = ui.add(egui::Button::new(RichText::new(format!("Disk{}", arrow)).size(10.0).color(p.text_secondary)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                            let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(p.text_secondary)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                             if btn1.clicked() || btn2.clicked() {
                                                 new_sort = Some("disk");
                                             }
@@ -8603,9 +8625,10 @@ impl LauncherApp {
                                         // 6. Network (Stacked: 0% top, Network bottom)
                                         ui.allocate_ui_with_layout(egui::vec2(COL_NET_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
                                             let is_sel = self.sensors_top_apps_sort == "net";
-                                            let arrow = if is_sel { if self.sensors_top_apps_sort_desc { " ↓" } else { " ↑" } } else { "" };
+                                            let arr = get_sort_arrow("net");
+                                            let title = if arr.is_empty() { "Network".to_string() } else { format!("Network {}", arr) };
                                             let btn1 = ui.add(egui::Button::new(RichText::new("0%").size(11.5).strong().color(if is_sel { p.accent_light } else { p.text_primary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
-                                            let btn2 = ui.add(egui::Button::new(RichText::new(format!("Network{}", arrow)).size(10.0).color(p.text_secondary)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                            let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(p.text_secondary)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                             if btn1.clicked() || btn2.clicked() {
                                                 new_sort = Some("net");
                                             }
@@ -8683,62 +8706,84 @@ impl LauncherApp {
                                             });
 
                                             // 2. Status (e.g. 🍃 for background/efficiency or blank)
-                                            ui.allocate_ui_with_layout(egui::vec2(COL_STATUS_W, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                                if !is_app_sec {
-                                                    ui.label(RichText::new("🍃").size(10.5).color(Color32::from_rgb(16, 185, 129))).on_hover_text("Background / Efficiency mode process");
-                                                }
-                                            });
+                                            let (status_rect, _) = ui.allocate_exact_size(egui::vec2(COL_STATUS_W, 22.0), egui::Sense::hover());
+                                            if !is_app_sec {
+                                                ui.painter().text(
+                                                    status_rect.center(),
+                                                    egui::Align2::CENTER_CENTER,
+                                                    "🍃",
+                                                    egui::FontId::proportional(11.0),
+                                                    Color32::from_rgb(16, 185, 129),
+                                                );
+                                            }
 
-                                            // 3. CPU (Heatmap tinted cell, right aligned)
-                                            ui.allocate_ui_with_layout(egui::vec2(COL_CPU_W, 22.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                let cell_rect = ui.max_rect();
-                                                if cpu_fill != Color32::TRANSPARENT {
-                                                    ui.painter().rect_filled(cell_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, cpu_fill);
-                                                }
-                                                let cpu_txt = format_tm_cpu(norm_cpu);
-                                                let cpu_color = if cpu_fill != Color32::TRANSPARENT {
-                                                    Color32::from_rgb(245, 245, 250)
-                                                } else {
-                                                    Color32::from_rgb(170, 175, 185)
-                                                };
-                                                ui.label(RichText::new(cpu_txt).size(11.0).monospace().color(cpu_color))
-                                                    .on_hover_text(format!("{:.1}% Total System CPU ({:.1}% single-core raw)", norm_cpu, grp.sum_cpu));
-                                            });
+                                            // 3. CPU (Heatmap tinted cell, strictly bounded, right aligned)
+                                            let (cpu_rect, cpu_resp) = ui.allocate_exact_size(egui::vec2(COL_CPU_W, 22.0), egui::Sense::hover());
+                                            if cpu_fill != Color32::TRANSPARENT {
+                                                ui.painter().rect_filled(cpu_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, cpu_fill);
+                                            }
+                                            let cpu_txt = format_tm_cpu(norm_cpu);
+                                            let cpu_color = if cpu_fill != Color32::TRANSPARENT {
+                                                Color32::from_rgb(245, 245, 250)
+                                            } else {
+                                                Color32::from_rgb(170, 175, 185)
+                                            };
+                                            ui.painter().text(
+                                                egui::pos2(cpu_rect.right() - 8.0, cpu_rect.center().y),
+                                                egui::Align2::RIGHT_CENTER,
+                                                &cpu_txt,
+                                                egui::FontId::monospace(11.0),
+                                                cpu_color,
+                                            );
+                                            cpu_resp.on_hover_text(format!("{:.1}% Total System CPU ({:.1}% single-core raw)", norm_cpu, grp.sum_cpu));
 
-                                            // 4. Memory (Heatmap tinted cell, right aligned)
-                                            ui.allocate_ui_with_layout(egui::vec2(COL_MEM_W, 22.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                let cell_rect = ui.max_rect();
-                                                if mem_fill != Color32::TRANSPARENT {
-                                                    ui.painter().rect_filled(cell_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, mem_fill);
-                                                }
-                                                let mem_txt = format_tm_mem(grp.sum_mem);
-                                                let mem_color = if mem_fill != Color32::TRANSPARENT {
-                                                    Color32::from_rgb(245, 245, 250)
-                                                } else {
-                                                    Color32::from_rgb(170, 175, 185)
-                                                };
-                                                ui.label(RichText::new(mem_txt).size(11.0).monospace().color(mem_color));
-                                            });
+                                            // 4. Memory (Heatmap tinted cell, strictly bounded, right aligned)
+                                            let (mem_rect, _) = ui.allocate_exact_size(egui::vec2(COL_MEM_W, 22.0), egui::Sense::hover());
+                                            if mem_fill != Color32::TRANSPARENT {
+                                                ui.painter().rect_filled(mem_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, mem_fill);
+                                            }
+                                            let mem_txt = format_tm_mem(grp.sum_mem);
+                                            let mem_color = if mem_fill != Color32::TRANSPARENT {
+                                                Color32::from_rgb(245, 245, 250)
+                                            } else {
+                                                Color32::from_rgb(170, 175, 185)
+                                            };
+                                            ui.painter().text(
+                                                egui::pos2(mem_rect.right() - 8.0, mem_rect.center().y),
+                                                egui::Align2::RIGHT_CENTER,
+                                                &mem_txt,
+                                                egui::FontId::monospace(11.0),
+                                                mem_color,
+                                            );
 
-                                            // 5. Disk (Heatmap tinted cell, right aligned)
-                                            ui.allocate_ui_with_layout(egui::vec2(COL_DISK_W, 22.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                let cell_rect = ui.max_rect();
-                                                if disk_fill != Color32::TRANSPARENT {
-                                                    ui.painter().rect_filled(cell_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, disk_fill);
-                                                }
-                                                let disk_txt = format_tm_disk(grp.sum_disk_rate);
-                                                let disk_color = if disk_fill != Color32::TRANSPARENT {
-                                                    Color32::from_rgb(245, 245, 250)
-                                                } else {
-                                                    Color32::from_rgb(170, 175, 185)
-                                                };
-                                                ui.label(RichText::new(disk_txt).size(11.0).monospace().color(disk_color));
-                                            });
+                                            // 5. Disk (Heatmap tinted cell, strictly bounded, right aligned)
+                                            let (disk_rect, _) = ui.allocate_exact_size(egui::vec2(COL_DISK_W, 22.0), egui::Sense::hover());
+                                            if disk_fill != Color32::TRANSPARENT {
+                                                ui.painter().rect_filled(disk_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, disk_fill);
+                                            }
+                                            let disk_txt = format_tm_disk(grp.sum_disk_rate);
+                                            let disk_color = if disk_fill != Color32::TRANSPARENT {
+                                                Color32::from_rgb(245, 245, 250)
+                                            } else {
+                                                Color32::from_rgb(170, 175, 185)
+                                            };
+                                            ui.painter().text(
+                                                egui::pos2(disk_rect.right() - 8.0, disk_rect.center().y),
+                                                egui::Align2::RIGHT_CENTER,
+                                                &disk_txt,
+                                                egui::FontId::monospace(11.0),
+                                                disk_color,
+                                            );
 
-                                            // 6. Network (Right aligned)
-                                            ui.allocate_ui_with_layout(egui::vec2(COL_NET_W, 22.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.label(RichText::new("0 Mbps").size(11.0).monospace().color(Color32::from_rgb(160, 165, 175)));
-                                            });
+                                            // 6. Network (Strictly bounded, right aligned)
+                                            let (net_rect, _) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 22.0), egui::Sense::hover());
+                                            ui.painter().text(
+                                                egui::pos2(net_rect.right() - 8.0, net_rect.center().y),
+                                                egui::Align2::RIGHT_CENTER,
+                                                "0 Mbps",
+                                                egui::FontId::monospace(11.0),
+                                                Color32::from_rgb(160, 165, 175),
+                                            );
                                             ui.end_row();
 
                                             // Expanded children subprocesses
@@ -8762,29 +8807,54 @@ impl LauncherApp {
                                                     });
 
                                                     // Child Status
-                                                    ui.allocate_ui_with_layout(egui::vec2(COL_STATUS_W, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new(&child.status).size(9.5).color(p.text_muted));
-                                                    });
+                                                    let (c_status_rect, _) = ui.allocate_exact_size(egui::vec2(COL_STATUS_W, 20.0), egui::Sense::hover());
+                                                    ui.painter().text(
+                                                        c_status_rect.left_center(),
+                                                        egui::Align2::LEFT_CENTER,
+                                                        &child.status,
+                                                        egui::FontId::proportional(9.5),
+                                                        p.text_muted,
+                                                    );
 
                                                     // Child CPU
-                                                    ui.allocate_ui_with_layout(egui::vec2(COL_CPU_W, 20.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new(format_tm_cpu(child_norm_cpu)).size(10.5).monospace().color(Color32::from_rgb(160, 165, 175)));
-                                                    });
+                                                    let (c_cpu_rect, _) = ui.allocate_exact_size(egui::vec2(COL_CPU_W, 20.0), egui::Sense::hover());
+                                                    ui.painter().text(
+                                                        egui::pos2(c_cpu_rect.right() - 8.0, c_cpu_rect.center().y),
+                                                        egui::Align2::RIGHT_CENTER,
+                                                        format_tm_cpu(child_norm_cpu),
+                                                        egui::FontId::monospace(10.5),
+                                                        Color32::from_rgb(160, 165, 175),
+                                                    );
 
                                                     // Child Memory
-                                                    ui.allocate_ui_with_layout(egui::vec2(COL_MEM_W, 20.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new(format_tm_mem(child.memory_bytes)).size(10.5).monospace().color(Color32::from_rgb(160, 165, 175)));
-                                                    });
+                                                    let (c_mem_rect, _) = ui.allocate_exact_size(egui::vec2(COL_MEM_W, 20.0), egui::Sense::hover());
+                                                    ui.painter().text(
+                                                        egui::pos2(c_mem_rect.right() - 8.0, c_mem_rect.center().y),
+                                                        egui::Align2::RIGHT_CENTER,
+                                                        format_tm_mem(child.memory_bytes),
+                                                        egui::FontId::monospace(10.5),
+                                                        Color32::from_rgb(160, 165, 175),
+                                                    );
 
                                                     // Child Disk
-                                                    ui.allocate_ui_with_layout(egui::vec2(COL_DISK_W, 20.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new(format_tm_disk(child.disk_rate_bps)).size(10.5).monospace().color(Color32::from_rgb(160, 165, 175)));
-                                                    });
+                                                    let (c_disk_rect, _) = ui.allocate_exact_size(egui::vec2(COL_DISK_W, 20.0), egui::Sense::hover());
+                                                    ui.painter().text(
+                                                        egui::pos2(c_disk_rect.right() - 8.0, c_disk_rect.center().y),
+                                                        egui::Align2::RIGHT_CENTER,
+                                                        format_tm_disk(child.disk_rate_bps),
+                                                        egui::FontId::monospace(10.5),
+                                                        Color32::from_rgb(160, 165, 175),
+                                                    );
 
                                                     // Child Network
-                                                    ui.allocate_ui_with_layout(egui::vec2(COL_NET_W, 20.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new("0 Mbps").size(10.5).monospace().color(Color32::from_rgb(140, 145, 155)));
-                                                    });
+                                                    let (c_net_rect, _) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 20.0), egui::Sense::hover());
+                                                    ui.painter().text(
+                                                        egui::pos2(c_net_rect.right() - 8.0, c_net_rect.center().y),
+                                                        egui::Align2::RIGHT_CENTER,
+                                                        "0 Mbps",
+                                                        egui::FontId::monospace(10.5),
+                                                        Color32::from_rgb(140, 145, 155),
+                                                    );
                                                     ui.end_row();
                                                 }
                                             }

@@ -1,4 +1,8 @@
 servers.json
-/__pycache__
+**/__pycache__/
+*.pyc
 target/
 **/target/
+fedora_commands.json
+ubuntu_commands.json
+guide.md

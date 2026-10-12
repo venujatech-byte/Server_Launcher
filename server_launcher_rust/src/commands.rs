@@ -35,7 +35,7 @@ impl Default for TerminalSession {
     fn default() -> Self {
         let initial_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         Self {
-            logs: Arc::new(Mutex::new(VecDeque::new())),
+            logs: Arc::new(Mutex::new(VecDeque::with_capacity(256))),
             input_text: String::new(),
             history: Vec::new(),
             history_idx: None,
@@ -450,7 +450,7 @@ impl TerminalSession {
                             if let Ok(l) = line {
                                 let mut q = logs_out.lock().unwrap();
                                 q.push_back(LogEntry::new(l, LogKind::Stdout));
-                                if q.len() > 10000 {
+                                if q.len() > 2000 {
                                     q.pop_front();
                                 }
                             }
@@ -466,7 +466,7 @@ impl TerminalSession {
                             if let Ok(l) = line {
                                 let mut q = logs_err.lock().unwrap();
                                 q.push_back(LogEntry::new(l, LogKind::Stderr));
-                                if q.len() > 10000 {
+                                if q.len() > 2000 {
                                     q.pop_front();
                                 }
                             }
@@ -585,7 +585,7 @@ impl TerminalSession {
                             if let Ok(l) = line {
                                 let mut q = logs_out.lock().unwrap();
                                 q.push_back(LogEntry::new(l, LogKind::Stdout));
-                                if q.len() > 10000 {
+                                if q.len() > 2000 {
                                     q.pop_front();
                                 }
                             }
@@ -601,7 +601,7 @@ impl TerminalSession {
                             if let Ok(l) = line {
                                 let mut q = logs_err.lock().unwrap();
                                 q.push_back(LogEntry::new(l, LogKind::Stderr));
-                                if q.len() > 10000 {
+                                if q.len() > 2000 {
                                     q.pop_front();
                                 }
                             }
@@ -672,6 +672,74 @@ pub fn open_system_terminal(cwd: &Path) -> Result<(), String> {
     }
 }
 
+pub fn launch_external_command(cmd_str: &str, cwd: &Path) -> Result<(), String> {
+    let script_path = std::env::temp_dir().join(format!(
+        "launcher_cmd_{}.sh",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
+    let script_content = format!(
+r#"#!/usr/bin/env bash
+echo "=========================================================="
+echo " Server Launcher: Local Command Execution"
+echo " Command: {cmd}"
+echo "=========================================================="
+cd "{cwd}"
+{cmd}
+EXIT_CODE=$?
+echo ""
+echo "[launcher] Command finished with exit code $EXIT_CODE."
+read -n 1 -s -r -p "Press any key to close this terminal..."
+"#,
+        cmd = cmd_str,
+        cwd = cwd.display()
+    );
+
+    let _ = std::fs::write(&script_path, script_content);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = std::fs::metadata(&script_path) {
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o755);
+            let _ = std::fs::set_permissions(&script_path, perms);
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let script_str = script_path.to_string_lossy().to_string();
+        let chosen = crate::service::find_terminal();
+        let mut cmd;
+        if let Some((term, args)) = chosen {
+            cmd = std::process::Command::new(term);
+            for arg in args {
+                cmd.arg(arg);
+            }
+            cmd.arg(&script_str);
+        } else {
+            cmd = std::process::Command::new("x-terminal-emulator");
+            cmd.args(&["-e", &script_str]);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+        cmd.spawn().map_err(|e| format!("Failed to spawn terminal: {}", e))?;
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = std::process::Command::new("cmd.exe");
+        cmd.args(&["/K", cmd_str]);
+        cmd.current_dir(cwd);
+        cmd.spawn().map_err(|e| format!("Failed to spawn cmd: {}", e))?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CommandModalState {
     pub open: bool,
@@ -682,6 +750,7 @@ pub struct CommandModalState {
     pub description: String,
     pub category: String,
     pub host_id: Option<String>,
+    pub run_in_terminal: bool,
     pub error: Option<String>,
 }
 
@@ -695,6 +764,7 @@ impl CommandModalState {
         self.description = String::new();
         self.category = "General".to_string();
         self.host_id = current_host;
+        self.run_in_terminal = false;
         self.error = None;
     }
 
@@ -707,6 +777,7 @@ impl CommandModalState {
         self.description = cmd.description.clone();
         self.category = cmd.category.clone();
         self.host_id = cmd.host_id.clone();
+        self.run_in_terminal = cmd.run_in_terminal;
         self.error = None;
     }
 }
@@ -769,6 +840,7 @@ mod tests {
         state.open_create(None);
         assert!(state.open);
         assert!(!state.is_edit);
+        assert!(!state.run_in_terminal);
         assert_eq!(state.category, "General");
 
         let cmd = SavedCommand {
@@ -778,6 +850,7 @@ mod tests {
             description: "Show repository status".to_string(),
             category: "Git".to_string(),
             host_id: None,
+            run_in_terminal: true,
         };
 
         state.open_edit(&cmd);
@@ -785,5 +858,31 @@ mod tests {
         assert_eq!(state.name, "Git Status");
         assert_eq!(state.command, "git status");
         assert_eq!(state.category, "Git");
+        assert!(state.run_in_terminal);
+    }
+
+    #[test]
+    fn test_parse_command_json_files() {
+        let fedora_path = std::path::Path::new("../fedora_commands.json");
+        if fedora_path.exists() {
+            let content = std::fs::read_to_string(fedora_path).expect("Read fedora_commands.json");
+            let cmds: Vec<SavedCommand> = serde_json::from_str(&content).expect("Parse fedora_commands.json");
+            assert!(!cmds.is_empty(), "fedora_commands.json should have commands");
+            for c in &cmds {
+                assert!(!c.name.is_empty());
+                assert!(c.command.starts_with("cd "), "Command '{}' should direct to specific location", c.name);
+            }
+        }
+
+        let ubuntu_path = std::path::Path::new("../ubuntu_commands.json");
+        if ubuntu_path.exists() {
+            let content = std::fs::read_to_string(ubuntu_path).expect("Read ubuntu_commands.json");
+            let cmds: Vec<SavedCommand> = serde_json::from_str(&content).expect("Parse ubuntu_commands.json");
+            assert!(!cmds.is_empty(), "ubuntu_commands.json should have commands");
+            for c in &cmds {
+                assert!(!c.name.is_empty());
+                assert!(c.command.starts_with("cd "), "Command '{}' should direct to specific location", c.name);
+            }
+        }
     }
 }

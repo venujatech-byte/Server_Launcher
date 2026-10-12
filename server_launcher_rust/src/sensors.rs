@@ -7,6 +7,7 @@ use sysinfo::{Components, Disks, Networks, System};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SensorCategory {
+    TopApps,
     Cpu,
     Memory,
     Gpu,
@@ -18,6 +19,7 @@ pub enum SensorCategory {
 impl SensorCategory {
     pub fn label(&self) -> &'static str {
         match self {
+            SensorCategory::TopApps => "Top Apps",
             SensorCategory::Cpu => "CPU",
             SensorCategory::Memory => "Memory (RAM)",
             SensorCategory::Gpu => "GPU",
@@ -26,15 +28,34 @@ impl SensorCategory {
         }
     }
 
-    pub fn emoji(&self) -> &'static str {
+    pub fn icon(&self) -> &'static str {
         match self {
-            SensorCategory::Cpu => "🖥",
-            SensorCategory::Memory => "🧠",
-            SensorCategory::Gpu => "🎮",
-            SensorCategory::Storage => "💾",
-            SensorCategory::System => "🌡",
+            SensorCategory::TopApps => crate::lucide::ZAP,
+            SensorCategory::Cpu => crate::lucide::CPU,
+            SensorCategory::Memory => crate::lucide::RAM,
+            SensorCategory::Gpu => crate::lucide::GPU,
+            SensorCategory::Storage => crate::lucide::STORAGE,
+            SensorCategory::System => crate::lucide::SENSORS,
         }
     }
+
+    pub fn emoji(&self) -> &'static str {
+        self.icon()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ProcessSensorInfo {
+    pub pid: u32,
+    pub name: String,
+    pub cpu_usage: f32,
+    pub memory_bytes: u64,
+    pub disk_read_bytes: u64,
+    pub disk_written_bytes: u64,
+    pub disk_read_rate_bps: f64,
+    pub disk_write_rate_bps: f64,
+    pub disk_rate_bps: f64,
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -56,6 +77,10 @@ pub struct DiskInfo {
     pub available_bytes: u64,
     pub used_bytes: u64,
     pub usage_pct: f32,
+    pub read_rate_bps: f64,
+    pub write_rate_bps: f64,
+    pub total_read_bytes: u64,
+    pub total_write_bytes: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -140,6 +165,8 @@ pub struct SystemSensorsSnapshot {
     // Storage
     pub disks: Vec<DiskInfo>,
     pub storage_temp: Option<f32>,
+    pub total_disk_read_rate_bps: f64,
+    pub total_disk_write_rate_bps: f64,
 
     // Network
     pub networks: Vec<NetInterfaceInfo>,
@@ -150,6 +177,13 @@ pub struct SystemSensorsSnapshot {
 
     // All temperature sensors
     pub temp_sensors: Vec<TempSensor>,
+
+    // Top Applications & Processes
+    pub top_apps: Vec<ProcessSensorInfo>,
+
+    // OS info
+    pub os_name: String,
+    pub os_version: String,
 
     pub timestamp: Option<Instant>,
 }
@@ -162,6 +196,10 @@ pub struct SystemSensorsCollector {
     prev_net_rx: HashMap<String, u64>,
     prev_net_tx: HashMap<String, u64>,
     prev_net_time: Instant,
+    prev_disk_read: HashMap<String, u64>,
+    prev_disk_write: HashMap<String, u64>,
+    prev_disk_time: Instant,
+    prev_proc_disk: HashMap<u32, (u64, u64)>,
 }
 
 impl Default for SystemSensorsCollector {
@@ -172,11 +210,13 @@ impl Default for SystemSensorsCollector {
 
 impl SystemSensorsCollector {
     pub fn new() -> Self {
-        let mut sys = System::new_all();
-        sys.refresh_all();
+        let mut sys = System::new();
+        sys.refresh_cpu_all();
+        sys.refresh_memory();
         let disks = Disks::new_with_refreshed_list();
         let networks = Networks::new_with_refreshed_list();
         let components = Components::new_with_refreshed_list();
+        let now = Instant::now();
 
         Self {
             sys,
@@ -185,11 +225,19 @@ impl SystemSensorsCollector {
             components,
             prev_net_rx: HashMap::new(),
             prev_net_tx: HashMap::new(),
-            prev_net_time: Instant::now(),
+            prev_net_time: now,
+            prev_disk_read: HashMap::new(),
+            prev_disk_write: HashMap::new(),
+            prev_disk_time: now,
+            prev_proc_disk: HashMap::new(),
         }
     }
 
     pub fn collect(&mut self) -> SystemSensorsSnapshot {
+        self.collect_with_top_apps(true)
+    }
+
+    pub fn collect_with_top_apps(&mut self, include_top_apps: bool) -> SystemSensorsSnapshot {
         // 1. Refresh System
         self.sys.refresh_cpu_all();
         self.sys.refresh_memory();
@@ -211,7 +259,7 @@ impl SystemSensorsCollector {
         let cpu_cores_logical = self.sys.cpus().len();
         let cpu_global_usage = self.sys.global_cpu_usage();
         let cpu_core_usages: Vec<f32> = self.sys.cpus().iter().map(|c| c.cpu_usage()).collect();
-        let (mut cpu_frequencies_mhz, cpu_power_watts, cpu_tdp_watts) = collect_cpu_frequencies_and_power();
+        let (mut cpu_frequencies_mhz, mut cpu_power_watts, cpu_tdp_watts) = collect_cpu_frequencies_and_power();
         if cpu_frequencies_mhz.is_empty() {
             cpu_frequencies_mhz = self.sys.cpus().iter().map(|c| c.frequency()).collect();
         }
@@ -220,6 +268,20 @@ impl SystemSensorsCollector {
         } else {
             self.sys.cpus().first().map(|c| c.frequency()).unwrap_or(0)
         };
+
+        // Guarantee CPU power watts is always populated (hwmon/RAPL or dynamic TDP-usage model)
+        if cpu_power_watts.is_none() {
+            let tdp = cpu_tdp_watts.unwrap_or(match cpu_cores_physical {
+                1..=2 => 15.0,
+                3..=4 => 28.0,
+                5..=8 => 45.0,
+                _ => 65.0,
+            });
+            let idle_w = (tdp * 0.12).clamp(2.5, 12.0);
+            let load_ratio = (cpu_global_usage / 100.0).clamp(0.0, 1.0);
+            let p_est = idle_w + (tdp - idle_w) * (0.35 * load_ratio + 0.65 * load_ratio.powf(1.35));
+            cpu_power_watts = Some((p_est * 10.0).round() / 10.0);
+        }
 
         // 3. Memory
         let mem_total_bytes = self.sys.total_memory();
@@ -240,7 +302,13 @@ impl SystemSensorsCollector {
         };
 
         // 4. Storage / Disks
+        let disk_elapsed_secs = self.prev_disk_time.elapsed().as_secs_f64().max(0.001);
+        let current_diskstats = collect_proc_diskstats();
+
         let mut disks = Vec::new();
+        let mut total_disk_read_rate_bps = 0.0;
+        let mut total_disk_write_rate_bps = 0.0;
+
         for d in &self.disks {
             let total = d.total_space();
             let avail = d.available_space();
@@ -250,18 +318,71 @@ impl SystemSensorsCollector {
             } else {
                 0.0
             };
+
+            let raw_name = d.name().to_string_lossy().to_string();
+            let clean_dev = raw_name.trim_start_matches("/dev/").to_string();
+
+            // Match diskstats
+            let (read_bytes, write_bytes) = current_diskstats
+                .get(&clean_dev)
+                .copied()
+                .or_else(|| {
+                    current_diskstats.iter().find_map(|(k, v)| {
+                        if clean_dev.starts_with(k) || k.starts_with(&clean_dev) {
+                            Some(*v)
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .unwrap_or((0, 0));
+
+            let prev_read = *self.prev_disk_read.get(&clean_dev).unwrap_or(&read_bytes);
+            let prev_write = *self.prev_disk_write.get(&clean_dev).unwrap_or(&write_bytes);
+
+            let read_rate = (read_bytes.saturating_sub(prev_read) as f64) / disk_elapsed_secs;
+            let write_rate = (write_bytes.saturating_sub(prev_write) as f64) / disk_elapsed_secs;
+
+            self.prev_disk_read.insert(clean_dev.clone(), read_bytes);
+            self.prev_disk_write.insert(clean_dev.clone(), write_bytes);
+
             disks.push(DiskInfo {
-                name: d.name().to_string_lossy().to_string(),
+                name: raw_name,
                 mount_point: d.mount_point().to_string_lossy().to_string(),
                 fs_type: d.file_system().to_string_lossy().to_string(),
                 total_bytes: total,
                 available_bytes: avail,
                 used_bytes: used,
                 usage_pct: pct,
+                read_rate_bps: read_rate,
+                write_rate_bps: write_rate,
+                total_read_bytes: read_bytes,
+                total_write_bytes: write_bytes,
             });
         }
         // Deduplicate or sort by mount point
         disks.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
+
+        // Calculate total physical disk read/write throughput rates across base devices
+        let mut base_matched = false;
+        for (dev, &(r_bytes, w_bytes)) in &current_diskstats {
+            if is_base_physical_disk(dev) {
+                base_matched = true;
+                let prev_r = *self.prev_disk_read.get(dev).unwrap_or(&r_bytes);
+                let prev_w = *self.prev_disk_write.get(dev).unwrap_or(&w_bytes);
+                total_disk_read_rate_bps += (r_bytes.saturating_sub(prev_r) as f64) / disk_elapsed_secs;
+                total_disk_write_rate_bps += (w_bytes.saturating_sub(prev_w) as f64) / disk_elapsed_secs;
+                self.prev_disk_read.insert(dev.clone(), r_bytes);
+                self.prev_disk_write.insert(dev.clone(), w_bytes);
+            }
+        }
+        if !base_matched {
+            for d in &disks {
+                total_disk_read_rate_bps += d.read_rate_bps;
+                total_disk_write_rate_bps += d.write_rate_bps;
+            }
+        }
+        self.prev_disk_time = now;
 
         // 5. Networks
         let mut networks = Vec::new();
@@ -351,6 +472,74 @@ impl SystemSensorsCollector {
         // 8. Power Supply & Battery
         let power = collect_power_supply();
 
+        // 9. Top Applications & Resource Consumers
+        let mut top_apps = Vec::new();
+        if include_top_apps {
+            self.sys.refresh_processes_specifics(
+                sysinfo::ProcessesToUpdate::All,
+                sysinfo::ProcessRefreshKind::new()
+                    .with_cpu()
+                    .with_memory()
+                    .with_disk_usage()
+                    .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
+            );
+            let mut current_proc_disk = HashMap::new();
+
+            for (pid, proc) in self.sys.processes() {
+                // Filter out OS-level threads so only actual processes are listed!
+                // On Linux, sysinfo returns all kernel tasks/threads with thread_kind == Some(Userland).
+                // Threads share the same address space (memory) and their CPU is already accounted for in the main process.
+                if proc.thread_kind().is_some() {
+                    continue;
+                }
+
+                let pid_u32 = pid.as_u32();
+                let mut name = proc.name().to_string_lossy().to_string();
+                if (name == "exe" || name.is_empty()) && proc.exe().is_some() {
+                    if let Some(exe_file) = proc.exe().unwrap().file_name() {
+                        name = exe_file.to_string_lossy().to_string();
+                    }
+                }
+                let cpu_usage = proc.cpu_usage();
+                let memory_bytes = proc.memory();
+                let disk_usage = proc.disk_usage();
+                let read_b = disk_usage.read_bytes;
+                let written_b = disk_usage.written_bytes;
+
+                current_proc_disk.insert(pid_u32, (read_b, written_b));
+
+                let (prev_r, prev_w) = self.prev_proc_disk.get(&pid_u32).copied().unwrap_or((read_b, written_b));
+                let r_rate = (read_b.saturating_sub(prev_r) as f64) / disk_elapsed_secs;
+                let w_rate = (written_b.saturating_sub(prev_w) as f64) / disk_elapsed_secs;
+                let disk_rate_bps = r_rate + w_rate;
+
+                let status = format!("{:?}", proc.status());
+
+                top_apps.push(ProcessSensorInfo {
+                    pid: pid_u32,
+                    name,
+                    cpu_usage,
+                    memory_bytes,
+                    disk_read_bytes: read_b,
+                    disk_written_bytes: written_b,
+                    disk_read_rate_bps: r_rate,
+                    disk_write_rate_bps: w_rate,
+                    disk_rate_bps,
+                    status,
+                });
+            }
+            self.prev_proc_disk = current_proc_disk;
+
+            // Sort by CPU usage descending by default, then memory
+            top_apps.sort_by(|a, b| {
+                b.cpu_usage
+                    .partial_cmp(&a.cpu_usage)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| b.memory_bytes.cmp(&a.memory_bytes))
+            });
+            top_apps.truncate(150);
+        }
+
         SystemSensorsSnapshot {
             cpu_brand,
             cpu_cores_physical,
@@ -374,15 +563,52 @@ impl SystemSensorsCollector {
             power,
             disks,
             storage_temp,
+            total_disk_read_rate_bps,
+            total_disk_write_rate_bps,
             networks,
             total_rx_rate_bps,
             total_tx_rate_bps,
             total_rx_bytes,
             total_tx_bytes,
             temp_sensors,
+            top_apps,
+            os_name: System::name().unwrap_or_default(),
+            os_version: System::os_version().unwrap_or_default(),
             timestamp: Some(now),
         }
     }
+}
+
+fn collect_proc_diskstats() -> HashMap<String, (u64, u64)> {
+    let mut stats = HashMap::new();
+    #[cfg(target_os = "linux")]
+    if let Ok(content) = fs::read_to_string("/proc/diskstats") {
+        for line in content.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 10 {
+                let dev = parts[2].to_string();
+                let sectors_read = parts[5].parse::<u64>().unwrap_or(0);
+                let sectors_written = parts[9].parse::<u64>().unwrap_or(0);
+                let read_bytes = sectors_read.saturating_mul(512);
+                let write_bytes = sectors_written.saturating_mul(512);
+                stats.insert(dev, (read_bytes, write_bytes));
+            }
+        }
+    }
+    stats
+}
+
+fn is_base_physical_disk(dev: &str) -> bool {
+    if dev.starts_with("loop") || dev.starts_with("ram") || dev.starts_with("zram") || dev.starts_with("dm-") {
+        return false;
+    }
+    if dev.starts_with("sd") || dev.starts_with("vd") || dev.starts_with("hd") || dev.starts_with("xvd") {
+        return !dev.chars().last().map(|c| c.is_ascii_digit()).unwrap_or(false);
+    }
+    if dev.starts_with("nvme") || dev.starts_with("mmcblk") {
+        return !dev.contains('p');
+    }
+    true
 }
 
 fn categorize_sensor(label: &str, chip: &str) -> SensorCategory {
@@ -538,20 +764,41 @@ pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32
 
     #[cfg(target_os = "linux")]
     {
-        // 1. Read per-core frequencies from cpufreq
+        // 1. Read per-core frequencies from cpufreq (scaling_cur_freq or cpuinfo_cur_freq)
         let mut core_idx = 0;
         loop {
-            let p = format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", core_idx);
-            let path = Path::new(&p);
-            if !path.exists() {
+            let p_scaling = format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", core_idx);
+            let p_cur = format!("/sys/devices/system/cpu/cpu{}/cpufreq/cpuinfo_cur_freq", core_idx);
+
+            let khz_opt = fs::read_to_string(&p_scaling)
+                .or_else(|_| fs::read_to_string(&p_cur))
+                .ok()
+                .and_then(|s| s.trim().parse::<u64>().ok());
+
+            if let Some(khz) = khz_opt {
+                freqs.push(khz / 1000);
+            } else if core_idx > 0 || !Path::new(&format!("/sys/devices/system/cpu/cpu{}", core_idx)).exists() {
                 break;
             }
-            if let Ok(s) = fs::read_to_string(path) {
-                if let Ok(khz) = s.trim().parse::<u64>() {
-                    freqs.push(khz / 1000);
+            core_idx += 1;
+            if core_idx > 128 {
+                break;
+            }
+        }
+
+        // Fallback: Read cpu MHz from /proc/cpuinfo if cpufreq is unavailable (VMs, VPS, containers)
+        if freqs.is_empty() {
+            if let Ok(cpuinfo) = fs::read_to_string("/proc/cpuinfo") {
+                for line in cpuinfo.lines() {
+                    if line.starts_with("cpu MHz") {
+                        if let Some(val_str) = line.split(':').nth(1) {
+                            if let Ok(mhz) = val_str.trim().parse::<f64>() {
+                                freqs.push(mhz as u64);
+                            }
+                        }
+                    }
                 }
             }
-            core_idx += 1;
         }
 
         // 2. Read CPU TDP limit from intel-rapl constraint
@@ -571,18 +818,24 @@ pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32
             }
         }
 
-        // 3. Read power draw from hwmon if labeled CPU / coretemp / k10temp
+        // 3. Read power draw from hwmon if labeled CPU / coretemp / k10temp / rapl
         let hwmon_dir = Path::new("/sys/class/hwmon");
         if hwmon_dir.exists() {
             if let Ok(entries) = fs::read_dir(hwmon_dir) {
                 for e in entries.flatten() {
                     let p = e.path();
                     let name = fs::read_to_string(p.join("name")).unwrap_or_default().to_lowercase();
-                    if name.contains("coretemp") || name.contains("k10temp") || name.contains("zenpower") || name.contains("cpu") {
+                    if name.contains("coretemp")
+                        || name.contains("k10temp")
+                        || name.contains("zenpower")
+                        || name.contains("cpu")
+                        || name.contains("rapl")
+                        || name.contains("fam15h")
+                    {
                         if let Ok(files) = fs::read_dir(&p) {
                             for f in files.flatten() {
                                 let fname = f.file_name().to_string_lossy().to_string();
-                                if fname.starts_with("power") && fname.ends_with("_input") {
+                                if fname.starts_with("power") && (fname.ends_with("_input") || fname.ends_with("_average")) {
                                     if let Ok(s) = fs::read_to_string(f.path()) {
                                         if let Ok(uw) = s.trim().parse::<f32>() {
                                             let w = uw / 1_000_000.0;
@@ -793,46 +1046,53 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
     }
 }
 
+static HAS_NVIDIA_SMI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
 fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
     let mut gpus = Vec::new();
 
-    // 1. Check NVIDIA via nvidia-smi
-    let nvidia_out = Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=name,temperature.gpu,utilization.gpu,utilization.memory,memory.used,memory.total,clocks.current.graphics,clocks.current.memory,power.draw,power.limit",
-            "--format=csv,noheader,nounits"
-        ])
-        .output();
+    // 1. Check NVIDIA via nvidia-smi if available
+    if HAS_NVIDIA_SMI.load(std::sync::atomic::Ordering::Relaxed) {
+        let nvidia_out = Command::new("nvidia-smi")
+            .args([
+                "--query-gpu=name,temperature.gpu,utilization.gpu,utilization.memory,memory.used,memory.total,clocks.current.graphics,clocks.current.memory,power.draw,power.limit",
+                "--format=csv,noheader,nounits"
+            ])
+            .output();
 
-    if let Ok(out) = nvidia_out {
-        if out.status.success() {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            for line in stdout.lines() {
-                let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
-                if parts.len() >= 6 {
-                    let name = parts[0].to_string();
-                    let temp = parts[1].parse::<f32>().ok();
-                    let load_pct = parts[2].parse::<f32>().ok();
-                    let mem_used = parts[4].parse::<u64>().ok();
-                    let mem_total = parts[5].parse::<u64>().ok();
-                    let clock_mhz = parts.get(6).and_then(|s| s.parse::<u32>().ok());
-                    let mem_clock_mhz = parts.get(7).and_then(|s| s.parse::<u32>().ok());
-                    let power_watts = parts.get(8).and_then(|s| s.parse::<f32>().ok());
-                    let power_limit_watts = parts.get(9).and_then(|s| s.parse::<f32>().ok());
+        match nvidia_out {
+            Ok(out) if out.status.success() => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                for line in stdout.lines() {
+                    let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+                    if parts.len() >= 6 {
+                        let name = parts[0].to_string();
+                        let temp = parts[1].parse::<f32>().ok();
+                        let load_pct = parts[2].parse::<f32>().ok();
+                        let mem_used = parts[4].parse::<u64>().ok();
+                        let mem_total = parts[5].parse::<u64>().ok();
+                        let clock_mhz = parts.get(6).and_then(|s| s.parse::<u32>().ok());
+                        let mem_clock_mhz = parts.get(7).and_then(|s| s.parse::<u32>().ok());
+                        let power_watts = parts.get(8).and_then(|s| s.parse::<f32>().ok());
+                        let power_limit_watts = parts.get(9).and_then(|s| s.parse::<f32>().ok());
 
-                    gpus.push(GpuSensorInfo {
-                        name,
-                        load_pct,
-                        temp,
-                        mem_used_mb: mem_used,
-                        mem_total_mb: mem_total,
-                        clock_mhz,
-                        mem_clock_mhz,
-                        power_watts,
-                        power_limit_watts,
-                        driver: "NVIDIA Proprietary".to_string(),
-                    });
+                        gpus.push(GpuSensorInfo {
+                            name,
+                            load_pct,
+                            temp,
+                            mem_used_mb: mem_used,
+                            mem_total_mb: mem_total,
+                            clock_mhz,
+                            mem_clock_mhz,
+                            power_watts,
+                            power_limit_watts,
+                            driver: "NVIDIA Proprietary".to_string(),
+                        });
+                    }
                 }
+            }
+            _ => {
+                HAS_NVIDIA_SMI.store(false, std::sync::atomic::Ordering::Relaxed);
             }
         }
     }
@@ -855,33 +1115,88 @@ fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
                             _ => "Integrated GPU",
                         };
 
-                        // Check frequency
+                        // Check frequency across all DRM / i915 / gt0 interfaces
                         let freq_mhz = fs::read_to_string(e.path().join("gt_act_freq_mhz"))
+                            .or_else(|_| fs::read_to_string(e.path().join("gt/gt0/rps_act_freq_mhz")))
                             .or_else(|_| fs::read_to_string(e.path().join("gt_cur_freq_mhz")))
+                            .or_else(|_| fs::read_to_string(e.path().join("gt/gt0/rps_cur_freq_mhz")))
+                            .or_else(|_| fs::read_to_string(dev.join("gt_act_freq_mhz")))
+                            .or_else(|_| fs::read_to_string(dev.join("gt_cur_freq_mhz")))
                             .ok()
                             .and_then(|s| s.trim().parse::<f32>().ok());
 
                         let max_freq_mhz = fs::read_to_string(e.path().join("gt_max_freq_mhz"))
+                            .or_else(|_| fs::read_to_string(e.path().join("gt/gt0/rps_max_freq_mhz")))
+                            .or_else(|_| fs::read_to_string(dev.join("gt_max_freq_mhz")))
                             .ok()
                             .and_then(|s| s.trim().parse::<f32>().ok())
                             .unwrap_or(1200.0);
 
                         let load_pct = freq_mhz.map(|f| ((f / max_freq_mhz) * 100.0).clamp(0.0, 100.0));
 
+                        let mut core_clock = freq_mhz.map(|f| f as u32);
+                        let mut mem_clock = None;
                         let mut power_watts = None;
+
                         let hwmon_p = dev.join("hwmon");
                         if hwmon_p.exists() {
                             if let Ok(entries) = fs::read_dir(&hwmon_p) {
                                 for hwe in entries.flatten() {
-                                    if let Ok(s) = fs::read_to_string(hwe.path().join("power1_average"))
-                                        .or_else(|_| fs::read_to_string(hwe.path().join("power1_input")))
-                                    {
-                                        if let Ok(uw) = s.trim().parse::<f32>() {
-                                            power_watts = Some(uw / 1_000_000.0);
-                                            break;
+                                    let hp = hwe.path();
+                                    if power_watts.is_none() {
+                                        if let Ok(s) = fs::read_to_string(hp.join("power1_average"))
+                                            .or_else(|_| fs::read_to_string(hp.join("power1_input")))
+                                        {
+                                            if let Ok(uw) = s.trim().parse::<f32>() {
+                                                power_watts = Some(uw / 1_000_000.0);
+                                            }
+                                        }
+                                    }
+                                    if core_clock.is_none() {
+                                        if let Ok(s) = fs::read_to_string(hp.join("freq1_input")) {
+                                            if let Ok(hz) = s.trim().parse::<u64>() {
+                                                core_clock = Some((hz / 1_000_000) as u32);
+                                            }
+                                        }
+                                    }
+                                    if mem_clock.is_none() {
+                                        if let Ok(s) = fs::read_to_string(hp.join("freq2_input")) {
+                                            if let Ok(hz) = s.trim().parse::<u64>() {
+                                                mem_clock = Some((hz / 1_000_000) as u32);
+                                            }
                                         }
                                     }
                                 }
+                            }
+                        }
+
+                        // Check AMD pp_dpm_sclk if still no core clock
+                        if core_clock.is_none() {
+                            if let Ok(s) = fs::read_to_string(dev.join("pp_dpm_sclk")) {
+                                for line in s.lines() {
+                                    if line.contains('*') {
+                                        let parts: Vec<&str> = line.split_whitespace().collect();
+                                        for p in parts {
+                                            if p.ends_with("mhz") || p.ends_with("MHz") {
+                                                let num_str = p.trim_end_matches(|c: char| !c.is_ascii_digit());
+                                                if let Ok(val) = num_str.parse::<u32>() {
+                                                    core_clock = Some(val);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if power_watts.is_none() {
+                            if let Some(clk) = core_clock {
+                                let max_f = max_freq_mhz.max(400.0);
+                                let clk_ratio = (clk as f32 / max_f).clamp(0.0, 1.0);
+                                let load_ratio = (load_pct.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0);
+                                let p_est = 1.0 + 14.0 * (0.35 * clk_ratio + 0.65 * load_ratio);
+                                power_watts = Some((p_est * 10.0).round() / 10.0);
                             }
                         }
 
@@ -891,8 +1206,8 @@ fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
                             temp: known_temp,
                             mem_used_mb: None,
                             mem_total_mb: None,
-                            clock_mhz: freq_mhz.map(|f| f as u32),
-                            mem_clock_mhz: None,
+                            clock_mhz: core_clock,
+                            mem_clock_mhz: mem_clock,
                             power_watts,
                             power_limit_watts: None,
                             driver: "Direct Rendering Manager (DRM)".to_string(),
@@ -958,7 +1273,42 @@ pub fn temp_color(temp: f32) -> Color32 {
 
 pub fn query_remote_sensors(host: &SshRemoteHost) -> Result<SystemSensorsSnapshot, String> {
     let script = r#"python3 -c '
-import os, glob, json
+import os, glob, json, time
+
+def read_cpu_stats():
+    cpus = {}
+    try:
+        with open("/proc/stat") as f:
+            for line in f:
+                if line.startswith("cpu"):
+                    p = line.split()
+                    name = p[0]
+                    vals = [float(x) for x in p[1:]]
+                    idle = vals[3] + (vals[4] if len(vals) > 4 else 0.0)
+                    total = sum(vals)
+                    cpus[name] = (total, idle)
+    except:
+        pass
+    return cpus
+
+def read_disk_stats():
+    d = {}
+    try:
+        with open("/proc/diskstats") as f:
+            for line in f:
+                p = line.split()
+                if len(p) >= 10:
+                    dev = p[2]
+                    r_b = int(p[5]) * 512
+                    w_b = int(p[9]) * 512
+                    d[dev] = (r_b, w_b)
+    except:
+        pass
+    return d
+
+t_start = time.time()
+c1 = read_cpu_stats()
+d1 = read_disk_stats()
 
 mem = {}
 try:
@@ -988,6 +1338,20 @@ for p in sorted(glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur
         cpu_freqs.append(int(open(p).read().strip()) // 1000)
     except:
         pass
+if not cpu_freqs:
+    for p in sorted(glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq/cpuinfo_cur_freq")):
+        try:
+            cpu_freqs.append(int(open(p).read().strip()) // 1000)
+        except:
+            pass
+if not cpu_freqs:
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if "cpu MHz" in line:
+                    cpu_freqs.append(int(float(line.split(":")[1].strip())))
+    except:
+        pass
 
 cpu_tdp = None
 for p in glob.glob("/sys/class/powercap/intel-rapl*/constraint_0_power_limit_uw"):
@@ -1002,13 +1366,17 @@ for p in glob.glob("/sys/class/powercap/intel-rapl*/constraint_0_power_limit_uw"
 cpu_power = None
 for hw in glob.glob("/sys/class/hwmon/hwmon*"):
     name = open(hw + "/name").read().strip().lower() if os.path.exists(hw + "/name") else ""
-    if "coretemp" in name or "k10temp" in name or "zenpower" in name or "cpu" in name:
-        for pin in glob.glob(hw + "/power*_input"):
+    if any(k in name for k in ["coretemp", "k10temp", "zenpower", "cpu", "rapl", "fam15h"]):
+        for pin in glob.glob(hw + "/power*_input") + glob.glob(hw + "/power*_average"):
             try:
-                cpu_power = int(open(pin).read().strip()) / 1e6
-                break
+                v = int(open(pin).read().strip()) / 1e6
+                if 0 < v < 1000:
+                    cpu_power = v
+                    break
             except:
                 pass
+        if cpu_power:
+            break
 
 disks = []
 try:
@@ -1071,6 +1439,22 @@ if not gpus:
             load = None
             if act_freq and max_freq and max_freq > 0:
                 load = round((act_freq / max_freq) * 100.0, 1)
+
+            p_watts = None
+            mem_clk = None
+            for hw in glob.glob(card + "/device/hwmon/hwmon*"):
+                for pin in glob.glob(hw + "/power1_average") + glob.glob(hw + "/power1_input"):
+                    try:
+                        p_watts = round(int(open(pin).read().strip()) / 1e6, 2)
+                        break
+                    except: pass
+                if not act_freq and os.path.exists(hw + "/freq1_input"):
+                    try: act_freq = int(open(hw + "/freq1_input").read().strip()) // 1000000
+                    except: pass
+                if os.path.exists(hw + "/freq2_input"):
+                    try: mem_clk = int(open(hw + "/freq2_input").read().strip()) // 1000000
+                    except: pass
+
             gpus.append({
                 "name": v_name,
                 "temp": None,
@@ -1078,8 +1462,8 @@ if not gpus:
                 "mem_used": None,
                 "mem_total": None,
                 "clock_mhz": act_freq,
-                "mem_clock_mhz": None,
-                "power_watts": None,
+                "mem_clock_mhz": mem_clk,
+                "power_watts": p_watts,
                 "power_limit_watts": None,
                 "driver": "DRM / Linux Kernel"
             })
@@ -1178,9 +1562,136 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
             "manufacturer": mfg
         })
 
+networks = []
+try:
+    with open("/proc/net/dev") as f:
+        for line in f:
+            if ":" in line:
+                p = line.split(":")
+                ifname = p[0].strip()
+                if ifname == "lo":
+                    continue
+                fields = p[1].split()
+                if len(fields) >= 9:
+                    rx = int(fields[0])
+                    tx = int(fields[8])
+                    networks.append({"name": ifname, "rx_bytes": rx, "tx_bytes": tx})
+except:
+    pass
+
+t_elapsed = time.time() - t_start
+if t_elapsed < 0.12:
+    time.sleep(0.12 - t_elapsed)
+c2 = read_cpu_stats()
+d2 = read_disk_stats()
+t_disk_elapsed = max(time.time() - t_start, 0.05)
+
+disk_rates = {}
+for dev, (r2, w2) in d2.items():
+    if dev in d1:
+        r1, w1 = d1[dev]
+        r_rate = max(0.0, (r2 - r1) / t_disk_elapsed)
+        w_rate = max(0.0, (w2 - w1) / t_disk_elapsed)
+        disk_rates[dev] = (r_rate, w_rate, r2, w2)
+    else:
+        disk_rates[dev] = (0.0, 0.0, r2, w2)
+
+for d in disks:
+    dev_name = os.path.basename(d["name"])
+    st = disk_rates.get(dev_name)
+    if not st:
+        for k, v in disk_rates.items():
+            if dev_name.startswith(k) or k.startswith(dev_name):
+                st = v; break
+    d["read_rate"] = st[0] if st else 0.0
+    d["write_rate"] = st[1] if st else 0.0
+    d["total_read"] = st[2] if st else 0
+    d["total_write"] = st[3] if st else 0
+
+tot_disk_read_rate = 0.0
+tot_disk_write_rate = 0.0
+base_found = False
+for dev, (r_rate, w_rate, _, _) in disk_rates.items():
+    if not (dev.startswith("loop") or dev.startswith("ram") or dev.startswith("zram") or dev.startswith("dm-")):
+        is_base = False
+        if any(dev.startswith(pfx) for pfx in ["sd", "vd", "hd", "xvd"]):
+            is_base = not dev[-1].isdigit()
+        elif dev.startswith("nvme") or dev.startswith("mmcblk"):
+            is_base = "p" not in dev
+        if is_base:
+            base_found = True
+            tot_disk_read_rate += r_rate
+            tot_disk_write_rate += w_rate
+
+if not base_found:
+    for d in disks:
+        tot_disk_read_rate += d.get("read_rate", 0.0)
+        tot_disk_write_rate += d.get("write_rate", 0.0)
+
+cpu_usage = 0.0
+if "cpu" in c1 and "cpu" in c2:
+    td = c2["cpu"][0] - c1["cpu"][0]
+    id_d = c2["cpu"][1] - c1["cpu"][1]
+    if td > 0:
+        cpu_usage = max(0.0, min(100.0, round(100.0 * (1.0 - id_d / td), 1)))
+
+cpu_core_usages = []
+idx = 0
+while f"cpu{idx}" in c1 and f"cpu{idx}" in c2:
+    td = c2[f"cpu{idx}"][0] - c1[f"cpu{idx}"][0]
+    id_d = c2[f"cpu{idx}"][1] - c1[f"cpu{idx}"][1]
+    if td > 0:
+        cpu_core_usages.append(max(0.0, min(100.0, round(100.0 * (1.0 - id_d / td), 1))))
+    else:
+        cpu_core_usages.append(0.0)
+    idx += 1
+
+if cpu_usage == 0.0 and os.path.exists("/proc/loadavg"):
+    try:
+        lavg = float(open("/proc/loadavg").read().split()[0])
+        cpu_usage = max(0.0, min(100.0, round((lavg / max(cores, 1)) * 100.0, 1)))
+    except:
+        pass
+
+top_apps = []
+try:
+    for line in os.popen("ps -eo pid,pcpu,pmem,rss,comm --sort=-pcpu 2>/dev/null").read().strip().split("\n")[1:31]:
+        p = line.split()
+        if len(p) >= 5:
+            top_apps.append({
+                "pid": int(p[0]),
+                "cpu": float(p[1]),
+                "mem_bytes": int(p[3]) * 1024,
+                "name": " ".join(p[4:]),
+                "status": "Running",
+            })
+except:
+    pass
+
+os_name = ""
+os_version = ""
+try:
+    with open("/etc/os-release") as f:
+        for line in f:
+            if line.startswith("NAME="):
+                os_name = line.split("=", 1)[1].strip().strip("\"")
+            elif line.startswith("VERSION_ID="):
+                os_version = line.split("=", 1)[1].strip().strip("\"")
+except:
+    pass
+if not os_name:
+    try:
+        import platform
+        os_name = platform.system()
+        os_version = platform.release()
+    except:
+        pass
+
 data = {
     "cpu_model": cpu_model,
     "cores": max(cores, 1),
+    "cpu_usage": cpu_usage,
+    "cpu_core_usages": cpu_core_usages,
     "cpu_freqs": cpu_freqs,
     "cpu_tdp": cpu_tdp,
     "cpu_power": cpu_power,
@@ -1189,12 +1700,18 @@ data = {
     "swap_total": mem.get("SwapTotal", 0),
     "swap_free": mem.get("SwapFree", 0),
     "disks": disks,
+    "total_disk_read_rate": tot_disk_read_rate,
+    "total_disk_write_rate": tot_disk_write_rate,
     "temps": temps,
     "gpus": gpus,
+    "networks": networks,
     "power": {
         "ac_online": ac_online,
         "batteries": batteries
-    }
+    },
+    "top_apps": top_apps,
+    "os_name": os_name,
+    "os_version": os_version
 }
 print(json.dumps(data))
 '
@@ -1213,6 +1730,17 @@ print(json.dumps(data))
 
     let cpu_brand = parsed["cpu_model"].as_str().unwrap_or("Remote CPU").to_string();
     let cpu_cores = parsed["cores"].as_u64().unwrap_or(1) as usize;
+    let cpu_global_usage = parsed["cpu_usage"].as_f64().unwrap_or(0.0) as f32;
+    let cpu_core_usages = if let Some(arr) = parsed["cpu_core_usages"].as_array() {
+        let usages: Vec<f32> = arr.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+        if usages.is_empty() {
+            vec![cpu_global_usage; cpu_cores]
+        } else {
+            usages
+        }
+    } else {
+        vec![cpu_global_usage; cpu_cores]
+    };
 
     let mut cpu_frequencies_mhz = Vec::new();
     if let Some(arr) = parsed["cpu_freqs"].as_array() {
@@ -1249,6 +1777,9 @@ print(json.dumps(data))
         0.0
     };
 
+    let total_disk_read_rate_bps = parsed["total_disk_read_rate"].as_f64().unwrap_or(0.0);
+    let total_disk_write_rate_bps = parsed["total_disk_write_rate"].as_f64().unwrap_or(0.0);
+
     let mut disks = Vec::new();
     if let Some(arr) = parsed["disks"].as_array() {
         for d in arr {
@@ -1256,6 +1787,11 @@ print(json.dumps(data))
             let used = d["used"].as_u64().unwrap_or(0);
             let avail = d["avail"].as_u64().unwrap_or(0);
             let pct = if total > 0 { (used as f32 / total as f32) * 100.0 } else { 0.0 };
+            let r_rate = d["read_rate"].as_f64().unwrap_or(0.0);
+            let w_rate = d["write_rate"].as_f64().unwrap_or(0.0);
+            let r_total = d["total_read"].as_u64().unwrap_or(0);
+            let w_total = d["total_write"].as_u64().unwrap_or(0);
+
             disks.push(DiskInfo {
                 name: d["name"].as_str().unwrap_or("").to_string(),
                 mount_point: d["mount"].as_str().unwrap_or("").to_string(),
@@ -1264,6 +1800,10 @@ print(json.dumps(data))
                 available_bytes: avail,
                 used_bytes: used,
                 usage_pct: pct,
+                read_rate_bps: r_rate,
+                write_rate_bps: w_rate,
+                total_read_bytes: r_total,
+                total_write_bytes: w_total,
             });
         }
     }
@@ -1375,12 +1915,55 @@ print(json.dumps(data))
         }
     }
 
+    let mut networks = Vec::new();
+    let mut total_rx_bytes = 0u64;
+    let mut total_tx_bytes = 0u64;
+    if let Some(arr) = parsed["networks"].as_array() {
+        for n in arr {
+            let name = n["name"].as_str().unwrap_or("").to_string();
+            let rx = n["rx_bytes"].as_u64().unwrap_or(0);
+            let tx = n["tx_bytes"].as_u64().unwrap_or(0);
+            total_rx_bytes += rx;
+            total_tx_bytes += tx;
+            networks.push(NetInterfaceInfo {
+                name,
+                rx_bytes: rx,
+                tx_bytes: tx,
+                rx_rate_bps: 0.0,
+                tx_rate_bps: 0.0,
+            });
+        }
+    }
+
+    let mut top_apps = Vec::new();
+    if let Some(arr) = parsed.get("top_apps").and_then(|v| v.as_array()) {
+        for a in arr {
+            let pid = a["pid"].as_u64().unwrap_or(0) as u32;
+            let name = a["name"].as_str().unwrap_or("").to_string();
+            let cpu_usage = a["cpu"].as_f64().unwrap_or(0.0) as f32;
+            let memory_bytes = a["mem_bytes"].as_u64().unwrap_or(0);
+            let status = a["status"].as_str().unwrap_or("Running").to_string();
+            top_apps.push(ProcessSensorInfo {
+                pid,
+                name,
+                cpu_usage,
+                memory_bytes,
+                disk_read_bytes: 0,
+                disk_written_bytes: 0,
+                disk_read_rate_bps: 0.0,
+                disk_write_rate_bps: 0.0,
+                disk_rate_bps: 0.0,
+                status,
+            });
+        }
+    }
+
     Ok(SystemSensorsSnapshot {
         cpu_brand,
         cpu_cores_physical: cpu_cores,
         cpu_cores_logical: cpu_cores,
-        cpu_global_usage: 0.0,
-        cpu_core_usages: vec![0.0; cpu_cores],
+        cpu_global_usage,
+        cpu_core_usages,
         cpu_frequency_mhz,
         cpu_frequencies_mhz,
         cpu_power_watts,
@@ -1398,12 +1981,17 @@ print(json.dumps(data))
         power,
         disks,
         storage_temp,
-        networks: Vec::new(),
+        total_disk_read_rate_bps,
+        total_disk_write_rate_bps,
+        networks,
         total_rx_rate_bps: 0.0,
         total_tx_rate_bps: 0.0,
-        total_rx_bytes: 0,
-        total_tx_bytes: 0,
+        total_rx_bytes,
+        total_tx_bytes,
         temp_sensors,
+        top_apps,
+        os_name: parsed["os_name"].as_str().unwrap_or("").to_string(),
+        os_version: parsed["os_version"].as_str().unwrap_or("").to_string(),
         timestamp: Some(Instant::now()),
     })
 }
@@ -1452,6 +2040,53 @@ mod tests {
         // Just verify it runs without crashing and creates a valid struct
         if let Some(pct) = ps.total_battery_pct {
             assert!(pct >= 0.0 && pct <= 100.0);
+        }
+    }
+
+    #[test]
+    fn test_base_physical_disk_detection() {
+        assert!(is_base_physical_disk("sda"));
+        assert!(is_base_physical_disk("nvme0n1"));
+        assert!(is_base_physical_disk("vda"));
+        assert!(!is_base_physical_disk("sda1"));
+        assert!(!is_base_physical_disk("nvme0n1p1"));
+        assert!(!is_base_physical_disk("loop0"));
+        assert!(!is_base_physical_disk("zram0"));
+        assert!(!is_base_physical_disk("dm-0"));
+    }
+
+    #[test]
+    fn test_disk_info_and_rates() {
+        let mut collector = SystemSensorsCollector::new();
+        let snap = collector.collect();
+        // Ensure rates are valid non-negative floats
+        assert!(snap.total_disk_read_rate_bps >= 0.0);
+        assert!(snap.total_disk_write_rate_bps >= 0.0);
+        for d in &snap.disks {
+            assert!(d.read_rate_bps >= 0.0);
+            assert!(d.write_rate_bps >= 0.0);
+        }
+    }
+
+    #[test]
+    fn test_top_apps_collection_and_cpu_power() {
+        let mut collector = SystemSensorsCollector::new();
+        let snap = collector.collect();
+
+        // CPU Power watts is guaranteed to be populated
+        assert!(snap.cpu_power_watts.is_some());
+        let p_watts = snap.cpu_power_watts.unwrap();
+        assert!(p_watts > 0.0, "CPU power usage should be positive, got {}", p_watts);
+
+        // Top apps should have running processes
+        assert!(!snap.top_apps.is_empty(), "top_apps should not be empty on a running system");
+        for app in &snap.top_apps {
+            assert!(app.pid > 0);
+            assert!(app.cpu_usage >= 0.0);
+            assert!(app.disk_read_rate_bps >= 0.0);
+            assert!(app.disk_write_rate_bps >= 0.0);
+            assert!(app.disk_rate_bps >= 0.0);
+            assert!(!app.status.is_empty());
         }
     }
 }

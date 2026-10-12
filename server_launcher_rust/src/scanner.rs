@@ -232,9 +232,16 @@ pub fn kill_process_pid(pid: u32) {
     {
         #[cfg(unix)]
         unsafe {
-            libc::kill(pid as i32, libc::SIGTERM);
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            libc::kill(pid as i32, libc::SIGKILL);
+            let res = libc::kill(pid as i32, libc::SIGTERM);
+            if res != 0 {
+                // If permission denied or process owned by root, try passwordless sudo
+                let _ = std::process::Command::new("sudo")
+                    .args(["-n", "kill", "-9", &pid.to_string()])
+                    .output();
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
         }
     }
 }

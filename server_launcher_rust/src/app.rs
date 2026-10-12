@@ -7259,47 +7259,47 @@ impl LauncherApp {
 
                                     // Row 4: Action Buttons (Start/Stop & Restart on left, circular tools on right)
                                     ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 8.0;
+                                        ui.spacing_mut().item_spacing.x = 4.0;
 
                                         if is_running {
                                             let btn_stop = egui::Button::new(
                                                 RichText::new("⏹ Stop")
-                                                    .size(11.5)
+                                                    .size(10.5)
                                                     .strong()
                                                     .color(Color32::from_rgb(0xfe, 0xf2, 0xf2)),
                                             )
                                             .fill(Color32::from_rgb(0x99, 0x1b, 0x1b))
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(999.0))
-                                            .min_size(egui::vec2(68.0, 28.0));
+                                            .min_size(egui::vec2(56.0, 24.0));
                                             if ui.add(btn_stop).on_hover_text("Stop this server").clicked() {
                                                 to_stop = Some(idx);
                                             }
 
                                             let btn_restart = egui::Button::new(
                                                 RichText::new("⟳ Restart")
-                                                    .size(11.5)
+                                                    .size(10.5)
                                                     .strong()
                                                     .color(Color32::from_rgb(0xec, 0xfe, 0xff)),
                                             )
                                             .fill(Color32::from_rgb(0x0e, 0x74, 0x90))
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(999.0))
-                                            .min_size(egui::vec2(78.0, 28.0));
+                                            .min_size(egui::vec2(66.0, 24.0));
                                             if ui.add(btn_restart).on_hover_text("Restart this server").clicked() {
                                                 to_restart = Some(idx);
                                             }
                                         } else {
                                             let btn_start = egui::Button::new(
                                                 RichText::new("▶ Start")
-                                                    .size(11.5)
+                                                    .size(10.5)
                                                     .strong()
                                                     .color(Color32::WHITE),
                                             )
                                             .fill(Color32::from_rgb(0x05, 0x96, 0x69))
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(999.0))
-                                            .min_size(egui::vec2(74.0, 28.0));
+                                            .min_size(egui::vec2(58.0, 24.0));
                                             if ui.add(btn_start).on_hover_text("Start this server").clicked() {
                                                 to_start = Some(idx);
                                             }
@@ -7307,14 +7307,14 @@ impl LauncherApp {
 
                                         // Right side circular action buttons
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.spacing_mut().item_spacing.x = 6.0;
+                                            ui.spacing_mut().item_spacing.x = 3.0;
 
                                             let circ_bg = Color32::from_rgb(0x27, 0x29, 0x36);
-                                            let circ_size = egui::vec2(28.0, 28.0);
+                                            let circ_size = egui::vec2(24.0, 24.0);
                                             let circ_rnd = Rounding::same(999.0);
 
                                             let btn_del = egui::Button::new(
-                                                RichText::new("🗑").size(11.0).color(Color32::from_rgb(0xf8, 0x71, 0x71)),
+                                                RichText::new("🗑").size(10.0).color(Color32::from_rgb(0xf8, 0x71, 0x71)),
                                             )
                                             .fill(circ_bg)
                                             .stroke(Stroke::NONE)
@@ -7325,7 +7325,7 @@ impl LauncherApp {
                                             }
 
                                             let btn_folder = egui::Button::new(
-                                                RichText::new("📁").size(11.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                                RichText::new("📁").size(10.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
                                             )
                                             .fill(circ_bg)
                                             .stroke(Stroke::NONE)
@@ -7336,7 +7336,7 @@ impl LauncherApp {
                                             }
 
                                             let btn_vscode = egui::Button::new(
-                                                RichText::new("💻").size(11.0).color(Color32::from_rgb(0x60, 0xa5, 0xfa)),
+                                                RichText::new("💻").size(10.0).color(Color32::from_rgb(0x60, 0xa5, 0xfa)),
                                             )
                                             .fill(circ_bg)
                                             .stroke(Stroke::NONE)
@@ -7347,7 +7347,7 @@ impl LauncherApp {
                                             }
 
                                             let btn_edit = egui::Button::new(
-                                                RichText::new("✏").size(11.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                                RichText::new("✏").size(10.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
                                             )
                                             .fill(circ_bg)
                                             .stroke(Stroke::NONE)
@@ -7358,7 +7358,7 @@ impl LauncherApp {
                                             }
 
                                             let btn_console = egui::Button::new(
-                                                RichText::new(">_").size(10.5).monospace().strong().color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                                RichText::new(">_").size(9.5).monospace().strong().color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
                                             )
                                             .fill(circ_bg)
                                             .stroke(Stroke::NONE)
@@ -7375,7 +7375,7 @@ impl LauncherApp {
                                                     format!("http://localhost:{}", s.config.port)
                                                 };
                                                 let btn_browser = egui::Button::new(
-                                                    RichText::new("↗").size(11.5).strong().color(Color32::from_rgb(0x38, 0xbd, 0xf8)),
+                                                    RichText::new("↗").size(10.5).strong().color(Color32::from_rgb(0x38, 0xbd, 0xf8)),
                                                 )
                                                 .fill(circ_bg)
                                                 .stroke(Stroke::NONE)
@@ -8040,47 +8040,47 @@ impl LauncherApp {
 
                             // Row 4: Action Buttons (Start/Stop & Restart on left, circular tools on right)
                             ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 8.0;
+                                ui.spacing_mut().item_spacing.x = 4.0;
 
                                 if is_running {
                                     let btn_stop = egui::Button::new(
                                         RichText::new("⏹ Stop")
-                                            .size(11.5)
+                                            .size(10.5)
                                             .strong()
                                             .color(Color32::from_rgb(0xfe, 0xf2, 0xf2)),
                                     )
                                     .fill(Color32::from_rgb(0x99, 0x1b, 0x1b))
                                     .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(999.0))
-                                    .min_size(egui::vec2(68.0, 28.0));
+                                    .min_size(egui::vec2(56.0, 24.0));
                                     if ui.add(btn_stop).on_hover_text("Stop this server").clicked() {
                                         to_toggle = Some((idx, 0));
                                     }
 
                                     let btn_restart = egui::Button::new(
                                         RichText::new("⟳ Restart")
-                                            .size(11.5)
+                                            .size(10.5)
                                             .strong()
                                             .color(Color32::from_rgb(0xec, 0xfe, 0xff)),
                                     )
                                     .fill(Color32::from_rgb(0x0e, 0x74, 0x90))
                                     .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(999.0))
-                                    .min_size(egui::vec2(78.0, 28.0));
+                                    .min_size(egui::vec2(66.0, 24.0));
                                     if ui.add(btn_restart).on_hover_text("Restart this server").clicked() {
                                         to_toggle = Some((idx, 2));
                                     }
                                 } else {
                                     let btn_start = egui::Button::new(
                                         RichText::new("▶ Start")
-                                            .size(11.5)
+                                            .size(10.5)
                                             .strong()
                                             .color(Color32::WHITE),
                                     )
                                     .fill(Color32::from_rgb(0x05, 0x96, 0x69))
                                     .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(999.0))
-                                    .min_size(egui::vec2(74.0, 28.0));
+                                    .min_size(egui::vec2(58.0, 24.0));
                                     if ui.add(btn_start).on_hover_text("Start this server").clicked() {
                                         to_toggle = Some((idx, 1));
                                     }
@@ -8088,14 +8088,14 @@ impl LauncherApp {
 
                                 // Right side circular action buttons
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    ui.spacing_mut().item_spacing.x = 3.0;
 
                                     let circ_bg = Color32::from_rgb(0x27, 0x29, 0x36);
-                                    let circ_size = egui::vec2(28.0, 28.0);
+                                    let circ_size = egui::vec2(24.0, 24.0);
                                     let circ_rnd = Rounding::same(999.0);
 
                                     let btn_del = egui::Button::new(
-                                        RichText::new("🗑").size(11.0).color(Color32::from_rgb(0xf8, 0x71, 0x71)),
+                                        RichText::new("🗑").size(10.0).color(Color32::from_rgb(0xf8, 0x71, 0x71)),
                                     )
                                     .fill(circ_bg)
                                     .stroke(Stroke::NONE)
@@ -8106,7 +8106,7 @@ impl LauncherApp {
                                     }
 
                                     let btn_folder = egui::Button::new(
-                                        RichText::new("📁").size(11.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                        RichText::new("📁").size(10.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
                                     )
                                     .fill(circ_bg)
                                     .stroke(Stroke::NONE)
@@ -8117,7 +8117,7 @@ impl LauncherApp {
                                     }
 
                                     let btn_vscode = egui::Button::new(
-                                        RichText::new("💻").size(11.0).color(Color32::from_rgb(0x60, 0xa5, 0xfa)),
+                                        RichText::new("💻").size(10.0).color(Color32::from_rgb(0x60, 0xa5, 0xfa)),
                                     )
                                     .fill(circ_bg)
                                     .stroke(Stroke::NONE)
@@ -8128,7 +8128,7 @@ impl LauncherApp {
                                     }
 
                                     let btn_edit = egui::Button::new(
-                                        RichText::new("✏").size(11.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                        RichText::new("✏").size(10.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
                                     )
                                     .fill(circ_bg)
                                     .stroke(Stroke::NONE)
@@ -8139,7 +8139,7 @@ impl LauncherApp {
                                     }
 
                                     let btn_console = egui::Button::new(
-                                        RichText::new(">_").size(10.5).monospace().strong().color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                        RichText::new(">_").size(9.5).monospace().strong().color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
                                     )
                                     .fill(circ_bg)
                                     .stroke(Stroke::NONE)
@@ -8149,16 +8149,21 @@ impl LauncherApp {
                                         s.open_console();
                                     }
 
-                                    if is_running && s.config.port > 0 {
+                                    if (is_running && s.config.port > 0) || s.config.url.is_some() {
+                                        let target_url = if let Some(u) = &s.config.url {
+                                            u.clone()
+                                        } else {
+                                            format!("http://localhost:{}", s.config.port)
+                                        };
                                         let btn_browser = egui::Button::new(
-                                            RichText::new("↗").size(11.5).strong().color(Color32::from_rgb(0x38, 0xbd, 0xf8)),
+                                            RichText::new("↗").size(10.5).strong().color(Color32::from_rgb(0x38, 0xbd, 0xf8)),
                                         )
                                         .fill(circ_bg)
                                         .stroke(Stroke::NONE)
                                         .rounding(circ_rnd)
                                         .min_size(circ_size);
-                                        if ui.add(btn_browser).on_hover_text(format!("Open http://localhost:{} in browser", s.config.port)).clicked() {
-                                            ui.ctx().open_url(egui::OpenUrl::new_tab(format!("http://localhost:{}", s.config.port)));
+                                        if ui.add(btn_browser).on_hover_text(format!("Open {} in browser", target_url)).clicked() {
+                                            ui.ctx().open_url(egui::OpenUrl::new_tab(target_url));
                                         }
                                     }
                                 });

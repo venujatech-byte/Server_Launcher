@@ -1674,9 +1674,9 @@ try:
     with open("/etc/os-release") as f:
         for line in f:
             if line.startswith("NAME="):
-                os_name = line.split("=", 1)[1].strip().strip('"')
+                os_name = line.split("=", 1)[1].strip().strip("\"")
             elif line.startswith("VERSION_ID="):
-                os_version = line.split("=", 1)[1].strip().strip('"')
+                os_version = line.split("=", 1)[1].strip().strip("\"")
 except:
     pass
 if not os_name:

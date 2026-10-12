@@ -28,15 +28,19 @@ impl SensorCategory {
         }
     }
 
-    pub fn emoji(&self) -> &'static str {
+    pub fn icon(&self) -> &'static str {
         match self {
-            SensorCategory::TopApps => "⚡",
-            SensorCategory::Cpu => "🖥",
-            SensorCategory::Memory => "🧠",
-            SensorCategory::Gpu => "🎮",
-            SensorCategory::Storage => "💾",
-            SensorCategory::System => "🌡",
+            SensorCategory::TopApps => crate::lucide::ZAP,
+            SensorCategory::Cpu => crate::lucide::CPU,
+            SensorCategory::Memory => crate::lucide::RAM,
+            SensorCategory::Gpu => crate::lucide::GPU,
+            SensorCategory::Storage => crate::lucide::STORAGE,
+            SensorCategory::System => crate::lucide::SENSORS,
         }
+    }
+
+    pub fn emoji(&self) -> &'static str {
+        self.icon()
     }
 }
 

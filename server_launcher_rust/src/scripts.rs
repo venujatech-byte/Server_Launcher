@@ -349,7 +349,7 @@ pub fn execute_local_script(
                         let mut l = logs_exit.lock().unwrap();
                         if exit.success() {
                             l.push_back(LogEntry::new(
-                                format!("✔ Script '{}' completed successfully (exit code: {}).", script_name, code),
+                                format!("{} Script '{}' completed successfully (exit code: {}).", crate::lucide::CHECK, script_name, code),
                                 LogKind::Launcher,
                             ));
                             if let Ok(mut st) = status_clone.lock() {
@@ -357,7 +357,7 @@ pub fn execute_local_script(
                             }
                         } else {
                             l.push_back(LogEntry::new(
-                                format!("✘ Script '{}' exited with status {}.", script_name, code),
+                                format!("{} Script '{}' exited with status {}.", crate::lucide::X, script_name, code),
                                 LogKind::Error,
                             ));
                             if let Ok(mut st) = status_clone.lock() {
@@ -368,7 +368,7 @@ pub fn execute_local_script(
                     Err(e) => {
                         let mut l = logs_exit.lock().unwrap();
                         l.push_back(LogEntry::new(
-                            format!("✘ Script wait error: {}", e),
+                            format!("{} Script wait error: {}", crate::lucide::X, e),
                             LogKind::Error,
                         ));
                         if let Ok(mut st) = status_clone.lock() {
@@ -387,7 +387,7 @@ pub fn execute_local_script(
             }
             let mut l = logs_arc.lock().unwrap();
             l.push_back(LogEntry::new(
-                format!("✘ Failed to spawn script '{}': {}", script.name, e),
+                format!("{} Failed to spawn script '{}': {}", crate::lucide::X, script.name, e),
                 LogKind::Error,
             ));
             if let Ok(mut st) = status_arc.lock() {
@@ -526,7 +526,7 @@ pub fn execute_remote_script(
                         let mut l = logs_exit.lock().unwrap();
                         if exit.success() {
                             l.push_back(LogEntry::new(
-                                format!("✔ Remote script '{}' completed successfully (exit code: {}).", script_name, code),
+                                format!("{} Remote script '{}' completed successfully (exit code: {}).", crate::lucide::CHECK, script_name, code),
                                 LogKind::Launcher,
                             ));
                             if let Ok(mut st) = status_clone.lock() {
@@ -534,7 +534,7 @@ pub fn execute_remote_script(
                             }
                         } else {
                             l.push_back(LogEntry::new(
-                                format!("✘ Remote script '{}' finished with code {}.", script_name, code),
+                                format!("{} Remote script '{}' finished with code {}.", crate::lucide::X, script_name, code),
                                 LogKind::Error,
                             ));
                             if let Ok(mut st) = status_clone.lock() {
@@ -545,7 +545,7 @@ pub fn execute_remote_script(
                     Err(e) => {
                         let mut l = logs_exit.lock().unwrap();
                         l.push_back(LogEntry::new(
-                            format!("✘ Remote script wait error: {}", e),
+                            format!("{} Remote script wait error: {}", crate::lucide::X, e),
                             LogKind::Error,
                         ));
                         if let Ok(mut st) = status_clone.lock() {
@@ -558,7 +558,7 @@ pub fn execute_remote_script(
         Err(e) => {
             let mut l = logs_arc.lock().unwrap();
             l.push_back(LogEntry::new(
-                format!("✘ Failed to initiate remote script '{}': {}", script.name, e),
+                format!("{} Failed to initiate remote script '{}': {}", crate::lucide::X, script.name, e),
                 LogKind::Error,
             ));
             if let Ok(mut st) = status_arc.lock() {

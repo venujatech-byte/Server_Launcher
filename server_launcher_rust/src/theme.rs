@@ -46,15 +46,15 @@ impl ThemeMode {
 
     pub fn emoji(&self) -> &'static str {
         match self {
-            ThemeMode::Dark => "🌙",
-            ThemeMode::NocturnalCommand => "🌌",
-            ThemeMode::CatppuccinMocha => "☕",
-            ThemeMode::CatppuccinLatte => "🥛",
-            ThemeMode::Light => "☀️",
-            ThemeMode::Dracula => "🧛",
-            ThemeMode::Nord => "❄️",
-            ThemeMode::TokyoNight => "🌆",
-            ThemeMode::Gtk4 => "🐧",
+            ThemeMode::Dark => crate::lucide::MOON,
+            ThemeMode::NocturnalCommand => crate::lucide::SPARKLES,
+            ThemeMode::CatppuccinMocha => crate::lucide::PALETTE,
+            ThemeMode::CatppuccinLatte => crate::lucide::SUN,
+            ThemeMode::Light => crate::lucide::SUN,
+            ThemeMode::Dracula => crate::lucide::FLAME,
+            ThemeMode::Nord => crate::lucide::COMPASS,
+            ThemeMode::TokyoNight => crate::lucide::ACTIVITY,
+            ThemeMode::Gtk4 => crate::lucide::SETTINGS,
         }
     }
 

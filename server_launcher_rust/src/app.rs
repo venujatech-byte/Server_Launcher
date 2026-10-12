@@ -71,11 +71,11 @@ pub enum SidebarTab {
 impl SidebarTab {
     pub fn label(&self) -> &'static str {
         match self {
-            SidebarTab::Servers => "🖥 Servers",
-            SidebarTab::Scripts => "📜 Scripts",
-            SidebarTab::Commands => "⚡ Cmds",
-            SidebarTab::SystemMD => "⚙ SystemD",
-            SidebarTab::Sensors => "🌡 Sensors",
+            SidebarTab::Servers => "\u{e153} Servers",
+            SidebarTab::Scripts => "\u{e2ed} Scripts",
+            SidebarTab::Commands => "\u{e181} Cmds",
+            SidebarTab::SystemMD => "\u{e245} SystemD",
+            SidebarTab::Sensors => "\u{e186} Sensors",
         }
     }
 }
@@ -624,7 +624,7 @@ impl LauncherApp {
                         Ok((imported_count, updated_count)) => {
                             self.persist_config();
                             self.import_status_msg = Some((
-                                format!("✔ Imported {} new, {} updated server(s)", imported_count, updated_count),
+                                format!("{} Imported {} new, {} updated server(s)", crate::lucide::CHECK, imported_count, updated_count),
                                 false,
                                 Instant::now(),
                             ));
@@ -664,7 +664,7 @@ impl LauncherApp {
                         Ok(_) => {
                             let fname = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "servers.json".to_string());
                             self.import_status_msg = Some((
-                                format!("✔ Exported {} server(s) to {}", servers.len(), fname),
+                                format!("{} Exported {} server(s) to {}", crate::lucide::CHECK, servers.len(), fname),
                                 false,
                                 Instant::now(),
                             ));
@@ -1104,13 +1104,13 @@ impl LauncherApp {
                     ui.label(RichText::new(format!("Port :{} | PID {}", port, pid_str)).size(10.5).color(p.text_muted));
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("✕ Close").clicked() {
+                        if ui.button(format!("{} Close", crate::lucide::X)).clicked() {
                             self.open_inline_terminals.remove(&port);
                         }
-                        if ui.button("⟳ Refresh Logs").on_hover_text("Fetch latest systemd/journald process output").clicked() {
+                        if ui.button(format!("{} Refresh Logs", crate::lucide::REFRESH_CW)).on_hover_text("Fetch latest systemd/journald process output").clicked() {
                             self.refresh_inline_logs(port, pid, cwd);
                         }
-                        if ui.button("🗑 Clear").clicked() {
+                        if ui.button(format!("{} Clear", crate::lucide::TRASH)).clicked() {
                             self.clear_inline_logs(port);
                         }
                     });
@@ -1189,28 +1189,28 @@ impl LauncherApp {
 
             if s.state == ServiceState::Running || s.state == ServiceState::Starting {
                 items.push((
-                    format!("⏹  Stop {}{}", s.config.name, grp_tag),
+                    format!("{}  Stop {}{}", crate::lucide::STOP, s.config.name, grp_tag),
                     PaletteAction::StopServer(s.config.key.clone()),
                 ));
                 items.push((
-                    format!("🔄  Restart {}{}", s.config.name, grp_tag),
+                    format!("{}  Restart {}{}", crate::lucide::REFRESH_CW, s.config.name, grp_tag),
                     PaletteAction::RestartServer(s.config.key.clone()),
                 ));
             } else {
                 items.push((
-                    format!("▶  Start {}{}", s.config.name, grp_tag),
+                    format!("{}  Start {}{}", crate::lucide::PLAY, s.config.name, grp_tag),
                     PaletteAction::StartServer(s.config.key.clone()),
                 ));
             }
             items.push((
-                format!("📜  View logs: {}", s.config.name),
+                format!("{}  View logs: {}", crate::lucide::SCRIPT, s.config.name),
                 PaletteAction::SelectTab(s.config.key.clone()),
             ));
 
             // Custom actions
             for act in &s.config.actions {
                 items.push((
-                    format!("⚡  {} [{}]", act.label, s.config.name),
+                    format!("{}  {} [{}]", crate::lucide::ZAP, act.label, s.config.name),
                     PaletteAction::RunAction {
                         key: s.config.key.clone(),
                         command: act.command.clone(),
@@ -1221,7 +1221,7 @@ impl LauncherApp {
             // Links
             for lnk in &s.config.links {
                 items.push((
-                    format!("🔗  Open {} ({})", lnk.label, lnk.url),
+                    format!("{}  Open {} ({})", crate::lucide::LINK, lnk.label, lnk.url),
                     PaletteAction::OpenLink(lnk.url.clone()),
                 ));
             }
@@ -1234,29 +1234,29 @@ impl LauncherApp {
         }
         for g in groups {
             items.push((
-                format!("▶  Start Group: {}", g),
+                format!("{}  Start Group: {}", crate::lucide::PLAY, g),
                 PaletteAction::StartGroup(g.clone()),
             ));
             items.push((
-                format!("⏹  Stop Group: {}", g),
+                format!("{}  Stop Group: {}", crate::lucide::STOP, g),
                 PaletteAction::StopGroup(g.clone()),
             ));
         }
 
         // 3. Global actions
         items.push((
-            "▶  Start All Servers".to_string(),
+            format!("{}  Start All Servers", crate::lucide::PLAY),
             PaletteAction::StartAll,
         ));
         items.push((
-            "⏹  Stop All Servers".to_string(),
+            format!("{}  Stop All Servers", crate::lucide::STOP),
             PaletteAction::StopAll,
         ));
 
         // 4. Color Themes
         for thm in ThemeMode::all() {
             items.push((
-                format!("🎨  Switch Theme: {} {}", thm.emoji(), thm.name()),
+                format!("{}  Switch Theme: {} {}", crate::lucide::PALETTE, thm.emoji(), thm.name()),
                 PaletteAction::SetTheme(thm.id_str().to_string()),
             ));
         }
@@ -1264,14 +1264,15 @@ impl LauncherApp {
         // 5. Autostart Actions
         let app_auto = crate::autostart::is_app_autostart_enabled();
         items.push((
-            format!("🚀  App Autostart on System Login: {}", if app_auto { "Disable" } else { "Enable" }),
+            format!("{}  App Autostart on System Login: {}", crate::lucide::ROCKET, if app_auto { "Disable" } else { "Enable" }),
             PaletteAction::ToggleAppAutostart,
         ));
 
         for s in &self.services {
             items.push((
                 format!(
-                    "🚀  Server Autostart on Launch: {} ({})",
+                    "{}  Server Autostart on Launch: {} ({})",
+                    crate::lucide::ROCKET,
                     s.config.name,
                     if s.config.autostart { "Disable" } else { "Enable" }
                 ),
@@ -1659,9 +1660,9 @@ impl LauncherApp {
                 .count();
 
             let local_tooltip = if running_count > 0 {
-                format!("🖥 This PC (Local)\n● {} active server{} running", running_count, if running_count > 1 { "s" } else { "" })
+                format!("{} This PC (Local)\n● {} active server{} running", crate::lucide::MONITOR, running_count, if running_count > 1 { "s" } else { "" })
             } else {
-                "🖥 This PC (Local)\nNo servers running".to_string()
+                format!("{} This PC (Local)\nNo servers running", crate::lucide::MONITOR)
             };
 
             let (local_rect, local_resp) = ui.allocate_exact_size(egui::vec2(38.0, 38.0), egui::Sense::click());
@@ -1679,7 +1680,7 @@ impl LauncherApp {
             ui.painter().text(
                 local_rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "🖥",
+                crate::lucide::MONITOR,
                 egui::FontId::proportional(16.0),
                 local_icon_col,
             );
@@ -1725,8 +1726,8 @@ impl LauncherApp {
                             };
 
                             let host_tooltip = format!(
-                                "🌐 {}\n{}@{}:{}\nStatus: {}\nRight-click for options",
-                                host.name, host.user, host.host, host.port, status_text
+                                "{} {}\n{}@{}:{}\nStatus: {}\nRight-click for options",
+                                crate::lucide::GLOBE, host.name, host.user, host.host, host.port, status_text
                             );
 
                             let (host_rect, host_resp) = ui.allocate_exact_size(egui::vec2(38.0, 38.0), egui::Sense::click());
@@ -1744,7 +1745,7 @@ impl LauncherApp {
                             ui.painter().text(
                                 host_rect.center(),
                                 egui::Align2::CENTER_CENTER,
-                                "🌐",
+                                crate::lucide::GLOBE,
                                 egui::FontId::proportional(15.0),
                                 host_icon_col,
                             );
@@ -1760,20 +1761,20 @@ impl LauncherApp {
                             }
 
                             host_resp.context_menu(|ui| {
-                                if ui.button("⚙ Edit Host").clicked() {
+                                if ui.button(format!("{} Edit Host", crate::lucide::SETTINGS)).clicked() {
                                     host_to_edit = Some(host.clone());
                                     ui.close_menu();
                                 }
-                                if ui.button("🔄 Test Connection").clicked() {
+                                if ui.button(format!("{} Test Connection", crate::lucide::REFRESH_CW)).clicked() {
                                     host_to_test = Some(host.clone());
                                     ui.close_menu();
                                 }
-                                if ui.button("↗ Launch External Terminal").clicked() {
+                                if ui.button(format!("{} Launch External Terminal", crate::lucide::EXTERNAL_LINK)).clicked() {
                                     host_to_term = Some(host.clone());
                                     ui.close_menu();
                                 }
                                 ui.separator();
-                                if ui.button(RichText::new("🗑 Delete Host").color(Color32::from_rgb(239, 68, 68))).clicked() {
+                                if ui.button(RichText::new(format!("{} Delete Host", crate::lucide::TRASH)).color(Color32::from_rgb(239, 68, 68))).clicked() {
                                     host_to_delete = Some(host.id.clone());
                                     ui.close_menu();
                                 }
@@ -1808,7 +1809,7 @@ impl LauncherApp {
                         ui.painter().text(
                             imp_rect.center(),
                             egui::Align2::CENTER_CENTER,
-                            "📥",
+                            crate::lucide::DOWNLOAD,
                             egui::FontId::proportional(14.0),
                             if imp_resp.hovered() { p.accent } else { p.text_muted },
                         );
@@ -2005,7 +2006,7 @@ impl LauncherApp {
             let search_q = self.remote_search_query.entry(host.id.clone()).or_default();
             ui.add(
                 egui::TextEdit::singleline(search_q)
-                    .hint_text("🔍 Filter remote servers...")
+                    .hint_text(format!("{} Filter remote servers...", crate::lucide::SEARCH))
                     .desired_width(ui.available_width()),
             );
             ui.add_space(6.0);
@@ -2143,7 +2144,7 @@ impl LauncherApp {
 
                                         // Stop Button
                                         let stop_btn = egui::Button::new(
-                                            RichText::new("⏹ Stop").size(10.0).strong().color(Color32::from_rgb(0xfe, 0xf2, 0xf2)),
+                                            RichText::new(format!("{} Stop", crate::lucide::STOP)).size(10.0).strong().color(Color32::from_rgb(0xfe, 0xf2, 0xf2)),
                                         )
                                         .fill(Color32::from_rgb(0x99, 0x1b, 0x1b))
                                         .rounding(Rounding::same(999.0));
@@ -2169,7 +2170,7 @@ impl LauncherApp {
 
                                         // Restart Button
                                         let restart_btn = egui::Button::new(
-                                            RichText::new("⟳ Restart").size(10.0).strong().color(Color32::from_rgb(0xec, 0xfe, 0xff)),
+                                            RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW)).size(10.0).strong().color(Color32::from_rgb(0xec, 0xfe, 0xff)),
                                         )
                                         .fill(Color32::from_rgb(0x0e, 0x74, 0x90))
                                         .rounding(Rounding::same(999.0));
@@ -2181,7 +2182,7 @@ impl LauncherApp {
 
                                         // Force Kill Button
                                         let kill_btn = egui::Button::new(
-                                            RichText::new("🛑 Kill").size(10.0).color(Color32::from_rgb(254, 202, 202)),
+                                            RichText::new(format!("{} Kill", crate::lucide::X)).size(10.0).color(Color32::from_rgb(254, 202, 202)),
                                         )
                                         .fill(Color32::from_rgb(45, 20, 25))
                                         .rounding(Rounding::same(999.0));
@@ -2197,7 +2198,7 @@ impl LauncherApp {
 
                                         // Curl Button
                                         let test_btn = egui::Button::new(
-                                            RichText::new("🌐 Curl").size(10.0).color(Color32::from_rgb(56, 189, 248)),
+                                            RichText::new(format!("{} Curl", crate::lucide::GLOBE)).size(10.0).color(Color32::from_rgb(56, 189, 248)),
                                         )
                                         .fill(Color32::from_rgb(24, 32, 48))
                                         .rounding(Rounding::same(999.0));
@@ -2208,7 +2209,7 @@ impl LauncherApp {
 
                                         // Info Button
                                         let ps_btn = egui::Button::new(
-                                            RichText::new("🔍 Info").size(10.0).color(Color32::from_rgb(250, 204, 21)),
+                                            RichText::new(format!("{} Info", crate::lucide::INFO)).size(10.0).color(Color32::from_rgb(250, 204, 21)),
                                         )
                                         .fill(Color32::from_rgb(34, 30, 20))
                                         .rounding(Rounding::same(999.0));
@@ -2294,7 +2295,7 @@ impl LauncherApp {
 
                                         // Start Button
                                         let start_btn = egui::Button::new(
-                                            RichText::new("▶ Start").size(10.0).strong().color(Color32::WHITE),
+                                            RichText::new(format!("{} Start", crate::lucide::PLAY)).size(10.0).strong().color(Color32::WHITE),
                                         )
                                         .fill(Color32::from_rgb(0x05, 0x96, 0x69))
                                         .rounding(Rounding::same(999.0));
@@ -2306,7 +2307,7 @@ impl LauncherApp {
 
                                         // Restart Button
                                         let restart_btn = egui::Button::new(
-                                            RichText::new("⟳ Restart").size(10.0).strong().color(Color32::from_rgb(0xec, 0xfe, 0xff)),
+                                            RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW)).size(10.0).strong().color(Color32::from_rgb(0xec, 0xfe, 0xff)),
                                         )
                                         .fill(Color32::from_rgb(0x0e, 0x74, 0x90))
                                         .rounding(Rounding::same(999.0));
@@ -2318,7 +2319,7 @@ impl LauncherApp {
 
                                         // Dismiss Button
                                         let dismiss_btn = egui::Button::new(
-                                            RichText::new("✕ Dismiss").size(10.0).color(Color32::from_rgb(148, 163, 184)),
+                                            RichText::new(format!("{} Dismiss", crate::lucide::X)).size(10.0).color(Color32::from_rgb(148, 163, 184)),
                                         )
                                         .fill(Color32::from_rgb(28, 30, 40))
                                         .rounding(Rounding::same(999.0));
@@ -2328,7 +2329,7 @@ impl LauncherApp {
 
                                         // Info Button
                                         let info_btn = egui::Button::new(
-                                            RichText::new("🔍 Info").size(10.0).color(Color32::from_rgb(250, 204, 21)),
+                                            RichText::new(format!("{} Info", crate::lucide::INFO)).size(10.0).color(Color32::from_rgb(250, 204, 21)),
                                         )
                                         .fill(Color32::from_rgb(34, 30, 20))
                                         .rounding(Rounding::same(999.0));
@@ -2920,9 +2921,9 @@ impl eframe::App for LauncherApp {
                         ui.spacing_mut().item_spacing.x = 8.0;
 
 
-                        // ⚙ Settings Button (Pill icon button)
+                        // Settings Button (Pill icon button)
                         let btn_settings = egui::Button::new(
-                            RichText::new("⚙").size(14.0).color(p.text_secondary),
+                            RichText::new(crate::lucide::SETTINGS).size(14.0).color(p.text_secondary),
                         )
                         .fill(p.bg_button)
                         .stroke(Stroke::NONE)
@@ -2940,7 +2941,7 @@ impl eframe::App for LauncherApp {
                             };
 
                             let btn_edit = egui::Button::new(
-                                RichText::new("⚙ Edit")
+                                RichText::new(format!("{} Edit", crate::lucide::SETTINGS))
                                     .size(11.5)
                                     .color(p.text_secondary),
                             )
@@ -2953,7 +2954,7 @@ impl eframe::App for LauncherApp {
                             }
 
                             let btn_reconnect = egui::Button::new(
-                                RichText::new("🔄 Reconnect")
+                                RichText::new(format!("{} Reconnect", crate::lucide::REFRESH_CW))
                                     .size(11.5)
                                     .color(p.text_secondary),
                             )
@@ -2967,7 +2968,7 @@ impl eframe::App for LauncherApp {
                             }
 
                             let btn_ext = egui::Button::new(
-                                RichText::new("↗ External Terminal")
+                                RichText::new(format!("{} External Terminal", crate::lucide::EXTERNAL_LINK))
                                     .size(11.5)
                                     .strong()
                                     .color(p.info),
@@ -3028,7 +3029,7 @@ impl eframe::App for LauncherApp {
 
                             // Quick Launch (Ctrl+P / Ctrl+K)
                             let btn_pal = egui::Button::new(
-                                RichText::new("⚡ Quick Launch Ctrl+P")
+                                RichText::new(format!("{} Quick Launch Ctrl+P", crate::lucide::ZAP))
                                     .size(11.5)
                                     .color(p.accent),
                             )
@@ -3050,7 +3051,7 @@ impl eframe::App for LauncherApp {
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
-                                        ui.label(RichText::new("🔍").size(11.0).color(p.text_muted));
+                                        ui.label(RichText::new(crate::lucide::SEARCH).size(11.0).color(p.text_muted));
                                         let s_resp = ui.add(
                                             egui::TextEdit::singleline(&mut self.overview_search_query)
                                                 .hint_text(
@@ -3081,7 +3082,7 @@ impl eframe::App for LauncherApp {
                                             if ui
                                                 .add(
                                                     egui::Button::new(
-                                                        RichText::new("✕").size(10.0).color(p.text_muted),
+                                                        RichText::new(crate::lucide::X).size(10.0).color(p.text_muted),
                                                     )
                                                     .frame(false),
                                                 )
@@ -3105,7 +3106,7 @@ impl eframe::App for LauncherApp {
                             } else {
                                 top_app.name.clone()
                             };
-                            let top_text = format!("⚡ {}: {:.0}%", top_name_short, top_app.cpu_usage);
+                            let top_text = format!("{} {}: {:.0}%", crate::lucide::ZAP, top_name_short, top_app.cpu_usage);
                             let top_resp = Frame::none()
                                 .fill(p.bg_card)
                                 .stroke(Stroke::NONE)
@@ -3124,7 +3125,7 @@ impl eframe::App for LauncherApp {
                         // 3. Storage Live Using Speed Chip
                         let d_read = header_snap.total_disk_read_rate_bps;
                         let d_write = header_snap.total_disk_write_rate_bps;
-                        let stor_text = format!("💾 ▼ {} ▲ {}", crate::sensors::format_rate(d_read), crate::sensors::format_rate(d_write));
+                        let stor_text = format!("{} ▼ {} ▲ {}", crate::lucide::STORAGE, crate::sensors::format_rate(d_read), crate::sensors::format_rate(d_write));
                         let stor_resp = Frame::none()
                             .fill(p.bg_card)
                             .stroke(Stroke::NONE)
@@ -3149,9 +3150,9 @@ impl eframe::App for LauncherApp {
                                 parts.push(format!("{:.1}W", w));
                             }
                             let gpu_text = if !parts.is_empty() {
-                                format!("🎮 {}", parts.join(" • "))
+                                format!("{} {}", crate::lucide::GPU, parts.join(" • "))
                             } else {
-                                format!("🎮 {:.0}%", gpu.load_pct.unwrap_or(0.0))
+                                format!("{} {:.0}%", crate::lucide::GPU, gpu.load_pct.unwrap_or(0.0))
                             };
                             let gpu_resp = Frame::none()
                                 .fill(p.bg_card)
@@ -3182,7 +3183,7 @@ impl eframe::App for LauncherApp {
                             cpu_parts.push(format!("{:.1}W", w));
                         }
                         cpu_parts.push(format!("{:.0}%", header_snap.cpu_global_usage));
-                        let cpu_text = format!("🖥 {}", cpu_parts.join(" • "));
+                        let cpu_text = format!("{} {}", crate::lucide::CPU, cpu_parts.join(" • "));
                         let cpu_resp = Frame::none()
                             .fill(p.bg_card)
                             .stroke(Stroke::NONE)
@@ -3807,7 +3808,7 @@ impl LauncherApp {
             // Search filter
             ui.add(
                 egui::TextEdit::singleline(&mut self.script_search_query)
-                    .hint_text("🔍 Filter scripts...")
+                    .hint_text(format!("{} Filter scripts...", crate::lucide::SEARCH))
                     .desired_width(ui.available_width()),
             );
 
@@ -3896,7 +3897,7 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         if s.autostart {
                                             ui.label(
-                                                RichText::new("⚡ Startup")
+                                                RichText::new(format!("{} Startup", crate::lucide::ZAP))
                                                     .size(10.0)
                                                     .color(Color32::from_rgb(250, 204, 21)),
                                             );
@@ -3921,7 +3922,7 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     if is_running {
                                         let btn_stop = egui::Button::new(
-                                            RichText::new("⏹ Stop").size(10.5).color(Color32::WHITE),
+                                            RichText::new(format!("{} Stop", crate::lucide::STOP)).size(10.5).color(Color32::WHITE),
                                         )
                                         .fill(p.danger)
                                         .rounding(Rounding::same(4.0));
@@ -3930,7 +3931,7 @@ impl LauncherApp {
                                         }
                                     } else {
                                         let btn_run = egui::Button::new(
-                                            RichText::new("▶ Run").size(10.5).color(Color32::WHITE),
+                                            RichText::new(format!("{} Run", crate::lucide::PLAY)).size(10.5).color(Color32::WHITE),
                                         )
                                         .fill(Color32::from_rgb(16, 185, 129))
                                         .rounding(Rounding::same(4.0));
@@ -3941,7 +3942,7 @@ impl LauncherApp {
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         let btn_del = egui::Button::new(
-                                            RichText::new("🗑").size(10.5).color(p.text_muted),
+                                            RichText::new(crate::lucide::TRASH).size(10.5).color(p.text_muted),
                                         )
                                         .fill(Color32::TRANSPARENT);
                                         if ui.add(btn_del).on_hover_text("Delete Script").clicked() {
@@ -3949,7 +3950,7 @@ impl LauncherApp {
                                         }
 
                                         let btn_edit = egui::Button::new(
-                                            RichText::new("✏").size(10.5).color(p.text_muted),
+                                            RichText::new(crate::lucide::PENCIL).size(10.5).color(p.text_muted),
                                         )
                                         .fill(Color32::TRANSPARENT);
                                         if ui.add(btn_edit).on_hover_text("Edit Script").clicked() {
@@ -4019,7 +4020,7 @@ impl LauncherApp {
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("📜").size(20.0));
+                                ui.label(RichText::new(crate::lucide::SCRIPT).size(20.0).color(p.accent));
                                 ui.vertical(|ui| {
                                     ui.horizontal(|ui| {
                                         ui.label(RichText::new(&s.name).size(15.0).strong().color(p.text_primary));
@@ -4030,7 +4031,7 @@ impl LauncherApp {
                                         );
                                         if s.autostart {
                                             ui.label(
-                                                RichText::new("⚡ Runs at Startup")
+                                                RichText::new(format!("{} Runs at Startup", crate::lucide::ZAP))
                                                     .size(10.5)
                                                     .color(Color32::from_rgb(250, 204, 21)),
                                             );
@@ -4046,13 +4047,13 @@ impl LauncherApp {
                                 });
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let btn_edit = egui::Button::new(RichText::new("✏ Edit").size(11.0).color(p.text_secondary))
+                                    let btn_edit = egui::Button::new(RichText::new(format!("{} Edit", crate::lucide::PENCIL)).size(11.0).color(p.text_secondary))
                                         .fill(p.bg_button);
                                     if ui.add(btn_edit).clicked() {
                                         self.script_modal.open_edit(&s);
                                     }
 
-                                    let btn_clear = egui::Button::new(RichText::new("🧹 Clear Logs").size(11.0).color(p.text_secondary))
+                                    let btn_clear = egui::Button::new(RichText::new(format!("{} Clear Logs", crate::lucide::TRASH)).size(11.0).color(p.text_secondary))
                                         .fill(p.bg_button);
                                     if ui.add(btn_clear).clicked() {
                                         if let Some(exec) = self.script_executions.get_mut(&s.id) {
@@ -4064,7 +4065,7 @@ impl LauncherApp {
 
                                     if is_running {
                                         let btn_stop = egui::Button::new(
-                                            RichText::new("⏹ Stop Script").size(11.5).strong().color(Color32::WHITE),
+                                            RichText::new(format!("{} Stop Script", crate::lucide::STOP)).size(11.5).strong().color(Color32::WHITE),
                                         )
                                         .fill(p.danger)
                                         .rounding(Rounding::same(4.0));
@@ -4075,7 +4076,7 @@ impl LauncherApp {
                                         }
                                     } else {
                                         let btn_run = egui::Button::new(
-                                            RichText::new("▶ Run Script").size(11.5).strong().color(Color32::WHITE),
+                                            RichText::new(format!("{} Run Script", crate::lucide::PLAY)).size(11.5).strong().color(Color32::WHITE),
                                         )
                                         .fill(Color32::from_rgb(16, 185, 129))
                                         .rounding(Rounding::same(4.0));
@@ -4110,7 +4111,7 @@ impl LauncherApp {
                                         if let Ok(l) = logs_arc.lock() {
                                             if l.is_empty() {
                                                 ui.label(
-                                                    RichText::new("Script ready. Click '▶ Run Script' to execute.")
+                                                    RichText::new(format!("Script ready. Click '{} Run Script' to execute.", crate::lucide::PLAY))
                                                         .size(11.5)
                                                         .color(Color32::from_rgb(100, 110, 130)),
                                                 );
@@ -4142,7 +4143,7 @@ impl LauncherApp {
                                         }
                                     } else {
                                         ui.label(
-                                            RichText::new("Script ready. Click '▶ Run Script' to execute.")
+                                            RichText::new(format!("Script ready. Click '{} Run Script' to execute.", crate::lucide::PLAY))
                                                 .size(11.5)
                                                 .color(Color32::from_rgb(100, 110, 130)),
                                         );
@@ -4154,7 +4155,7 @@ impl LauncherApp {
             None => {
                 ui.vertical_centered(|ui| {
                     ui.add_space(40.0);
-                    ui.label(RichText::new("📜 Custom Scripts").size(16.0).strong().color(p.text_primary));
+                    ui.label(RichText::new(format!("{} Custom Scripts", crate::lucide::SCRIPT)).size(16.0).strong().color(p.text_primary));
                     ui.add_space(6.0);
                     ui.label(
                         RichText::new("Select a script from the left or click '+ New Script' to create one.\nScripts can execute any command or interpreter and can run automatically on launch.")
@@ -4219,7 +4220,7 @@ impl LauncherApp {
             // Search filter
             ui.add(
                 egui::TextEdit::singleline(&mut self.saved_command_search)
-                    .hint_text("🔍 Filter commands...")
+                    .hint_text(format!("{} Filter commands...", crate::lucide::SEARCH))
                     .desired_width(ui.available_width()),
             );
 
@@ -4287,7 +4288,7 @@ impl LauncherApp {
                                         if c.run_in_terminal {
                                             ui.add_space(4.0);
                                             ui.label(
-                                                RichText::new("🖥 External")
+                                                RichText::new(format!("{} External", crate::lucide::MONITOR))
                                                     .size(10.0)
                                                     .strong()
                                                     .color(p.info),
@@ -4326,7 +4327,11 @@ impl LauncherApp {
                                 ui.add_space(4.0);
 
                                 ui.horizontal(|ui| {
-                                    let run_label = if c.run_in_terminal { "▶ Run (Terminal)" } else { "▶ Run" };
+                                    let run_label = if c.run_in_terminal {
+                                        format!("{} Run (Terminal)", crate::lucide::PLAY)
+                                    } else {
+                                        format!("{} Run", crate::lucide::PLAY)
+                                    };
                                     let run_bg = if c.run_in_terminal { Color32::from_rgb(0x02, 0x84, 0xc7) } else { Color32::from_rgb(16, 185, 129) };
                                     let btn_run = egui::Button::new(
                                         RichText::new(run_label).size(10.5).color(Color32::WHITE),
@@ -4339,7 +4344,7 @@ impl LauncherApp {
 
                                     if !c.run_in_terminal {
                                         let btn_ext = egui::Button::new(
-                                            RichText::new("↗ External").size(10.0).color(p.accent_light),
+                                            RichText::new(format!("{} External", crate::lucide::EXTERNAL_LINK)).size(10.0).color(p.accent_light),
                                         )
                                         .fill(p.bg_button)
                                         .stroke(Stroke::NONE)
@@ -4350,19 +4355,19 @@ impl LauncherApp {
                                     }
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let btn_del = egui::Button::new(RichText::new("🗑").size(10.5).color(p.text_muted))
+                                        let btn_del = egui::Button::new(RichText::new(crate::lucide::TRASH).size(10.5).color(p.text_muted))
                                             .fill(Color32::TRANSPARENT);
                                         if ui.add(btn_del).on_hover_text("Delete Command").clicked() {
                                             to_delete = Some(c.id.clone());
                                         }
 
-                                        let btn_edit = egui::Button::new(RichText::new("✏").size(10.5).color(p.text_muted))
+                                        let btn_edit = egui::Button::new(RichText::new(crate::lucide::PENCIL).size(10.5).color(p.text_muted))
                                             .fill(Color32::TRANSPARENT);
                                         if ui.add(btn_edit).on_hover_text("Edit Command").clicked() {
                                             to_edit = Some(c.clone());
                                         }
 
-                                        let btn_copy = egui::Button::new(RichText::new("📋").size(10.5).color(p.text_muted))
+                                        let btn_copy = egui::Button::new(RichText::new(crate::lucide::COPY).size(10.5).color(p.text_muted))
                                             .fill(Color32::TRANSPARENT);
                                         if ui.add(btn_copy).on_hover_text("Copy to Clipboard").clicked() {
                                             ui.output_mut(|o| o.copied_text = c.command.clone());
@@ -4422,16 +4427,16 @@ impl LauncherApp {
 
         let is_running = term.is_running();
         let stat_msg = term.status.lock().ok().map(|st| match &*st {
-            TerminalCommandStatus::Idle => "● Ready".to_string(),
-            TerminalCommandStatus::Running(c) => format!("▶ Running: {}", c),
-            TerminalCommandStatus::Success(code) => format!("✓ Exit code {}", code),
-            TerminalCommandStatus::Failed(err) => format!("✘ Failed: {}", err),
+            TerminalCommandStatus::Idle => format!("{} Ready", crate::lucide::CIRCLE_DOT),
+            TerminalCommandStatus::Running(c) => format!("{} Running: {}", crate::lucide::PLAY, c),
+            TerminalCommandStatus::Success(code) => format!("{} Exit code {}", crate::lucide::CHECK, code),
+            TerminalCommandStatus::Failed(err) => format!("{} Failed: {}", crate::lucide::X, err),
         }).unwrap_or_default();
 
         let title = if let Some(h) = &host_opt {
-            format!("🌐 Remote SSH Terminal ({}@{}:{})", h.user, h.host, h.port)
+            format!("{} Remote SSH Terminal ({}@{}:{})", crate::lucide::GLOBE, h.user, h.host, h.port)
         } else {
-            "💻 Local Interactive Terminal".to_string()
+            format!("{} Local Interactive Terminal", crate::lucide::MONITOR)
         };
 
         let cwd_display = if host_opt.is_none() {
@@ -4467,12 +4472,12 @@ impl LauncherApp {
                 .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("⚡").size(20.0));
+                        ui.label(RichText::new(crate::lucide::TERMINAL).size(18.0).color(p.accent));
                         ui.vertical(|ui| {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(&title).size(13.5).strong().color(p.text_primary));
                                 ui.label(
-                                    RichText::new(format!("📂 {}", cwd_display))
+                                    RichText::new(format!("{} {}", crate::lucide::FOLDER, cwd_display))
                                         .size(11.0)
                                         .color(Color32::from_rgb(147, 197, 253))
                                         .monospace(),
@@ -4486,7 +4491,7 @@ impl LauncherApp {
                         });
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let btn_clear = egui::Button::new(RichText::new("🧹 Clear (Ctrl+L)").size(11.0).color(p.text_secondary))
+                            let btn_clear = egui::Button::new(RichText::new(format!("{} Clear (Ctrl+L)", crate::lucide::TRASH)).size(11.0).color(p.text_secondary))
                                 .fill(p.bg_button);
                             if ui.add(btn_clear).clicked() {
                                 term.clear();
@@ -4495,7 +4500,7 @@ impl LauncherApp {
 
                             if is_running {
                                 let btn_stop = egui::Button::new(
-                                    RichText::new("⏹ Interrupt (Ctrl+C)").size(11.0).strong().color(Color32::WHITE),
+                                    RichText::new(format!("{} Interrupt (Ctrl+C)", crate::lucide::STOP)).size(11.0).strong().color(Color32::WHITE),
                                 )
                                 .fill(p.danger)
                                 .rounding(Rounding::same(4.0));
@@ -4504,7 +4509,7 @@ impl LauncherApp {
                                     term.request_focus = true;
                                 }
                             } else if host_opt.is_none() {
-                                let btn_ext = egui::Button::new(RichText::new("💻 Native Terminal").size(11.0).color(p.text_secondary))
+                                let btn_ext = egui::Button::new(RichText::new(format!("{} Native Terminal", crate::lucide::EXTERNAL_LINK)).size(11.0).color(p.text_secondary))
                                     .fill(p.bg_button);
                                 if ui.add(btn_ext).on_hover_text("Open native system terminal window in current directory").clicked() {
                                     let _ = crate::commands::open_system_terminal(&term.cwd);
@@ -4590,7 +4595,7 @@ impl LauncherApp {
                     // 2. Integrated Interactive Terminal Prompt Row
                     ui.horizontal(|ui| {
                         let prompt_label = if is_running {
-                            "▶ stdin > ".to_string()
+                            format!("{} stdin > ", crate::lucide::CHEVRON_RIGHT)
                         } else {
                             prompt_str.clone()
                         };
@@ -4700,7 +4705,7 @@ impl LauncherApp {
                         // Inline Action Button
                         if is_running {
                             let btn_stop = egui::Button::new(
-                                RichText::new("⏹ Stop").size(11.0).strong().color(Color32::WHITE),
+                                RichText::new(format!("{} Stop", crate::lucide::STOP)).size(11.0).strong().color(Color32::WHITE),
                             )
                             .fill(p.danger)
                             .rounding(Rounding::same(4.0));
@@ -4710,7 +4715,7 @@ impl LauncherApp {
                             }
                         } else {
                             let btn_run = egui::Button::new(
-                                RichText::new("▶ Run").size(11.0).strong().color(Color32::WHITE),
+                                RichText::new(format!("{} Run", crate::lucide::PLAY)).size(11.0).strong().color(Color32::WHITE),
                             )
                             .fill(p.accent)
                             .rounding(Rounding::same(4.0));
@@ -4758,7 +4763,7 @@ impl LauncherApp {
                 ui.label(RichText::new("SYSTEMD SERVICES").size(12.0).strong().color(p.text_muted));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_new = egui::Button::new(
-                        RichText::new("+ New Service").size(11.0).strong().color(Color32::WHITE),
+                        RichText::new(format!("{} New Service", crate::lucide::PLUS)).size(11.0).strong().color(Color32::WHITE),
                     )
                     .fill(p.accent)
                     .rounding(Rounding::same(4.0));
@@ -4816,7 +4821,7 @@ impl LauncherApp {
 
                 if host_id.is_none() && !self.local_sudo_password.is_empty() {
                     ui.add_space(4.0);
-                    if ui.button(RichText::new("🔑 Sudo [✕]").size(10.0).color(Color32::from_rgb(16, 185, 129)))
+                    if ui.button(RichText::new(format!("{} Sudo [{}]", crate::lucide::KEY, crate::lucide::X)).size(10.0).color(Color32::from_rgb(16, 185, 129)))
                         .on_hover_text("Sudo password cached for this session. Click to clear/forget.")
                         .clicked()
                     {
@@ -4825,7 +4830,7 @@ impl LauncherApp {
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let btn_ref = egui::Button::new(RichText::new("🔄").size(11.0).color(p.text_secondary))
+                    let btn_ref = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(p.text_secondary))
                         .fill(p.bg_button);
                     if ui.add(btn_ref).on_hover_text("Refresh systemd services list").clicked() {
                         if host_id.is_some() {
@@ -4860,7 +4865,7 @@ impl LauncherApp {
             // Search filter
             ui.add(
                 egui::TextEdit::singleline(&mut self.service_search_query)
-                    .hint_text("🔍 Filter services...")
+                    .hint_text(format!("{} Filter services...", crate::lucide::SEARCH))
                     .desired_width(ui.available_width()),
             );
 
@@ -4899,20 +4904,20 @@ impl LauncherApp {
                             .and_then(|e| e.get(key).cloned())
                             .filter(|e| !e.is_empty()); // skip empty error strings
                         if let Some(err) = err_opt {
-                            ui.label(RichText::new("⚠ Failed to load services").size(12.0).strong().color(p.danger));
+                            ui.label(RichText::new(format!("{} Failed to load services", crate::lucide::ALERT_TRIANGLE)).size(12.0).strong().color(p.danger));
                             ui.add_space(4.0);
                             ui.label(RichText::new(&err).size(11.0).color(p.danger));
                             ui.add_space(8.0);
-                            ui.label(RichText::new("Click '🔄' to retry.").size(11.0).color(p.text_muted));
+                            ui.label(RichText::new(format!("Click '{}' to retry.", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_muted));
                         } else {
                             ui.label(RichText::new("No systemd services found").size(12.0).color(p.text_muted));
                             ui.add_space(4.0);
-                            ui.label(RichText::new("Click '🔄' to refresh or switch scope (User ↔ System).").size(11.0).color(p.text_muted));
+                            ui.label(RichText::new(format!("Click '{}' to refresh or switch scope (User / System).", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_muted));
                         }
                     } else {
                         ui.label(RichText::new("No systemd services found").size(12.0).color(p.text_muted));
                         ui.add_space(4.0);
-                        ui.label(RichText::new("Click '🔄' to scan or switch scope.").size(11.0).color(p.text_muted));
+                        ui.label(RichText::new(format!("Click '{}' to scan or switch scope.", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_muted));
                     }
                 });
                 return;
@@ -4942,11 +4947,11 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 6.0;
                                     let status_dot = if is_active {
-                                        RichText::new("●").size(12.0).color(Color32::from_rgb(16, 185, 129))
+                                        RichText::new(crate::lucide::CIRCLE_DOT).size(11.0).color(Color32::from_rgb(16, 185, 129))
                                     } else if is_failed {
-                                        RichText::new("✘").size(12.0).color(p.danger)
+                                        RichText::new(crate::lucide::X).size(11.0).color(p.danger)
                                     } else {
-                                        RichText::new("○").size(12.0).color(p.text_muted)
+                                        RichText::new(crate::lucide::CIRCLE).size(11.0).color(p.text_muted)
                                     };
                                     ui.label(status_dot);
 
@@ -5087,16 +5092,16 @@ impl LauncherApp {
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("⚙").size(22.0));
+                                ui.label(RichText::new(crate::lucide::SYSTEMD).size(20.0).color(p.accent));
                                 ui.vertical(|ui| {
                                     ui.horizontal(|ui| {
                                         ui.label(RichText::new(&s.name).size(15.0).strong().color(p.text_primary));
                                         let status_tag = if is_active {
-                                            RichText::new("● Active (Running)").size(11.0).strong().color(Color32::from_rgb(16, 185, 129))
+                                            RichText::new(format!("{} Active (Running)", crate::lucide::CHECK)).size(11.0).strong().color(Color32::from_rgb(16, 185, 129))
                                         } else if is_failed {
-                                            RichText::new("✘ Failed").size(11.0).strong().color(p.danger)
+                                            RichText::new(format!("{} Failed", crate::lucide::X)).size(11.0).strong().color(p.danger)
                                         } else {
-                                            RichText::new("○ Inactive").size(11.0).color(p.text_muted)
+                                            RichText::new(format!("{} Inactive", crate::lucide::CIRCLE)).size(11.0).color(p.text_muted)
                                         };
                                         ui.label(status_tag);
                                     });
@@ -5135,7 +5140,7 @@ impl LauncherApp {
                                     ui.label(RichText::new("Executing remote action...").size(11.0).color(p.accent));
                                 } else {
                                     if is_active {
-                                        let btn_stop = egui::Button::new(RichText::new("⏹ Stop").size(11.0).strong().color(Color32::WHITE))
+                                        let btn_stop = egui::Button::new(RichText::new(format!("{} Stop", crate::lucide::STOP)).size(11.0).strong().color(Color32::WHITE))
                                             .fill(p.danger)
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(999.0))
@@ -5144,7 +5149,7 @@ impl LauncherApp {
                                             action_to_run = Some("stop");
                                         }
                                     } else {
-                                        let btn_start = egui::Button::new(RichText::new("▶ Start").size(11.0).strong().color(Color32::WHITE))
+                                        let btn_start = egui::Button::new(RichText::new(format!("{} Start", crate::lucide::PLAY)).size(11.0).strong().color(Color32::WHITE))
                                             .fill(Color32::from_rgb(16, 185, 129))
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(999.0))
@@ -5154,7 +5159,7 @@ impl LauncherApp {
                                         }
                                     }
 
-                                    let btn_restart = egui::Button::new(RichText::new("🔄 Restart").size(11.0).color(p.text_primary))
+                                    let btn_restart = egui::Button::new(RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_primary))
                                         .fill(p.bg_button)
                                         .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(999.0))
@@ -5164,7 +5169,7 @@ impl LauncherApp {
                                     }
 
                                     if is_enabled {
-                                        let btn_disable = egui::Button::new(RichText::new("❌ Disable").size(11.0).color(p.text_primary))
+                                        let btn_disable = egui::Button::new(RichText::new(format!("{} Disable", crate::lucide::X)).size(11.0).color(p.text_primary))
                                             .fill(p.bg_button)
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(999.0))
@@ -5173,7 +5178,7 @@ impl LauncherApp {
                                             action_to_run = Some("disable");
                                         }
                                     } else {
-                                        let btn_enable = egui::Button::new(RichText::new("✅ Enable").size(11.0).color(p.text_primary))
+                                        let btn_enable = egui::Button::new(RichText::new(format!("{} Enable", crate::lucide::CHECK)).size(11.0).color(p.text_primary))
                                             .fill(p.bg_button)
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(999.0))
@@ -5183,7 +5188,7 @@ impl LauncherApp {
                                         }
                                     }
 
-                                    let btn_reload = egui::Button::new(RichText::new("🔄 Reload Daemon").size(11.0).color(p.text_secondary))
+                                    let btn_reload = egui::Button::new(RichText::new(format!("{} Reload Daemon", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_secondary))
                                         .fill(p.bg_button)
                                         .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(999.0))
@@ -5286,7 +5291,7 @@ impl LauncherApp {
                             ui.spinner();
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let btn_ref_log = egui::Button::new(RichText::new("🔄 Refresh Logs").size(11.0).color(p.text_secondary))
+                            let btn_ref_log = egui::Button::new(RichText::new(format!("{} Refresh Logs", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_secondary))
                                 .fill(p.bg_button);
                             if ui.add(btn_ref_log).clicked() {
                                 if let Some(host) = &host_opt {
@@ -5305,8 +5310,8 @@ impl LauncherApp {
                             // Refresh Interval Dropdown
                             let prev_interval = self.journal_refresh_interval;
                             let interval_label = match self.journal_refresh_interval {
-                                0 => "⏱ Auto: Off".to_string(),
-                                secs => format!("⏱ Auto: {}s", secs),
+                                0 => format!("{} Auto: Off", crate::lucide::CLOCK),
+                                secs => format!("{} Auto: {}s", crate::lucide::CLOCK, secs),
                             };
                             egui::ComboBox::from_id_salt("journal_refresh_interval_combo")
                                 .selected_text(RichText::new(interval_label).size(11.0).color(p.text_primary))
@@ -5352,7 +5357,7 @@ impl LauncherApp {
                             if is_journal_in_flight {
                                 "Fetching logs from remote host...".to_string()
                             } else {
-                                "No journal logs received yet. Click '🔄 Refresh Logs'.".to_string()
+                                format!("No journal logs received yet. Click '{} Refresh Logs'.", crate::lucide::REFRESH_CW)
                             }
                         })
                     } else {
@@ -5389,7 +5394,7 @@ impl LauncherApp {
             None => {
                 ui.vertical_centered(|ui| {
                     ui.add_space(40.0);
-                    ui.label(RichText::new("⚙ SystemMD Services").size(16.0).strong().color(p.text_primary));
+                    ui.label(RichText::new(format!("{} SystemMD Services", crate::lucide::SYSTEMD)).size(16.0).strong().color(p.text_primary));
                     ui.add_space(6.0);
                     ui.label(
                         RichText::new("Select a systemd unit from the left panel to control (start/stop/restart) and view journalctl logs,\nor click '+ New Service' to create and enable a new systemd unit.")
@@ -5579,7 +5584,7 @@ impl LauncherApp {
                         cancel = true;
                     }
 
-                    let btn_auth = egui::Button::new(RichText::new("✔ Authenticate").size(11.5).strong().color(Color32::WHITE))
+                    let btn_auth = egui::Button::new(RichText::new(format!("{} Authenticate", crate::lucide::CHECK)).size(11.5).strong().color(Color32::WHITE))
                         .fill(palette.accent)
                         .rounding(Rounding::same(4.0));
                     if ui.add(btn_auth).clicked() {
@@ -5672,7 +5677,7 @@ impl LauncherApp {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label(
-                                    RichText::new("🎨 Theme & Visual Styling")
+                                    RichText::new(format!("{} Theme & Visual Styling", crate::lucide::PALETTE))
                                         .size(13.0)
                                         .strong()
                                         .color(palette.text_primary),
@@ -5757,7 +5762,7 @@ impl LauncherApp {
 
                             ui.horizontal(|ui| {
                                 ui.label(
-                                    RichText::new("🚀 System Startup (Autostart on Boot)")
+                                    RichText::new(format!("{} System Startup (Autostart on Boot)", crate::lucide::ROCKET))
                                         .size(13.0)
                                         .strong()
                                         .color(palette.text_primary),
@@ -5784,9 +5789,9 @@ impl LauncherApp {
                                     }
 
                                     let (badge_txt, badge_bg, badge_fg) = if is_boot {
-                                        ("● ENABLED", palette.success_subtle, palette.success)
+                                        (format!("{} ENABLED", crate::lucide::CHECK), palette.success_subtle, palette.success)
                                     } else {
-                                        ("○ DISABLED", palette.bg_subtle, palette.text_muted)
+                                        (format!("{} DISABLED", crate::lucide::CIRCLE), palette.bg_subtle, palette.text_muted)
                                     };
                                     Frame::none()
                                         .fill(badge_bg)
@@ -5819,7 +5824,7 @@ impl LauncherApp {
                         .inner_margin(egui::Margin::same(12.0))
                         .show(ui, |ui| {
                             ui.label(
-                                RichText::new("📦 Servers Configuration (Import & Export)")
+                                RichText::new(format!("{} Servers Configuration (Import & Export)", crate::lucide::PACKAGE))
                                     .size(13.0)
                                     .strong()
                                     .color(palette.text_primary),
@@ -5838,7 +5843,7 @@ impl LauncherApp {
                                 ui.spacing_mut().item_spacing.x = 8.0;
 
                                 let btn_import = egui::Button::new(
-                                    RichText::new("📥 Import servers.json")
+                                    RichText::new(format!("{} Import servers.json", crate::lucide::DOWNLOAD))
                                         .size(11.5)
                                         .strong()
                                         .color(palette.accent_text),
@@ -5852,7 +5857,7 @@ impl LauncherApp {
                                 }
 
                                 let btn_export = egui::Button::new(
-                                    RichText::new("📤 Export servers.json")
+                                    RichText::new(format!("{} Export servers.json", crate::lucide::UPLOAD))
                                         .size(11.5)
                                         .strong()
                                         .color(palette.text_primary),
@@ -5890,7 +5895,7 @@ impl LauncherApp {
                         .inner_margin(egui::Margin::same(12.0))
                         .show(ui, |ui| {
                             ui.label(
-                                RichText::new("⌨ Keyboard Shortcuts")
+                                RichText::new(format!("{} Keyboard Shortcuts", crate::lucide::KEYBOARD))
                                     .size(13.0)
                                     .strong()
                                     .color(palette.text_primary),
@@ -6048,7 +6053,7 @@ impl LauncherApp {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("HARDWARE SENSORS").size(12.0).strong().color(p.text_muted));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let btn_ref = egui::Button::new(RichText::new("🔄").size(11.0).color(p.text_secondary))
+                    let btn_ref = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(p.text_secondary))
                         .fill(p.bg_button);
                     if ui.add(btn_ref).on_hover_text("Refresh all sensors now").clicked() {
                         if let Some(hid) = host_id {
@@ -6063,8 +6068,8 @@ impl LauncherApp {
 
                     // Auto-refresh interval dropdown
                     let interval_label = match self.sensors_refresh_interval {
-                        0 => "⏱ Off".to_string(),
-                        s => format!("⏱ {}s", s),
+                        0 => format!("{} Off", crate::lucide::CLOCK),
+                        s => format!("{} {}s", crate::lucide::CLOCK, s),
                     };
                     egui::ComboBox::from_id_salt("sensors_refresh_interval_combo")
                         .selected_text(RichText::new(interval_label).size(10.0).color(p.text_primary))
@@ -6084,7 +6089,7 @@ impl LauncherApp {
             // Search filter
             ui.add(
                 egui::TextEdit::singleline(&mut self.sensors_search_query)
-                    .hint_text("🔍 Filter sensors & temps...")
+                    .hint_text(format!("{} Filter sensors & temps...", crate::lucide::SEARCH))
                     .desired_width(ui.available_width()),
             );
 
@@ -6128,7 +6133,7 @@ impl LauncherApp {
                         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("🖥 CPU").size(12.0).strong().color(p.text_primary));
+                                ui.label(RichText::new(format!("{} CPU", crate::lucide::CPU)).size(12.0).strong().color(p.text_primary));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     if let Some(t) = snap.cpu_temp {
                                         ui.label(RichText::new(format!("{:.1}°C", t)).size(11.0).strong().color(crate::sensors::temp_color(t)));
@@ -6147,18 +6152,18 @@ impl LauncherApp {
                                     } else {
                                         format!("{} MHz", snap.cpu_frequency_mhz)
                                     };
-                                    ui.label(RichText::new(format!("⏱ {}", freq_s)).size(10.5).monospace().color(p.info));
+                                    ui.label(RichText::new(format!("{} {}", crate::lucide::CLOCK, freq_s)).size(10.5).monospace().color(p.info));
                                 }
                                 if let Some(w) = snap.cpu_power_watts {
                                     if snap.cpu_frequency_mhz > 0 {
                                         ui.label(RichText::new("•").size(10.0).color(p.text_muted));
                                     }
-                                    ui.label(RichText::new(format!("⚡ {:.1} W", w)).size(10.5).strong().color(Color32::from_rgb(250, 204, 21)));
+                                    ui.label(RichText::new(format!("{} {:.1} W", crate::lucide::ZAP, w)).size(10.5).strong().color(Color32::from_rgb(250, 204, 21)));
                                 } else if let Some(tdp) = snap.cpu_tdp_watts {
                                     if snap.cpu_frequency_mhz > 0 {
                                         ui.label(RichText::new("•").size(10.0).color(p.text_muted));
                                     }
-                                    ui.label(RichText::new(format!("⚡ TDP: {:.0} W", tdp)).size(10.0).color(p.text_muted));
+                                    ui.label(RichText::new(format!("{} TDP: {:.0} W", crate::lucide::ZAP, tdp)).size(10.0).color(p.text_muted));
                                 }
                             });
                         });
@@ -6174,9 +6179,9 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("⚡ Top Apps").size(12.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new(format!("{} Top Apps", crate::lucide::ACTIVITY)).size(12.0).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let btn_all = egui::Button::new(RichText::new("View all ↗").size(10.0).color(p.accent))
+                                        let btn_all = egui::Button::new(RichText::new(format!("View all {}", crate::lucide::EXTERNAL_LINK)).size(10.0).color(p.accent))
                                             .frame(false);
                                         if ui.add(btn_all).clicked() {
                                             self.sensors_category_filter = "Top Apps".to_string();
@@ -6217,7 +6222,7 @@ impl LauncherApp {
                         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("🧠 Memory").size(12.0).strong().color(p.text_primary));
+                                ui.label(RichText::new(format!("{} Memory", crate::lucide::RAM)).size(12.0).strong().color(p.text_primary));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     if let Some(t) = snap.ram_temp {
                                         ui.label(RichText::new(format!("{:.1}°C", t)).size(11.0).strong().color(crate::sensors::temp_color(t)));
@@ -6242,7 +6247,7 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("🎮 GPU").size(12.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new(format!("{} GPU", crate::lucide::GPU)).size(12.0).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         if let Some(t) = gpu.temp {
                                             ui.label(RichText::new(format!("{:.1}°C", t)).size(11.0).strong().color(crate::sensors::temp_color(t)));
@@ -6259,7 +6264,7 @@ impl LauncherApp {
                                 ui.add_space(3.0);
                                 ui.horizontal_wrapped(|ui| {
                                     if let Some(clk) = gpu.clock_mhz {
-                                        ui.label(RichText::new(format!("⏱ {} MHz", clk)).size(10.5).monospace().color(p.info));
+                                        ui.label(RichText::new(format!("{} {} MHz", crate::lucide::CLOCK, clk)).size(10.5).monospace().color(p.info));
                                     }
                                     if let Some(mclk) = gpu.mem_clock_mhz {
                                         if gpu.clock_mhz.is_some() {
@@ -6271,7 +6276,7 @@ impl LauncherApp {
                                         if gpu.clock_mhz.is_some() || gpu.mem_clock_mhz.is_some() {
                                             ui.label(RichText::new("•").size(10.0).color(p.text_muted));
                                         }
-                                        ui.label(RichText::new(format!("⚡ {:.1} W", w)).size(10.5).strong().color(Color32::from_rgb(250, 204, 21)));
+                                        ui.label(RichText::new(format!("{} {:.1} W", crate::lucide::ZAP, w)).size(10.5).strong().color(Color32::from_rgb(250, 204, 21)));
                                     }
                                 });
                             });
@@ -6296,7 +6301,7 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("💾 Storage").size(12.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new(format!("{} Storage", crate::lucide::STORAGE)).size(12.0).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         if let Some(t) = snap.storage_temp {
                                             ui.label(RichText::new(format!("{:.1}°C", t)).size(11.0).strong().color(crate::sensors::temp_color(t)));
@@ -6311,10 +6316,10 @@ impl LauncherApp {
 
                                 ui.add_space(3.0);
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("▼").size(11.0).strong().color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new(crate::lucide::ARROW_DOWN).size(11.0).strong().color(Color32::from_rgb(56, 189, 248)));
                                     ui.label(RichText::new(crate::sensors::format_rate(snap.total_disk_read_rate_bps)).size(10.5).monospace().color(p.text_primary));
                                     ui.add_space(6.0);
-                                    ui.label(RichText::new("▲").size(11.0).strong().color(Color32::from_rgb(168, 85, 247)));
+                                    ui.label(RichText::new(crate::lucide::ARROW_UP).size(11.0).strong().color(Color32::from_rgb(168, 85, 247)));
                                     ui.label(RichText::new(crate::sensors::format_rate(snap.total_disk_write_rate_bps)).size(10.5).monospace().color(p.text_primary));
                                 });
                             });
@@ -6331,9 +6336,9 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("🔋 Power").size(12.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new(format!("{} Power", crate::lucide::BATTERY)).size(12.0).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let ac_text = if snap.power.ac_online == Some(true) { "🔌 AC Online" } else { "🔋 Battery" };
+                                        let ac_text = if snap.power.ac_online == Some(true) { format!("{} AC Online", crate::lucide::PLUG) } else { format!("{} Battery", crate::lucide::BATTERY) };
                                         ui.label(RichText::new(ac_text).size(10.5).strong().color(p.text_secondary));
                                     });
                                 });
@@ -6345,7 +6350,7 @@ impl LauncherApp {
                                 }
                                 if let Some(w) = snap.power.total_power_watts {
                                     ui.add_space(2.0);
-                                    ui.label(RichText::new(format!("⚡ Rate: {:.1} W", w)).size(10.0).color(p.info));
+                                    ui.label(RichText::new(format!("{} Rate: {:.1} W", crate::lucide::ZAP, w)).size(10.0).color(p.info));
                                 }
                             });
 
@@ -6360,17 +6365,17 @@ impl LauncherApp {
                         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("🌐 Network").size(12.0).strong().color(p.text_primary));
+                                ui.label(RichText::new(format!("{} Network", crate::lucide::NETWORK)).size(12.0).strong().color(p.text_primary));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new(format!("{} ifaces", snap.networks.len())).size(10.5).color(p.text_muted));
                                 });
                             });
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("↓").size(11.5).strong().color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(crate::lucide::ARROW_DOWN).size(11.5).strong().color(Color32::from_rgb(56, 189, 248)));
                                 ui.label(RichText::new(crate::sensors::format_rate(snap.total_rx_rate_bps)).size(11.0).monospace().color(p.text_primary));
                                 ui.add_space(8.0);
-                                ui.label(RichText::new("↑").size(11.5).strong().color(Color32::from_rgb(168, 85, 247)));
+                                ui.label(RichText::new(crate::lucide::ARROW_UP).size(11.5).strong().color(Color32::from_rgb(168, 85, 247)));
                                 ui.label(RichText::new(crate::sensors::format_rate(snap.total_tx_rate_bps)).size(11.0).monospace().color(p.text_primary));
                             });
                         });
@@ -6385,7 +6390,7 @@ impl LauncherApp {
                         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("🌡 Temperature Probes").size(12.0).strong().color(p.text_primary));
+                                ui.label(RichText::new(format!("{} Temperature Probes", crate::lucide::THERMOMETER)).size(12.0).strong().color(p.text_primary));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new(format!("{}", snap.temp_sensors.len())).size(12.0).strong().color(p.accent));
                                 });
@@ -6469,7 +6474,7 @@ impl LauncherApp {
                     ui.horizontal(|ui| {
                         ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                             ui.horizontal_wrapped(|ui| {
-                                ui.label(RichText::new("📊").size(20.0));
+                                ui.label(RichText::new(crate::lucide::ACTIVITY).size(18.0).color(p.accent));
                                 let title = if let Some(hid) = host_id {
                                     format!("Hardware Sensors Monitor — Remote Host ({})", hid)
                                 } else {
@@ -6494,25 +6499,25 @@ impl LauncherApp {
                                     } else {
                                         format!("{} MHz", snap.cpu_frequency_mhz)
                                     };
-                                    ui.label(RichText::new(format!("⏱ {}", freq_s)).size(11.0).monospace().color(p.info));
+                                    ui.label(RichText::new(format!("{} {}", crate::lucide::CLOCK, freq_s)).size(11.0).monospace().color(p.info));
                                 }
                                 if let Some(w) = snap.cpu_power_watts {
                                     ui.label(RichText::new("•").size(11.0).color(p.text_muted));
-                                    ui.label(RichText::new(format!("⚡ {:.1} W", w)).size(11.0).strong().color(Color32::from_rgb(250, 204, 21)));
+                                    ui.label(RichText::new(format!("{} {:.1} W", crate::lucide::ZAP, w)).size(11.0).strong().color(Color32::from_rgb(250, 204, 21)));
                                 }
                                 if let Some(gpu) = snap.gpus.first() {
                                     ui.label(RichText::new("•").size(11.0).color(p.text_muted));
                                     let mut g_parts = Vec::new();
                                     if let Some(clk) = gpu.clock_mhz {
-                                        g_parts.push(format!("⏱ {} MHz", clk));
+                                        g_parts.push(format!("{} {} MHz", crate::lucide::CLOCK, clk));
                                     }
                                     if let Some(w) = gpu.power_watts {
-                                        g_parts.push(format!("⚡ {:.1} W", w));
+                                        g_parts.push(format!("{} {:.1} W", crate::lucide::ZAP, w));
                                     }
                                     let g_desc = if !g_parts.is_empty() {
-                                        format!("🎮 GPU: {}", g_parts.join(" • "))
+                                        format!("{} GPU: {}", crate::lucide::GPU, g_parts.join(" • "))
                                     } else {
-                                        format!("🎮 GPU: {}", gpu.name)
+                                        format!("{} GPU: {}", crate::lucide::GPU, gpu.name)
                                     };
                                     ui.label(RichText::new(g_desc).size(11.0).color(p.info));
                                 }
@@ -6520,13 +6525,13 @@ impl LauncherApp {
                                 ui.label(RichText::new(format!("{} Total RAM", crate::sensors::format_bytes(snap.mem_total_bytes))).size(11.0).color(p.success));
                                 if snap.total_disk_read_rate_bps > 0.0 || snap.total_disk_write_rate_bps > 0.0 {
                                     ui.label(RichText::new("•").size(11.0).color(p.text_muted));
-                                    ui.label(RichText::new(format!("💾 Live Storage Speed: ▼ {}  ▲ {}", crate::sensors::format_rate(snap.total_disk_read_rate_bps), crate::sensors::format_rate(snap.total_disk_write_rate_bps))).size(11.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new(format!("{} Live Storage Speed: {} {}  {} {}", crate::lucide::STORAGE, crate::lucide::ARROW_DOWN, crate::sensors::format_rate(snap.total_disk_read_rate_bps), crate::lucide::ARROW_UP, crate::sensors::format_rate(snap.total_disk_write_rate_bps))).size(11.0).monospace().color(Color32::from_rgb(56, 189, 248)));
                                 }
                             });
                         });
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let btn_ref = egui::Button::new(RichText::new("🔄 Refresh Now").size(11.5).strong().color(Color32::WHITE))
+                            let btn_ref = egui::Button::new(RichText::new(format!("{} Refresh Now", crate::lucide::REFRESH_CW)).size(11.5).strong().color(Color32::WHITE))
                                 .fill(p.accent)
                                 .rounding(Rounding::same(999.0));
                             if ui.add(btn_ref).clicked() {
@@ -6554,7 +6559,7 @@ impl LauncherApp {
                         .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("⚠️ Remote sensor query notice:").size(11.5).strong().color(Color32::from_rgb(239, 68, 68)));
+                                ui.label(RichText::new(format!("{} Remote sensor query notice:", crate::lucide::ALERT_TRIANGLE)).size(11.5).strong().color(Color32::from_rgb(239, 68, 68)));
                                 ui.label(RichText::new(err_msg).size(11.0).color(p.text_secondary));
                             });
                         });
@@ -6581,13 +6586,13 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("🖥 Central Processing Unit (CPU)").size(13.5).strong().color(p.text_primary));
+                                    ui.label(RichText::new(format!("{} Central Processing Unit (CPU)", crate::lucide::CPU)).size(13.5).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         if let Some(t) = snap.cpu_temp {
                                             ui.label(RichText::new(format!("Package: {:.1}°C", t)).size(12.0).strong().color(crate::sensors::temp_color(t)));
                                         }
                                         if let Some(w) = snap.cpu_power_watts {
-                                            ui.label(RichText::new(format!("⚡ {:.1} W", w)).size(12.0).strong().color(p.info));
+                                            ui.label(RichText::new(format!("{} {:.1} W", crate::lucide::ZAP, w)).size(12.0).strong().color(p.info));
                                         }
                                     });
                                 });
@@ -6666,7 +6671,7 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("🧠 System Memory (RAM) & Swap").size(13.5).strong().color(p.text_primary));
+                                    ui.label(RichText::new(format!("{} System Memory (RAM) & Swap", crate::lucide::RAM)).size(13.5).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         if let Some(t) = snap.ram_temp {
                                             ui.label(RichText::new(format!("SODIMM: {:.1}°C", t)).size(12.0).strong().color(crate::sensors::temp_color(t)));
@@ -6702,20 +6707,20 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new(format!("⚡ Top Applications & Resource Consumers ({})", snap.top_apps.len())).size(13.5).strong().color(p.text_primary));
+                                    ui.label(RichText::new(format!("{} Top Applications & Resource Consumers ({})", crate::lucide::ACTIVITY, snap.top_apps.len())).size(13.5).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         let sort_opts = [
-                                            ("cpu", "⚡ CPU %"),
-                                            ("mem", "🧠 Memory"),
-                                            ("disk", "💾 Disk Speed"),
-                                            ("name", "🏷 Name"),
-                                            ("pid", "# PID"),
+                                            ("cpu", format!("{} CPU %", crate::lucide::CPU)),
+                                            ("mem", format!("{} Memory", crate::lucide::RAM)),
+                                            ("disk", format!("{} Disk Speed", crate::lucide::STORAGE)),
+                                            ("name", format!("{} Name", crate::lucide::TAG)),
+                                            ("pid", format!("{} PID", crate::lucide::HASH)),
                                         ];
                                         for (val, label) in sort_opts.iter().rev() {
                                             let is_active = self.sensors_top_apps_sort == *val;
                                             let bg = if is_active { p.accent } else { p.bg_button };
                                             let fg = if is_active { p.accent_text } else { p.text_secondary };
-                                            let btn = egui::Button::new(RichText::new(*label).size(10.0).strong().color(fg))
+                                            let btn = egui::Button::new(RichText::new(label).size(10.0).strong().color(fg))
                                                 .fill(bg)
                                                 .stroke(Stroke::NONE)
                                                 .rounding(Rounding::same(999.0));
@@ -6771,7 +6776,7 @@ impl LauncherApp {
 
                                                 let app_name = if app.name.is_empty() { format!("PID {}", app.pid) } else { app.name.clone() };
                                                 ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("⚡").size(11.0).color(p.accent));
+                                                    ui.label(RichText::new(crate::lucide::ACTIVITY).size(11.0).color(p.accent));
                                                     ui.label(RichText::new(app_name).size(11.5).strong().color(p.text_primary));
                                                 });
 
@@ -6807,10 +6812,10 @@ impl LauncherApp {
                                                 ui.label(RichText::new(format!("{} ({:.1}%)", mem_str, mem_pct)).size(11.0).monospace().color(p.text_secondary));
 
                                                 ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("▼").size(10.5).color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new(crate::lucide::ARROW_DOWN).size(10.5).color(Color32::from_rgb(56, 189, 248)));
                                                     ui.label(RichText::new(crate::sensors::format_rate(app.disk_read_rate_bps)).size(10.5).monospace().color(p.text_primary));
                                                     ui.add_space(3.0);
-                                                    ui.label(RichText::new("▲").size(10.5).color(Color32::from_rgb(168, 85, 247)));
+                                                    ui.label(RichText::new(crate::lucide::ARROW_UP).size(10.5).color(Color32::from_rgb(168, 85, 247)));
                                                     ui.label(RichText::new(crate::sensors::format_rate(app.disk_write_rate_bps)).size(10.5).monospace().color(p.text_primary));
                                                 });
 
@@ -6836,16 +6841,16 @@ impl LauncherApp {
                                 .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new(format!("🎮 GPU #{}: {}", idx, gpu.name)).size(13.5).strong().color(p.text_primary));
+                                        ui.label(RichText::new(format!("{} GPU #{}: {}", crate::lucide::GPU, idx, gpu.name)).size(13.5).strong().color(p.text_primary));
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             if let Some(t) = gpu.temp {
                                                 ui.label(RichText::new(format!("Temp: {:.1}°C", t)).size(12.0).strong().color(crate::sensors::temp_color(t)));
                                             }
                                             if let Some(w) = gpu.power_watts {
                                                 let p_str = if let Some(lim) = gpu.power_limit_watts {
-                                                    format!("⚡ Power: {:.1} W / {:.0} W limit", w, lim)
+                                                    format!("{} Power: {:.1} W / {:.0} W limit", crate::lucide::ZAP, w, lim)
                                                 } else {
-                                                    format!("⚡ Power: {:.1} W", w)
+                                                    format!("{} Power: {:.1} W", crate::lucide::ZAP, w)
                                                 };
                                                 ui.label(RichText::new(p_str).size(11.5).strong().color(p.info));
                                             }
@@ -6857,15 +6862,15 @@ impl LauncherApp {
                                         ui.label(RichText::new(format!("Driver: {}", gpu.driver)).size(10.5).color(p.text_muted));
                                         if let Some(clk) = gpu.clock_mhz {
                                             ui.label(RichText::new("•").size(10.5).color(p.text_muted));
-                                            ui.label(RichText::new(format!("⏱ Core Clock: {} MHz", clk)).size(11.0).strong().monospace().color(p.info));
+                                            ui.label(RichText::new(format!("{} Core Clock: {} MHz", crate::lucide::CLOCK, clk)).size(11.0).strong().monospace().color(p.info));
                                         }
                                         if let Some(mclk) = gpu.mem_clock_mhz {
                                             ui.label(RichText::new("•").size(10.5).color(p.text_muted));
-                                            ui.label(RichText::new(format!("⏱ VRAM Clock: {} MHz", mclk)).size(11.0).monospace().color(p.accent));
+                                            ui.label(RichText::new(format!("{} VRAM Clock: {} MHz", crate::lucide::CLOCK, mclk)).size(11.0).monospace().color(p.accent));
                                         }
                                         if let Some(w) = gpu.power_watts {
                                             ui.label(RichText::new("•").size(10.5).color(p.text_muted));
-                                            ui.label(RichText::new(format!("⚡ Draw: {:.1} W", w)).size(11.0).strong().color(Color32::from_rgb(250, 204, 21)));
+                                            ui.label(RichText::new(format!("{} Draw: {:.1} W", crate::lucide::ZAP, w)).size(11.0).strong().color(Color32::from_rgb(250, 204, 21)));
                                         }
                                         if let (Some(used), Some(total)) = (gpu.mem_used_mb, gpu.mem_total_mb) {
                                             ui.label(RichText::new("•").size(10.5).color(p.text_muted));
@@ -6893,18 +6898,18 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("🔋 Power Supply & Battery Health").size(13.5).strong().color(p.text_primary));
+                                    ui.label(RichText::new(format!("{} Power Supply & Battery Health", crate::lucide::BATTERY)).size(13.5).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         if let Some(ac) = snap.power.ac_online {
                                             let (txt, col) = if ac {
-                                                ("🔌 AC Mains: Online", Color32::from_rgb(16, 185, 129))
+                                                (format!("{} AC Mains: Online", crate::lucide::PLUG), Color32::from_rgb(16, 185, 129))
                                             } else {
-                                                ("🔋 Battery Mode", Color32::from_rgb(245, 158, 11))
+                                                (format!("{} Battery Mode", crate::lucide::BATTERY), Color32::from_rgb(245, 158, 11))
                                             };
                                             ui.label(RichText::new(txt).size(11.5).strong().color(col));
                                         }
                                         if let Some(w) = snap.power.total_power_watts {
-                                            ui.label(RichText::new(format!("⚡ {:.1} W", w)).size(11.5).monospace().color(p.info));
+                                            ui.label(RichText::new(format!("{} {:.1} W", crate::lucide::ZAP, w)).size(11.5).monospace().color(p.info));
                                         }
                                     });
                                 });
@@ -6987,17 +6992,17 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("💾 Storage & Mounted Disks").size(13.5).strong().color(p.text_primary));
+                                    ui.label(RichText::new(format!("{} Storage & Mounted Disks", crate::lucide::STORAGE)).size(13.5).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         if let Some(t) = snap.storage_temp {
                                             ui.label(RichText::new(format!("NVMe/Drive: {:.1}°C", t)).size(12.0).strong().color(crate::sensors::temp_color(t)));
                                         }
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new("Total I/O:").size(11.0).color(p.text_muted));
-                                            ui.label(RichText::new("▼").size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new(crate::lucide::ARROW_DOWN).size(11.0).color(Color32::from_rgb(56, 189, 248)));
                                             ui.label(RichText::new(crate::sensors::format_rate(snap.total_disk_read_rate_bps)).size(11.0).monospace().color(p.text_primary));
                                             ui.add_space(4.0);
-                                            ui.label(RichText::new("▲").size(11.0).color(Color32::from_rgb(168, 85, 247)));
+                                            ui.label(RichText::new(crate::lucide::ARROW_UP).size(11.0).color(Color32::from_rgb(168, 85, 247)));
                                             ui.label(RichText::new(crate::sensors::format_rate(snap.total_disk_write_rate_bps)).size(11.0).monospace().color(p.text_primary));
                                         });
                                     });
@@ -7014,7 +7019,7 @@ impl LauncherApp {
                                             ui.label(RichText::new(format!("{} / {} ({:.1}%)", used_s, total_s, d.usage_pct)).size(11.0).monospace().color(p.text_secondary));
                                             if d.read_rate_bps > 0.0 || d.write_rate_bps > 0.0 {
                                                 ui.add_space(6.0);
-                                                ui.label(RichText::new(format!("▼ {}  ▲ {}", crate::sensors::format_rate(d.read_rate_bps), crate::sensors::format_rate(d.write_rate_bps))).size(10.5).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new(format!("{} {}  {} {}", crate::lucide::ARROW_DOWN, crate::sensors::format_rate(d.read_rate_bps), crate::lucide::ARROW_UP, crate::sensors::format_rate(d.write_rate_bps))).size(10.5).monospace().color(Color32::from_rgb(56, 189, 248)));
                                             }
                                         });
                                     });
@@ -7025,10 +7030,10 @@ impl LauncherApp {
                                     ui.add_space(2.0);
                                     ui.horizontal(|ui| {
                                         ui.label(RichText::new("Live Speed:").size(10.5).color(p.text_muted));
-                                        ui.label(RichText::new("▼").size(10.5).color(Color32::from_rgb(56, 189, 248)));
+                                        ui.label(RichText::new(crate::lucide::ARROW_DOWN).size(10.5).color(Color32::from_rgb(56, 189, 248)));
                                         ui.label(RichText::new(format!("Read: {}", crate::sensors::format_rate(d.read_rate_bps))).size(10.5).monospace().color(Color32::from_rgb(56, 189, 248)));
                                         ui.add_space(6.0);
-                                        ui.label(RichText::new("▲").size(10.5).color(Color32::from_rgb(168, 85, 247)));
+                                        ui.label(RichText::new(crate::lucide::ARROW_UP).size(10.5).color(Color32::from_rgb(168, 85, 247)));
                                         ui.label(RichText::new(format!("Write: {}", crate::sensors::format_rate(d.write_rate_bps))).size(10.5).monospace().color(Color32::from_rgb(168, 85, 247)));
                                         if d.total_read_bytes > 0 || d.total_write_bytes > 0 {
                                             ui.label(RichText::new("•").size(10.5).color(p.text_muted));
@@ -7051,13 +7056,13 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("🌐 Network Interfaces & Real-Time Bandwidth").size(13.5).strong().color(p.text_primary));
+                                    ui.label(RichText::new(format!("{} Network Interfaces & Real-Time Bandwidth", crate::lucide::NETWORK)).size(13.5).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Total ↓").size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new(format!("Total {}", crate::lucide::ARROW_DOWN)).size(11.0).color(Color32::from_rgb(56, 189, 248)));
                                             ui.label(RichText::new(crate::sensors::format_rate(snap.total_rx_rate_bps)).size(11.0).monospace().color(p.text_primary));
                                             ui.add_space(6.0);
-                                            ui.label(RichText::new("↑").size(11.0).color(Color32::from_rgb(168, 85, 247)));
+                                            ui.label(RichText::new(crate::lucide::ARROW_UP).size(11.0).color(Color32::from_rgb(168, 85, 247)));
                                             ui.label(RichText::new(crate::sensors::format_rate(snap.total_tx_rate_bps)).size(11.0).monospace().color(p.text_primary));
                                         });
                                     });
@@ -7099,7 +7104,7 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new(format!("🌡 All Hardware Temperature Probes ({})", snap.temp_sensors.len())).size(13.5).strong().color(p.text_primary));
+                                    ui.label(RichText::new(format!("{} All Hardware Temperature Probes ({})", crate::lucide::THERMOMETER, snap.temp_sensors.len())).size(13.5).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.label(RichText::new("● <55°C | ● 55-75°C | ● >75°C").size(10.5).color(p.text_muted));
                                     });
@@ -7261,7 +7266,7 @@ impl LauncherApp {
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
-                                    let header_text = format!("🏷  {} ({})", group_name.to_uppercase(), indices.len());
+                                    let header_text = format!("{}  {} ({})", crate::lucide::TAG, group_name.to_uppercase(), indices.len());
                                     let title_w = (ui.available_width() - 150.0).max(40.0);
                                     ui.allocate_ui_with_layout(
                                         egui::vec2(title_w, 20.0),
@@ -7283,7 +7288,7 @@ impl LauncherApp {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         let btn_stop_grp = egui::Button::new(
-                                            RichText::new("⏹ Stop").size(10.5).strong().color(Color32::from_rgb(0xff, 0xda, 0xd6)),
+                                            RichText::new(format!("{} Stop", crate::lucide::STOP)).size(10.5).strong().color(Color32::from_rgb(0xff, 0xda, 0xd6)),
                                         )
                                         .fill(Color32::from_rgb(0x99, 0x1b, 0x1b))
                                         .stroke(Stroke::NONE)
@@ -7294,7 +7299,7 @@ impl LauncherApp {
                                         }
 
                                         let btn_start_grp = egui::Button::new(
-                                            RichText::new("▶ Start").size(10.5).strong().color(Color32::WHITE),
+                                            RichText::new(format!("{} Start", crate::lucide::PLAY)).size(10.5).strong().color(Color32::WHITE),
                                         )
                                         .fill(Color32::from_rgb(0x05, 0x96, 0x69))
                                         .stroke(Stroke::NONE)
@@ -7456,7 +7461,7 @@ impl LauncherApp {
                                                     .show(ui, |ui| {
                                                         ui.horizontal(|ui| {
                                                             ui.spacing_mut().item_spacing.x = 4.0;
-                                                            ui.label(RichText::new("🆔").size(10.0));
+                                                            ui.label(RichText::new(crate::lucide::HASH).size(10.0));
                                                             ui.label(
                                                                 RichText::new(format!("{}", pid))
                                                                     .size(11.0)
@@ -7475,7 +7480,7 @@ impl LauncherApp {
                                                 .show(ui, |ui| {
                                                     ui.horizontal(|ui| {
                                                         ui.spacing_mut().item_spacing.x = 4.0;
-                                                        ui.label(RichText::new("⚡").size(10.5).color(Color32::from_rgb(0x38, 0xbd, 0xf8)));
+                                                        ui.label(RichText::new(crate::lucide::CPU).size(10.5).color(Color32::from_rgb(0x38, 0xbd, 0xf8)));
                                                         ui.label(
                                                             RichText::new(format!("{:.1}%", s.cpu_usage))
                                                                 .size(11.0)
@@ -7494,7 +7499,7 @@ impl LauncherApp {
                                                 .show(ui, |ui| {
                                                     ui.horizontal(|ui| {
                                                         ui.spacing_mut().item_spacing.x = 4.0;
-                                                        ui.label(RichText::new("💾").size(10.0).color(Color32::from_rgb(0x4a, 0xde, 0x80)));
+                                                        ui.label(RichText::new(crate::lucide::RAM).size(10.0).color(Color32::from_rgb(0x4a, 0xde, 0x80)));
                                                         ui.label(
                                                             RichText::new(format!("{:.1} MB", s.memory_mb))
                                                                 .size(11.0)
@@ -7515,7 +7520,7 @@ impl LauncherApp {
                                                 .show(ui, |ui| {
                                                     ui.horizontal(|ui| {
                                                         ui.spacing_mut().item_spacing.x = 4.0;
-                                                        ui.label(RichText::new("⏱").size(10.5).color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
+                                                        ui.label(RichText::new(crate::lucide::CLOCK).size(10.5).color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
                                                         ui.label(
                                                             RichText::new(uptime_str)
                                                                 .size(11.0)
@@ -7533,7 +7538,7 @@ impl LauncherApp {
                                                 .show(ui, |ui| {
                                                     ui.horizontal(|ui| {
                                                         ui.spacing_mut().item_spacing.x = 4.0;
-                                                        ui.label(RichText::new("⏹").size(9.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
+                                                        ui.label(RichText::new(crate::lucide::STOP).size(9.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
                                                         ui.label(RichText::new("Idle").size(11.0).monospace().color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
                                                     });
                                                 });
@@ -7547,7 +7552,7 @@ impl LauncherApp {
                                                     .show(ui, |ui| {
                                                         ui.horizontal(|ui| {
                                                             ui.spacing_mut().item_spacing.x = 4.0;
-                                                            ui.label(RichText::new("🖧").size(10.0).color(Color32::from_rgb(0x70, 0xd5, 0xe4)));
+                                                            ui.label(RichText::new(crate::lucide::NETWORK).size(10.0).color(Color32::from_rgb(0x70, 0xd5, 0xe4)));
                                                             ui.label(RichText::new(format!(":{}", s.config.port)).size(11.0).monospace().color(Color32::from_rgb(0x70, 0xd5, 0xe4)));
                                                         });
                                                     });
@@ -7565,7 +7570,7 @@ impl LauncherApp {
                                                 .show(ui, |ui| {
                                                     ui.horizontal(|ui| {
                                                         ui.spacing_mut().item_spacing.x = 4.0;
-                                                        ui.label(RichText::new("📁").size(10.0));
+                                                        ui.label(RichText::new(crate::lucide::FOLDER).size(10.0));
                                                         ui.label(RichText::new(folder_name).size(10.5).monospace().color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
                                                     });
                                                 });
@@ -7580,7 +7585,7 @@ impl LauncherApp {
 
                                         if is_running {
                                             let btn_stop = egui::Button::new(
-                                                RichText::new("⏹ Stop")
+                                                RichText::new(format!("{} Stop", crate::lucide::STOP))
                                                     .size(10.5)
                                                     .strong()
                                                     .color(Color32::from_rgb(0xfe, 0xf2, 0xf2)),
@@ -7594,7 +7599,7 @@ impl LauncherApp {
                                             }
 
                                             let btn_restart = egui::Button::new(
-                                                RichText::new("⟳ Restart")
+                                                RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW))
                                                     .size(10.5)
                                                     .strong()
                                                     .color(Color32::from_rgb(0xec, 0xfe, 0xff)),
@@ -7608,7 +7613,7 @@ impl LauncherApp {
                                             }
                                         } else {
                                             let btn_start = egui::Button::new(
-                                                RichText::new("▶ Start")
+                                                RichText::new(format!("{} Start", crate::lucide::PLAY))
                                                     .size(10.5)
                                                     .strong()
                                                     .color(Color32::WHITE),
@@ -7631,7 +7636,7 @@ impl LauncherApp {
                                             let circ_rnd = Rounding::same(999.0);
 
                                             let btn_del = egui::Button::new(
-                                                RichText::new("🗑").size(10.0).color(Color32::from_rgb(0xf8, 0x71, 0x71)),
+                                                RichText::new(crate::lucide::TRASH).size(10.0).color(Color32::from_rgb(0xf8, 0x71, 0x71)),
                                             )
                                             .fill(circ_bg)
                                             .stroke(Stroke::NONE)
@@ -7642,7 +7647,7 @@ impl LauncherApp {
                                             }
 
                                             let btn_folder = egui::Button::new(
-                                                RichText::new("📁").size(10.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                                RichText::new(crate::lucide::FOLDER).size(10.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
                                             )
                                             .fill(circ_bg)
                                             .stroke(Stroke::NONE)
@@ -7653,7 +7658,7 @@ impl LauncherApp {
                                             }
 
                                             let btn_vscode = egui::Button::new(
-                                                RichText::new("💻").size(10.0).color(Color32::from_rgb(0x60, 0xa5, 0xfa)),
+                                                RichText::new(crate::lucide::CODE).size(10.0).color(Color32::from_rgb(0x60, 0xa5, 0xfa)),
                                             )
                                             .fill(circ_bg)
                                             .stroke(Stroke::NONE)
@@ -7664,7 +7669,7 @@ impl LauncherApp {
                                             }
 
                                             let btn_edit = egui::Button::new(
-                                                RichText::new("✏").size(10.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                                RichText::new(crate::lucide::PENCIL).size(10.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
                                             )
                                             .fill(circ_bg)
                                             .stroke(Stroke::NONE)
@@ -7675,7 +7680,7 @@ impl LauncherApp {
                                             }
 
                                             let btn_console = egui::Button::new(
-                                                RichText::new(">_").size(9.5).monospace().strong().color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                                RichText::new(crate::lucide::TERMINAL).size(10.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
                                             )
                                             .fill(circ_bg)
                                             .stroke(Stroke::NONE)
@@ -7692,7 +7697,7 @@ impl LauncherApp {
                                                     format!("http://localhost:{}", s.config.port)
                                                 };
                                                 let btn_browser = egui::Button::new(
-                                                    RichText::new("↗").size(10.5).strong().color(Color32::from_rgb(0x38, 0xbd, 0xf8)),
+                                                    RichText::new(crate::lucide::EXTERNAL_LINK).size(10.5).strong().color(Color32::from_rgb(0x38, 0xbd, 0xf8)),
                                                 )
                                                 .fill(circ_bg)
                                                 .stroke(Stroke::NONE)
@@ -7797,7 +7802,7 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
                                 ui.label(
-                                    RichText::new("📊 Server Overview")
+                                    RichText::new(format!("{} Server Overview", crate::lucide::SERVER))
                                         .size(12.0)
                                         .strong()
                                         .color(if is_ov_active { p.text_primary } else { p.text_secondary }),
@@ -7960,7 +7965,7 @@ impl LauncherApp {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let btn_refresh = egui::Button::new(
-                    RichText::new("🔄 Refresh")
+                    RichText::new(format!("{} Refresh", crate::lucide::REFRESH_CW))
                         .size(11.5)
                         .strong()
                         .color(p.accent),
@@ -7973,7 +7978,7 @@ impl LauncherApp {
                     self.refresh_server_list();
                 }
 
-                // Search Box with 🔍 icon, hint, clear button, and Ctrl+F focus support
+                // Search Box with search icon, hint, clear button, and Ctrl+F focus support
                 Frame::none()
                     .fill(p.bg_input)
                     .stroke(Stroke::NONE)
@@ -7982,7 +7987,7 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.label(
-                                RichText::new("🔍")
+                                RichText::new(crate::lucide::SEARCH)
                                     .size(11.5)
                                     .color(p.text_muted),
                             );
@@ -8011,7 +8016,7 @@ impl LauncherApp {
                                 if ui
                                     .add(
                                         egui::Button::new(
-                                            RichText::new("✕")
+                                            RichText::new(crate::lucide::X)
                                                 .size(10.5)
                                                 .color(p.text_muted),
                                         )
@@ -8237,7 +8242,7 @@ impl LauncherApp {
                                             .show(ui, |ui| {
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 4.0;
-                                                    ui.label(RichText::new("🆔").size(10.0));
+                                                    ui.label(RichText::new(crate::lucide::HASH).size(10.0));
                                                     ui.label(
                                                         RichText::new(format!("{}", pid))
                                                             .size(11.0)
@@ -8256,7 +8261,7 @@ impl LauncherApp {
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                                ui.label(RichText::new("⚡").size(10.5).color(Color32::from_rgb(0x38, 0xbd, 0xf8)));
+                                                ui.label(RichText::new(crate::lucide::CPU).size(10.5).color(Color32::from_rgb(0x38, 0xbd, 0xf8)));
                                                 ui.label(
                                                     RichText::new(format!("{:.1}%", s.cpu_usage))
                                                         .size(11.0)
@@ -8275,7 +8280,7 @@ impl LauncherApp {
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                                ui.label(RichText::new("💾").size(10.0).color(Color32::from_rgb(0x4a, 0xde, 0x80)));
+                                                ui.label(RichText::new(crate::lucide::RAM).size(10.0).color(Color32::from_rgb(0x4a, 0xde, 0x80)));
                                                 ui.label(
                                                     RichText::new(format!("{:.1} MB", s.memory_mb))
                                                         .size(11.0)
@@ -8296,7 +8301,7 @@ impl LauncherApp {
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                                ui.label(RichText::new("⏱").size(10.5).color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
+                                                ui.label(RichText::new(crate::lucide::CLOCK).size(10.5).color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
                                                 ui.label(
                                                     RichText::new(uptime_str)
                                                         .size(11.0)
@@ -8314,7 +8319,7 @@ impl LauncherApp {
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                                ui.label(RichText::new("⏹").size(9.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
+                                                ui.label(RichText::new(crate::lucide::STOP).size(9.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
                                                 ui.label(RichText::new("Idle").size(11.0).monospace().color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
                                             });
                                         });
@@ -8328,7 +8333,7 @@ impl LauncherApp {
                                             .show(ui, |ui| {
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 4.0;
-                                                    ui.label(RichText::new("🖧").size(10.0).color(Color32::from_rgb(0x70, 0xd5, 0xe4)));
+                                                    ui.label(RichText::new(crate::lucide::NETWORK).size(10.0).color(Color32::from_rgb(0x70, 0xd5, 0xe4)));
                                                     ui.label(RichText::new(format!(":{}", s.config.port)).size(11.0).monospace().color(Color32::from_rgb(0x70, 0xd5, 0xe4)));
                                                 });
                                             });
@@ -8346,7 +8351,7 @@ impl LauncherApp {
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                                ui.label(RichText::new("📁").size(10.0));
+                                                ui.label(RichText::new(crate::lucide::FOLDER).size(10.0));
                                                 ui.label(RichText::new(folder_name).size(10.5).monospace().color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
                                             });
                                         });
@@ -8361,7 +8366,7 @@ impl LauncherApp {
 
                                 if is_running {
                                     let btn_stop = egui::Button::new(
-                                        RichText::new("⏹ Stop")
+                                        RichText::new(format!("{} Stop", crate::lucide::STOP))
                                             .size(10.5)
                                             .strong()
                                             .color(Color32::from_rgb(0xfe, 0xf2, 0xf2)),
@@ -8375,7 +8380,7 @@ impl LauncherApp {
                                     }
 
                                     let btn_restart = egui::Button::new(
-                                        RichText::new("⟳ Restart")
+                                        RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW))
                                             .size(10.5)
                                             .strong()
                                             .color(Color32::from_rgb(0xec, 0xfe, 0xff)),
@@ -8389,7 +8394,7 @@ impl LauncherApp {
                                     }
                                 } else {
                                     let btn_start = egui::Button::new(
-                                        RichText::new("▶ Start")
+                                        RichText::new(format!("{} Start", crate::lucide::PLAY))
                                             .size(10.5)
                                             .strong()
                                             .color(Color32::WHITE),
@@ -8412,7 +8417,7 @@ impl LauncherApp {
                                     let circ_rnd = Rounding::same(999.0);
 
                                     let btn_del = egui::Button::new(
-                                        RichText::new("🗑").size(10.0).color(Color32::from_rgb(0xf8, 0x71, 0x71)),
+                                        RichText::new(crate::lucide::TRASH).size(10.0).color(Color32::from_rgb(0xf8, 0x71, 0x71)),
                                     )
                                     .fill(circ_bg)
                                     .stroke(Stroke::NONE)
@@ -8423,7 +8428,7 @@ impl LauncherApp {
                                     }
 
                                     let btn_folder = egui::Button::new(
-                                        RichText::new("📁").size(10.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                        RichText::new(crate::lucide::FOLDER).size(10.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
                                     )
                                     .fill(circ_bg)
                                     .stroke(Stroke::NONE)
@@ -8434,7 +8439,7 @@ impl LauncherApp {
                                     }
 
                                     let btn_vscode = egui::Button::new(
-                                        RichText::new("💻").size(10.0).color(Color32::from_rgb(0x60, 0xa5, 0xfa)),
+                                        RichText::new(crate::lucide::CODE).size(10.0).color(Color32::from_rgb(0x60, 0xa5, 0xfa)),
                                     )
                                     .fill(circ_bg)
                                     .stroke(Stroke::NONE)
@@ -8445,7 +8450,7 @@ impl LauncherApp {
                                     }
 
                                     let btn_edit = egui::Button::new(
-                                        RichText::new("✏").size(10.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                        RichText::new(crate::lucide::PENCIL).size(10.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
                                     )
                                     .fill(circ_bg)
                                     .stroke(Stroke::NONE)
@@ -8456,7 +8461,7 @@ impl LauncherApp {
                                     }
 
                                     let btn_console = egui::Button::new(
-                                        RichText::new(">_").size(9.5).monospace().strong().color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                        RichText::new(crate::lucide::TERMINAL).size(10.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
                                     )
                                     .fill(circ_bg)
                                     .stroke(Stroke::NONE)
@@ -8468,12 +8473,12 @@ impl LauncherApp {
 
                                     if (is_running && s.config.port > 0) || s.config.url.is_some() {
                                         let target_url = if let Some(u) = &s.config.url {
-                                            u.clone()
+                                             u.clone()
                                         } else {
                                             format!("http://localhost:{}", s.config.port)
                                         };
                                         let btn_browser = egui::Button::new(
-                                            RichText::new("↗").size(10.5).strong().color(Color32::from_rgb(0x38, 0xbd, 0xf8)),
+                                            RichText::new(crate::lucide::EXTERNAL_LINK).size(10.5).strong().color(Color32::from_rgb(0x38, 0xbd, 0xf8)),
                                         )
                                         .fill(circ_bg)
                                         .stroke(Stroke::NONE)
@@ -8728,14 +8733,14 @@ impl LauncherApp {
                                         if let Some(pid) = listener.pid {
                                             render_metric_pill(
                                                 ui,
-                                                "🆔",
+                                                crate::lucide::HASH,
                                                 &format!("PID {}", pid),
                                                 p.text_muted,
                                             );
                                         }
                                         render_metric_pill(
                                             ui,
-                                            "🔌",
+                                            crate::lucide::PLUG,
                                             &format!(":{}", listener.port),
                                             p.info,
                                         );
@@ -8791,13 +8796,13 @@ impl LauncherApp {
                                                 ui.add_space(36.0);
                                                 render_metric_pill(
                                                     ui,
-                                                    "⚡",
+                                                    crate::lucide::CPU,
                                                     &format!("{:.1}%", cpu),
                                                     p.info,
                                                 );
                                                 render_metric_pill(
                                                     ui,
-                                                    "💾",
+                                                    crate::lucide::RAM,
                                                     &format!("{:.1} MB", mem),
                                                     p.success,
                                                 );
@@ -8817,7 +8822,7 @@ impl LauncherApp {
                                                 ui.vertical(|ui| {
                                                     if !cwd_str.is_empty() {
                                                         ui.horizontal(|ui| {
-                                                            ui.label(RichText::new("📁 Location:").size(11.0).strong().color(p.accent));
+                                                            ui.label(RichText::new(format!("{} Location:", crate::lucide::FOLDER)).size(11.0).strong().color(p.accent));
                                                             ui.label(
                                                                 RichText::new(&cwd_str)
                                                                     .size(10.5)
@@ -8831,7 +8836,7 @@ impl LauncherApp {
                                                             ui.add_space(4.0);
                                                         }
                                                         ui.horizontal(|ui| {
-                                                            ui.label(RichText::new("⚙ Command:").size(11.0).strong().color(p.accent));
+                                                            ui.label(RichText::new(format!("{} Command:", crate::lucide::SETTINGS)).size(11.0).strong().color(p.accent));
                                                             ui.label(
                                                                 RichText::new(&cmd_str)
                                                                     .size(10.5)
@@ -8853,9 +8858,9 @@ impl LauncherApp {
                                                     ui.horizontal(|ui| {
                                                         let is_inline_open = self.open_inline_terminals.contains(&listener.port);
                                                         let inline_btn_text = if is_inline_open {
-                                                             "📟 Hide Inline Terminal"
+                                                             format!("{} Hide Inline Terminal", crate::lucide::TERMINAL)
                                                         } else {
-                                                             "📟 View Output (Inline Terminal)"
+                                                             format!("{} View Output (Inline Terminal)", crate::lucide::TERMINAL)
                                                         };
                                                         let btn_inline = egui::Button::new(
                                                             RichText::new(inline_btn_text)
@@ -8877,7 +8882,7 @@ impl LauncherApp {
                                                         }
 
                                                         let btn_external = egui::Button::new(
-                                                            RichText::new("↗ External Terminal")
+                                                            RichText::new(format!("{} External Terminal", crate::lucide::EXTERNAL_LINK))
                                                                 .size(11.0)
                                                                 .strong()
                                                                 .color(p.info),
@@ -8898,7 +8903,7 @@ impl LauncherApp {
 
                                                         if !cwd_str.is_empty() {
                                                             let btn_folder = egui::Button::new(
-                                                                RichText::new("📁 Open Folder")
+                                                                RichText::new(format!("{} Open Folder", crate::lucide::FOLDER))
                                                                     .size(11.0)
                                                                     .strong()
                                                                     .color(p.warning),
@@ -8912,7 +8917,7 @@ impl LauncherApp {
                                                             }
 
                                                             let btn_vscode = egui::Button::new(
-                                                                RichText::new("💻 VS Code")
+                                                                RichText::new(format!("{} VS Code", crate::lucide::CODE))
                                                                     .size(11.0)
                                                                     .strong()
                                                                     .color(p.info),
@@ -8996,7 +9001,7 @@ impl LauncherApp {
                                         ui.add_space(4.0);
                                         render_metric_pill(
                                             ui,
-                                            "🔌",
+                                            crate::lucide::PLUG,
                                             &format!(":{}", port),
                                             p.text_muted,
                                         );
@@ -9009,7 +9014,7 @@ impl LauncherApp {
 
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             let btn_del = egui::Button::new(
-                                                RichText::new("✕").size(11.0).color(p.text_muted),
+                                                RichText::new(crate::lucide::X).size(11.0).color(p.text_muted),
                                             )
                                             .fill(p.bg_button)
                                             .rounding(Rounding::same(4.0));
@@ -9041,7 +9046,7 @@ impl LauncherApp {
                                                 ui.vertical(|ui| {
                                                     if !cwd.is_empty() {
                                                         ui.horizontal(|ui| {
-                                                            ui.label(RichText::new("📁 Location:").size(11.0).strong().color(p.accent));
+                                                            ui.label(RichText::new(format!("{} Location:", crate::lucide::FOLDER)).size(11.0).strong().color(p.accent));
                                                             ui.label(
                                                                 RichText::new(cwd)
                                                                     .size(10.5)
@@ -9055,7 +9060,7 @@ impl LauncherApp {
                                                             ui.add_space(4.0);
                                                         }
                                                         ui.horizontal(|ui| {
-                                                            ui.label(RichText::new("⚙ Command:").size(11.0).strong().color(p.accent));
+                                                            ui.label(RichText::new(format!("{} Command:", crate::lucide::SETTINGS)).size(11.0).strong().color(p.accent));
                                                             ui.label(
                                                                 RichText::new(cmd)
                                                                     .size(10.5)
@@ -9077,9 +9082,9 @@ impl LauncherApp {
                                                     ui.horizontal(|ui| {
                                                         let is_inline_open = self.open_inline_terminals.contains(port);
                                                         let inline_btn_text = if is_inline_open {
-                                                            "📟 Hide Inline Terminal"
+                                                             format!("{} Hide Inline Terminal", crate::lucide::TERMINAL)
                                                         } else {
-                                                            "📟 View Output (Inline Terminal)"
+                                                             format!("{} View Output (Inline Terminal)", crate::lucide::TERMINAL)
                                                         };
                                                         let btn_inline = egui::Button::new(
                                                             RichText::new(inline_btn_text)
@@ -9101,7 +9106,7 @@ impl LauncherApp {
                                                         }
 
                                                         let btn_external = egui::Button::new(
-                                                            RichText::new("↗ External Terminal")
+                                                            RichText::new(format!("{} External Terminal", crate::lucide::EXTERNAL_LINK))
                                                                 .size(11.0)
                                                                 .strong()
                                                                 .color(p.info),
@@ -9122,7 +9127,7 @@ impl LauncherApp {
 
                                                         if !cwd.is_empty() {
                                                             let btn_folder = egui::Button::new(
-                                                                RichText::new("📁 Open Folder")
+                                                                RichText::new(format!("{} Open Folder", crate::lucide::FOLDER))
                                                                     .size(11.0)
                                                                     .strong()
                                                                     .color(p.warning),
@@ -9136,7 +9141,7 @@ impl LauncherApp {
                                                             }
 
                                                             let btn_vscode = egui::Button::new(
-                                                                RichText::new("💻 VS Code")
+                                                                RichText::new(format!("{} VS Code", crate::lucide::CODE))
                                                                     .size(11.0)
                                                                     .strong()
                                                                     .color(p.info),
@@ -9293,27 +9298,27 @@ impl LauncherApp {
                             };
                             render_metric_pill(
                                 ui,
-                                "🌐",
+                                crate::lucide::NETWORK,
                                 &format!(":{}", port),
                                 port_color,
                             );
                         }
                         render_metric_pill(
                             ui,
-                            "⚡",
+                            crate::lucide::CPU,
                             &format!("{:.1}%", cpu),
                             Color32::from_rgb(96, 165, 250),
                         );
                         render_metric_pill(
                             ui,
-                            "💾",
+                            crate::lucide::RAM,
                             &format!("{:.1} MB", mem),
                             Color32::from_rgb(52, 211, 153),
                         );
                         if !uptime.is_empty() {
                             render_metric_pill(
                                 ui,
-                                "⏱",
+                                crate::lucide::CLOCK,
                                 &uptime,
                                 Color32::from_rgb(251, 191, 36),
                             );
@@ -9358,7 +9363,7 @@ impl LauncherApp {
 
                         let search_is_open = self.search_open.get(key).copied().unwrap_or(false);
                         let find_btn = egui::Button::new(
-                            RichText::new("🔍 Find (Ctrl+F)")
+                            RichText::new(format!("{} Find (Ctrl+F)", crate::lucide::SEARCH))
                                 .size(11.0)
                                 .color(if search_is_open { p.accent } else { p.text_secondary }),
                         )
@@ -9378,7 +9383,7 @@ impl LauncherApp {
                     ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
 
                     let vscode_btn = egui::Button::new(
-                        RichText::new("💻 VS Code")
+                        RichText::new(format!("{} VS Code", crate::lucide::CODE))
                             .size(11.0)
                             .color(p.info),
                     )
@@ -9391,7 +9396,7 @@ impl LauncherApp {
                     }
 
                     let folder_btn = egui::Button::new(
-                        RichText::new("📁 Folder")
+                        RichText::new(format!("{} Folder", crate::lucide::FOLDER))
                             .size(11.0)
                             .color(p.text_secondary),
                     )
@@ -9404,7 +9409,7 @@ impl LauncherApp {
                     }
 
                     let console_btn = egui::Button::new(
-                        RichText::new("💻 Console")
+                        RichText::new(format!("{} Console", crate::lucide::TERMINAL))
                             .size(11.0)
                             .color(p.accent_light),
                     )
@@ -9422,7 +9427,7 @@ impl LauncherApp {
                     let mut auto_scroll = self.auto_scroll.get(key).copied().unwrap_or(true);
                     if ui.checkbox(
                         &mut auto_scroll,
-                        RichText::new("⬇ Auto-scroll").size(11.0).color(p.accent_light),
+                        RichText::new(format!("{} Auto-scroll", crate::lucide::ARROW_DOWN)).size(11.0).color(p.accent_light),
                     ).on_hover_text("Keep pinned to bottom when new logs arrive (uncheck to scroll up smoothly without jitter)").changed() {
                         self.auto_scroll.insert(key.to_string(), auto_scroll);
                     }
@@ -9430,7 +9435,7 @@ impl LauncherApp {
                     let mut autostart = self.find_service(key).map(|s| s.config.autostart).unwrap_or(false);
                     if ui.checkbox(
                         &mut autostart,
-                        RichText::new("🚀 Autostart").size(11.0).color(p.accent_light),
+                        RichText::new(format!("{} Autostart", crate::lucide::PLAY)).size(11.0).color(p.accent_light),
                     ).on_hover_text("Automatically start this server when Server Launcher opens").changed() {
                         if let Some(s) = self.find_service_mut(key) {
                             s.config.autostart = autostart;
@@ -9441,7 +9446,7 @@ impl LauncherApp {
                     let mut auto_restart = self.find_service(key).map(|s| s.config.auto_restart).unwrap_or(false);
                     if ui.checkbox(
                         &mut auto_restart,
-                        RichText::new("🔄 Auto-restart").size(11.0).color(p.accent_light),
+                        RichText::new(format!("{} Auto-restart", crate::lucide::REFRESH_CW)).size(11.0).color(p.accent_light),
                     ).on_hover_text("Auto-restart this server if it exits unexpectedly or crashes").changed() {
                         if let Some(s) = self.find_service_mut(key) {
                             s.config.auto_restart = auto_restart;
@@ -9456,7 +9461,7 @@ impl LauncherApp {
                     ui.horizontal_wrapped(|ui| {
                         for act in &actions {
                             let act_btn = egui::Button::new(
-                                RichText::new(format!("⚡ {}", act.label))
+                                RichText::new(format!("{} {}", crate::lucide::ZAP, act.label))
                                     .size(10.5)
                                     .color(p.warning),
                             )
@@ -9469,7 +9474,7 @@ impl LauncherApp {
 
                         for lnk in &links {
                             let lnk_btn = egui::Button::new(
-                                RichText::new(format!("🔗 {}", lnk.label))
+                                RichText::new(format!("{} {}", crate::lucide::EXTERNAL_LINK, lnk.label))
                                     .size(10.5)
                                     .color(p.info),
                             )
@@ -9492,7 +9497,7 @@ impl LauncherApp {
                         .rounding(Rounding::same(4.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("🔍").color(p.accent));
+                                ui.label(RichText::new(crate::lucide::SEARCH).color(p.accent));
                                 let q_entry = self.search_queries.entry(key.to_string()).or_default();
                                 let search_input = ui.add(
                                     egui::TextEdit::singleline(q_entry)
@@ -9507,7 +9512,7 @@ impl LauncherApp {
                                 ui.checkbox(filter_entry, RichText::new("Filter lines").size(11.0).color(p.text_secondary));
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.button("✕").clicked() {
+                                    if ui.button(crate::lucide::X).clicked() {
                                         self.search_open.insert(key.to_string(), false);
                                     }
                                 });
@@ -9768,7 +9773,7 @@ impl LauncherApp {
                 if is_running {
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);
-                        ui.label(RichText::new("⚡ Shortcuts:").size(11.0).color(p.text_muted));
+                        ui.label(RichText::new(format!("{} Shortcuts:", crate::lucide::ZAP)).size(11.0).color(p.text_muted));
                         let shortcuts = [
                             ("h (help)", "h", "Send 'h + enter' (show dev server help & shortcuts)"),
                             ("r (restart)", "r", "Send 'r + enter' (restart dev server)"),
@@ -9836,7 +9841,7 @@ impl LauncherApp {
                         }
                     }
 
-                    let btn_console = egui::Button::new(RichText::new("💻 Console").size(11.0).color(p.accent_light))
+                    let btn_console = egui::Button::new(RichText::new(format!("{} Console", crate::lucide::TERMINAL)).size(11.0).color(p.accent_light))
                         .fill(p.bg_button)
                         .stroke(Stroke::NONE)
                         .rounding(Rounding::same(999.0));
@@ -9878,7 +9883,7 @@ impl LauncherApp {
                         .show(ui, |ui| {
                             ui.set_width(popup_w);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("⚡ Commands").size(11.0).strong().color(p.accent));
+                                ui.label(RichText::new(format!("{} Commands", crate::lucide::ZAP)).size(11.0).strong().color(p.accent));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new("↑↓ Navigate  •  Enter Select  •  Tab Complete  •  Esc Close").size(9.5).color(p.text_muted));
                                 });

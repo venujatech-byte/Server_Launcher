@@ -1231,7 +1231,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("⚡").size(13.0).color(Color32::from_rgb(196, 192, 255)));
+                                    ui.label(RichText::new(crate::lucide::ZAP).size(13.0).color(Color32::from_rgb(196, 192, 255)));
                                     ui.label(
                                         RichText::new("Pick a Template (Fast Setup)")
                                             .size(12.5)
@@ -1484,7 +1484,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     // Run at startup checkbox
                     ui.checkbox(
                         &mut state.autostart,
-                        RichText::new("🚀 Run server at startup")
+                        RichText::new(format!("{} Run server at startup", crate::lucide::PLAY))
                             .size(12.0)
                             .color(palette.text_primary),
                     );
@@ -1534,7 +1534,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                                 egui::TextEdit::singleline(cmd).clip_text(true),
                             );
                             if ui
-                                .button(RichText::new("✕").size(11.0).color(Color32::from_rgb(230, 80, 80)))
+                                .button(RichText::new(crate::lucide::X).size(11.0).color(Color32::from_rgb(230, 80, 80)))
                                 .clicked()
                             {
                                 remove_action_idx = Some(i);
@@ -1580,7 +1580,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                                 egui::TextEdit::singleline(url).clip_text(true),
                             );
                             if ui
-                                .button(RichText::new("✕").size(11.0).color(Color32::from_rgb(230, 80, 80)))
+                                .button(RichText::new(crate::lucide::X).size(11.0).color(Color32::from_rgb(230, 80, 80)))
                                 .clicked()
                             {
                                 remove_link_idx = Some(i);
@@ -1730,7 +1730,7 @@ pub fn render_command_palette(
     let max_h = (screen.height() - 100.0).max(300.0);
 
     let mut is_open = state.open;
-    Window::new("⚡ Quick Launch (Ctrl+P)")
+    Window::new(format!("{} Quick Launch (Ctrl+P)", crate::lucide::ZAP))
         .open(&mut is_open)
         .collapsible(false)
         .resizable(false)
@@ -1742,14 +1742,14 @@ pub fn render_command_palette(
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new("⚡ Quick Launch")
+                    RichText::new(format!("{} Quick Launch", crate::lucide::ZAP))
                         .size(14.0)
                         .strong()
                         .color(palette.text_primary),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .button(RichText::new("✕").size(12.0).color(palette.text_secondary))
+                        .button(RichText::new(crate::lucide::X).size(12.0).color(palette.text_secondary))
                         .clicked()
                     {
                         state.open = false;
@@ -1783,7 +1783,7 @@ pub fn render_command_palette(
                         for (i, (label, act)) in filtered.iter().enumerate() {
                             let selected = i == state.selected_idx;
                             let text = if selected {
-                                RichText::new(format!("❯  {}", label))
+                                RichText::new(format!("{}  {}", crate::lucide::CHEVRON_RIGHT, label))
                                     .color(palette.accent_light)
                                     .strong()
                             } else {
@@ -1977,7 +1977,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                             .rounding(Rounding::same(6.0))
                             .inner_margin(egui::Margin::same(6.0))
                             .show(ui, |ui| {
-                                ui.label(RichText::new("⚡").size(13.0).color(Color32::from_rgb(196, 192, 255)));
+                                ui.label(RichText::new(crate::lucide::ZAP).size(13.0).color(Color32::from_rgb(196, 192, 255)));
                             });
                         ui.add_space(6.0);
                         ui.vertical(|ui| {
@@ -2079,7 +2079,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                         .hint_text("e.g. ~/.ssh/id_ed25519 or /home/user/.ssh/id_rsa")
                         .clip_text(true),
                 );
-                let browse_btn = egui::Button::new(RichText::new("📁 Browse...").size(11.0).color(palette.text_secondary))
+                let browse_btn = egui::Button::new(RichText::new(format!("{} Browse...", crate::lucide::FOLDER)).size(11.0).color(palette.text_secondary))
                     .fill(Color32::from_rgb(26, 29, 40))
                     .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
                     .rounding(Rounding::same(6.0));
@@ -2095,7 +2095,11 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             ui.horizontal(|ui| {
                 ui.label(RichText::new("SSH Password (optional if using key/agent)").size(12.0).strong().color(palette.text_primary));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let eye_label = if state.show_password { "👁 Hide" } else { "👁 Show" };
+                    let eye_label = if state.show_password {
+                        format!("{} Hide", crate::lucide::EYE_OFF)
+                    } else {
+                        format!("{} Show", crate::lucide::EYE)
+                    };
                     if ui.small_button(eye_label).clicked() {
                         state.show_password = !state.show_password;
                     }
@@ -2134,7 +2138,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             // Footer
             ui.horizontal(|ui| {
                 // Test Connection button
-                let test_btn = egui::Button::new(RichText::new("⚡ Test Connection").size(11.5).color(Color32::from_rgb(196, 192, 255)))
+                let test_btn = egui::Button::new(RichText::new(format!("{} Test Connection", crate::lucide::ZAP)).size(11.5).color(Color32::from_rgb(196, 192, 255)))
                     .fill(Color32::from_rgb(26, 29, 42))
                     .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 50, 72)))
                     .rounding(Rounding::same(999.0));
@@ -2295,7 +2299,7 @@ pub fn render_close_confirmation_modal(
             ui.vertical(|ui| {
                 // Header with warning icon
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("⚠️").size(24.0));
+                    ui.label(RichText::new(crate::lucide::ALERT_TRIANGLE).size(24.0).color(palette.warning));
                     ui.add_space(4.0);
                     ui.vertical(|ui| {
                         ui.label(
@@ -2372,7 +2376,7 @@ pub fn render_close_confirmation_modal(
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let btn_stop = egui::Button::new(
-                            RichText::new("🛑 Stop & Exit").size(12.0).strong().color(Color32::WHITE),
+                            RichText::new(format!("{} Stop & Exit", crate::lucide::STOP)).size(12.0).strong().color(Color32::WHITE),
                         )
                         .fill(palette.danger)
                         .stroke(Stroke::NONE)
@@ -2428,7 +2432,11 @@ pub fn render_script_modal(
     }
 
     let mut result = None;
-    let title = if state.is_edit { "✏ Edit Custom Script" } else { "📜 New Custom Script" };
+    let title = if state.is_edit {
+        format!("{} Edit Custom Script", crate::lucide::PENCIL)
+    } else {
+        format!("{} New Custom Script", crate::lucide::SCRIPT)
+    };
 
     let screen = ctx.screen_rect();
     let modal_w = 540.0_f32.min(screen.width() - 40.0).max(360.0);
@@ -2437,7 +2445,7 @@ pub fn render_script_modal(
     let mut is_open = state.open;
     let window_id = egui::Id::new("script_modal_dialog");
     let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
-    Window::new(title)
+    Window::new(&title)
         .id(window_id)
         .title_bar(false)
         .collapsible(false)
@@ -2463,7 +2471,7 @@ pub fn render_script_modal(
                 .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
         )
         .show(ctx, |ui| {
-            render_modal_titlebar(ui, title, &mut is_open);
+            render_modal_titlebar(ui, &title, &mut is_open);
             ui.add_space(8.0);
             ui.add_space(4.0);
 
@@ -2519,7 +2527,7 @@ pub fn render_script_modal(
             // Startup Autostart Toggle
             ui.checkbox(
                 &mut state.autostart,
-                RichText::new("⚡ Run automatically at startup / connection")
+                RichText::new(format!("{} Run automatically at startup / connection", crate::lucide::ZAP))
                     .size(12.0)
                     .color(palette.accent)
                     .strong(),
@@ -2562,7 +2570,7 @@ pub fn render_script_modal(
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_save = egui::Button::new(
-                        RichText::new("💾 Save Script").size(12.0).strong().color(Color32::WHITE),
+                        RichText::new(format!("{} Save Script", crate::lucide::SAVE)).size(12.0).strong().color(Color32::WHITE),
                     )
                     .fill(palette.accent)
                     .rounding(Rounding::same(5.0))
@@ -2616,7 +2624,11 @@ pub fn render_command_modal(
     }
 
     let mut result = None;
-    let title = if state.is_edit { "✏ Edit Saved Command" } else { "⚡ Save Custom Command" };
+    let title = if state.is_edit {
+        format!("{} Edit Saved Command", crate::lucide::PENCIL)
+    } else {
+        format!("{} Save Custom Command", crate::lucide::COMMAND)
+    };
 
     let screen = ctx.screen_rect();
     let modal_w = 480.0_f32.min(screen.width() - 40.0).max(340.0);
@@ -2625,7 +2637,7 @@ pub fn render_command_modal(
     let mut is_open = state.open;
     let window_id = egui::Id::new("command_modal_dialog");
     let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
-    Window::new(title)
+    Window::new(&title)
         .id(window_id)
         .title_bar(false)
         .collapsible(false)
@@ -2651,7 +2663,7 @@ pub fn render_command_modal(
                 .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
         )
         .show(ctx, |ui| {
-            render_modal_titlebar(ui, title, &mut is_open);
+            render_modal_titlebar(ui, &title, &mut is_open);
             ui.add_space(8.0);
             ui.add_space(4.0);
 
@@ -2740,7 +2752,7 @@ pub fn render_command_modal(
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_save = egui::Button::new(
-                        RichText::new("💾 Save Command").size(12.0).strong().color(Color32::WHITE),
+                        RichText::new(format!("{} Save Command", crate::lucide::SAVE)).size(12.0).strong().color(Color32::WHITE),
                     )
                     .fill(palette.accent)
                     .rounding(Rounding::same(5.0))
@@ -2930,7 +2942,7 @@ pub fn render_new_service_modal(
             ui.add_space(8.0);
 
             // Generated Preview
-            ui.collapsing("🔍 Preview Generated Unit File", |ui| {
+            ui.collapsing(format!("{} Preview Generated Unit File", crate::lucide::SEARCH), |ui| {
                 let preview = state.def.generate_service_content();
                 ui.add(
                     egui::TextEdit::multiline(&mut preview.as_str())
@@ -2958,7 +2970,7 @@ pub fn render_new_service_modal(
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_create = egui::Button::new(
-                        RichText::new("🚀 Create & Enable Service").size(12.0).strong().color(Color32::WHITE),
+                        RichText::new(format!("{} Create & Enable Service", crate::lucide::PLAY)).size(12.0).strong().color(Color32::WHITE),
                     )
                     .fill(palette.accent)
                     .rounding(Rounding::same(5.0))
@@ -3092,7 +3104,7 @@ pub fn render_remote_start_server_modal(
                     .rounding(Rounding::same(8.0))
                     .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                     .show(ui, |ui| {
-                        ui.label(RichText::new(format!("⚠️ {}", err)).size(11.0).color(Color32::from_rgb(252, 165, 165)));
+                        ui.label(RichText::new(format!("{} {}", crate::lucide::ALERT_TRIANGLE, err)).size(11.0).color(Color32::from_rgb(252, 165, 165)));
                     });
                 ui.add_space(8.0);
             }
@@ -3241,7 +3253,7 @@ pub fn render_sudo_modal(
     }
 
     let mut result = None;
-    let title = "🔒 Superuser Authentication";
+    let title = format!("{} Superuser Authentication", crate::lucide::LOCK);
 
     let screen = ctx.screen_rect();
     let modal_w = 460.0_f32.min(screen.width() - 40.0).max(340.0);
@@ -3258,7 +3270,7 @@ pub fn render_sudo_modal(
         is_open = false;
     }
 
-    Window::new(title)
+    Window::new(&title)
         .id(window_id)
         .title_bar(false)
         .collapsible(false)
@@ -3282,7 +3294,7 @@ pub fn render_sudo_modal(
                 .inner_margin(egui::Margin::symmetric(16.0, 14.0)),
         )
         .show(ctx, |ui| {
-            render_modal_titlebar(ui, title, &mut is_open);
+            render_modal_titlebar(ui, &title, &mut is_open);
             ui.add_space(10.0);
 
             let script_name = state.script.as_ref().map(|s| s.name.as_str()).unwrap_or("Script");
@@ -3299,7 +3311,7 @@ pub fn render_sudo_modal(
                 .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("🛡").size(22.0));
+                        ui.label(RichText::new(crate::lucide::SHIELD).size(22.0).color(palette.accent));
                         ui.add_space(6.0);
                         ui.vertical(|ui| {
                             ui.label(
@@ -3327,7 +3339,7 @@ pub fn render_sudo_modal(
                     .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("✘").size(12.0).color(palette.danger));
+                            ui.label(RichText::new(crate::lucide::X).size(12.0).color(palette.danger));
                             ui.label(RichText::new(err).size(11.5).color(palette.danger));
                         });
                     });
@@ -3355,7 +3367,7 @@ pub fn render_sudo_modal(
                 }
 
                 let eye_btn = egui::Button::new(
-                    RichText::new(if state.show_password { "👁" } else { "🔒" }).size(12.0),
+                    RichText::new(if state.show_password { crate::lucide::EYE_OFF } else { crate::lucide::EYE }).size(12.0),
                 )
                 .fill(Color32::from_rgb(30, 34, 48))
                 .rounding(Rounding::same(6.0));
@@ -3372,7 +3384,7 @@ pub fn render_sudo_modal(
 
             ui.add_space(6.0);
             ui.label(
-                RichText::new("🔒 Password is securely provided via askpass helper and not saved.")
+                RichText::new(format!("{} Password is securely provided via askpass helper and not saved.", crate::lucide::LOCK))
                     .size(10.5)
                     .color(palette.text_muted),
             );
@@ -3382,7 +3394,7 @@ pub fn render_sudo_modal(
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_submit = egui::Button::new(
-                        RichText::new("▶ Authenticate & Run")
+                        RichText::new(format!("{} Authenticate & Run", crate::lucide::PLAY))
                             .size(12.0)
                             .strong()
                             .color(Color32::WHITE),

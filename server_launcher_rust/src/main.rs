@@ -6,6 +6,7 @@ mod scanner;
 mod service;
 pub mod autostart;
 pub mod commands;
+pub mod lucide;
 pub mod scripts;
 pub mod sensors;
 pub mod systemd;
@@ -102,6 +103,9 @@ fn main() -> eframe::Result<()> {
                 .map(ThemeMode::from_id_str)
                 .unwrap_or_default();
             cc.egui_ctx.set_visuals(initial_theme.palette().egui_visuals());
+
+            // Initialize Lucide icon pack font for crisp, reliable vector icon rendering
+            lucide::setup_lucide_font(&cc.egui_ctx);
 
             // Scale UI for comfortable modern HiDPI reading
             cc.egui_ctx.set_pixels_per_point(1.15);

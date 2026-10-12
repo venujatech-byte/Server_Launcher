@@ -723,6 +723,45 @@ pub fn parse_ssh_config_str(content: &str, home: &std::path::Path) -> Vec<SshRem
     hosts
 }
 
+/// Terminate a process on a remote SSH host using sudo if available, falling back to kill -9
+pub fn kill_remote_process_pid(host: &SshRemoteHost, pid: u32) -> Result<(), String> {
+    let has_pass = !host.password.trim().is_empty();
+    let kill_cmd = if has_pass {
+        let pass = host.password.trim();
+        format!(
+            "(echo '{}' | sudo -S kill -15 {} 2>/dev/null; sleep 0.1; echo '{}' | sudo -S kill -9 {} 2>/dev/null) \
+             || (sudo -n kill -15 {} 2>/dev/null; sleep 0.1; sudo -n kill -9 {} 2>/dev/null) \
+             || (sudo kill -15 {} 2>/dev/null; sleep 0.1; sudo kill -9 {} 2>/dev/null) \
+             || (kill -15 {} 2>/dev/null; sleep 0.1; kill -9 {} 2>/dev/null)",
+            pass, pid, pass, pid, pid, pid, pid, pid, pid, pid
+        )
+    } else {
+        format!(
+            "(sudo -n kill -15 {} 2>/dev/null; sleep 0.1; sudo -n kill -9 {} 2>/dev/null) \
+             || (sudo kill -15 {} 2>/dev/null; sleep 0.1; sudo kill -9 {} 2>/dev/null) \
+             || (kill -15 {} 2>/dev/null; sleep 0.1; kill -9 {} 2>/dev/null)",
+            pid, pid, pid, pid, pid, pid
+        )
+    };
+
+    let mut cmd = build_ssh_command(host, &kill_cmd);
+    match cmd.output() {
+        Ok(out) => {
+            if out.status.success() {
+                Ok(())
+            } else {
+                let err = String::from_utf8_lossy(&out.stderr);
+                if err.trim().is_empty() {
+                    Ok(())
+                } else {
+                    Err(format!("Remote kill failed: {}", err.trim()))
+                }
+            }
+        }
+        Err(e) => Err(format!("Failed to execute remote kill: {}", e)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

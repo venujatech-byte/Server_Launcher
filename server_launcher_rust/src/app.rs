@@ -8160,13 +8160,13 @@ impl LauncherApp {
                 });
                 }
                 SensorsSubTab::TopApps => {
-                    self.render_sensors_top_apps_tab(ui, &snap);
+                    self.render_sensors_top_apps_tab(ui, &snap, host_id);
                 }
             }
         });
     }
 
-    fn render_sensors_top_apps_tab(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot) {
+    fn render_sensors_top_apps_tab(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
 
         // Fixed column widths and compact spacing matching Windows 11 Task Manager
@@ -9101,9 +9101,31 @@ impl LauncherApp {
         }
 
         if let Some(pid) = kill_target_pid {
-            crate::scanner::kill_process_pid(pid);
-            self.sensors_top_apps_selected_pid = None;
-            self.sensors_top_apps_status_msg = Some((format!("Terminated process PID {}", pid), false, Instant::now()));
+            if let Some(hid) = host_id {
+                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                    let host_name = host.name.clone();
+                    let hid_clone = hid.to_string();
+                    let snapshots_arc = self.remote_sensors_snapshots.clone();
+                    let last_fetch_arc = self.remote_sensors_last_fetch.clone();
+                    let errors_arc = self.remote_sensors_errors.clone();
+
+                    std::thread::spawn(move || {
+                        let _ = crate::remote::kill_remote_process_pid(&host, pid);
+                        std::thread::sleep(std::time::Duration::from_millis(400));
+                        if let Ok(snap) = crate::sensors::query_remote_sensors(&host) {
+                            snapshots_arc.lock().unwrap().insert(hid_clone.clone(), snap);
+                            last_fetch_arc.lock().unwrap().insert(hid_clone.clone(), Instant::now());
+                            errors_arc.lock().unwrap().remove(&hid_clone);
+                        }
+                    });
+                    self.sensors_top_apps_selected_pid = None;
+                    self.sensors_top_apps_status_msg = Some((format!("Terminated remote process PID {} on {} (sudo)", pid, host_name), false, Instant::now()));
+                }
+            } else {
+                crate::scanner::kill_process_pid(pid);
+                self.sensors_top_apps_selected_pid = None;
+                self.sensors_top_apps_status_msg = Some((format!("Terminated process PID {}", pid), false, Instant::now()));
+            }
         }
     }
 

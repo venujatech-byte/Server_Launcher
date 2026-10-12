@@ -5075,7 +5075,8 @@ impl LauncherApp {
             // Single-line horizontal scrollable pill bar (never wraps vertically, keeps cards visible!)
             ScrollArea::horizontal()
                 .id_salt("cmd_cat_pills_hscroll")
-                .auto_shrink([false, false])
+                .auto_shrink([false, true])
+                .max_height(32.0)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
@@ -10756,7 +10757,8 @@ impl LauncherApp {
             // 1. Group Filter Pills Bar (single-line horizontal scrollable)
             ScrollArea::horizontal()
                 .id_salt("server_groups_hscroll")
-                .auto_shrink([false, false])
+                .auto_shrink([false, true])
+                .max_height(32.0)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;

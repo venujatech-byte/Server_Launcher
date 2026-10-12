@@ -5020,7 +5020,16 @@ impl LauncherApp {
 
             ui.add_space(6.0);
 
-            // Category Filter Pills
+            // Search filter
+            ui.add(
+                egui::TextEdit::singleline(&mut self.saved_command_search)
+                    .hint_text(format!("{} Filter commands...", crate::lucide::SEARCH))
+                    .desired_width(ui.available_width()),
+            );
+
+            ui.add_space(6.0);
+
+            // Category Filter Row
             let mut categories = vec!["All".to_string()];
             let mut unique_cats = BTreeSet::new();
             for c in &self.saved_commands {
@@ -5030,30 +5039,61 @@ impl LauncherApp {
             }
             categories.extend(unique_cats);
 
-            ui.horizontal_wrapped(|ui| {
-                for cat in categories {
-                    let is_active = self.saved_command_category == cat;
-                    let bg = if is_active { p.accent } else { p.bg_button };
-                    let fg = if is_active { p.accent_text } else { p.text_secondary };
-                    let btn = egui::Button::new(RichText::new(&cat).size(10.5).color(fg))
-                        .fill(bg)
-                        .rounding(Rounding::same(4.0));
-                    if ui.add(btn).clicked() {
-                        self.saved_command_category = cat;
-                    }
-                }
+            if !categories.contains(&self.saved_command_category) {
+                self.saved_command_category = "All".to_string();
+            }
+
+            // ComboBox selector for quick direct access to any category
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Category:").size(11.0).color(p.text_muted));
+                let cur_cat = &self.saved_command_category;
+                let count = if cur_cat == "All" {
+                    self.saved_commands.iter().filter(|c| c.host_id.as_deref() == host_id).count()
+                } else {
+                    self.saved_commands.iter().filter(|c| c.host_id.as_deref() == host_id && &c.category == cur_cat).count()
+                };
+                let combo_label = format!("{} ({})", cur_cat, count);
+
+                egui::ComboBox::from_id_salt("cmd_cat_combo")
+                    .selected_text(RichText::new(combo_label).size(11.0).strong().color(p.accent_light))
+                    .width((ui.available_width() - 4.0).max(40.0))
+                    .show_ui(ui, |ui| {
+                        for cat in &categories {
+                            let cat_count = if cat == "All" {
+                                self.saved_commands.iter().filter(|c| c.host_id.as_deref() == host_id).count()
+                            } else {
+                                self.saved_commands.iter().filter(|c| c.host_id.as_deref() == host_id && &c.category == cat).count()
+                            };
+                            let label = format!("{} ({})", cat, cat_count);
+                            ui.selectable_value(&mut self.saved_command_category, cat.clone(), label);
+                        }
+                    });
             });
 
+            ui.add_space(4.0);
+
+            // Single-line horizontal scrollable pill bar (never wraps vertically, keeps cards visible!)
+            ScrollArea::horizontal()
+                .id_salt("cmd_cat_pills_hscroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        for cat in &categories {
+                            let is_active = self.saved_command_category == *cat;
+                            let bg = if is_active { p.accent } else { p.bg_button };
+                            let fg = if is_active { p.accent_text } else { p.text_secondary };
+                            let btn = egui::Button::new(RichText::new(cat).size(10.5).color(fg))
+                                .fill(bg)
+                                .rounding(Rounding::same(999.0));
+                            if ui.add(btn).clicked() {
+                                self.saved_command_category = cat.clone();
+                            }
+                        }
+                    });
+                });
+
             ui.add_space(6.0);
-
-            // Search filter
-            ui.add(
-                egui::TextEdit::singleline(&mut self.saved_command_search)
-                    .hint_text(format!("{} Filter commands...", crate::lucide::SEARCH))
-                    .desired_width(ui.available_width()),
-            );
-
-            ui.add_space(8.0);
 
             let q = self.saved_command_search.trim().to_lowercase();
             let cat_filter = &self.saved_command_category;
@@ -10713,39 +10753,46 @@ impl LauncherApp {
             ui.set_width(ui.available_width());
             ui.set_max_width(ui.available_width());
             // 1. Group Filter Pills Bar
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Group:").size(11.5).color(p.text_muted));
+            // 1. Group Filter Pills Bar (single-line horizontal scrollable)
+            ScrollArea::horizontal()
+                .id_salt("server_groups_hscroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        ui.label(RichText::new("Group:").size(11.0).color(p.text_muted));
 
-                let mut all_groups = vec!["All".to_string()];
-                let mut unique_groups = BTreeSet::new();
-                for s in &self.services {
-                    unique_groups.insert(s.config.group.clone());
-                }
-                all_groups.extend(unique_groups);
+                        let mut all_groups = vec!["All".to_string()];
+                        let mut unique_groups = BTreeSet::new();
+                        for s in &self.services {
+                            unique_groups.insert(s.config.group.clone());
+                        }
+                        all_groups.extend(unique_groups);
 
-                for grp in all_groups {
-                    let is_active = self.active_group_filter == grp;
-                    let bg_color = if is_active {
-                        p.accent
-                    } else {
-                        p.bg_button
-                    };
-                    let text_color = if is_active {
-                        p.accent_text
-                    } else {
-                        p.text_secondary
-                    };
+                        for grp in all_groups {
+                            let is_active = self.active_group_filter == grp;
+                            let bg_color = if is_active {
+                                p.accent
+                            } else {
+                                p.bg_button
+                            };
+                            let text_color = if is_active {
+                                p.accent_text
+                            } else {
+                                p.text_secondary
+                            };
 
-                    let btn = egui::Button::new(RichText::new(&grp).size(11.0).color(text_color))
-                        .fill(bg_color)
-                        .rounding(Rounding::same(999.0))
-                        .stroke(Stroke::NONE);
+                            let btn = egui::Button::new(RichText::new(&grp).size(11.0).color(text_color))
+                                .fill(bg_color)
+                                .rounding(Rounding::same(999.0))
+                                .stroke(Stroke::NONE);
 
-                    if ui.add(btn).clicked() {
-                        self.active_group_filter = grp.clone();
-                    }
-                }
-            });
+                            if ui.add(btn).clicked() {
+                                self.active_group_filter = grp.clone();
+                            }
+                        }
+                    });
+                });
 
             ui.add_space(6.0);
 

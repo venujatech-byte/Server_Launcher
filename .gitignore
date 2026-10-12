@@ -5,3 +5,4 @@ target/
 **/target/
 fedora_commands.json
 ubuntu_commands.json
+guide.md

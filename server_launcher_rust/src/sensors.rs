@@ -229,6 +229,10 @@ impl SystemSensorsCollector {
     }
 
     pub fn collect(&mut self) -> SystemSensorsSnapshot {
+        self.collect_with_top_apps(true)
+    }
+
+    pub fn collect_with_top_apps(&mut self, include_top_apps: bool) -> SystemSensorsSnapshot {
         // 1. Refresh System
         self.sys.refresh_cpu_all();
         self.sys.refresh_memory();
@@ -464,51 +468,53 @@ impl SystemSensorsCollector {
         let power = collect_power_supply();
 
         // 9. Top Applications & Resource Consumers
-        self.sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
         let mut top_apps = Vec::new();
-        let mut current_proc_disk = HashMap::new();
+        if include_top_apps {
+            self.sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
+            let mut current_proc_disk = HashMap::new();
 
-        for (pid, proc) in self.sys.processes() {
-            let pid_u32 = pid.as_u32();
-            let name = proc.name().to_string_lossy().to_string();
-            let cpu_usage = proc.cpu_usage();
-            let memory_bytes = proc.memory();
-            let disk_usage = proc.disk_usage();
-            let read_b = disk_usage.read_bytes;
-            let written_b = disk_usage.written_bytes;
+            for (pid, proc) in self.sys.processes() {
+                let pid_u32 = pid.as_u32();
+                let name = proc.name().to_string_lossy().to_string();
+                let cpu_usage = proc.cpu_usage();
+                let memory_bytes = proc.memory();
+                let disk_usage = proc.disk_usage();
+                let read_b = disk_usage.read_bytes;
+                let written_b = disk_usage.written_bytes;
 
-            current_proc_disk.insert(pid_u32, (read_b, written_b));
+                current_proc_disk.insert(pid_u32, (read_b, written_b));
 
-            let (prev_r, prev_w) = self.prev_proc_disk.get(&pid_u32).copied().unwrap_or((read_b, written_b));
-            let r_rate = (read_b.saturating_sub(prev_r) as f64) / disk_elapsed_secs;
-            let w_rate = (written_b.saturating_sub(prev_w) as f64) / disk_elapsed_secs;
-            let disk_rate_bps = r_rate + w_rate;
+                let (prev_r, prev_w) = self.prev_proc_disk.get(&pid_u32).copied().unwrap_or((read_b, written_b));
+                let r_rate = (read_b.saturating_sub(prev_r) as f64) / disk_elapsed_secs;
+                let w_rate = (written_b.saturating_sub(prev_w) as f64) / disk_elapsed_secs;
+                let disk_rate_bps = r_rate + w_rate;
 
-            let status = format!("{:?}", proc.status());
+                let status = format!("{:?}", proc.status());
 
-            top_apps.push(ProcessSensorInfo {
-                pid: pid_u32,
-                name,
-                cpu_usage,
-                memory_bytes,
-                disk_read_bytes: read_b,
-                disk_written_bytes: written_b,
-                disk_read_rate_bps: r_rate,
-                disk_write_rate_bps: w_rate,
-                disk_rate_bps,
-                status,
+                top_apps.push(ProcessSensorInfo {
+                    pid: pid_u32,
+                    name,
+                    cpu_usage,
+                    memory_bytes,
+                    disk_read_bytes: read_b,
+                    disk_written_bytes: written_b,
+                    disk_read_rate_bps: r_rate,
+                    disk_write_rate_bps: w_rate,
+                    disk_rate_bps,
+                    status,
+                });
+            }
+            self.prev_proc_disk = current_proc_disk;
+
+            // Sort by CPU usage descending by default, then memory
+            top_apps.sort_by(|a, b| {
+                b.cpu_usage
+                    .partial_cmp(&a.cpu_usage)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| b.memory_bytes.cmp(&a.memory_bytes))
             });
+            top_apps.truncate(50);
         }
-        self.prev_proc_disk = current_proc_disk;
-
-        // Sort by CPU usage descending by default, then memory
-        top_apps.sort_by(|a, b| {
-            b.cpu_usage
-                .partial_cmp(&a.cpu_usage)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| b.memory_bytes.cmp(&a.memory_bytes))
-        });
-        top_apps.truncate(50);
 
         SystemSensorsSnapshot {
             cpu_brand,

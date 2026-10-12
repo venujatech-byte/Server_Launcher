@@ -578,6 +578,432 @@ pub fn create_remote_service(host: &SshRemoteHost, def: &NewServiceDefinition) -
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UnitFilesInfo {
+    pub fragment_path: Option<String>,
+    pub drop_in_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UnitDependenciesInfo {
+    pub requires: Vec<String>,
+    pub wants: Vec<String>,
+    pub required_by: Vec<String>,
+    pub wanted_by: Vec<String>,
+    pub after: Vec<String>,
+    pub before: Vec<String>,
+    pub conflicts: Vec<String>,
+    pub part_of: Vec<String>,
+    pub binds_to: Vec<String>,
+    pub tree_output: String,
+}
+
+pub fn parse_show_files_output(stdout: &str) -> UnitFilesInfo {
+    let mut info = UnitFilesInfo::default();
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("FragmentPath=") {
+            let path = rest.trim();
+            if !path.is_empty() {
+                info.fragment_path = Some(path.to_string());
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("DropInPaths=") {
+            for p in rest.split_whitespace() {
+                if !p.is_empty() && !info.drop_in_paths.contains(&p.to_string()) {
+                    info.drop_in_paths.push(p.to_string());
+                }
+            }
+        }
+    }
+    info
+}
+
+pub fn parse_show_dependencies_output(stdout: &str) -> UnitDependenciesInfo {
+    let mut info = UnitDependenciesInfo::default();
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if let Some((key, val)) = trimmed.split_once('=') {
+            let list: Vec<String> = val.split_whitespace().map(|s| s.to_string()).collect();
+            match key {
+                "Requires" => info.requires = list,
+                "Wants" => info.wants = list,
+                "RequiredBy" => info.required_by = list,
+                "WantedBy" => info.wanted_by = list,
+                "After" => info.after = list,
+                "Before" => info.before = list,
+                "Conflicts" => info.conflicts = list,
+                "PartOf" => info.part_of = list,
+                "BindsTo" => info.binds_to = list,
+                _ => {}
+            }
+        }
+    }
+    info
+}
+
+pub fn get_local_unit_files(unit: &str, user_mode: bool) -> UnitFilesInfo {
+    let mut cmd = Command::new("systemctl");
+    if user_mode {
+        cmd.arg("--user");
+    }
+    cmd.args(["show", "-p", "FragmentPath", "-p", "DropInPaths", unit]);
+    let mut info = match cmd.output() {
+        Ok(out) if out.status.success() => {
+            parse_show_files_output(&String::from_utf8_lossy(&out.stdout))
+        }
+        _ => UnitFilesInfo::default(),
+    };
+
+    // Fallbacks if FragmentPath not found
+    if info.fragment_path.is_none() {
+        if user_mode {
+            if let Ok(home) = std::env::var("HOME") {
+                let p = PathBuf::from(home).join(".config").join("systemd").join("user").join(unit);
+                if p.exists() {
+                    info.fragment_path = Some(p.to_string_lossy().to_string());
+                }
+            }
+        } else {
+            for dir in ["/etc/systemd/system", "/lib/systemd/system", "/usr/lib/systemd/system"] {
+                let p = PathBuf::from(dir).join(unit);
+                if p.exists() {
+                    info.fragment_path = Some(p.to_string_lossy().to_string());
+                    break;
+                }
+            }
+        }
+    }
+
+    // Also check for drop-in folder if empty
+    let dropin_dir = if user_mode {
+        std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config").join("systemd").join("user").join(format!("{}.d", unit)))
+    } else {
+        Some(PathBuf::from("/etc/systemd/system").join(format!("{}.d", unit)))
+    };
+    if let Some(dir) = dropin_dir {
+        if dir.exists() {
+            if let Ok(entries) = fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() && path.extension().map_or(false, |ext| ext == "conf") {
+                        let path_str = path.to_string_lossy().to_string();
+                        if !info.drop_in_paths.contains(&path_str) {
+                            info.drop_in_paths.push(path_str);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    info.drop_in_paths.sort();
+    info
+}
+
+pub fn get_remote_unit_files(host: &SshRemoteHost, unit: &str, user_mode: bool) -> Result<UnitFilesInfo, String> {
+    let script = if user_mode {
+        format!(
+            "uid=$(id -u); export XDG_RUNTIME_DIR=/run/user/$uid; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; \
+             systemctl --user show -p FragmentPath -p DropInPaths {unit} 2>/dev/null",
+            unit = unit
+        )
+    } else {
+        format!("systemctl show -p FragmentPath -p DropInPaths {unit} 2>/dev/null", unit = unit)
+    };
+    let mut cmd = build_ssh_command(host, &script);
+    match cmd.output() {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let mut info = parse_show_files_output(&stdout);
+            info.drop_in_paths.sort();
+            Ok(info)
+        }
+        Err(e) => Err(format!("SSH error: {}", e)),
+    }
+}
+
+pub fn read_local_unit_file(path: &str, sudo_password: Option<&str>) -> Result<String, String> {
+    match fs::read_to_string(path) {
+        Ok(content) => Ok(content),
+        Err(e) => {
+            let pass = sudo_password.unwrap_or("").trim();
+            if !pass.is_empty() {
+                let mut cmd = Command::new("sudo");
+                cmd.arg("-S").arg("-p").arg("").arg("cat").arg(path);
+                cmd.stdin(std::process::Stdio::piped())
+                   .stdout(std::process::Stdio::piped())
+                   .stderr(std::process::Stdio::piped());
+                if let Ok(mut child) = cmd.spawn() {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        use std::io::Write;
+                        let _ = writeln!(stdin, "{}", pass);
+                    }
+                    if let Ok(out) = child.wait_with_output() {
+                        if out.status.success() {
+                            return Ok(String::from_utf8_lossy(&out.stdout).to_string());
+                        }
+                    }
+                }
+            }
+            Err(format!("Could not read file {}: {}", path, e))
+        }
+    }
+}
+
+pub fn read_remote_unit_file(host: &SshRemoteHost, path: &str) -> Result<String, String> {
+    let pass = host.password.trim();
+    let script = if !pass.is_empty() {
+        format!("cat '{path}' 2>/dev/null || (echo {pass} | sudo -S cat '{path}' 2>/dev/null) || sudo -n cat '{path}'", path = path, pass = pass)
+    } else {
+        format!("cat '{path}' 2>/dev/null || sudo -n cat '{path}'", path = path)
+    };
+    let mut cmd = build_ssh_command(host, &script);
+    match cmd.output() {
+        Ok(out) => {
+            if out.status.success() {
+                Ok(String::from_utf8_lossy(&out.stdout).to_string())
+            } else {
+                let err = String::from_utf8_lossy(&out.stderr);
+                Err(if err.trim().is_empty() { "Failed to read remote unit file".to_string() } else { err.trim().to_string() })
+            }
+        }
+        Err(e) => Err(format!("SSH error reading unit file: {}", e)),
+    }
+}
+
+pub fn write_local_unit_file(path: &str, content: &str, user_mode: bool, sudo_password: Option<&str>) -> Result<String, String> {
+    let target = PathBuf::from(path);
+    if user_mode || path.starts_with("/home/") || path.contains("/.config/") {
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory {:?}: {}", parent, e))?;
+        }
+        fs::write(&target, content).map_err(|e| format!("Failed to write {:?}: {}", target, e))?;
+
+        let mut reload_cmd = Command::new("systemctl");
+        if user_mode {
+            reload_cmd.arg("--user");
+        }
+        reload_cmd.arg("daemon-reload");
+        let _ = reload_cmd.output();
+        Ok(format!("Saved {:?} and reloaded daemon", target))
+    } else {
+        // System file requires root
+        let pass = sudo_password.unwrap_or("").trim();
+        let temp_dir = std::env::temp_dir();
+        let nanos = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let temp_path = temp_dir.join(format!("sl_edit_{}_{}.conf", std::process::id(), nanos));
+        fs::write(&temp_path, content).map_err(|e| format!("Failed to write temp file {:?}: {}", temp_path, e))?;
+
+        let temp_file_str = temp_path.to_string_lossy().to_string();
+        let parent_str = target.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "/etc/systemd/system".to_string());
+        let sh_cmd = format!(
+            "mkdir -p '{}' && cp '{}' '{}' && chmod 644 '{}' && systemctl daemon-reload",
+            parent_str, temp_file_str, path, path
+        );
+
+        let mut cmd = Command::new("sudo");
+        if !pass.is_empty() {
+            cmd.arg("-S").arg("-p").arg("");
+        } else {
+            cmd.arg("-n");
+        }
+        cmd.arg("sh").arg("-c").arg(&sh_cmd);
+        cmd.stdin(std::process::Stdio::piped())
+           .stdout(std::process::Stdio::piped())
+           .stderr(std::process::Stdio::piped());
+
+        let res = match cmd.spawn() {
+            Ok(mut child) => {
+                if !pass.is_empty() {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        use std::io::Write;
+                        let _ = writeln!(stdin, "{}", pass);
+                    }
+                }
+                match child.wait_with_output() {
+                    Ok(out) => {
+                        if out.status.success() {
+                            Ok(format!("Saved {} and reloaded daemon", path))
+                        } else {
+                            let err = String::from_utf8_lossy(&out.stderr);
+                            Err(if err.trim().is_empty() { "Sudo write failed".to_string() } else { err.trim().to_string() })
+                        }
+                    }
+                    Err(e) => Err(format!("Failed to wait for sudo: {}", e)),
+                }
+            }
+            Err(e) => Err(format!("Failed to spawn sudo: {}", e)),
+        };
+        let _ = fs::remove_file(&temp_path);
+        res
+    }
+}
+
+pub fn write_remote_unit_file(host: &SshRemoteHost, path: &str, content: &str, user_mode: bool) -> Result<String, String> {
+    let pass = host.password.trim();
+    let script = if user_mode {
+        format!(
+            "mkdir -p \"$(dirname '{path}')\" && cat << 'EOF' > '{path}'\n{content}\nEOF\n\
+             uid=$(id -u); export XDG_RUNTIME_DIR=/run/user/$uid; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; \
+             systemctl --user daemon-reload",
+            path = path, content = content
+        )
+    } else if !pass.is_empty() {
+        format!(
+            "echo {pass} | sudo -S mkdir -p \"$(dirname '{path}')\" && \
+             echo '{pass}' | sudo -S tee '{path}' > /dev/null << 'EOF'\n{content}\nEOF\n\
+             echo {pass} | sudo -S systemctl daemon-reload",
+            path = path, content = content, pass = pass
+        )
+    } else {
+        format!(
+            "sudo -n mkdir -p \"$(dirname '{path}')\" && \
+             sudo -n tee '{path}' > /dev/null << 'EOF'\n{content}\nEOF\n\
+             sudo -n systemctl daemon-reload",
+            path = path, content = content
+        )
+    };
+    let mut cmd = build_ssh_command(host, &script);
+    match cmd.output() {
+        Ok(out) => {
+            if out.status.success() {
+                Ok(format!("Remote {} saved and daemon reloaded", path))
+            } else {
+                let err = String::from_utf8_lossy(&out.stderr);
+                Err(if err.trim().is_empty() { "Failed to write remote file".to_string() } else { err.trim().to_string() })
+            }
+        }
+        Err(e) => Err(format!("SSH error writing file: {}", e)),
+    }
+}
+
+pub fn delete_local_drop_in(path: &str, user_mode: bool, sudo_password: Option<&str>) -> Result<String, String> {
+    if user_mode || path.starts_with("/home/") || path.contains("/.config/") {
+        let _ = fs::remove_file(path);
+        let mut reload_cmd = Command::new("systemctl");
+        if user_mode {
+            reload_cmd.arg("--user");
+        }
+        reload_cmd.arg("daemon-reload");
+        let _ = reload_cmd.output();
+        Ok(format!("Deleted drop-in {} and reloaded daemon", path))
+    } else {
+        let pass = sudo_password.unwrap_or("").trim();
+        let sh_cmd = format!("rm -f '{}' && systemctl daemon-reload", path);
+        let mut cmd = Command::new("sudo");
+        if !pass.is_empty() {
+            cmd.arg("-S").arg("-p").arg("");
+        } else {
+            cmd.arg("-n");
+        }
+        cmd.arg("sh").arg("-c").arg(&sh_cmd);
+        cmd.stdin(std::process::Stdio::piped())
+           .stdout(std::process::Stdio::piped())
+           .stderr(std::process::Stdio::piped());
+
+        match cmd.spawn() {
+            Ok(mut child) => {
+                if !pass.is_empty() {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        use std::io::Write;
+                        let _ = writeln!(stdin, "{}", pass);
+                    }
+                }
+                match child.wait_with_output() {
+                    Ok(out) if out.status.success() => Ok(format!("Deleted drop-in {} and reloaded daemon", path)),
+                    Ok(out) => Err(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+                    Err(e) => Err(format!("Sudo error: {}", e)),
+                }
+            }
+            Err(e) => Err(format!("Failed to spawn sudo: {}", e)),
+        }
+    }
+}
+
+pub fn delete_remote_drop_in(host: &SshRemoteHost, path: &str, user_mode: bool) -> Result<String, String> {
+    let pass = host.password.trim();
+    let script = if user_mode {
+        format!(
+            "rm -f '{path}'; uid=$(id -u); export XDG_RUNTIME_DIR=/run/user/$uid; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; \
+             systemctl --user daemon-reload",
+            path = path
+        )
+    } else if !pass.is_empty() {
+        format!("echo {pass} | sudo -S rm -f '{path}' && echo {pass} | sudo -S systemctl daemon-reload", path = path, pass = pass)
+    } else {
+        format!("sudo -n rm -f '{path}' && sudo -n systemctl daemon-reload", path = path)
+    };
+    let mut cmd = build_ssh_command(host, &script);
+    match cmd.output() {
+        Ok(out) => {
+            if out.status.success() {
+                Ok(format!("Remote drop-in {} deleted", path))
+            } else {
+                let err = String::from_utf8_lossy(&out.stderr);
+                Err(if err.trim().is_empty() { "Failed to delete remote drop-in".to_string() } else { err.trim().to_string() })
+            }
+        }
+        Err(e) => Err(format!("SSH error: {}", e)),
+    }
+}
+
+pub fn get_local_unit_dependencies(unit: &str, user_mode: bool) -> UnitDependenciesInfo {
+    let mut cmd = Command::new("systemctl");
+    if user_mode {
+        cmd.arg("--user");
+    }
+    cmd.args(["show", "-p", "Requires", "-p", "Wants", "-p", "RequiredBy", "-p", "WantedBy", "-p", "After", "-p", "Before", "-p", "Conflicts", "-p", "PartOf", "-p", "BindsTo", unit]);
+    let mut info = match cmd.output() {
+        Ok(out) if out.status.success() => {
+            parse_show_dependencies_output(&String::from_utf8_lossy(&out.stdout))
+        }
+        _ => UnitDependenciesInfo::default(),
+    };
+
+    let mut tree_cmd = Command::new("systemctl");
+    if user_mode {
+        tree_cmd.arg("--user");
+    }
+    tree_cmd.args(["list-dependencies", unit, "--all", "--no-pager"]);
+    if let Ok(out) = tree_cmd.output() {
+        if out.status.success() {
+            info.tree_output = String::from_utf8_lossy(&out.stdout).to_string();
+        }
+    }
+    info
+}
+
+pub fn get_remote_unit_dependencies(host: &SshRemoteHost, unit: &str, user_mode: bool) -> Result<UnitDependenciesInfo, String> {
+    let script = if user_mode {
+        format!(
+            "uid=$(id -u); export XDG_RUNTIME_DIR=/run/user/$uid; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; \
+             systemctl --user show -p Requires -p Wants -p RequiredBy -p WantedBy -p After -p Before -p Conflicts -p PartOf -p BindsTo {unit} 2>/dev/null; \
+             echo '---TREE---'; \
+             systemctl --user list-dependencies {unit} --all --no-pager 2>/dev/null",
+            unit = unit
+        )
+    } else {
+        format!(
+            "systemctl show -p Requires -p Wants -p RequiredBy -p WantedBy -p After -p Before -p Conflicts -p PartOf -p BindsTo {unit} 2>/dev/null; \
+             echo '---TREE---'; \
+             systemctl list-dependencies {unit} --all --no-pager 2>/dev/null",
+            unit = unit
+        )
+    };
+    let mut cmd = build_ssh_command(host, &script);
+    match cmd.output() {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let mut parts = stdout.split("---TREE---");
+            let show_out = parts.next().unwrap_or("");
+            let tree_out = parts.next().unwrap_or("").trim().to_string();
+            let mut info = parse_show_dependencies_output(show_out);
+            info.tree_output = tree_out;
+            Ok(info)
+        }
+        Err(e) => Err(format!("SSH error: {}", e)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -621,5 +1047,40 @@ mod tests {
         assert!(content.contains("WorkingDirectory=/home/user/web"));
         assert!(content.contains("Environment=PORT=3000"));
         assert!(content.contains("WantedBy=default.target"));
+    }
+
+    #[test]
+    fn test_parse_show_files_output() {
+        let raw = r#"
+FragmentPath=/lib/systemd/system/docker.service
+DropInPaths=/etc/systemd/system/docker.service.d/override.conf /etc/systemd/system/docker.service.d/http-proxy.conf
+"#;
+        let parsed = parse_show_files_output(raw);
+        assert_eq!(parsed.fragment_path, Some("/lib/systemd/system/docker.service".to_string()));
+        assert_eq!(parsed.drop_in_paths.len(), 2);
+        assert_eq!(parsed.drop_in_paths[0], "/etc/systemd/system/docker.service.d/override.conf");
+        assert_eq!(parsed.drop_in_paths[1], "/etc/systemd/system/docker.service.d/http-proxy.conf");
+    }
+
+    #[test]
+    fn test_parse_show_dependencies_output() {
+        let raw = r#"
+Requires=sysinit.target system.slice
+Wants=network-online.target
+RequiredBy=multi-user.target
+WantedBy=
+After=sysinit.target basic.target
+Before=shutdown.target
+Conflicts=shutdown.target
+PartOf=
+BindsTo=
+"#;
+        let deps = parse_show_dependencies_output(raw);
+        assert_eq!(deps.requires, vec!["sysinit.target", "system.slice"]);
+        assert_eq!(deps.wants, vec!["network-online.target"]);
+        assert_eq!(deps.required_by, vec!["multi-user.target"]);
+        assert_eq!(deps.after, vec!["sysinit.target", "basic.target"]);
+        assert_eq!(deps.before, vec!["shutdown.target"]);
+        assert_eq!(deps.conflicts, vec!["shutdown.target"]);
     }
 }

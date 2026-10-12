@@ -56,7 +56,7 @@ pub struct Service {
     pub started_at: Option<std::time::Instant>,
 
     pub logs: Arc<Mutex<VecDeque<LogEntry>>>,
-    stdin_writer: Option<Arc<Mutex<ChildStdin>>>,
+    stdin_writer: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
     child_handle: Option<Child>,
 
     max_logs: usize,
@@ -118,7 +118,103 @@ impl Service {
             logs.clear();
         }
     }
+}
 
+enum SpawnedIo {
+    #[cfg(unix)]
+    Pty {
+        reader: std::fs::File,
+        writer: std::fs::File,
+    },
+    Piped {
+        stdin: Option<ChildStdin>,
+        stdout: Option<std::process::ChildStdout>,
+        stderr: Option<std::process::ChildStderr>,
+    },
+}
+
+#[cfg(unix)]
+fn spawn_child(mut cmd: Command) -> std::io::Result<(Child, SpawnedIo)> {
+    use std::os::unix::io::FromRawFd;
+
+    let mut master = 0;
+    let mut slave = 0;
+    let res = unsafe {
+        libc::openpty(
+            &mut master,
+            &mut slave,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+
+    if res == 0 {
+        let ws = libc::winsize {
+            ws_row: 24,
+            ws_col: 120,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        unsafe { libc::ioctl(master, libc::TIOCSWINSZ, &ws) };
+
+        let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+        if unsafe { libc::tcgetattr(slave, &mut termios) } == 0 {
+            termios.c_lflag &= !libc::ECHO;
+            unsafe { libc::tcsetattr(slave, libc::TCSANOW, &termios) };
+        }
+
+        let slave_in = unsafe { Stdio::from_raw_fd(libc::dup(slave)) };
+        let slave_out = unsafe { Stdio::from_raw_fd(libc::dup(slave)) };
+        let slave_err = unsafe { Stdio::from_raw_fd(slave) };
+
+        cmd.stdin(slave_in);
+        cmd.stdout(slave_out);
+        cmd.stderr(slave_err);
+
+        match cmd.spawn() {
+            Ok(child) => {
+                let master_write_fd = unsafe { libc::dup(master) };
+                let master_writer = unsafe { std::fs::File::from_raw_fd(master_write_fd) };
+                let master_reader = unsafe { std::fs::File::from_raw_fd(master) };
+                return Ok((
+                    child,
+                    SpawnedIo::Pty {
+                        reader: master_reader,
+                        writer: master_writer,
+                    },
+                ));
+            }
+            Err(e) => {
+                unsafe { libc::close(master); }
+                return Err(e);
+            }
+        }
+    }
+
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let mut child = cmd.spawn()?;
+    let stdin = child.stdin.take();
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    Ok((child, SpawnedIo::Piped { stdin, stdout, stderr }))
+}
+
+#[cfg(not(unix))]
+fn spawn_child(mut cmd: Command) -> std::io::Result<(Child, SpawnedIo)> {
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let mut child = cmd.spawn()?;
+    let stdin = child.stdin.take();
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    Ok((child, SpawnedIo::Piped { stdin, stdout, stderr }))
+}
+
+impl Service {
     pub fn start(&mut self) {
         self.restart_at = None;
         if self.state == ServiceState::Running || self.state == ServiceState::Starting {
@@ -197,12 +293,8 @@ impl Service {
 
         prepare_environment(&mut cmd, &cwd_str, &env_vars);
 
-        cmd.stdin(Stdio::piped());
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
-
-        match cmd.spawn() {
-            Ok(mut child) => {
+        match spawn_child(cmd) {
+            Ok((child, io)) => {
                 let pid = child.id();
                 self.pid = Some(pid);
                 self.started_at = Some(std::time::Instant::now());
@@ -216,26 +308,38 @@ impl Service {
                     LogKind::Launcher,
                 );
 
-                if let Some(stdin) = child.stdin.take() {
-                    self.stdin_writer = Some(Arc::new(Mutex::new(stdin)));
-                }
-
-                if let Some(stdout) = child.stdout.take() {
-                    spawn_stream_reader(
-                        stdout,
-                        Arc::clone(&self.logs),
-                        self.max_logs,
-                        LogKind::Stdout,
-                    );
-                }
-
-                if let Some(stderr) = child.stderr.take() {
-                    spawn_stream_reader(
-                        stderr,
-                        Arc::clone(&self.logs),
-                        self.max_logs,
-                        LogKind::Stderr,
-                    );
+                match io {
+                    #[cfg(unix)]
+                    SpawnedIo::Pty { reader, writer } => {
+                        self.stdin_writer = Some(Arc::new(Mutex::new(Box::new(writer))));
+                        spawn_stream_reader(
+                            reader,
+                            Arc::clone(&self.logs),
+                            self.max_logs,
+                            LogKind::Stdout,
+                        );
+                    }
+                    SpawnedIo::Piped { stdin, stdout, stderr } => {
+                        if let Some(sin) = stdin {
+                            self.stdin_writer = Some(Arc::new(Mutex::new(Box::new(sin))));
+                        }
+                        if let Some(sout) = stdout {
+                            spawn_stream_reader(
+                                sout,
+                                Arc::clone(&self.logs),
+                                self.max_logs,
+                                LogKind::Stdout,
+                            );
+                        }
+                        if let Some(serr) = stderr {
+                            spawn_stream_reader(
+                                serr,
+                                Arc::clone(&self.logs),
+                                self.max_logs,
+                                LogKind::Stderr,
+                            );
+                        }
+                    }
                 }
 
                 self.child_handle = Some(child);
@@ -1246,6 +1350,10 @@ pub fn prepare_environment(cmd: &mut Command, cwd_str: &str, env_vars: &HashMap<
     cmd.env("PYTHONUNBUFFERED", "1");
     cmd.env("PYTHONIOENCODING", "utf-8");
     cmd.env("FORCE_COLOR", "1");
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    cmd.env("EXPO_NO_TELEMETRY", "1");
+    cmd.env_remove("CI");
 
     for (k, v) in env_vars {
         cmd.env(k, v);
@@ -1292,6 +1400,67 @@ pub fn prepare_environment(cmd: &mut Command, cwd_str: &str, env_vars: &HashMap<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_openpty() {
+        #[cfg(unix)]
+        unsafe {
+            use std::os::unix::io::FromRawFd;
+            use std::process::Stdio;
+            use std::io::{Read, Write};
+
+            let mut master = 0;
+            let mut slave = 0;
+            let res = libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut());
+            assert_eq!(res, 0);
+
+            // Configure termios to disable echo
+            let mut termios: libc::termios = std::mem::zeroed();
+            if libc::tcgetattr(slave, &mut termios) == 0 {
+                termios.c_lflag &= !libc::ECHO;
+                libc::tcsetattr(slave, libc::TCSANOW, &termios);
+            }
+
+            // Set terminal size
+            let ws = libc::winsize {
+                ws_row: 24,
+                ws_col: 120,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            };
+            libc::ioctl(master, libc::TIOCSWINSZ, &ws);
+
+            let slave_in = Stdio::from_raw_fd(libc::dup(slave));
+            let slave_out = Stdio::from_raw_fd(libc::dup(slave));
+            let slave_err = Stdio::from_raw_fd(slave);
+
+            let mut child = Command::new("node")
+                .args(["-i"]) // interactive node REPL
+                .stdin(slave_in)
+                .stdout(slave_out)
+                .stderr(slave_err)
+                .spawn()
+                .expect("failed to spawn node");
+
+            let master_write_fd = libc::dup(master);
+            let mut master_writer = std::fs::File::from_raw_fd(master_write_fd);
+            let mut master_reader = std::fs::File::from_raw_fd(master);
+
+            // Send input to REPL
+            writeln!(master_writer, "100 + 234").expect("failed to write to master");
+            writeln!(master_writer, ".exit").expect("failed to write exit");
+
+            let mut output = String::new();
+            let mut buf = [0u8; 1024];
+            while let Ok(n) = master_reader.read(&mut buf) {
+                if n == 0 { break; }
+                output.push_str(&String::from_utf8_lossy(&buf[..n]));
+            }
+            let _ = child.wait();
+            println!("REPL output:\n{}", output);
+            assert!(output.contains("334"));
+        }
+    }
 
     #[test]
     fn test_strip_ansi() {

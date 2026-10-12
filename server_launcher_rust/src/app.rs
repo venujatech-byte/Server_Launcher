@@ -13,8 +13,8 @@ use crate::scripts::{
 use crate::commands::{CommandModalState, TerminalCommandStatus, TerminalSession};
 use crate::systemd::{
     control_local_service, control_remote_service, create_local_service, create_remote_service,
-    fetch_local_journal, fetch_remote_journal, list_local_services, list_remote_services,
-    SystemdService,
+    delete_local_drop_in, fetch_local_journal, fetch_remote_journal, list_local_services,
+    list_remote_services, write_local_unit_file, SystemdService,
 };
 use crate::remote::{
     build_remote_restart_cmd, build_remote_start_cmd,
@@ -31,7 +31,7 @@ use egui::{
     Color32, Context, Frame, Key, Modifiers, RichText, Rounding, ScrollArea, Stroke, Ui,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use sysinfo::System;
@@ -80,6 +80,19 @@ impl SidebarTab {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemdTab {
+    Status,
+    Files,
+    Dependencies,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SensorsSubTab {
+    System,
+    TopApps,
+}
+
 /// Represents a local systemd action that requires sudo.
 #[derive(Clone, Debug)]
 pub enum PendingSudoAction {
@@ -87,6 +100,10 @@ pub enum PendingSudoAction {
     ServiceAction { unit: String, action: &'static str, user_mode: bool },
     /// create_local_service(def)
     CreateService { def: crate::systemd::NewServiceDefinition },
+    /// write_local_unit_file(path, content, user_mode)
+    SaveUnitFile { path: String, content: String, user_mode: bool },
+    /// delete_local_drop_in(path, user_mode)
+    DeleteDropIn { path: String, user_mode: bool },
 }
 
 /// State for the sudo-password popup dialog.
@@ -227,6 +244,21 @@ pub struct LauncherApp {
     pub journal_refresh_interval: u32,
     pub last_journal_refresh: Instant,
 
+    // SystemMD Tabs & Files / Dependencies state:
+    pub systemd_tab: SystemdTab,
+    pub systemd_files_cache: HashMap<String, (crate::systemd::UnitFilesInfo, Instant)>,
+    pub systemd_selected_file: Option<String>,
+    pub systemd_file_content: String,
+    pub systemd_file_original: String,
+    pub systemd_file_status_msg: Option<(String, bool)>,
+    pub systemd_new_dropin_open: bool,
+    pub systemd_new_dropin_name: String,
+    pub systemd_new_dropin_template: usize,
+    pub systemd_deps_cache: HashMap<String, (crate::systemd::UnitDependenciesInfo, Instant)>,
+    pub systemd_deps_history: Vec<String>,
+    pub systemd_deps_filter: String,
+    pub systemd_deps_view_mode: usize,
+
     // Sensors State
     pub sensors_collector: crate::sensors::SystemSensorsCollector,
     pub sensors_snapshot: crate::sensors::SystemSensorsSnapshot,
@@ -239,6 +271,8 @@ pub struct LauncherApp {
     pub sensors_search_query: String,
     pub sensors_category_filter: String,
     pub sensors_top_apps_sort: String,
+    pub sensors_subtab: SensorsSubTab,
+    pub sensors_top_apps_visited: bool,
 
     // Sudo popup for local system-level systemd operations
     pub sudo_popup: SudoPopupState,
@@ -267,7 +301,7 @@ fn render_window_button(
     kind: WindowButtonKind,
     palette: &crate::theme::ThemePalette,
 ) -> bool {
-    let size = egui::vec2(36.0, 24.0);
+    let size = egui::vec2(32.0, 20.0);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     let hovered = resp.hovered();
 
@@ -550,6 +584,20 @@ impl LauncherApp {
             journal_refresh_interval: config_file.journal_refresh_interval.unwrap_or(0),
             last_journal_refresh: Instant::now(),
 
+            systemd_tab: SystemdTab::Status,
+            systemd_files_cache: HashMap::new(),
+            systemd_selected_file: None,
+            systemd_file_content: String::new(),
+            systemd_file_original: String::new(),
+            systemd_file_status_msg: None,
+            systemd_new_dropin_open: false,
+            systemd_new_dropin_name: "override.conf".to_string(),
+            systemd_new_dropin_template: 0,
+            systemd_deps_cache: HashMap::new(),
+            systemd_deps_history: Vec::new(),
+            systemd_deps_filter: String::new(),
+            systemd_deps_view_mode: 0,
+
             sensors_collector: crate::sensors::SystemSensorsCollector::new(),
             sensors_snapshot: crate::sensors::SystemSensorsSnapshot::default(),
             sensors_refresh_interval: 2,
@@ -561,6 +609,8 @@ impl LauncherApp {
             sensors_search_query: String::new(),
             sensors_category_filter: "All".to_string(),
             sensors_top_apps_sort: "cpu".to_string(),
+            sensors_subtab: SensorsSubTab::System,
+            sensors_top_apps_visited: false,
             sudo_popup: SudoPopupState::default(),
             local_sudo_password: String::new(),
             import_status_msg: None,
@@ -2691,18 +2741,18 @@ impl eframe::App for LauncherApp {
         let p = self.theme.palette();
 
         // ═════════════════════════════════════════════════════════════════════
-        // 0. DEDICATED SLIM CUSTOM TITLEBAR (Height 28px)
+        // 0. DEDICATED SLIM CUSTOM TITLEBAR (Height 22px)
         // ═════════════════════════════════════════════════════════════════════
         egui::TopBottomPanel::top("custom_titlebar")
-            .exact_height(28.0)
+            .exact_height(22.0)
             .frame(
                 Frame::none()
                     .fill(p.bg_header)
                     .inner_margin(egui::Margin {
-                        left: 12.0,
-                        right: 6.0,
-                        top: 2.0,
-                        bottom: 2.0,
+                        left: 10.0,
+                        right: 4.0,
+                        top: 1.0,
+                        bottom: 1.0,
                     }),
             )
             .show(ctx, |ui| {
@@ -2756,24 +2806,6 @@ impl eframe::App for LauncherApp {
                 });
             });
 
-        // Periodically refresh hardware telemetry snapshot for global top header bar
-        if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval.max(1) as u64) {
-            if self.selected_machine == "local" {
-                self.sensors_snapshot = self.sensors_collector.collect();
-                self.last_sensors_refresh = Instant::now();
-            }
-        }
-
-        let header_snap = if self.selected_machine != "local" {
-            self.remote_sensors_snapshots
-                .lock()
-                .unwrap()
-                .get(&self.selected_machine)
-                .cloned()
-                .unwrap_or_else(|| self.sensors_snapshot.clone())
-        } else {
-            self.sensors_snapshot.clone()
-        };
 
         // ═════════════════════════════════════════════════════════════════════
         // TOP HEADER BAR (App Toolbar: Logo, search, action buttons)
@@ -2783,10 +2815,10 @@ impl eframe::App for LauncherApp {
                 Frame::none()
                     .fill(p.bg_header)
                     .inner_margin(egui::Margin {
-                        left: 18.0,
-                        right: 18.0,
-                        top: 8.0,
-                        bottom: 12.0,
+                        left: 14.0,
+                        right: 14.0,
+                        top: 4.0,
+                        bottom: 5.0,
                     }),
             )
             .show(ctx, |ui| {
@@ -2801,7 +2833,7 @@ impl eframe::App for LauncherApp {
                     if let Some(texture) = &self.icon_texture {
                         ui.add(
                             egui::Image::from_texture(texture)
-                                .fit_to_exact_size(egui::vec2(36.0, 36.0)),
+                                .fit_to_exact_size(egui::vec2(28.0, 28.0)),
                         );
                         ui.add_space(6.0);
                     }
@@ -2882,18 +2914,18 @@ impl eframe::App for LauncherApp {
                         ui.vertical(|ui| {
                             ui.label(
                                 RichText::new("Server Launcher")
-                                    .size(20.0)
+                                    .size(16.5)
                                     .strong()
                                     .color(p.text_primary),
                             );
-                            ui.add_space(2.0);
+                            ui.add_space(1.0);
                             ui.label(
                                 RichText::new(format!(
                                     "this pc: {}    servers: {}",
                                     self.lan_ip,
                                     self.services.len()
                                 ))
-                                .size(11.5)
+                                .size(10.5)
                                 .color(p.text_muted),
                             );
 
@@ -2923,12 +2955,12 @@ impl eframe::App for LauncherApp {
 
                         // Settings Button (Pill icon button)
                         let btn_settings = egui::Button::new(
-                            RichText::new(crate::lucide::SETTINGS).size(14.0).color(p.text_secondary),
+                            RichText::new(crate::lucide::SETTINGS).size(13.0).color(p.text_secondary),
                         )
                         .fill(p.bg_button)
                         .stroke(Stroke::NONE)
                         .rounding(Rounding::same(999.0))
-                        .min_size(egui::vec2(34.0, 28.0));
+                        .min_size(egui::vec2(30.0, 24.0));
                         if ui.add(btn_settings).on_hover_text("Settings & Preferences (Ctrl+,)").clicked() {
                             self.settings_modal_open = true;
                         }
@@ -2942,26 +2974,26 @@ impl eframe::App for LauncherApp {
 
                             let btn_edit = egui::Button::new(
                                 RichText::new(format!("{} Edit", crate::lucide::SETTINGS))
-                                    .size(11.5)
+                                    .size(11.0)
                                     .color(p.text_secondary),
                             )
                             .fill(p.bg_button)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(68.0, 28.0));
+                            .min_size(egui::vec2(64.0, 24.0));
                             if ui.add(btn_edit).clicked() {
                                 self.ssh_host_modal.open_edit(host);
                             }
 
                             let btn_reconnect = egui::Button::new(
                                 RichText::new(format!("{} Reconnect", crate::lucide::REFRESH_CW))
-                                    .size(11.5)
+                                    .size(11.0)
                                     .color(p.text_secondary),
                             )
                             .fill(p.bg_button)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(96.0, 28.0));
+                            .min_size(egui::vec2(90.0, 24.0));
                             if ui.add(btn_reconnect).clicked() {
                                 self.test_remote_host(host);
                                 self.trigger_remote_scan(host);
@@ -2969,14 +3001,14 @@ impl eframe::App for LauncherApp {
 
                             let btn_ext = egui::Button::new(
                                 RichText::new(format!("{} External Terminal", crate::lucide::EXTERNAL_LINK))
-                                    .size(11.5)
+                                    .size(11.0)
                                     .strong()
                                     .color(p.info),
                             )
                             .fill(p.info_subtle)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(140.0, 28.0));
+                            .min_size(egui::vec2(130.0, 24.0));
                             if ui.add(btn_ext).on_hover_text("Open desktop terminal connected via SSH").clicked() {
                                 let _ = launch_external_ssh_terminal(host);
                             }
@@ -2984,14 +3016,14 @@ impl eframe::App for LauncherApp {
                             let scan_label = if is_scanning { "Scanning..." } else { "Scan Ports" };
                             let btn_scan = egui::Button::new(
                                 RichText::new(scan_label)
-                                    .size(11.5)
+                                    .size(11.0)
                                     .strong()
                                     .color(p.accent),
                             )
                             .fill(p.bg_button)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(90.0, 28.0));
+                            .min_size(egui::vec2(84.0, 24.0));
                             if ui.add(btn_scan).clicked() {
                                 self.trigger_remote_scan(host);
                             }
@@ -2999,14 +3031,14 @@ impl eframe::App for LauncherApp {
                             // Remote Server Controls: + Start Server, Stop All, Restart All
                             let btn_add_server = egui::Button::new(
                                 RichText::new("+ Start Server")
-                                    .size(11.5)
+                                    .size(11.0)
                                     .strong()
                                     .color(Color32::WHITE),
                             )
                             .fill(Color32::from_rgb(0x05, 0x96, 0x69))
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(105.0, 28.0));
+                            .min_size(egui::vec2(98.0, 24.0));
                             if ui.add(btn_add_server).on_hover_text("Start a new server or process on remote host").clicked() {
                                 self.remote_start_server_modal.open_for_host(host);
                             }
@@ -3015,14 +3047,14 @@ impl eframe::App for LauncherApp {
                             // + Add Server (Primary Accent Pill)
                             let btn_add = egui::Button::new(
                                 RichText::new("+ Add Server")
-                                    .size(12.0)
+                                    .size(11.5)
                                     .strong()
                                     .color(p.accent_text),
                             )
                             .fill(p.accent)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(98.0, 28.0));
+                            .min_size(egui::vec2(92.0, 24.0));
                             if ui.add(btn_add).clicked() {
                                 self.add_edit_modal.open_new();
                             }
@@ -3030,13 +3062,13 @@ impl eframe::App for LauncherApp {
                             // Quick Launch (Ctrl+P / Ctrl+K)
                             let btn_pal = egui::Button::new(
                                 RichText::new(format!("{} Quick Launch Ctrl+P", crate::lucide::ZAP))
-                                    .size(11.5)
+                                    .size(11.0)
                                     .color(p.accent),
                             )
                             .fill(p.bg_button)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(145.0, 28.0));
+                            .min_size(egui::vec2(135.0, 24.0));
                             if ui.add(btn_pal).clicked() {
                                 self.palette_modal.open = true;
                                 self.palette_modal.query.clear();
@@ -3047,7 +3079,7 @@ impl eframe::App for LauncherApp {
                                 .fill(p.bg_input)
                                 .stroke(Stroke::NONE)
                                 .rounding(Rounding::same(999.0))
-                                .inner_margin(egui::Margin::symmetric(10.0, 4.0))
+                                .inner_margin(egui::Margin::symmetric(8.0, 2.0))
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
@@ -3096,107 +3128,7 @@ impl eframe::App for LauncherApp {
                                 });
                         }
 
-                        // ── Live Hardware Telemetry Strip (CPU Clock & Power, GPU, Storage Live Speed, Top Apps) ──
-                        ui.add_space(6.0);
 
-                        // 4. Top Apps Chip
-                        if let Some(top_app) = header_snap.top_apps.first() {
-                            let top_name_short = if top_app.name.len() > 10 {
-                                format!("{}…", &top_app.name[..8])
-                            } else {
-                                top_app.name.clone()
-                            };
-                            let top_text = format!("{} {}: {:.0}%", crate::lucide::ZAP, top_name_short, top_app.cpu_usage);
-                            let top_resp = Frame::none()
-                                .fill(p.bg_card)
-                                .stroke(Stroke::NONE)
-                                .rounding(Rounding::same(999.0))
-                                .inner_margin(egui::Margin::symmetric(9.0, 4.0))
-                                .show(ui, |ui| {
-                                    ui.label(RichText::new(top_text).size(10.5).strong().color(Color32::from_rgb(250, 204, 21)));
-                                });
-                            let top_interact = ui.interact(top_resp.response.rect, ui.id().with("hdr_telemetry_top_app"), egui::Sense::click());
-                            if top_interact.on_hover_text(format!("Top Resource Consumer: {}\nPID: {}\nCPU: {:.1}%\nMemory: {}\nDisk Speed: {}\n\nClick to view Top Applications", top_app.name, top_app.pid, top_app.cpu_usage, crate::sensors::format_bytes(top_app.memory_bytes), crate::sensors::format_rate(top_app.disk_rate_bps))).clicked() {
-                                self.active_sidebar_tab = SidebarTab::Sensors;
-                                self.sensors_category_filter = "Top Apps".to_string();
-                            }
-                        }
-
-                        // 3. Storage Live Using Speed Chip
-                        let d_read = header_snap.total_disk_read_rate_bps;
-                        let d_write = header_snap.total_disk_write_rate_bps;
-                        let stor_text = format!("{} ▼ {} ▲ {}", crate::lucide::STORAGE, crate::sensors::format_rate(d_read), crate::sensors::format_rate(d_write));
-                        let stor_resp = Frame::none()
-                            .fill(p.bg_card)
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(999.0))
-                            .inner_margin(egui::Margin::symmetric(9.0, 4.0))
-                            .show(ui, |ui| {
-                                ui.label(RichText::new(stor_text).size(10.5).monospace().color(Color32::from_rgb(56, 189, 248)));
-                            });
-                        let stor_interact = ui.interact(stor_resp.response.rect, ui.id().with("hdr_telemetry_storage"), egui::Sense::click());
-                        if stor_interact.on_hover_text(format!("Storage Using Speed:\nRead Rate: {}\nWrite Rate: {}\n\nClick to view Storage & Disks", crate::sensors::format_rate(d_read), crate::sensors::format_rate(d_write))).clicked() {
-                            self.active_sidebar_tab = SidebarTab::Sensors;
-                            self.sensors_category_filter = "Storage".to_string();
-                        }
-
-                        // 2. GPU Chip (Clock & Power)
-                        if let Some(gpu) = header_snap.gpus.first() {
-                            let mut parts = Vec::new();
-                            if let Some(clk) = gpu.clock_mhz {
-                                parts.push(format!("{}MHz", clk));
-                            }
-                            if let Some(w) = gpu.power_watts {
-                                parts.push(format!("{:.1}W", w));
-                            }
-                            let gpu_text = if !parts.is_empty() {
-                                format!("{} {}", crate::lucide::GPU, parts.join(" • "))
-                            } else {
-                                format!("{} {:.0}%", crate::lucide::GPU, gpu.load_pct.unwrap_or(0.0))
-                            };
-                            let gpu_resp = Frame::none()
-                                .fill(p.bg_card)
-                                .stroke(Stroke::NONE)
-                                .rounding(Rounding::same(999.0))
-                                .inner_margin(egui::Margin::symmetric(9.0, 4.0))
-                                .show(ui, |ui| {
-                                    ui.label(RichText::new(gpu_text).size(10.5).monospace().color(p.info));
-                                });
-                            let gpu_interact = ui.interact(gpu_resp.response.rect, ui.id().with("hdr_telemetry_gpu"), egui::Sense::click());
-                            if gpu_interact.on_hover_text(format!("GPU: {}\nClock: {} MHz\nPower: {:.1} W\n\nClick to view GPU Sensors", gpu.name, gpu.clock_mhz.unwrap_or(0), gpu.power_watts.unwrap_or(0.0))).clicked() {
-                                self.active_sidebar_tab = SidebarTab::Sensors;
-                                self.sensors_category_filter = "GPU".to_string();
-                            }
-                        }
-
-                        // 1. CPU Chip (Clock Speed & Power Usage & Load)
-                        let mut cpu_parts = Vec::new();
-                        if header_snap.cpu_frequency_mhz > 0 {
-                            let clk_str = if header_snap.cpu_frequency_mhz >= 1000 {
-                                format!("{:.2}GHz", header_snap.cpu_frequency_mhz as f64 / 1000.0)
-                            } else {
-                                format!("{}MHz", header_snap.cpu_frequency_mhz)
-                            };
-                            cpu_parts.push(clk_str);
-                        }
-                        if let Some(w) = header_snap.cpu_power_watts {
-                            cpu_parts.push(format!("{:.1}W", w));
-                        }
-                        cpu_parts.push(format!("{:.0}%", header_snap.cpu_global_usage));
-                        let cpu_text = format!("{} {}", crate::lucide::CPU, cpu_parts.join(" • "));
-                        let cpu_resp = Frame::none()
-                            .fill(p.bg_card)
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(999.0))
-                            .inner_margin(egui::Margin::symmetric(9.0, 4.0))
-                            .show(ui, |ui| {
-                                ui.label(RichText::new(cpu_text).size(10.5).monospace().color(p.text_primary));
-                            });
-                        let cpu_interact = ui.interact(cpu_resp.response.rect, ui.id().with("hdr_telemetry_cpu"), egui::Sense::click());
-                        if cpu_interact.on_hover_text(format!("CPU: {}\nClock Speed: {} MHz\nPower Draw: {:.1} W\nGlobal Usage: {:.1}%\n\nClick to view CPU & Hardware Sensors", header_snap.cpu_brand, header_snap.cpu_frequency_mhz, header_snap.cpu_power_watts.unwrap_or(0.0), header_snap.cpu_global_usage)).clicked() {
-                            self.active_sidebar_tab = SidebarTab::Sensors;
-                            self.sensors_category_filter = "CPU".to_string();
-                        }
                     });
                 });
             });
@@ -3236,8 +3168,8 @@ impl eframe::App for LauncherApp {
                         .inner_margin(egui::Margin {
                             left: 0.0,
                             right: 16.0,
-                            top: 8.0,
-                            bottom: 14.0,
+                            top: 4.0,
+                            bottom: 6.0,
                         }),
                 )
                 .show(ctx, |ui| {
@@ -3290,8 +3222,8 @@ impl eframe::App for LauncherApp {
                         .inner_margin(egui::Margin {
                             left: 12.0,
                             right: 18.0,
-                            top: 8.0,
-                            bottom: 14.0,
+                            top: 4.0,
+                            bottom: 6.0,
                         }),
                 )
                 .show(ctx, |ui| {
@@ -5024,6 +4956,10 @@ impl LauncherApp {
                     if let Some(unit) = selected {
                         self.selected_service = Some(unit.clone());
                         self.service_action_msg = None;
+                        self.systemd_selected_file = None;
+                        self.systemd_file_content.clear();
+                        self.systemd_file_original.clear();
+                        self.systemd_file_status_msg = None;
                         // Fetch journalctl asynchronously
                         if let Some(host) = &host_opt {
                             self.trigger_remote_journal_fetch(host, &unit, user_mode);
@@ -5058,7 +4994,18 @@ impl LauncherApp {
         };
 
         let selected_unit = self.selected_service.clone();
-        let service_opt = selected_unit.as_ref().and_then(|u| services_list.iter().find(|s| &s.name == u).cloned());
+        let service_opt = selected_unit.as_ref().and_then(|u| {
+            services_list.iter().find(|s| &s.name == u).cloned().or_else(|| {
+                Some(SystemdService {
+                    name: u.clone(),
+                    load_state: "loaded".to_string(),
+                    active_state: "active".to_string(),
+                    sub_state: "".to_string(),
+                    description: String::new(),
+                    is_user: user_mode,
+                })
+            })
+        });
 
         match service_opt {
             Some(s) => {
@@ -5283,112 +5230,152 @@ impl LauncherApp {
 
                     ui.add_space(8.0);
 
-                    // Journalctl Logs Viewer
+                    // ═════════════════════════════════════════════════════════
+                    // SystemMD Tabs: [ Status ] [ Files & Drop-ins ] [ Dependencies ]
+                    // ═════════════════════════════════════════════════════════
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Service Logs (journalctl -n 100)").size(12.0).strong().color(p.text_muted));
-                        if is_journal_in_flight {
-                            ui.add_space(4.0);
-                            ui.spinner();
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        let tabs = [
+                            (SystemdTab::Status, format!("{} Status", crate::lucide::ACTIVITY)),
+                            (SystemdTab::Files, format!("{} Files & Drop-ins", crate::lucide::FILE_CODE)),
+                            (SystemdTab::Dependencies, format!("{} Dependencies", crate::lucide::LAYERS)),
+                        ];
+                        for (tab, label) in tabs {
+                            let is_sel = self.systemd_tab == tab;
+                            let btn = egui::Button::new(
+                                RichText::new(label)
+                                    .size(11.5)
+                                    .strong()
+                                    .color(if is_sel { p.accent_text } else { p.text_secondary }),
+                            )
+                            .fill(if is_sel { p.accent } else { p.bg_button })
+                            .stroke(if is_sel { Stroke::NONE } else { Stroke::new(1.0_f32, p.border.gamma_multiply(0.5)) })
+                            .rounding(Rounding::same(999.0))
+                            .min_size(egui::vec2(86.0, 26.0));
+                            if ui.add(btn).clicked() {
+                                self.systemd_tab = tab;
+                            }
                         }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let btn_ref_log = egui::Button::new(RichText::new(format!("{} Refresh Logs", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_secondary))
-                                .fill(p.bg_button);
-                            if ui.add(btn_ref_log).clicked() {
-                                if let Some(host) = &host_opt {
-                                    self.trigger_remote_journal_fetch(host, &s.name, user_mode);
-                                } else {
-                                    let pass_for_journal = if !user_mode && !self.local_sudo_password.is_empty() {
-                                        Some(self.local_sudo_password.as_str())
-                                    } else {
-                                        None
-                                    };
-                                    self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100, pass_for_journal).unwrap_or_default();
-                                }
-                                self.last_journal_refresh = Instant::now();
-                            }
-
-                            // Refresh Interval Dropdown
-                            let prev_interval = self.journal_refresh_interval;
-                            let interval_label = match self.journal_refresh_interval {
-                                0 => format!("{} Auto: Off", crate::lucide::CLOCK),
-                                secs => format!("{} Auto: {}s", crate::lucide::CLOCK, secs),
-                            };
-                            egui::ComboBox::from_id_salt("journal_refresh_interval_combo")
-                                .selected_text(RichText::new(interval_label).size(11.0).color(p.text_primary))
-                                .width(105.0)
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.journal_refresh_interval, 0, "Off (Manual)");
-                                    ui.selectable_value(&mut self.journal_refresh_interval, 1, "Every 1s");
-                                    ui.selectable_value(&mut self.journal_refresh_interval, 2, "Every 2s");
-                                    ui.selectable_value(&mut self.journal_refresh_interval, 5, "Every 5s");
-                                    ui.selectable_value(&mut self.journal_refresh_interval, 10, "Every 10s");
-                                    ui.selectable_value(&mut self.journal_refresh_interval, 30, "Every 30s");
-                                    ui.selectable_value(&mut self.journal_refresh_interval, 60, "Every 60s");
-                                });
-                            if self.journal_refresh_interval != prev_interval {
-                                self.last_journal_refresh = Instant::now();
-                                self.persist_config();
-                            }
-                        });
                     });
 
-                    // Auto-refresh timer check
-                    if self.journal_refresh_interval > 0 {
-                        ui.ctx().request_repaint_after(Duration::from_millis(500));
-                        if self.last_journal_refresh.elapsed() >= Duration::from_secs(self.journal_refresh_interval as u64) {
-                            self.last_journal_refresh = Instant::now();
-                            if let Some(host) = &host_opt {
-                                self.trigger_remote_journal_fetch(host, &s.name, user_mode);
-                            } else {
-                                let pass_for_journal = if !user_mode && !self.local_sudo_password.is_empty() {
-                                    Some(self.local_sudo_password.as_str())
-                                } else {
-                                    None
-                                };
-                                self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100, pass_for_journal).unwrap_or_default();
-                            }
-                        }
-                    }
+                    ui.add_space(8.0);
 
-                    ui.add_space(4.0);
+                    match self.systemd_tab {
+                        SystemdTab::Status => {
+                            // Journalctl Logs Viewer
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Service Logs (journalctl -n 100)").size(12.0).strong().color(p.text_muted));
+                                if is_journal_in_flight {
+                                    ui.add_space(4.0);
+                                    ui.spinner();
+                                }
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let btn_ref_log = egui::Button::new(RichText::new(format!("{} Refresh Logs", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_secondary))
+                                        .fill(p.bg_button);
+                                    if ui.add(btn_ref_log).clicked() {
+                                        if let Some(host) = &host_opt {
+                                            self.trigger_remote_journal_fetch(host, &s.name, user_mode);
+                                        } else {
+                                            let pass_for_journal = if !user_mode && !self.local_sudo_password.is_empty() {
+                                                Some(self.local_sudo_password.as_str())
+                                            } else {
+                                                None
+                                            };
+                                            self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100, pass_for_journal).unwrap_or_default();
+                                        }
+                                        self.last_journal_refresh = Instant::now();
+                                    }
 
-                    let display_logs = if let Some(ref jk) = j_key {
-                        self.remote_journal_logs.lock().map(|m| m.get(jk).cloned()).unwrap_or(None).unwrap_or_else(|| {
-                            if is_journal_in_flight {
-                                "Fetching logs from remote host...".to_string()
-                            } else {
-                                format!("No journal logs received yet. Click '{} Refresh Logs'.", crate::lucide::REFRESH_CW)
-                            }
-                        })
-                    } else {
-                        self.service_journal_logs.clone()
-                    };
-
-                    let log_h = (ui.available_height() - 20.0).max(180.0);
-                    Frame::none()
-                        .fill(Color32::from_rgb(12, 14, 20))
-                        .stroke(Stroke::NONE)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                        .show(ui, |ui| {
-                            ui.set_height(log_h);
-                            ScrollArea::vertical()
-                                .id_salt("journalctl_scroll")
-                                .stick_to_bottom(true)
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    if display_logs.trim().is_empty() {
-                                        ui.label(RichText::new("No journal logs recorded for this service.").size(11.5).color(Color32::from_rgb(100, 110, 130)));
-                                    } else {
-                                        ui.label(
-                                            RichText::new(&display_logs)
-                                                .size(11.0)
-                                                .monospace()
-                                                .color(Color32::from_rgb(220, 225, 235)),
-                                        );
+                                    // Refresh Interval Dropdown
+                                    let prev_interval = self.journal_refresh_interval;
+                                    let interval_label = match self.journal_refresh_interval {
+                                        0 => format!("{} Auto: Off", crate::lucide::CLOCK),
+                                        secs => format!("{} Auto: {}s", crate::lucide::CLOCK, secs),
+                                    };
+                                    egui::ComboBox::from_id_salt("journal_refresh_interval_combo")
+                                        .selected_text(RichText::new(interval_label).size(11.0).color(p.text_primary))
+                                        .width(105.0)
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(&mut self.journal_refresh_interval, 0, "Off (Manual)");
+                                            ui.selectable_value(&mut self.journal_refresh_interval, 1, "Every 1s");
+                                            ui.selectable_value(&mut self.journal_refresh_interval, 2, "Every 2s");
+                                            ui.selectable_value(&mut self.journal_refresh_interval, 5, "Every 5s");
+                                            ui.selectable_value(&mut self.journal_refresh_interval, 10, "Every 10s");
+                                            ui.selectable_value(&mut self.journal_refresh_interval, 30, "Every 30s");
+                                            ui.selectable_value(&mut self.journal_refresh_interval, 60, "Every 60s");
+                                        });
+                                    if self.journal_refresh_interval != prev_interval {
+                                        self.last_journal_refresh = Instant::now();
+                                        self.persist_config();
                                     }
                                 });
-                        });
+                            });
+
+                            // Auto-refresh timer check
+                            if self.journal_refresh_interval > 0 {
+                                ui.ctx().request_repaint_after(Duration::from_millis(500));
+                                if self.last_journal_refresh.elapsed() >= Duration::from_secs(self.journal_refresh_interval as u64) {
+                                    self.last_journal_refresh = Instant::now();
+                                    if let Some(host) = &host_opt {
+                                        self.trigger_remote_journal_fetch(host, &s.name, user_mode);
+                                    } else {
+                                        let pass_for_journal = if !user_mode && !self.local_sudo_password.is_empty() {
+                                            Some(self.local_sudo_password.as_str())
+                                        } else {
+                                            None
+                                        };
+                                        self.service_journal_logs = fetch_local_journal(&s.name, user_mode, 100, pass_for_journal).unwrap_or_default();
+                                    }
+                                }
+                            }
+
+                            ui.add_space(4.0);
+
+                            let display_logs = if let Some(ref jk) = j_key {
+                                self.remote_journal_logs.lock().map(|m| m.get(jk).cloned()).unwrap_or(None).unwrap_or_else(|| {
+                                    if is_journal_in_flight {
+                                        "Fetching logs from remote host...".to_string()
+                                    } else {
+                                        format!("No journal logs received yet. Click '{} Refresh Logs'.", crate::lucide::REFRESH_CW)
+                                    }
+                                })
+                            } else {
+                                self.service_journal_logs.clone()
+                            };
+
+                            let log_h = (ui.available_height() - 20.0).max(180.0);
+                            Frame::none()
+                                .fill(Color32::from_rgb(12, 14, 20))
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(8.0))
+                                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                                .show(ui, |ui| {
+                                    ui.set_height(log_h);
+                                    ScrollArea::vertical()
+                                        .id_salt("journalctl_scroll")
+                                        .stick_to_bottom(true)
+                                        .auto_shrink([false, false])
+                                        .show(ui, |ui| {
+                                            if display_logs.trim().is_empty() {
+                                                ui.label(RichText::new("No journal logs recorded for this service.").size(11.5).color(Color32::from_rgb(100, 110, 130)));
+                                            } else {
+                                                ui.label(
+                                                    RichText::new(&display_logs)
+                                                        .size(11.0)
+                                                        .monospace()
+                                                        .color(Color32::from_rgb(220, 225, 235)),
+                                                );
+                                            }
+                                        });
+                                });
+                        }
+                        SystemdTab::Files => {
+                            self.render_systemd_files_tab(ui, &s, user_mode, host_opt.as_ref());
+                        }
+                        SystemdTab::Dependencies => {
+                            self.render_systemd_dependencies_tab(ui, &s, user_mode, host_opt.as_ref(), &services_list);
+                        }
+                    }
                 });
             }
             None => {
@@ -5397,12 +5384,657 @@ impl LauncherApp {
                     ui.label(RichText::new(format!("{} SystemMD Services", crate::lucide::SYSTEMD)).size(16.0).strong().color(p.text_primary));
                     ui.add_space(6.0);
                     ui.label(
-                        RichText::new("Select a systemd unit from the left panel to control (start/stop/restart) and view journalctl logs,\nor click '+ New Service' to create and enable a new systemd unit.")
+                        RichText::new("Select a systemd unit from the left panel to control, edit unit files & drop-ins, and inspect dependencies,\nor click '+ New Service' to create and enable a new systemd unit.")
                             .size(12.0)
                             .color(p.text_muted),
                     );
                 });
             }
+        }
+    }
+
+    fn load_systemd_unit_files(&mut self, unit: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) -> crate::systemd::UnitFilesInfo {
+        let cache_key = format!("{}:{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), unit, user_mode);
+        if let Some((info, time)) = self.systemd_files_cache.get(&cache_key) {
+            if time.elapsed() < Duration::from_secs(10) {
+                return info.clone();
+            }
+        }
+        let info = if let Some(host) = host_opt {
+            crate::systemd::get_remote_unit_files(host, unit, user_mode).unwrap_or_default()
+        } else {
+            crate::systemd::get_local_unit_files(unit, user_mode)
+        };
+        self.systemd_files_cache.insert(cache_key, (info.clone(), Instant::now()));
+        info
+    }
+
+    fn load_systemd_unit_dependencies(&mut self, unit: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) -> crate::systemd::UnitDependenciesInfo {
+        let cache_key = format!("{}:{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), unit, user_mode);
+        if let Some((deps, time)) = self.systemd_deps_cache.get(&cache_key) {
+            if time.elapsed() < Duration::from_secs(15) {
+                return deps.clone();
+            }
+        }
+        let deps = if let Some(host) = host_opt {
+            crate::systemd::get_remote_unit_dependencies(host, unit, user_mode).unwrap_or_default()
+        } else {
+            crate::systemd::get_local_unit_dependencies(unit, user_mode)
+        };
+        self.systemd_deps_cache.insert(cache_key, (deps.clone(), Instant::now()));
+        deps
+    }
+
+    fn render_systemd_files_tab(
+        &mut self,
+        ui: &mut Ui,
+        s: &SystemdService,
+        user_mode: bool,
+        host_opt: Option<&SshRemoteHost>,
+    ) {
+        let p = self.theme.palette();
+        let files_info = self.load_systemd_unit_files(&s.name, user_mode, host_opt);
+
+        // Determine available files
+        let mut available_paths = Vec::new();
+        if let Some(ref fp) = files_info.fragment_path {
+            available_paths.push((fp.clone(), false, s.name.clone()));
+        }
+        for dp in &files_info.drop_in_paths {
+            let name = Path::new(dp).file_name().and_then(|n| n.to_str()).unwrap_or(dp).to_string();
+            available_paths.push((dp.clone(), true, name));
+        }
+
+        if self.systemd_selected_file.is_none() && !available_paths.is_empty() {
+            let (first_path, _, _) = &available_paths[0];
+            self.systemd_selected_file = Some(first_path.clone());
+            let content = if let Some(host) = host_opt {
+                crate::systemd::read_remote_unit_file(host, first_path).unwrap_or_default()
+            } else {
+                let pass = if !user_mode && !self.local_sudo_password.is_empty() {
+                    Some(self.local_sudo_password.as_str())
+                } else {
+                    None
+                };
+                crate::systemd::read_local_unit_file(first_path, pass).unwrap_or_default()
+            };
+            self.systemd_file_content = content.clone();
+            self.systemd_file_original = content;
+        }
+
+        // Sub-toolbar: File Selector Pills & Actions
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+            ui.label(RichText::new("Unit Files:").size(11.5).strong().color(p.text_muted));
+
+            let mut switch_to_path = None;
+            for (path, is_dropin, label) in &available_paths {
+                let is_current = self.systemd_selected_file.as_deref() == Some(path.as_str());
+                let icon = if *is_dropin { crate::lucide::PACKAGE } else { crate::lucide::FILE_TEXT };
+                let btn = egui::Button::new(
+                    RichText::new(format!("{} {}", icon, label))
+                        .size(11.0)
+                        .color(if is_current { p.accent_text } else { p.text_secondary }),
+                )
+                .fill(if is_current { p.accent } else { p.bg_button })
+                .stroke(if is_current { Stroke::NONE } else { Stroke::new(1.0_f32, p.border.gamma_multiply(0.5)) })
+                .rounding(Rounding::same(999.0));
+
+                if ui.add(btn).on_hover_text(format!("Path: {}\nType: {}", path, if *is_dropin { "Drop-In Override" } else { "Primary Unit File" })).clicked() {
+                    switch_to_path = Some(path.clone());
+                }
+            }
+
+            if let Some(new_p) = switch_to_path {
+                self.systemd_selected_file = Some(new_p.clone());
+                let content = if let Some(host) = host_opt {
+                    crate::systemd::read_remote_unit_file(host, &new_p).unwrap_or_default()
+                } else {
+                    let pass = if !user_mode && !self.local_sudo_password.is_empty() {
+                        Some(self.local_sudo_password.as_str())
+                    } else {
+                        None
+                    };
+                    crate::systemd::read_local_unit_file(&new_p, pass).unwrap_or_default()
+                };
+                self.systemd_file_content = content.clone();
+                self.systemd_file_original = content;
+                self.systemd_file_status_msg = None;
+            }
+
+            // + New Drop-In Button
+            let btn_new_dropin = egui::Button::new(
+                RichText::new(format!("{} New Drop-In", crate::lucide::PLUS)).size(11.0).strong().color(Color32::WHITE),
+            )
+            .fill(p.accent)
+            .rounding(Rounding::same(999.0));
+            if ui.add(btn_new_dropin).on_hover_text("Create a new configuration drop-in override (e.g. override.conf)").clicked() {
+                self.systemd_new_dropin_open = !self.systemd_new_dropin_open;
+            }
+
+            // Refresh Files button
+            let btn_ref = egui::Button::new(RichText::new(format!("{} Refresh", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_secondary))
+                .fill(p.bg_button)
+                .rounding(Rounding::same(999.0));
+            if ui.add(btn_ref).on_hover_text("Reload files and re-read from disk").clicked() {
+                let cache_key = format!("{}:{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), s.name, user_mode);
+                self.systemd_files_cache.remove(&cache_key);
+                self.systemd_selected_file = None;
+            }
+        });
+
+        // New Drop-In Dialog Card (if open)
+        if self.systemd_new_dropin_open {
+            ui.add_space(4.0);
+            Frame::none()
+                .fill(p.bg_card)
+                .stroke(Stroke::new(1.0_f32, p.accent.gamma_multiply(0.4)))
+                .rounding(Rounding::same(10.0))
+                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("{} Create New Drop-In Override for {}", crate::lucide::PACKAGE, s.name)).size(13.0).strong().color(p.accent));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button(RichText::new(crate::lucide::CLOSE).size(12.0).color(p.text_muted)).clicked() {
+                                self.systemd_new_dropin_open = false;
+                            }
+                        });
+                    });
+                    ui.label(RichText::new("Drop-ins safely extend or override unit settings without modifying package-managed files.").size(10.5).color(p.text_muted));
+                    ui.add_space(4.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Filename:").size(11.0).color(p.text_secondary));
+                        ui.add(egui::TextEdit::singleline(&mut self.systemd_new_dropin_name).desired_width(160.0).font(egui::TextStyle::Monospace));
+                        let dropin_dir_preview = if user_mode {
+                            format!("~/.config/systemd/user/{}.d/{}", s.name, self.systemd_new_dropin_name.trim())
+                        } else {
+                            format!("/etc/systemd/system/{}.d/{}", s.name, self.systemd_new_dropin_name.trim())
+                        };
+                        ui.label(RichText::new(format!("→ {}", dropin_dir_preview)).size(10.5).color(p.text_muted));
+                    });
+
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);
+                        ui.label(RichText::new("Templates:").size(10.5).color(p.text_muted));
+                        let templates = [
+                            ("ExecStart Override", "[Service]\nExecStart=\nExecStart=/usr/bin/my-app --flags\n"),
+                            ("Environment Vars", "[Service]\nEnvironment=\"PORT=8080\"\nEnvironment=\"NODE_ENV=production\"\n"),
+                            ("Restart Policy", "[Service]\nRestart=always\nRestartSec=5s\n"),
+                            ("Resource Limits", "[Service]\nMemoryMax=2G\nCPUQuota=100%\n"),
+                            ("Empty", "[Service]\n"),
+                        ];
+                        for (idx, (t_name, t_body)) in templates.iter().enumerate() {
+                            let btn = egui::Button::new(RichText::new(*t_name).size(10.5).color(if self.systemd_new_dropin_template == idx { p.accent_text } else { p.accent }))
+                                .fill(if self.systemd_new_dropin_template == idx { p.accent } else { p.bg_button })
+                                .rounding(Rounding::same(999.0));
+                            if ui.add(btn).clicked() {
+                                self.systemd_new_dropin_template = idx;
+                                self.systemd_file_content = t_body.to_string();
+                            }
+                        }
+                    });
+
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        let btn_create = egui::Button::new(RichText::new(format!("{} Create Drop-In", crate::lucide::CHECK)).size(11.0).strong().color(Color32::WHITE))
+                            .fill(Color32::from_rgb(16, 185, 129))
+                            .rounding(Rounding::same(999.0));
+                        if ui.add(btn_create).clicked() {
+                            let clean_name = if self.systemd_new_dropin_name.trim().ends_with(".conf") {
+                                self.systemd_new_dropin_name.trim().to_string()
+                            } else {
+                                format!("{}.conf", self.systemd_new_dropin_name.trim())
+                            };
+                            let target_path = if user_mode {
+                                let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+                                format!("{}/.config/systemd/user/{}.d/{}", home, s.name, clean_name)
+                            } else {
+                                format!("/etc/systemd/system/{}.d/{}", s.name, clean_name)
+                            };
+
+                            let initial_content = if self.systemd_file_content.trim().is_empty() {
+                                "[Service]\n".to_string()
+                            } else {
+                                self.systemd_file_content.clone()
+                            };
+
+                            if let Some(host) = host_opt {
+                                match crate::systemd::write_remote_unit_file(host, &target_path, &initial_content, user_mode) {
+                                    Ok(msg) => {
+                                        self.systemd_file_status_msg = Some((msg, false));
+                                        self.systemd_selected_file = Some(target_path.clone());
+                                        self.systemd_file_original = initial_content;
+                                        self.systemd_new_dropin_open = false;
+                                        let cache_key = format!("{}:{}:{}", host.id, s.name, user_mode);
+                                        self.systemd_files_cache.remove(&cache_key);
+                                    }
+                                    Err(e) => self.systemd_file_status_msg = Some((e, true)),
+                                }
+                            } else {
+                                if !user_mode && self.local_sudo_password.is_empty() {
+                                    self.sudo_popup.open = true;
+                                    self.sudo_popup.pending = Some(PendingSudoAction::SaveUnitFile {
+                                        path: target_path.clone(),
+                                        content: initial_content.clone(),
+                                        user_mode,
+                                    });
+                                    self.sudo_popup.password_input.clear();
+                                    self.sudo_popup.error = None;
+                                    self.sudo_popup.remember_password = true;
+                                    self.sudo_popup.just_opened = true;
+                                    self.systemd_selected_file = Some(target_path);
+                                    self.systemd_new_dropin_open = false;
+                                } else {
+                                    let pass = if !user_mode && !self.local_sudo_password.is_empty() {
+                                        Some(self.local_sudo_password.as_str())
+                                    } else {
+                                        None
+                                    };
+                                    match crate::systemd::write_local_unit_file(&target_path, &initial_content, user_mode, pass) {
+                                        Ok(msg) => {
+                                            self.systemd_file_status_msg = Some((msg, false));
+                                            self.systemd_selected_file = Some(target_path.clone());
+                                            self.systemd_file_original = initial_content;
+                                            self.systemd_new_dropin_open = false;
+                                            let cache_key = format!("local:{}:{}", s.name, user_mode);
+                                            self.systemd_files_cache.remove(&cache_key);
+                                        }
+                                        Err(e) => self.systemd_file_status_msg = Some((e, true)),
+                                    }
+                                }
+                            }
+                        }
+                    });
+                });
+        }
+
+        ui.add_space(6.0);
+
+        // Editor Control Card Header
+        let cur_path = self.systemd_selected_file.clone().unwrap_or_default();
+        let is_dropin = cur_path.contains(".d/");
+        let is_modified = self.systemd_file_content != self.systemd_file_original;
+
+        Frame::none()
+            .fill(p.bg_card)
+            .stroke(Stroke::NONE)
+            .rounding(Rounding::same(8.0))
+            .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(format!("{} {}", if is_dropin { crate::lucide::PACKAGE } else { crate::lucide::FILE_TEXT }, &cur_path)).size(11.5).monospace().color(p.accent_light));
+                    if is_dropin {
+                        ui.label(RichText::new("Drop-In Override").size(10.0).color(Color32::from_rgb(56, 189, 248)));
+                    } else {
+                        ui.label(RichText::new("Primary Unit").size(10.0).color(p.text_muted));
+                    }
+                    if is_modified {
+                        ui.label(RichText::new("● Unsaved Changes").size(10.5).strong().color(Color32::from_rgb(250, 204, 21)));
+                    }
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+
+                        // Quick restart service button
+                        let btn_restart = egui::Button::new(RichText::new(format!("{} Restart Service", crate::lucide::REFRESH_CW)).size(10.5).color(p.text_secondary))
+                            .fill(p.bg_button)
+                            .rounding(Rounding::same(999.0));
+                        if ui.add(btn_restart).on_hover_text("Restart service to activate new configuration").clicked() {
+                            if let Some(host) = host_opt {
+                                self.trigger_remote_service_action(host, &s.name, "restart", user_mode);
+                            } else {
+                                let pass = if !user_mode && !self.local_sudo_password.is_empty() {
+                                    Some(self.local_sudo_password.as_str())
+                                } else {
+                                    None
+                                };
+                                let _ = crate::systemd::control_local_service(&s.name, "restart", user_mode, pass);
+                            }
+                        }
+
+                        // Delete Drop-In (if dropin)
+                        if is_dropin {
+                            let btn_del = egui::Button::new(RichText::new(format!("{} Delete Drop-In", crate::lucide::TRASH)).size(10.5).strong().color(Color32::WHITE))
+                                .fill(p.danger)
+                                .rounding(Rounding::same(999.0));
+                            if ui.add(btn_del).on_hover_text("Remove this drop-in override and reload daemon").clicked() {
+                                if let Some(host) = host_opt {
+                                    match crate::systemd::delete_remote_drop_in(host, &cur_path, user_mode) {
+                                        Ok(msg) => {
+                                            self.systemd_file_status_msg = Some((msg, false));
+                                            self.systemd_selected_file = None;
+                                            self.systemd_files_cache.clear();
+                                        }
+                                        Err(e) => self.systemd_file_status_msg = Some((e, true)),
+                                    }
+                                } else {
+                                    if !user_mode && self.local_sudo_password.is_empty() {
+                                        self.sudo_popup.open = true;
+                                        self.sudo_popup.pending = Some(PendingSudoAction::DeleteDropIn {
+                                            path: cur_path.clone(),
+                                            user_mode,
+                                        });
+                                        self.sudo_popup.password_input.clear();
+                                        self.sudo_popup.error = None;
+                                        self.sudo_popup.remember_password = true;
+                                        self.sudo_popup.just_opened = true;
+                                    } else {
+                                        let pass = if !user_mode && !self.local_sudo_password.is_empty() {
+                                            Some(self.local_sudo_password.as_str())
+                                        } else {
+                                            None
+                                        };
+                                        match crate::systemd::delete_local_drop_in(&cur_path, user_mode, pass) {
+                                            Ok(msg) => {
+                                                self.systemd_file_status_msg = Some((msg, false));
+                                                self.systemd_selected_file = None;
+                                                self.systemd_files_cache.clear();
+                                            }
+                                            Err(e) => self.systemd_file_status_msg = Some((e, true)),
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Revert Button
+                        if is_modified {
+                            let btn_revert = egui::Button::new(RichText::new("Revert").size(10.5).color(p.text_secondary))
+                                .fill(p.bg_button)
+                                .rounding(Rounding::same(999.0));
+                            if ui.add(btn_revert).on_hover_text("Discard changes and restore original file").clicked() {
+                                self.systemd_file_content = self.systemd_file_original.clone();
+                            }
+                        }
+
+                        // Save & Reload Button
+                        let btn_save = egui::Button::new(
+                            RichText::new(format!("{} Save & Reload", crate::lucide::SAVE)).size(10.5).strong().color(Color32::WHITE),
+                        )
+                        .fill(if is_modified { p.accent } else { p.bg_button })
+                        .rounding(Rounding::same(999.0));
+                        if ui.add(btn_save).on_hover_text("Save file to disk and execute systemctl daemon-reload").clicked() {
+                            if let Some(host) = host_opt {
+                                match crate::systemd::write_remote_unit_file(host, &cur_path, &self.systemd_file_content, user_mode) {
+                                    Ok(msg) => {
+                                        self.systemd_file_original = self.systemd_file_content.clone();
+                                        self.systemd_file_status_msg = Some((msg, false));
+                                    }
+                                    Err(e) => self.systemd_file_status_msg = Some((e, true)),
+                                }
+                            } else {
+                                if !user_mode && self.local_sudo_password.is_empty() {
+                                    self.sudo_popup.open = true;
+                                    self.sudo_popup.pending = Some(PendingSudoAction::SaveUnitFile {
+                                        path: cur_path.clone(),
+                                        content: self.systemd_file_content.clone(),
+                                        user_mode,
+                                    });
+                                    self.sudo_popup.password_input.clear();
+                                    self.sudo_popup.error = None;
+                                    self.sudo_popup.remember_password = true;
+                                    self.sudo_popup.just_opened = true;
+                                } else {
+                                    let pass = if !user_mode && !self.local_sudo_password.is_empty() {
+                                        Some(self.local_sudo_password.as_str())
+                                    } else {
+                                        None
+                                    };
+                                    match crate::systemd::write_local_unit_file(&cur_path, &self.systemd_file_content, user_mode, pass) {
+                                        Ok(msg) => {
+                                            self.systemd_file_original = self.systemd_file_content.clone();
+                                            self.systemd_file_status_msg = Some((msg, false));
+                                        }
+                                        Err(e) => self.systemd_file_status_msg = Some((e, true)),
+                                    }
+                                }
+                            }
+                        }
+                    });
+                });
+            });
+
+        // Status banner
+        if let Some((ref msg, is_err)) = self.systemd_file_status_msg {
+            ui.add_space(4.0);
+            Frame::none()
+                .fill(if is_err { p.danger.gamma_multiply(0.2) } else { p.bg_card })
+                .stroke(Stroke::new(1.0_f32, if is_err { p.danger } else { p.accent }))
+                .rounding(Rounding::same(6.0))
+                .inner_margin(egui::Margin::symmetric(10.0, 4.0))
+                .show(ui, |ui| {
+                    ui.label(RichText::new(msg).size(11.0).color(if is_err { p.danger } else { p.accent }));
+                });
+        }
+
+        ui.add_space(4.0);
+
+        // Code Editor Viewport
+        let edit_h = (ui.available_height() - 16.0).max(180.0);
+        Frame::none()
+            .fill(Color32::from_rgb(12, 14, 20))
+            .stroke(Stroke::new(1.0_f32, p.border.gamma_multiply(0.6)))
+            .rounding(Rounding::same(8.0))
+            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+            .show(ui, |ui| {
+                ui.set_height(edit_h);
+                ScrollArea::both()
+                    .id_salt("systemd_file_editor_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.systemd_file_content)
+                                .font(egui::TextStyle::Monospace)
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(25)
+                                .code_editor()
+                                .lock_focus(true),
+                        );
+                    });
+            });
+    }
+
+    fn render_systemd_dependencies_tab(
+        &mut self,
+        ui: &mut Ui,
+        s: &SystemdService,
+        user_mode: bool,
+        host_opt: Option<&SshRemoteHost>,
+        services_list: &[SystemdService],
+    ) {
+        let p = self.theme.palette();
+        let deps = self.load_systemd_unit_dependencies(&s.name, user_mode, host_opt);
+
+        let mut navigate_to_unit: Option<String> = None;
+
+        // Top Toolbar
+        ui.horizontal(|ui| {
+            // History Back button
+            if let Some(prev) = self.systemd_deps_history.last() {
+                let btn_back = egui::Button::new(
+                    RichText::new(format!("{} Back to {}", crate::lucide::ARROW_LEFT, prev)).size(11.0).strong().color(p.accent_text),
+                )
+                .fill(p.accent)
+                .rounding(Rounding::same(999.0));
+                if ui.add(btn_back).on_hover_text("Navigate back to previously viewed unit").clicked() {
+                    let prev_unit = self.systemd_deps_history.pop().unwrap();
+                    self.selected_service = Some(prev_unit);
+                    return;
+                }
+            }
+
+            // Filter box
+            ui.label(RichText::new(crate::lucide::SEARCH).size(12.0).color(p.text_muted));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.systemd_deps_filter)
+                    .hint_text("Filter dependencies...")
+                    .desired_width(180.0),
+            );
+
+            // View Mode segmented buttons
+            let btn_cat = egui::Button::new(
+                RichText::new("Categorized").size(11.0).color(if self.systemd_deps_view_mode == 0 { p.accent_text } else { p.text_secondary }),
+            )
+            .fill(if self.systemd_deps_view_mode == 0 { p.accent } else { p.bg_button })
+            .rounding(Rounding::same(999.0));
+            if ui.add(btn_cat).clicked() {
+                self.systemd_deps_view_mode = 0;
+            }
+
+            let btn_tree = egui::Button::new(
+                RichText::new("Dependency Tree").size(11.0).color(if self.systemd_deps_view_mode == 1 { p.accent_text } else { p.text_secondary }),
+            )
+            .fill(if self.systemd_deps_view_mode == 1 { p.accent } else { p.bg_button })
+            .rounding(Rounding::same(999.0));
+            if ui.add(btn_tree).clicked() {
+                self.systemd_deps_view_mode = 1;
+            }
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let btn_ref = egui::Button::new(RichText::new(format!("{} Refresh", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_secondary))
+                    .fill(p.bg_button)
+                    .rounding(Rounding::same(999.0));
+                if ui.add(btn_ref).on_hover_text("Refresh dependencies").clicked() {
+                    let cache_key = format!("{}:{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), s.name, user_mode);
+                    self.systemd_deps_cache.remove(&cache_key);
+                }
+            });
+        });
+
+        ui.add_space(6.0);
+
+        if self.systemd_deps_view_mode == 0 {
+            // Categorized View
+            ScrollArea::vertical()
+                .id_salt("systemd_deps_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let filter = self.systemd_deps_filter.trim().to_lowercase();
+
+                    let categories = [
+                        ("Requires (Hard Dependencies)", "Units that must be active for this unit to start. If any of them fails or stops, this unit is deactivated.", &deps.requires, Color32::from_rgb(239, 68, 68)),
+                        ("Wants (Soft Dependencies)", "Suggested units that start alongside this unit. A failure does not stop this unit.", &deps.wants, Color32::from_rgb(56, 189, 248)),
+                        ("After (Order After)", "This unit starts after these units have completed initialization.", &deps.after, Color32::from_rgb(168, 85, 247)),
+                        ("Before (Order Before)", "These units only start after this unit has completed initialization.", &deps.before, Color32::from_rgb(147, 197, 253)),
+                        ("Conflicts (Incompatible Units)", "Units that cannot run simultaneously with this unit.", &deps.conflicts, Color32::from_rgb(244, 63, 94)),
+                        ("Required By (Reverse Hard Dependencies)", "Units on the system that strictly require this unit.", &deps.required_by, Color32::from_rgb(245, 158, 11)),
+                        ("Wanted By (Reverse Soft Dependencies)", "Units on the system that declare Wants= on this unit.", &deps.wanted_by, Color32::from_rgb(34, 197, 94)),
+                        ("Part Of & Binds To", "Units sharing life cycle binding with this unit.", &deps.part_of, Color32::from_rgb(192, 132, 252)),
+                    ];
+
+                    let mut any_shown = false;
+                    for (cat_title, cat_desc, cat_units, accent_color) in categories {
+                        let filtered_units: Vec<&String> = cat_units.iter()
+                            .filter(|u| filter.is_empty() || u.to_lowercase().contains(&filter))
+                            .collect();
+
+                        if filtered_units.is_empty() && !filter.is_empty() {
+                            continue;
+                        }
+                        any_shown = true;
+
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::new(1.0_f32, p.border.gamma_multiply(0.4)))
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(format!("● {}", cat_title)).size(12.0).strong().color(accent_color));
+                                    ui.label(RichText::new(format!("({})", filtered_units.len())).size(11.0).color(p.text_muted));
+                                });
+                                ui.label(RichText::new(cat_desc).size(10.5).color(p.text_muted));
+                                ui.add_space(4.0);
+
+                                if filtered_units.is_empty() {
+                                    ui.label(RichText::new("None declared").size(10.5).italics().color(p.text_muted));
+                                } else {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+                                        for unit_name in filtered_units {
+                                            // Find unit status in services_list
+                                            let s_status = services_list.iter().find(|s| s.name == **unit_name);
+                                            let (dot, _dot_color) = if let Some(known) = s_status {
+                                                if known.is_active() {
+                                                    ("●", Color32::from_rgb(16, 185, 129))
+                                                } else if known.is_failed() {
+                                                    ("✕", p.danger)
+                                                } else {
+                                                    ("○", p.text_muted)
+                                                }
+                                            } else if unit_name.ends_with(".target") {
+                                                ("🎯", Color32::from_rgb(148, 163, 184))
+                                            } else if unit_name.ends_with(".socket") {
+                                                ("🔌", Color32::from_rgb(56, 189, 248))
+                                            } else if unit_name.ends_with(".slice") {
+                                                ("🍰", Color32::from_rgb(168, 85, 247))
+                                            } else {
+                                                ("⚙", p.text_muted)
+                                            };
+
+                                            let btn = egui::Button::new(
+                                                RichText::new(format!("{} {}", dot, unit_name))
+                                                    .size(11.0)
+                                                    .monospace()
+                                                    .color(p.text_primary),
+                                            )
+                                            .fill(p.bg_button)
+                                            .stroke(Stroke::new(1.0_f32, p.border.gamma_multiply(0.4)))
+                                            .rounding(Rounding::same(999.0));
+
+                                            if ui.add(btn).on_hover_text(format!("Click to view and inspect dependencies for {}", unit_name)).clicked() {
+                                                navigate_to_unit = Some((*unit_name).clone());
+                                            }
+                                        }
+                                    });
+                                }
+                            });
+                        ui.add_space(6.0);
+                    }
+
+                    if !any_shown {
+                        ui.add_space(20.0);
+                        ui.label(RichText::new("No matching dependencies found").size(12.0).color(p.text_muted));
+                    }
+                });
+        } else {
+            // Dependency Tree View
+            let tree_h = (ui.available_height() - 16.0).max(180.0);
+            Frame::none()
+                .fill(Color32::from_rgb(12, 14, 20))
+                .stroke(Stroke::new(1.0_f32, p.border.gamma_multiply(0.6)))
+                .rounding(Rounding::same(8.0))
+                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                .show(ui, |ui| {
+                    ui.set_height(tree_h);
+                    ScrollArea::both()
+                        .id_salt("systemd_deps_tree_scroll")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            if deps.tree_output.trim().is_empty() {
+                                ui.label(RichText::new("No dependency tree output returned from systemctl list-dependencies.").size(11.0).color(p.text_muted));
+                            } else {
+                                ui.label(
+                                    RichText::new(&deps.tree_output)
+                                        .size(11.0)
+                                        .monospace()
+                                        .color(Color32::from_rgb(220, 225, 235)),
+                                );
+                            }
+                        });
+                });
+        }
+
+        if let Some(target_unit) = navigate_to_unit {
+            self.systemd_deps_history.push(s.name.clone());
+            self.selected_service = Some(target_unit);
+            self.service_action_msg = None;
+            self.systemd_selected_file = None;
+            self.systemd_file_content.clear();
+            self.systemd_file_original.clear();
+            self.systemd_file_status_msg = None;
         }
     }
 
@@ -5470,6 +6102,56 @@ impl LauncherApp {
                     }
                 }
             }
+            PendingSudoAction::SaveUnitFile { path, content, user_mode } => {
+                let res = write_local_unit_file(&path, &content, user_mode, Some(&pass));
+                match res {
+                    Ok(msg) => {
+                        if from_popup && self.sudo_popup.remember_password {
+                            self.local_sudo_password = pass;
+                        }
+                        self.sudo_popup.open = false;
+                        self.sudo_popup.pending = None;
+                        self.sudo_popup.password_input.clear();
+                        self.sudo_popup.error = None;
+                        self.systemd_file_original = content.clone();
+                        self.systemd_file_status_msg = Some((msg, false));
+                        self.systemd_files_cache.clear();
+                    }
+                    Err(e) => {
+                        self.local_sudo_password.clear();
+                        self.sudo_popup.open = true;
+                        self.sudo_popup.pending = Some(PendingSudoAction::SaveUnitFile { path, content, user_mode });
+                        self.sudo_popup.error = Some(e);
+                        self.sudo_popup.just_opened = true;
+                    }
+                }
+            }
+            PendingSudoAction::DeleteDropIn { path, user_mode } => {
+                let res = delete_local_drop_in(&path, user_mode, Some(&pass));
+                match res {
+                    Ok(msg) => {
+                        if from_popup && self.sudo_popup.remember_password {
+                            self.local_sudo_password = pass;
+                        }
+                        self.sudo_popup.open = false;
+                        self.sudo_popup.pending = None;
+                        self.sudo_popup.password_input.clear();
+                        self.sudo_popup.error = None;
+                        self.systemd_selected_file = None;
+                        self.systemd_file_content.clear();
+                        self.systemd_file_original.clear();
+                        self.systemd_file_status_msg = Some((msg, false));
+                        self.systemd_files_cache.clear();
+                    }
+                    Err(e) => {
+                        self.local_sudo_password.clear();
+                        self.sudo_popup.open = true;
+                        self.sudo_popup.pending = Some(PendingSudoAction::DeleteDropIn { path, user_mode });
+                        self.sudo_popup.error = Some(e);
+                        self.sudo_popup.just_opened = true;
+                    }
+                }
+            }
         }
     }
 
@@ -5530,6 +6212,18 @@ impl LauncherApp {
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(RichText::new("Create system service:").size(12.0).color(palette.text_secondary));
                                 ui.label(RichText::new(&def.name).size(12.0).strong().color(palette.text_primary));
+                            });
+                        }
+                        PendingSudoAction::SaveUnitFile { path, .. } => {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new("Save system unit file:").size(12.0).color(palette.text_secondary));
+                                ui.label(RichText::new(path).size(12.0).strong().color(palette.text_primary));
+                            });
+                        }
+                        PendingSudoAction::DeleteDropIn { path, .. } => {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new("Delete system drop-in:").size(12.0).color(palette.text_secondary));
+                                ui.label(RichText::new(path).size(12.0).strong().color(palette.danger));
                             });
                         }
                     }
@@ -6039,7 +6733,8 @@ impl LauncherApp {
             self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_default()
         } else {
             if self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval.max(1) as u64) {
-                self.sensors_snapshot = self.sensors_collector.collect();
+                let include_top = self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited;
+                self.sensors_snapshot = self.sensors_collector.collect_with_top_apps(include_top);
                 self.last_sensors_refresh = Instant::now();
             }
             self.sensors_snapshot.clone()
@@ -6061,7 +6756,8 @@ impl LauncherApp {
                                 self.trigger_remote_sensors_query(host);
                             }
                         } else {
-                            self.sensors_snapshot = self.sensors_collector.collect();
+                            let include_top = self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited;
+                            self.sensors_snapshot = self.sensors_collector.collect_with_top_apps(include_top);
                             self.last_sensors_refresh = Instant::now();
                         }
                     }
@@ -6100,7 +6796,11 @@ impl LauncherApp {
                 ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
                 let categories = ["All", "Top Apps", "CPU", "RAM", "GPU", "Power", "Storage", "Network", "Temps"];
                 for cat in categories {
-                    let is_active = self.sensors_category_filter == cat;
+                    let is_active = if cat == "Top Apps" {
+                        self.sensors_subtab == SensorsSubTab::TopApps
+                    } else {
+                        self.sensors_subtab == SensorsSubTab::System && self.sensors_category_filter == cat
+                    };
                     let bg = if is_active { p.accent } else { p.bg_button };
                     let fg = if is_active { p.accent_text } else { p.text_secondary };
                     let btn = egui::Button::new(RichText::new(cat).size(10.0).strong().color(fg))
@@ -6108,7 +6808,17 @@ impl LauncherApp {
                         .stroke(Stroke::NONE)
                         .rounding(Rounding::same(999.0));
                     if ui.add(btn).clicked() {
-                        self.sensors_category_filter = cat.to_string();
+                        if cat == "Top Apps" {
+                            self.sensors_subtab = SensorsSubTab::TopApps;
+                            self.sensors_top_apps_visited = true;
+                            if self.selected_machine == "local" && self.sensors_snapshot.top_apps.is_empty() {
+                                self.sensors_snapshot = self.sensors_collector.collect_with_top_apps(true);
+                                self.last_sensors_refresh = Instant::now();
+                            }
+                        } else {
+                            self.sensors_subtab = SensorsSubTab::System;
+                            self.sensors_category_filter = cat.to_string();
+                        }
                     }
                 }
             });
@@ -6184,7 +6894,12 @@ impl LauncherApp {
                                         let btn_all = egui::Button::new(RichText::new(format!("View all {}", crate::lucide::EXTERNAL_LINK)).size(10.0).color(p.accent))
                                             .frame(false);
                                         if ui.add(btn_all).clicked() {
-                                            self.sensors_category_filter = "Top Apps".to_string();
+                                            self.sensors_subtab = SensorsSubTab::TopApps;
+                                            self.sensors_top_apps_visited = true;
+                                            if self.selected_machine == "local" && self.sensors_snapshot.top_apps.is_empty() {
+                                                self.sensors_snapshot = self.sensors_collector.collect_with_top_apps(true);
+                                                self.last_sensors_refresh = Instant::now();
+                                            }
                                         }
                                     });
                                 });
@@ -6441,7 +7156,8 @@ impl LauncherApp {
             self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_default()
         } else {
             if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
-                self.sensors_snapshot = self.sensors_collector.collect();
+                let include_top = self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited;
+                self.sensors_snapshot = self.sensors_collector.collect_with_top_apps(include_top);
                 self.last_sensors_refresh = Instant::now();
             }
             self.sensors_snapshot.clone()
@@ -6450,7 +7166,6 @@ impl LauncherApp {
         let filter_cat = self.sensors_category_filter.clone();
         let search_q = self.sensors_search_query.trim().to_lowercase();
 
-        let show_top_apps = filter_cat == "All" || filter_cat == "Top Apps";
         let show_cpu = filter_cat == "All" || filter_cat == "CPU";
         let show_ram = filter_cat == "All" || filter_cat == "RAM";
         let show_gpu = filter_cat == "All" || filter_cat == "GPU";
@@ -6540,7 +7255,8 @@ impl LauncherApp {
                                         self.trigger_remote_sensors_query(host);
                                     }
                                 } else {
-                                    self.sensors_snapshot = self.sensors_collector.collect();
+                                    let include_top = self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited;
+                                    self.sensors_snapshot = self.sensors_collector.collect_with_top_apps(include_top);
                                     self.last_sensors_refresh = Instant::now();
                                 }
                             }
@@ -6566,16 +7282,54 @@ impl LauncherApp {
                 }
             }
 
-            ui.add_space(8.0);
+            ui.add_space(6.0);
 
             // ═════════════════════════════════════════════════════════════════
-            // Main Scrollable Area for Sensors Sections
+            // Sensors Subtabs: [ System ]  [ Top Apps ]
             // ═════════════════════════════════════════════════════════════════
-            ScrollArea::vertical()
-                .id_salt("sensors_main_scroll")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let tabs = [
+                    (SensorsSubTab::System, format!("{} System", crate::lucide::CPU)),
+                    (SensorsSubTab::TopApps, format!("{} Top Apps", crate::lucide::ACTIVITY)),
+                ];
+                for (tab, label) in tabs {
+                    let is_sel = self.sensors_subtab == tab;
+                    let btn = egui::Button::new(
+                        RichText::new(label)
+                            .size(11.5)
+                            .strong()
+                            .color(if is_sel { p.accent_text } else { p.text_secondary }),
+                    )
+                    .fill(if is_sel { p.accent } else { p.bg_button })
+                    .stroke(if is_sel { Stroke::NONE } else { Stroke::new(1.0_f32, p.border.gamma_multiply(0.5)) })
+                    .rounding(Rounding::same(999.0))
+                    .min_size(egui::vec2(90.0, 26.0));
+                    if ui.add(btn).clicked() {
+                        self.sensors_subtab = tab;
+                        if tab == SensorsSubTab::TopApps {
+                            self.sensors_top_apps_visited = true;
+                            if self.selected_machine == "local" && self.sensors_snapshot.top_apps.is_empty() {
+                                self.sensors_snapshot = self.sensors_collector.collect_with_top_apps(true);
+                                self.last_sensors_refresh = Instant::now();
+                            }
+                        }
+                    }
+                }
+            });
+
+            ui.add_space(6.0);
+
+            match self.sensors_subtab {
+                SensorsSubTab::System => {
+                    // ═════════════════════════════════════════════════════════════════
+                    // Main Scrollable Area for System Hardware Sensors
+                    // ═════════════════════════════════════════════════════════════════
+                    ScrollArea::vertical()
+                        .id_salt("sensors_main_scroll")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
 
                     // SECTION 1: CPU MONITOR & PER-CORE BREAKDOWN
                     if show_cpu {
@@ -6698,138 +7452,6 @@ impl LauncherApp {
                         ui.add_space(8.0);
                     }
 
-                    // SECTION: TOP APPLICATIONS & RESOURCE CONSUMERS
-                    if show_top_apps && !snap.top_apps.is_empty() {
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(format!("{} Top Applications & Resource Consumers ({})", crate::lucide::ACTIVITY, snap.top_apps.len())).size(13.5).strong().color(p.text_primary));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let sort_opts = [
-                                            ("cpu", format!("{} CPU %", crate::lucide::CPU)),
-                                            ("mem", format!("{} Memory", crate::lucide::RAM)),
-                                            ("disk", format!("{} Disk Speed", crate::lucide::STORAGE)),
-                                            ("name", format!("{} Name", crate::lucide::TAG)),
-                                            ("pid", format!("{} PID", crate::lucide::HASH)),
-                                        ];
-                                        for (val, label) in sort_opts.iter().rev() {
-                                            let is_active = self.sensors_top_apps_sort == *val;
-                                            let bg = if is_active { p.accent } else { p.bg_button };
-                                            let fg = if is_active { p.accent_text } else { p.text_secondary };
-                                            let btn = egui::Button::new(RichText::new(label).size(10.0).strong().color(fg))
-                                                .fill(bg)
-                                                .stroke(Stroke::NONE)
-                                                .rounding(Rounding::same(999.0));
-                                            if ui.add(btn).clicked() {
-                                                self.sensors_top_apps_sort = val.to_string();
-                                            }
-                                        }
-                                        ui.label(RichText::new("Sort:").size(10.5).color(p.text_muted));
-                                    });
-                                });
-
-                                ui.add_space(8.0);
-
-                                let mut sorted_apps = snap.top_apps.clone();
-                                if !search_q.is_empty() {
-                                    sorted_apps.retain(|a| {
-                                        a.name.to_lowercase().contains(&search_q)
-                                            || a.pid.to_string().contains(&search_q)
-                                            || a.status.to_lowercase().contains(&search_q)
-                                    });
-                                }
-
-                                match self.sensors_top_apps_sort.as_str() {
-                                    "mem" => sorted_apps.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes)),
-                                    "disk" => sorted_apps.sort_by(|a, b| b.disk_rate_bps.partial_cmp(&a.disk_rate_bps).unwrap_or(std::cmp::Ordering::Equal)),
-                                    "name" => sorted_apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
-                                    "pid" => sorted_apps.sort_by_key(|a| a.pid),
-                                    _ => sorted_apps.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap_or(std::cmp::Ordering::Equal)),
-                                }
-
-                                if sorted_apps.is_empty() {
-                                    ui.add_space(8.0);
-                                    ui.vertical_centered(|ui| {
-                                        ui.label(RichText::new("No active processes match the search query.").size(11.5).color(p.text_muted));
-                                    });
-                                } else {
-                                    egui::Grid::new("top_apps_right_grid")
-                                        .num_columns(7)
-                                        .striped(true)
-                                        .spacing(egui::vec2(12.0, 6.0))
-                                        .show(ui, |ui| {
-                                            ui.label(RichText::new("PID").size(11.0).strong().color(p.text_muted));
-                                            ui.label(RichText::new("Application").size(11.0).strong().color(p.text_muted));
-                                            ui.label(RichText::new("Status").size(11.0).strong().color(p.text_muted));
-                                            ui.label(RichText::new("CPU Usage").size(11.0).strong().color(p.text_muted));
-                                            ui.label(RichText::new("Memory (RAM)").size(11.0).strong().color(p.text_muted));
-                                            ui.label(RichText::new("Storage Live Speed").size(11.0).strong().color(Color32::from_rgb(56, 189, 248)));
-                                            ui.label(RichText::new("Lifetime Disk I/O").size(11.0).strong().color(p.text_muted));
-                                            ui.end_row();
-
-                                            for app in sorted_apps.iter().take(40) {
-                                                ui.label(RichText::new(format!("{}", app.pid)).size(11.0).monospace().color(p.text_muted));
-
-                                                let app_name = if app.name.is_empty() { format!("PID {}", app.pid) } else { app.name.clone() };
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new(crate::lucide::ACTIVITY).size(11.0).color(p.accent));
-                                                    ui.label(RichText::new(app_name).size(11.5).strong().color(p.text_primary));
-                                                });
-
-                                                let (st_color, st_bg) = match app.status.to_lowercase().as_str() {
-                                                    "run" | "running" => (Color32::from_rgb(16, 185, 129), Color32::from_rgba_premultiplied(16, 185, 129, 25)),
-                                                    "idle" | "sleep" | "sleeping" => (p.text_secondary, p.bg_button),
-                                                    _ => (Color32::from_rgb(56, 189, 248), Color32::from_rgba_premultiplied(56, 189, 248, 25)),
-                                                };
-                                                Frame::none()
-                                                    .fill(st_bg)
-                                                    .stroke(Stroke::NONE)
-                                                    .rounding(Rounding::same(999.0))
-                                                    .inner_margin(egui::Margin::symmetric(6.0, 1.5))
-                                                    .show(ui, |ui| {
-                                                        ui.label(RichText::new(&app.status).size(9.5).color(st_color));
-                                                    });
-
-                                                let cpu_frac = (app.cpu_usage / 100.0).clamp(0.0, 1.0);
-                                                let cpu_col = if app.cpu_usage >= 50.0 { p.danger }
-                                                    else if app.cpu_usage >= 15.0 { Color32::from_rgb(250, 204, 21) }
-                                                    else { p.accent };
-                                                ui.horizontal(|ui| {
-                                                    ui.add(egui::ProgressBar::new(cpu_frac).desired_width(70.0).animate(false));
-                                                    ui.label(RichText::new(format!("{:.1}%", app.cpu_usage)).size(11.0).strong().monospace().color(cpu_col));
-                                                });
-
-                                                let mem_str = crate::sensors::format_bytes(app.memory_bytes);
-                                                let mem_pct = if snap.mem_total_bytes > 0 {
-                                                    (app.memory_bytes as f32 / snap.mem_total_bytes as f32) * 100.0
-                                                } else {
-                                                    0.0
-                                                };
-                                                ui.label(RichText::new(format!("{} ({:.1}%)", mem_str, mem_pct)).size(11.0).monospace().color(p.text_secondary));
-
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new(crate::lucide::ARROW_DOWN).size(10.5).color(Color32::from_rgb(56, 189, 248)));
-                                                    ui.label(RichText::new(crate::sensors::format_rate(app.disk_read_rate_bps)).size(10.5).monospace().color(p.text_primary));
-                                                    ui.add_space(3.0);
-                                                    ui.label(RichText::new(crate::lucide::ARROW_UP).size(10.5).color(Color32::from_rgb(168, 85, 247)));
-                                                    ui.label(RichText::new(crate::sensors::format_rate(app.disk_write_rate_bps)).size(10.5).monospace().color(p.text_primary));
-                                                });
-
-                                                let lt_str = format!("R: {} / W: {}", crate::sensors::format_bytes(app.disk_read_bytes), crate::sensors::format_bytes(app.disk_written_bytes));
-                                                ui.label(RichText::new(lt_str).size(10.0).color(p.text_muted));
-
-                                                ui.end_row();
-                                            }
-                                        });
-                                }
-                            });
-
-                        ui.add_space(8.0);
-                    }
 
                     // SECTION 3: GPU MONITOR
                     if show_gpu && !snap.gpus.is_empty() {
@@ -7178,7 +7800,225 @@ impl LauncherApp {
                         ui.add_space(8.0);
                     }
                 });
+                }
+                SensorsSubTab::TopApps => {
+                    self.render_sensors_top_apps_tab(ui, &snap);
+                }
+            }
         });
+    }
+
+    fn render_sensors_top_apps_tab(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot) {
+        let p = self.theme.palette();
+
+        const COL_PID_W: f32 = 65.0;
+        const COL_APP_W: f32 = 220.0;
+        const COL_STATUS_W: f32 = 85.0;
+        const COL_CPU_W: f32 = 145.0;
+        const COL_MEM_W: f32 = 135.0;
+        const COL_SPEED_W: f32 = 175.0;
+        const COL_IO_W: f32 = 150.0;
+
+        Frame::none()
+            .fill(p.bg_card)
+            .stroke(Stroke::NONE)
+            .rounding(Rounding::same(8.0))
+            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+            .show(ui, |ui| {
+                // Header row of Top Apps tab
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(format!("{} Top Resource-Consuming Processes", crate::lucide::ACTIVITY)).size(13.5).strong().color(p.text_primary));
+                    let count_text = format!("{} processes", snap.top_apps.len());
+                    Frame::none()
+                        .fill(p.bg_button)
+                        .rounding(Rounding::same(999.0))
+                        .inner_margin(egui::Margin::symmetric(7.0, 2.0))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(count_text).size(10.0).strong().color(p.text_secondary));
+                        });
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Sort options pills
+                        let sort_opts = [
+                            ("cpu", format!("{} CPU", crate::lucide::CPU)),
+                            ("mem", format!("{} Memory", crate::lucide::DATABASE)),
+                            ("disk", format!("{} Disk Speed", crate::lucide::STORAGE)),
+                            ("name", format!("{} Name", crate::lucide::TAG)),
+                            ("pid", format!("{} PID", crate::lucide::HASH)),
+                        ];
+                        for (val, label) in sort_opts.iter().rev() {
+                            let is_active = self.sensors_top_apps_sort == *val;
+                            let bg = if is_active { p.accent } else { p.bg_button };
+                            let fg = if is_active { p.accent_text } else { p.text_secondary };
+                            let btn = egui::Button::new(RichText::new(label).size(10.0).strong().color(fg))
+                                .fill(bg)
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(999.0));
+                            if ui.add(btn).clicked() {
+                                self.sensors_top_apps_sort = val.to_string();
+                            }
+                        }
+                        ui.label(RichText::new("Sort:").size(10.5).color(p.text_muted));
+
+                        ui.add_space(8.0);
+
+                        // Search box
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.sensors_search_query)
+                                .hint_text(format!("{} Filter process name, PID, status...", crate::lucide::SEARCH))
+                                .desired_width(220.0),
+                        );
+                    });
+                });
+
+                ui.add_space(10.0);
+
+                let search_q = self.sensors_search_query.trim().to_lowercase();
+                let mut sorted_apps = snap.top_apps.clone();
+                if !search_q.is_empty() {
+                    sorted_apps.retain(|a| {
+                        a.name.to_lowercase().contains(&search_q)
+                            || a.pid.to_string().contains(&search_q)
+                            || a.status.to_lowercase().contains(&search_q)
+                    });
+                }
+
+                match self.sensors_top_apps_sort.as_str() {
+                    "mem" => sorted_apps.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes)),
+                    "disk" => sorted_apps.sort_by(|a, b| b.disk_rate_bps.partial_cmp(&a.disk_rate_bps).unwrap_or(std::cmp::Ordering::Equal)),
+                    "name" => sorted_apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+                    "pid" => sorted_apps.sort_by_key(|a| a.pid),
+                    _ => sorted_apps.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap_or(std::cmp::Ordering::Equal)),
+                }
+
+                if sorted_apps.is_empty() {
+                    ui.add_space(20.0);
+                    ui.vertical_centered(|ui| {
+                        if !self.sensors_top_apps_visited {
+                            ui.label(RichText::new("Loading system processes...").size(12.0).color(p.text_muted));
+                        } else {
+                            ui.label(RichText::new("No active processes match the search query.").size(12.0).color(p.text_muted));
+                        }
+                    });
+                    ui.add_space(20.0);
+                } else {
+                    ScrollArea::vertical()
+                        .id_salt("top_apps_v_scroll")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ScrollArea::horizontal()
+                                .id_salt("top_apps_h_scroll")
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    egui::Grid::new("top_apps_permanent_grid")
+                                        .num_columns(7)
+                                        .striped(true)
+                                        .spacing(egui::vec2(12.0, 6.0))
+                                        .show(ui, |ui| {
+                                            // Header row with permanent column widths
+                                            ui.allocate_ui_with_layout(egui::vec2(COL_PID_W, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                ui.label(RichText::new("PID").size(11.0).strong().color(p.text_muted));
+                                            });
+                                            ui.allocate_ui_with_layout(egui::vec2(COL_APP_W, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                ui.label(RichText::new("Application").size(11.0).strong().color(p.text_muted));
+                                            });
+                                            ui.allocate_ui_with_layout(egui::vec2(COL_STATUS_W, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                ui.label(RichText::new("Status").size(11.0).strong().color(p.text_muted));
+                                            });
+                                            ui.allocate_ui_with_layout(egui::vec2(COL_CPU_W, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                ui.label(RichText::new("CPU Usage").size(11.0).strong().color(p.text_muted));
+                                            });
+                                            ui.allocate_ui_with_layout(egui::vec2(COL_MEM_W, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                ui.label(RichText::new("Memory (RAM)").size(11.0).strong().color(p.text_muted));
+                                            });
+                                            ui.allocate_ui_with_layout(egui::vec2(COL_SPEED_W, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                ui.label(RichText::new("Storage Live Speed").size(11.0).strong().color(Color32::from_rgb(56, 189, 248)));
+                                            });
+                                            ui.allocate_ui_with_layout(egui::vec2(COL_IO_W, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                ui.label(RichText::new("Lifetime Disk I/O").size(11.0).strong().color(p.text_muted));
+                                            });
+                                            ui.end_row();
+
+                                            for app in sorted_apps.iter().take(50) {
+                                                ui.allocate_ui_with_layout(egui::vec2(COL_PID_W, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                    ui.label(RichText::new(format!("{}", app.pid)).size(11.0).monospace().color(p.text_muted));
+                                                });
+
+                                                ui.allocate_ui_with_layout(egui::vec2(COL_APP_W, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                    ui.horizontal(|ui| {
+                                                        ui.label(RichText::new(crate::lucide::ACTIVITY).size(11.0).color(p.accent));
+                                                        let app_name = if app.name.is_empty() { format!("PID {}", app.pid) } else { app.name.clone() };
+                                                        let short_name = if app_name.len() > 24 {
+                                                            format!("{}…", &app_name[..22])
+                                                        } else {
+                                                            app_name.clone()
+                                                        };
+                                                        let lbl = ui.label(RichText::new(short_name).size(11.5).strong().color(p.text_primary));
+                                                        if app_name.len() > 24 {
+                                                            lbl.on_hover_text(&app_name);
+                                                        }
+                                                    });
+                                                });
+
+                                                ui.allocate_ui_with_layout(egui::vec2(COL_STATUS_W, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                    let (st_color, st_bg) = match app.status.to_lowercase().as_str() {
+                                                        "run" | "running" => (Color32::from_rgb(16, 185, 129), Color32::from_rgba_premultiplied(16, 185, 129, 25)),
+                                                        "idle" | "sleep" | "sleeping" => (p.text_secondary, p.bg_button),
+                                                        _ => (Color32::from_rgb(56, 189, 248), Color32::from_rgba_premultiplied(56, 189, 248, 25)),
+                                                    };
+                                                    Frame::none()
+                                                        .fill(st_bg)
+                                                        .stroke(Stroke::NONE)
+                                                        .rounding(Rounding::same(999.0))
+                                                        .inner_margin(egui::Margin::symmetric(6.0, 1.5))
+                                                        .show(ui, |ui| {
+                                                            ui.label(RichText::new(&app.status).size(9.5).color(st_color));
+                                                        });
+                                                });
+
+                                                ui.allocate_ui_with_layout(egui::vec2(COL_CPU_W, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                    let cpu_frac = (app.cpu_usage / 100.0).clamp(0.0, 1.0);
+                                                    let cpu_col = if app.cpu_usage >= 50.0 { p.danger }
+                                                        else if app.cpu_usage >= 15.0 { Color32::from_rgb(250, 204, 21) }
+                                                        else { p.accent };
+                                                    ui.horizontal(|ui| {
+                                                        ui.add(egui::ProgressBar::new(cpu_frac).desired_width(70.0).animate(false));
+                                                        ui.label(RichText::new(format!("{:.1}%", app.cpu_usage)).size(11.0).strong().monospace().color(cpu_col));
+                                                    });
+                                                });
+
+                                                ui.allocate_ui_with_layout(egui::vec2(COL_MEM_W, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                    let mem_str = crate::sensors::format_bytes(app.memory_bytes);
+                                                    let mem_pct = if snap.mem_total_bytes > 0 {
+                                                        (app.memory_bytes as f32 / snap.mem_total_bytes as f32) * 100.0
+                                                    } else {
+                                                        0.0
+                                                    };
+                                                    ui.label(RichText::new(format!("{} ({:.1}%)", mem_str, mem_pct)).size(11.0).monospace().color(p.text_secondary));
+                                                });
+
+                                                ui.allocate_ui_with_layout(egui::vec2(COL_SPEED_W, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                    ui.horizontal(|ui| {
+                                                        ui.label(RichText::new(crate::lucide::ARROW_DOWN).size(10.5).color(Color32::from_rgb(56, 189, 248)));
+                                                        ui.label(RichText::new(crate::sensors::format_rate(app.disk_read_rate_bps)).size(10.5).monospace().color(p.text_primary));
+                                                        ui.add_space(3.0);
+                                                        ui.label(RichText::new(crate::lucide::ARROW_UP).size(10.5).color(Color32::from_rgb(168, 85, 247)));
+                                                        ui.label(RichText::new(crate::sensors::format_rate(app.disk_write_rate_bps)).size(10.5).monospace().color(p.text_primary));
+                                                    });
+                                                });
+
+                                                ui.allocate_ui_with_layout(egui::vec2(COL_IO_W, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                    let lt_str = format!("R: {} / W: {}", crate::sensors::format_bytes(app.disk_read_bytes), crate::sensors::format_bytes(app.disk_written_bytes));
+                                                    ui.label(RichText::new(lt_str).size(10.0).color(p.text_muted));
+                                                });
+
+                                                ui.end_row();
+                                            }
+                                        });
+                                });
+                        });
+                }
+            });
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -7917,7 +8757,7 @@ impl LauncherApp {
                 .fill(p.bg_main)
                 .stroke(Stroke::NONE)
                 .rounding(Rounding { nw: 0.0, ne: 6.0, sw: 6.0, se: 6.0 })
-                .inner_margin(10.0)
+                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                 .show(ui, |ui| {
                     ui.set_height(ui.available_height());
                     if self.active_tab == "overview" {
@@ -9241,7 +10081,7 @@ impl LauncherApp {
     // Right Panel Tab 1+: Server Log View + Ctrl+F Search + Command Bar
     // ─────────────────────────────────────────────────────────────────────────
     fn render_server_log_content(&mut self, ui: &mut Ui, key: &str) {
-        let (name, is_running, pid, port, port_open, cpu, mem, uptime, actions, links) = {
+        let (name, is_running, _pid, port, port_open, cpu, mem, uptime, actions, links) = {
             if let Some(s) = self.find_service(key) {
                 (
                     s.config.name.clone(),
@@ -9282,14 +10122,6 @@ impl LauncherApp {
 
                     if is_running {
                         ui.add_space(8.0);
-                        if let Some(p) = pid {
-                            render_metric_pill(
-                                ui,
-                                "",
-                                &format!("PID {}", p),
-                                Color32::from_rgb(148, 163, 184),
-                            );
-                        }
                         if port > 0 {
                             let port_color = if port_open {
                                 Color32::from_rgb(96, 165, 250)
@@ -9546,9 +10378,9 @@ impl LauncherApp {
             .filter(|entry| !filter_active || entry.text.to_lowercase().contains(&q))
             .collect();
 
-        let bottom_dock_reserve = if is_running { 90.0 } else { 58.0 };
-        let terminal_available_height = (ui.available_height() - bottom_dock_reserve).max(80.0);
-        let inner_terminal_height = (terminal_available_height - 18.0).max(60.0);
+        let bottom_dock_reserve = if is_running { 68.0 } else { 44.0 };
+        let terminal_available_height = (ui.available_height() - bottom_dock_reserve).max(120.0);
+        let inner_terminal_height = (terminal_available_height - 16.0).max(100.0);
         let auto_scroll_enabled = self.auto_scroll.get(key).copied().unwrap_or(true);
         let row_height = 18.0_f32;
         let total_rows = filtered_logs.len();
@@ -9559,10 +10391,13 @@ impl LauncherApp {
             .rounding(Rounding::same(8.0))
             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
             .show(ui, |ui| {
+                ui.set_height(terminal_available_height);
+                ui.set_min_height(terminal_available_height);
                 ScrollArea::both()
                     .id_salt(format!("log_scroll_{}", key))
                     .stick_to_bottom(auto_scroll_enabled)
                     .auto_shrink([false, false])
+                    .min_scrolled_height(inner_terminal_height)
                     .max_height(inner_terminal_height)
                     .show_rows(ui, row_height, total_rows, |ui, row_range| {
                         ui.set_width(ui.available_width());
@@ -9761,13 +10596,13 @@ impl LauncherApp {
         // ─────────────────────────────────────────────────────────────────────
         // Section C: Bottom Command & Shortcuts Dock (Card)
         // ─────────────────────────────────────────────────────────────────────
-        ui.add_space(6.0);
+        ui.add_space(4.0);
 
         let resp = Frame::none()
             .fill(p.bg_card)
             .stroke(Stroke::new(1.0_f32, p.border))
             .rounding(Rounding::same(8.0))
-            .inner_margin(egui::Margin::symmetric(10.0, 7.0))
+            .inner_margin(egui::Margin::symmetric(10.0, 6.0))
             .show(ui, |ui| {
                 // Quick Dev Server Shortcuts Toolbar (when running)
                 if is_running {

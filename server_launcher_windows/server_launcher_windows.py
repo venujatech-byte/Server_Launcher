@@ -783,6 +783,8 @@ class ServerLauncherWindowsApp(tk.Tk):
         self.active_server_name: Optional[str] = None
         self.active_tab_name = "servers"
         self.sensors_subtab = "system"  # 'system' or 'top_apps'
+        self.sensors_refresh_interval = 5.0
+        self.top_apps_interval_var = tk.StringVar(value="5s (Default)")
         self.top_apps_visited = False
         self.top_apps_sort_col = "cpu"
         self.top_apps_sort_desc = True
@@ -1837,6 +1839,32 @@ class ServerLauncherWindowsApp(tk.Tk):
         btn_end = tk.Button(top_bar, text="✕ End task", font=("Segoe UI", 9, "bold"), bg=Palette.DANGER, fg=Palette.WHITE, padx=10, pady=2, relief=tk.FLAT, cursor="hand2", command=self._kill_selected_top_app)
         btn_end.pack(side=tk.RIGHT, padx=6)
 
+        # Update Speed Interval Dropdown
+        def on_interval_change(*_):
+            val = self.top_apps_interval_var.get()
+            if "1s" in val:
+                self.sensors_refresh_interval = 1.0
+            elif "2s" in val:
+                self.sensors_refresh_interval = 2.0
+            elif "5s" in val:
+                self.sensors_refresh_interval = 5.0
+            elif "10s" in val:
+                self.sensors_refresh_interval = 10.0
+            elif "Paused" in val:
+                self.sensors_refresh_interval = 0.0
+
+        self.top_apps_interval_var.trace_add("write", on_interval_change)
+        cmb_interval = ttk.Combobox(
+            top_bar,
+            textvariable=self.top_apps_interval_var,
+            values=["1s (High)", "2s (Fast)", "5s (Default)", "10s (Low)", "Paused"],
+            state="readonly",
+            width=13,
+            font=("Segoe UI", 9),
+        )
+        cmb_interval.pack(side=tk.RIGHT, padx=6)
+        tk.Label(top_bar, text="⏱", font=("Segoe UI", 9), bg=Palette.BG_CARD, fg=Palette.TEXT_MUTED).pack(side=tk.RIGHT)
+
         # Search Entry
         ent_search = tk.Entry(top_bar, textvariable=self.top_apps_search_var, font=("Segoe UI", 9), bg=Palette.BG_BUTTON, fg=Palette.TEXT_PRIMARY, insertbackground=Palette.TEXT_PRIMARY, width=22)
         ent_search.pack(side=tk.RIGHT, padx=4)
@@ -1907,13 +1935,13 @@ class ServerLauncherWindowsApp(tk.Tk):
         if col == "pid":
             filtered.sort(key=lambda a: a.pid, reverse=desc)
         elif col == "name":
-            filtered.sort(key=lambda a: a.name.lower(), reverse=desc)
+            filtered.sort(key=lambda a: (a.name.lower(), -a.cpu_pct), reverse=desc)
         elif col == "status":
-            filtered.sort(key=lambda a: a.status.lower(), reverse=desc)
+            filtered.sort(key=lambda a: (a.status.lower(), -a.cpu_pct, a.name.lower()), reverse=desc)
         elif col == "mem":
-            filtered.sort(key=lambda a: a.memory_bytes, reverse=desc)
+            filtered.sort(key=lambda a: (a.memory_bytes, a.cpu_pct, a.name.lower()), reverse=desc)
         else: # cpu
-            filtered.sort(key=lambda a: a.cpu_pct, reverse=desc)
+            filtered.sort(key=lambda a: (a.cpu_pct, a.memory_bytes, a.name.lower()), reverse=desc)
 
         arrow = " ▼" if desc else " ▲"
         headers = {
@@ -2312,10 +2340,14 @@ class ServerLauncherWindowsApp(tk.Tk):
     # ----------------------------------------------------------------------
 
     def _start_background_pollers(self):
-        # Hardware Telemetry Poller (Every 2 seconds)
+        # Hardware Telemetry Poller (Dynamic interval, default 5 seconds)
         def poll_sensors():
             while True:
-                time.sleep(2.0)
+                interval = getattr(self, "sensors_refresh_interval", 5.0)
+                if interval <= 0:
+                    time.sleep(1.0)
+                    continue
+                time.sleep(interval)
                 try:
                     if self.active_tab_name == "sensors":
                         include_top = (self.sensors_subtab == "top_apps" and self.top_apps_visited)

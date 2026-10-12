@@ -3695,8 +3695,8 @@ impl eframe::App for LauncherApp {
         } else if is_scanning || has_remote_bg_work {
             ctx.request_repaint_after(std::time::Duration::from_millis(150));
         } else if self.active_sidebar_tab == SidebarTab::Sensors && self.sensors_refresh_interval > 0 {
-            // Repaint dynamically matching sensors interval (minimum 500ms for smooth UI)
-            ctx.request_repaint_after(std::time::Duration::from_millis(500));
+            // Repaint dynamically matching sensors interval (e.g. 5s)
+            ctx.request_repaint_after(std::time::Duration::from_secs(self.sensors_refresh_interval.max(1) as u64));
         } else if any_running {
             // When servers are running, repaint every 1.5s — stats update rate doesn't need to be faster
             ctx.request_repaint_after(std::time::Duration::from_millis(1500));
@@ -7032,7 +7032,7 @@ impl LauncherApp {
             }
             self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_default()
         } else {
-            if self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval.max(1) as u64) {
+            if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
                 let include_top = self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited;
                 self.sensors_snapshot = self.sensors_collector.collect_with_top_apps(include_top);
                 self.last_sensors_refresh = Instant::now();
@@ -8435,7 +8435,7 @@ impl LauncherApp {
                     children: Vec<crate::sensors::ProcessSensorInfo>,
                 }
 
-                let mut groups_map: HashMap<String, (String, bool, Vec<crate::sensors::ProcessSensorInfo>)> = HashMap::new();
+                let mut groups_map: std::collections::BTreeMap<String, (String, bool, Vec<crate::sensors::ProcessSensorInfo>)> = std::collections::BTreeMap::new();
                 for app in filtered_apps {
                     let key = app.name.trim().to_lowercase();
                     let is_app = is_foreground(&app.name);
@@ -8444,7 +8444,11 @@ impl LauncherApp {
                 }
 
                 let mut all_groups: Vec<GroupSummary> = groups_map.into_iter().map(|(key, (disp_name, is_app, mut list))| {
-                    list.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap_or(std::cmp::Ordering::Equal));
+                    list.sort_by(|a, b| {
+                        b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| b.memory_bytes.cmp(&a.memory_bytes))
+                            .then_with(|| a.pid.cmp(&b.pid))
+                    });
                     let sum_cpu: f32 = list.iter().map(|p| p.cpu_usage).sum();
                     let sum_mem: u64 = list.iter().map(|p| p.memory_bytes).sum();
                     let sum_disk_rate: f64 = list.iter().map(|p| p.disk_rate_bps).sum();
@@ -8461,14 +8465,46 @@ impl LauncherApp {
                     }
                 }).collect();
 
-                // Sort groups (Name, CPU, RAM, Storage, Network)
+                // Sort groups deterministically (Name, CPU, RAM, Storage, Network) with stable secondary tie-breakers
                 let desc = self.sensors_top_apps_sort_desc;
                 match self.sensors_top_apps_sort.as_str() {
-                    "mem" => all_groups.sort_by(|a, b| if desc { b.sum_mem.cmp(&a.sum_mem) } else { a.sum_mem.cmp(&b.sum_mem) }),
-                    "disk" => all_groups.sort_by(|a, b| if desc { b.sum_disk_rate.partial_cmp(&a.sum_disk_rate).unwrap_or(std::cmp::Ordering::Equal) } else { a.sum_disk_rate.partial_cmp(&b.sum_disk_rate).unwrap_or(std::cmp::Ordering::Equal) }),
-                    "name" => all_groups.sort_by(|a, b| if desc { b.display_name.to_lowercase().cmp(&a.display_name.to_lowercase()) } else { a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()) }),
-                    "net" => all_groups.sort_by(|a, b| if desc { b.display_name.cmp(&a.display_name) } else { a.display_name.cmp(&b.display_name) }),
-                    _ => all_groups.sort_by(|a, b| if desc { b.sum_cpu.partial_cmp(&a.sum_cpu).unwrap_or(std::cmp::Ordering::Equal) } else { a.sum_cpu.partial_cmp(&b.sum_cpu).unwrap_or(std::cmp::Ordering::Equal) }),
+                    "mem" => all_groups.sort_by(|a, b| {
+                        let ord = if desc { b.sum_mem.cmp(&a.sum_mem) } else { a.sum_mem.cmp(&b.sum_mem) };
+                        ord.then_with(|| b.sum_cpu.partial_cmp(&a.sum_cpu).unwrap_or(std::cmp::Ordering::Equal))
+                            .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
+                    }),
+                    "disk" => all_groups.sort_by(|a, b| {
+                        let ord = if desc {
+                            b.sum_disk_rate.partial_cmp(&a.sum_disk_rate).unwrap_or(std::cmp::Ordering::Equal)
+                        } else {
+                            a.sum_disk_rate.partial_cmp(&b.sum_disk_rate).unwrap_or(std::cmp::Ordering::Equal)
+                        };
+                        ord.then_with(|| b.sum_cpu.partial_cmp(&a.sum_cpu).unwrap_or(std::cmp::Ordering::Equal))
+                            .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
+                    }),
+                    "name" => all_groups.sort_by(|a, b| {
+                        if desc {
+                            b.display_name.to_lowercase().cmp(&a.display_name.to_lowercase())
+                        } else {
+                            a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase())
+                        }
+                    }),
+                    "net" => all_groups.sort_by(|a, b| {
+                        if desc {
+                            b.display_name.to_lowercase().cmp(&a.display_name.to_lowercase())
+                        } else {
+                            a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase())
+                        }
+                    }),
+                    _ => all_groups.sort_by(|a, b| {
+                        let ord = if desc {
+                            b.sum_cpu.partial_cmp(&a.sum_cpu).unwrap_or(std::cmp::Ordering::Equal)
+                        } else {
+                            a.sum_cpu.partial_cmp(&b.sum_cpu).unwrap_or(std::cmp::Ordering::Equal)
+                        };
+                        ord.then_with(|| b.sum_mem.cmp(&a.sum_mem))
+                            .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
+                    }),
                 }
 
                 let (apps_groups, bg_groups): (Vec<GroupSummary>, Vec<GroupSummary>) = all_groups.into_iter().partition(|g| g.is_app);

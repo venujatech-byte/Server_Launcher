@@ -134,6 +134,8 @@ pub struct SavedCommand {
     pub category: String,
     #[serde(default)]
     pub host_id: Option<String>, // None for Local PC, Some(id) for SSH Host
+    #[serde(default)]
+    pub run_in_terminal: bool,
 }
 
 fn default_command_category() -> String {

@@ -4095,7 +4095,7 @@ impl LauncherApp {
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.set_max_width(ui.available_width());
-                    let mut to_run_cmd = None;
+                    let mut to_run_cmd: Option<(String, bool)> = None;
                     let mut to_edit = None;
                     let mut to_delete = None;
 
@@ -4122,6 +4122,15 @@ impl LauncherApp {
                                                 .size(10.5)
                                                 .color(p.text_muted),
                                         );
+                                        if c.run_in_terminal {
+                                            ui.add_space(4.0);
+                                            ui.label(
+                                                RichText::new("🖥 External")
+                                                    .size(10.0)
+                                                    .strong()
+                                                    .color(p.info),
+                                            );
+                                        }
                                     });
                                 });
 
@@ -4155,13 +4164,27 @@ impl LauncherApp {
                                 ui.add_space(4.0);
 
                                 ui.horizontal(|ui| {
+                                    let run_label = if c.run_in_terminal { "▶ Run (Terminal)" } else { "▶ Run" };
+                                    let run_bg = if c.run_in_terminal { Color32::from_rgb(0x02, 0x84, 0xc7) } else { Color32::from_rgb(16, 185, 129) };
                                     let btn_run = egui::Button::new(
-                                        RichText::new("▶ Run").size(10.5).color(Color32::WHITE),
+                                        RichText::new(run_label).size(10.5).color(Color32::WHITE),
                                     )
-                                    .fill(Color32::from_rgb(16, 185, 129))
+                                    .fill(run_bg)
                                     .rounding(Rounding::same(4.0));
-                                    if ui.add(btn_run).on_hover_text("Execute this command in terminal").clicked() {
-                                        to_run_cmd = Some(c.command.clone());
+                                    if ui.add(btn_run).on_hover_text(if c.run_in_terminal { "Execute in external desktop terminal window" } else { "Execute in terminal" }).clicked() {
+                                        to_run_cmd = Some((c.command.clone(), c.run_in_terminal));
+                                    }
+
+                                    if !c.run_in_terminal {
+                                        let btn_ext = egui::Button::new(
+                                            RichText::new("↗ External").size(10.0).color(p.accent_light),
+                                        )
+                                        .fill(p.bg_button)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(4.0));
+                                        if ui.add(btn_ext).on_hover_text("Execute in external desktop terminal window").clicked() {
+                                            to_run_cmd = Some((c.command.clone(), true));
+                                        }
                                     }
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -4189,16 +4212,27 @@ impl LauncherApp {
                         ui.add_space(6.0);
                     }
 
-                    if let Some(cmd_str) = to_run_cmd {
-                        if let Some(hid) = host_id {
-                            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                let term = self.remote_terminals.entry(hid.to_string()).or_default();
-                                term.execute_remote(&host, &cmd_str);
-                                term.request_focus = true;
+                    if let Some((cmd_str, in_external)) = to_run_cmd {
+                        if in_external {
+                            if let Some(hid) = host_id {
+                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                    let _ = crate::remote::launch_external_ssh_command(&host, &cmd_str);
+                                }
+                            } else {
+                                let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                                let _ = crate::commands::launch_external_command(&cmd_str, &cwd);
                             }
                         } else {
-                            self.local_terminal.execute_local(&cmd_str, "");
-                            self.local_terminal.request_focus = true;
+                            if let Some(hid) = host_id {
+                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                    let term = self.remote_terminals.entry(hid.to_string()).or_default();
+                                    term.execute_remote(&host, &cmd_str);
+                                    term.request_focus = true;
+                                }
+                            } else {
+                                self.local_terminal.execute_local(&cmd_str, "");
+                                self.local_terminal.request_focus = true;
+                            }
                         }
                     }
 

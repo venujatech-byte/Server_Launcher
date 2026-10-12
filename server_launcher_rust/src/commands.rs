@@ -672,6 +672,74 @@ pub fn open_system_terminal(cwd: &Path) -> Result<(), String> {
     }
 }
 
+pub fn launch_external_command(cmd_str: &str, cwd: &Path) -> Result<(), String> {
+    let script_path = std::env::temp_dir().join(format!(
+        "launcher_cmd_{}.sh",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
+    let script_content = format!(
+r#"#!/usr/bin/env bash
+echo "=========================================================="
+echo " Server Launcher: Local Command Execution"
+echo " Command: {cmd}"
+echo "=========================================================="
+cd "{cwd}"
+{cmd}
+EXIT_CODE=$?
+echo ""
+echo "[launcher] Command finished with exit code $EXIT_CODE."
+read -n 1 -s -r -p "Press any key to close this terminal..."
+"#,
+        cmd = cmd_str,
+        cwd = cwd.display()
+    );
+
+    let _ = std::fs::write(&script_path, script_content);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = std::fs::metadata(&script_path) {
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o755);
+            let _ = std::fs::set_permissions(&script_path, perms);
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let script_str = script_path.to_string_lossy().to_string();
+        let chosen = crate::service::find_terminal();
+        let mut cmd;
+        if let Some((term, args)) = chosen {
+            cmd = std::process::Command::new(term);
+            for arg in args {
+                cmd.arg(arg);
+            }
+            cmd.arg(&script_str);
+        } else {
+            cmd = std::process::Command::new("x-terminal-emulator");
+            cmd.args(&["-e", &script_str]);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+        cmd.spawn().map_err(|e| format!("Failed to spawn terminal: {}", e))?;
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = std::process::Command::new("cmd.exe");
+        cmd.args(&["/K", cmd_str]);
+        cmd.current_dir(cwd);
+        cmd.spawn().map_err(|e| format!("Failed to spawn cmd: {}", e))?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CommandModalState {
     pub open: bool,
@@ -682,6 +750,7 @@ pub struct CommandModalState {
     pub description: String,
     pub category: String,
     pub host_id: Option<String>,
+    pub run_in_terminal: bool,
     pub error: Option<String>,
 }
 
@@ -695,6 +764,7 @@ impl CommandModalState {
         self.description = String::new();
         self.category = "General".to_string();
         self.host_id = current_host;
+        self.run_in_terminal = false;
         self.error = None;
     }
 
@@ -707,6 +777,7 @@ impl CommandModalState {
         self.description = cmd.description.clone();
         self.category = cmd.category.clone();
         self.host_id = cmd.host_id.clone();
+        self.run_in_terminal = cmd.run_in_terminal;
         self.error = None;
     }
 }
@@ -769,6 +840,7 @@ mod tests {
         state.open_create(None);
         assert!(state.open);
         assert!(!state.is_edit);
+        assert!(!state.run_in_terminal);
         assert_eq!(state.category, "General");
 
         let cmd = SavedCommand {
@@ -778,6 +850,7 @@ mod tests {
             description: "Show repository status".to_string(),
             category: "Git".to_string(),
             host_id: None,
+            run_in_terminal: true,
         };
 
         state.open_edit(&cmd);
@@ -785,5 +858,6 @@ mod tests {
         assert_eq!(state.name, "Git Status");
         assert_eq!(state.command, "git status");
         assert_eq!(state.category, "Git");
+        assert!(state.run_in_terminal);
     }
 }

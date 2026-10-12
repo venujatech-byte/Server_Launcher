@@ -2264,6 +2264,16 @@ pub fn render_command_modal(
                     .desired_width(ui.available_width()),
             );
 
+            // Run with external terminal option
+            ui.add_space(8.0);
+            let is_ext_term = state.run_in_terminal;
+            ui.checkbox(
+                &mut state.run_in_terminal,
+                RichText::new("Run with external terminal (for interactive tools like top, htop, nano)")
+                    .size(11.5)
+                    .color(if is_ext_term { palette.accent } else { palette.text_secondary }),
+            ).on_hover_text("Launch an interactive external desktop terminal window when executing this command (required for full-screen TUI tools like top, htop, vim)");
+
             ui.add_space(12.0);
             ui.separator();
             ui.add_space(6.0);
@@ -2299,6 +2309,7 @@ pub fn render_command_modal(
                                     state.category.trim().to_string()
                                 },
                                 host_id: state.host_id.clone(),
+                                run_in_terminal: state.run_in_terminal,
                             });
                             state.open = false;
                         }

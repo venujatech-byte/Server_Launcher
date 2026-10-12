@@ -528,6 +528,120 @@ read -r
     }
 }
 
+/// Launch an external terminal running a specific command on this remote host
+pub fn launch_external_ssh_command(host: &SshRemoteHost, cmd_to_run: &str) -> Result<(), String> {
+    let script_dir = std::env::temp_dir();
+    let script_path = script_dir.join(format!(
+        "launcher_ssh_cmd_{}.sh",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
+
+    let key_arg = if !host.key_path.trim().is_empty() {
+        format!("-i \"{}\"", host.key_path.trim())
+    } else {
+        String::new()
+    };
+
+    let target = format!("{}@{}", host.user.trim(), host.host.trim());
+    let remote_cd = if !host.remote_cwd.trim().is_empty() {
+        format!("cd '{}' && ", host.remote_cwd.trim())
+    } else {
+        String::new()
+    };
+
+    let (pass_block, ssh_cmd) = if !host.password.trim().is_empty() {
+        let escaped_pass = host.password.trim().replace('"', "\\\"").replace('$', "\\$");
+        (
+            format!(
+r#"if command -v sshpass >/dev/null 2>&1; then
+    export SSHPASS="{}"
+    SSH_BIN="sshpass -e ssh"
+else
+    echo "Note: sshpass not installed. Please enter password if prompted."
+    SSH_BIN="ssh"
+fi
+"#,
+                escaped_pass
+            ),
+            "$SSH_BIN"
+        )
+    } else {
+        (String::new(), "ssh")
+    };
+
+    let escaped_remote_cmd = cmd_to_run.replace('"', "\\\"");
+
+    let script_content = format!(
+r#"#!/usr/bin/env bash
+echo "=========================================================="
+echo " Server Launcher: Remote SSH Command Execution"
+echo " Host   : {name} ({target}:{port})"
+echo " Command: {cmd}"
+echo "=========================================================="
+echo "Connecting to {target}..."
+{pass_block}
+{ssh_cmd} -t -p {port} {key_arg} {target} "{remote_cd}{cmd}"
+EXIT_CODE=$?
+echo ""
+echo "[launcher] Command exited with code $EXIT_CODE."
+read -n 1 -s -r -p "Press any key to close this terminal..."
+"#,
+        name = host.name,
+        target = target,
+        port = host.port,
+        key_arg = key_arg,
+        pass_block = pass_block,
+        ssh_cmd = ssh_cmd,
+        remote_cd = remote_cd,
+        cmd = escaped_remote_cmd,
+    );
+
+    let _ = std::fs::write(&script_path, script_content);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = std::fs::metadata(&script_path) {
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o755);
+            let _ = std::fs::set_permissions(&script_path, perms);
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let script_str = script_path.to_string_lossy().to_string();
+        let chosen = crate::service::find_terminal();
+        let mut cmd;
+        if let Some((term, args)) = chosen {
+            cmd = Command::new(term);
+            for arg in args {
+                cmd.arg(arg);
+            }
+            cmd.arg(&script_str);
+        } else {
+            cmd = Command::new("x-terminal-emulator");
+            cmd.args(&["-e", &script_str]);
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+        cmd.spawn().map_err(|e| format!("Failed to spawn terminal: {}", e))?;
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = Command::new("cmd.exe");
+        cmd.args(&["/K", &format!("ssh -t -p {} {} {} \"{} {}\"", host.port, key_arg, target, remote_cd, escaped_remote_cmd)]);
+        cmd.spawn().map_err(|e| format!("Failed to spawn cmd: {}", e))?;
+        Ok(())
+    }
+}
+
 /// Parse ~/.ssh/config to import existing configured hosts
 pub fn import_from_ssh_config() -> Vec<SshRemoteHost> {
     let home = match std::env::var("HOME") {

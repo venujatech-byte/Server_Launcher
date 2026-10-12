@@ -35,7 +35,7 @@ impl Default for TerminalSession {
     fn default() -> Self {
         let initial_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         Self {
-            logs: Arc::new(Mutex::new(VecDeque::new())),
+            logs: Arc::new(Mutex::new(VecDeque::with_capacity(256))),
             input_text: String::new(),
             history: Vec::new(),
             history_idx: None,
@@ -450,7 +450,7 @@ impl TerminalSession {
                             if let Ok(l) = line {
                                 let mut q = logs_out.lock().unwrap();
                                 q.push_back(LogEntry::new(l, LogKind::Stdout));
-                                if q.len() > 10000 {
+                                if q.len() > 2000 {
                                     q.pop_front();
                                 }
                             }
@@ -466,7 +466,7 @@ impl TerminalSession {
                             if let Ok(l) = line {
                                 let mut q = logs_err.lock().unwrap();
                                 q.push_back(LogEntry::new(l, LogKind::Stderr));
-                                if q.len() > 10000 {
+                                if q.len() > 2000 {
                                     q.pop_front();
                                 }
                             }
@@ -585,7 +585,7 @@ impl TerminalSession {
                             if let Ok(l) = line {
                                 let mut q = logs_out.lock().unwrap();
                                 q.push_back(LogEntry::new(l, LogKind::Stdout));
-                                if q.len() > 10000 {
+                                if q.len() > 2000 {
                                     q.pop_front();
                                 }
                             }
@@ -601,7 +601,7 @@ impl TerminalSession {
                             if let Ok(l) = line {
                                 let mut q = logs_err.lock().unwrap();
                                 q.push_back(LogEntry::new(l, LogKind::Stderr));
-                                if q.len() > 10000 {
+                                if q.len() > 2000 {
                                     q.pop_front();
                                 }
                             }

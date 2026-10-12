@@ -290,7 +290,7 @@ pub struct LauncherApp {
     pub sensors_snapshot: Arc<crate::sensors::SystemSensorsSnapshot>,
     pub sensors_refresh_interval: u32,
     pub last_sensors_refresh: Instant,
-    pub remote_sensors_snapshots: Arc<Mutex<HashMap<String, crate::sensors::SystemSensorsSnapshot>>>,
+    pub remote_sensors_snapshots: Arc<Mutex<HashMap<String, Arc<crate::sensors::SystemSensorsSnapshot>>>>,
     pub remote_sensors_in_flight: Arc<Mutex<HashSet<String>>>,
     pub remote_sensors_last_fetch: Arc<Mutex<HashMap<String, Instant>>>,
     pub remote_sensors_errors: Arc<Mutex<HashMap<String, String>>>,
@@ -785,7 +785,7 @@ impl LauncherApp {
         std::thread::spawn(move || {
             match crate::sensors::query_remote_sensors(&host) {
                 Ok(snap) => {
-                    snapshots_arc.lock().unwrap().insert(hid.clone(), snap);
+                    snapshots_arc.lock().unwrap().insert(hid.clone(), Arc::new(snap));
                     last_fetch_arc.lock().unwrap().insert(hid.clone(), Instant::now());
                     errors_arc.lock().unwrap().remove(&hid);
                 }
@@ -4196,16 +4196,15 @@ impl eframe::App for LauncherApp {
                 || self.remote_sensors_in_flight.lock().map(|s| !s.is_empty()).unwrap_or(false)
         };
         if self.close_confirm_open {
-            // Keep repainting while confirmation dialog is open
-            ctx.request_repaint();
+            ctx.request_repaint_after(std::time::Duration::from_millis(1000));
         } else if is_scanning || has_remote_bg_work {
-            ctx.request_repaint_after(std::time::Duration::from_millis(150));
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
         } else if self.active_sidebar_tab == SidebarTab::Sensors && self.sensors_refresh_interval > 0 {
             // Repaint dynamically matching sensors interval (e.g. 5s)
             ctx.request_repaint_after(std::time::Duration::from_secs(self.sensors_refresh_interval.max(1) as u64));
         } else if any_running {
-            // When servers are running, repaint every 1.5s — stats update rate doesn't need to be faster
-            ctx.request_repaint_after(std::time::Duration::from_millis(1500));
+            // When servers are running, align repaint with the 2.0s polling cycle
+            ctx.request_repaint_after(std::time::Duration::from_millis(2000));
         } else {
             // When fully idle, repaint reactively on user interaction only (4s heartbeat)
             ctx.request_repaint_after(std::time::Duration::from_secs(4));
@@ -6264,7 +6263,9 @@ impl LauncherApp {
 
                             // Auto-refresh timer check
                             if self.journal_refresh_interval > 0 {
-                                ui.ctx().request_repaint_after(Duration::from_millis(500));
+                                let next_refresh = Duration::from_secs(self.journal_refresh_interval as u64)
+                                    .saturating_sub(self.last_journal_refresh.elapsed());
+                                ui.ctx().request_repaint_after(next_refresh.max(Duration::from_millis(1000)));
                                 if self.last_journal_refresh.elapsed() >= Duration::from_secs(self.journal_refresh_interval as u64) {
                                     self.last_journal_refresh = Instant::now();
                                     if let Some(host) = &host_opt {
@@ -8452,14 +8453,14 @@ impl LauncherApp {
                     self.trigger_remote_sensors_query(host);
                 }
             }
-            self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_default()
+            self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_else(|| Arc::new(crate::sensors::SystemSensorsSnapshot::default()))
         } else {
             if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
                 let include_top = self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited;
                 self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
                 self.last_sensors_refresh = Instant::now();
             }
-            (*self.sensors_snapshot).clone()
+            Arc::clone(&self.sensors_snapshot)
         };
 
         ui.vertical(|ui| {
@@ -8875,14 +8876,14 @@ impl LauncherApp {
                     self.trigger_remote_sensors_query(host);
                 }
             }
-            self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_default()
+            self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_else(|| Arc::new(crate::sensors::SystemSensorsSnapshot::default()))
         } else {
             if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
                 let include_top = self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited;
                 self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
                 self.last_sensors_refresh = Instant::now();
             }
-            (*self.sensors_snapshot).clone()
+            Arc::clone(&self.sensors_snapshot)
         };
 
         let filter_cat = self.sensors_category_filter.clone();
@@ -9540,7 +9541,7 @@ impl LauncherApp {
                     let _ = crate::procmgr::send_remote_signal(&host, pid, &sig_str);
                     std::thread::sleep(std::time::Duration::from_millis(400));
                     if let Ok(snap) = crate::sensors::query_remote_sensors(&host) {
-                        snapshots_arc.lock().unwrap().insert(hid_clone.clone(), snap);
+                        snapshots_arc.lock().unwrap().insert(hid_clone.clone(), Arc::new(snap));
                         last_fetch_arc.lock().unwrap().insert(hid_clone.clone(), Instant::now());
                         errors_arc.lock().unwrap().remove(&hid_clone);
                     }

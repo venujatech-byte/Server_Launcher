@@ -2441,52 +2441,102 @@ impl LauncherApp {
                 }
             }
 
-            // Split layout: Left panel (width 380px with Tabs on top) + Right panel (Remaining width)
-            let total_h = ui.available_height();
-            ui.horizontal(|ui| {
-                ui.set_height(total_h);
-                ui.set_min_height(total_h);
+            if self.active_sidebar_tab == SidebarTab::Sensors {
+                // Top row: Navigation tabs (380px fixed width) + System Brief Info Panel (remaining width)
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(egui::vec2(380.0, 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.set_width(380.0);
+                        ui.set_max_width(380.0);
+                        self.render_sidebar_tabs_bar(ui);
+                    });
 
-                let left_w = if self.active_sidebar_tab == SidebarTab::Sensors { 250.0 } else { 380.0 };
+                    ui.add_space(8.0);
+
+                    let brief_w = ui.available_width().max(100.0);
+                    ui.allocate_ui_with_layout(egui::vec2(brief_w, 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.set_width(brief_w);
+                        ui.set_max_width(brief_w);
+                        self.render_system_brief_info_panel(ui, Some(&host.id));
+                    });
+                });
+
+                ui.add_space(6.0);
+
+                // Split layout below: Shrunk Sensors left sidebar (240px) + Right Subtab Page (remaining width)
+                let total_h = ui.available_height();
+                let left_w = 240.0;
                 let right_w = (ui.available_width() - left_w - 12.0).max(300.0);
 
-                // LEFT PANEL (380px)
-                ui.allocate_ui_with_layout(egui::vec2(left_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.set_width(left_w);
-                    ui.set_max_width(left_w);
+                ui.horizontal(|ui| {
                     ui.set_height(total_h);
                     ui.set_min_height(total_h);
-                    // 1. Navigation Tabs on top of left panel
-                    self.render_sidebar_tabs_bar(ui);
-                    ui.add_space(6.0);
 
-                    // 2. Left panel content for active tab
-                    match self.active_sidebar_tab {
-                        SidebarTab::Servers => self.render_remote_servers_left_panel(ui, &host),
-                        SidebarTab::Scripts => self.render_scripts_left_panel(ui, Some(&host.id)),
-                        SidebarTab::Commands => self.render_commands_left_panel(ui, Some(&host.id)),
-                        SidebarTab::SystemMD => self.render_systemd_left_panel(ui, Some(&host.id)),
-                        SidebarTab::Sensors => self.render_sensors_left_panel(ui, Some(&host.id)),
-                    }
+                    ui.allocate_ui_with_layout(egui::vec2(left_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.set_width(left_w);
+                        ui.set_max_width(left_w);
+                        ui.set_height(total_h);
+                        ui.set_min_height(total_h);
+                        self.render_sensors_left_panel(ui, Some(&host.id));
+                    });
+
+                    ui.separator();
+
+                    ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.set_width(right_w);
+                        ui.set_max_width(right_w);
+                        ui.set_height(total_h);
+                        ui.set_min_height(total_h);
+                        self.render_sensors_right_panel(ui, Some(&host.id));
+                    });
                 });
-
-                ui.separator();
-
-                // RIGHT PANEL (Remaining width)
-                ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.set_width(right_w);
-                    ui.set_max_width(right_w);
+            } else {
+                // Split layout: Left panel (width 380px with Tabs on top) + Right panel (Remaining width)
+                let total_h = ui.available_height();
+                ui.horizontal(|ui| {
                     ui.set_height(total_h);
                     ui.set_min_height(total_h);
-                    match self.active_sidebar_tab {
-                        SidebarTab::Servers => self.render_remote_servers_right_panel(ui, &host),
-                        SidebarTab::Scripts => self.render_scripts_right_panel(ui, Some(&host.id)),
-                        SidebarTab::Commands => self.render_commands_right_panel(ui, Some(&host.id)),
-                        SidebarTab::SystemMD => self.render_systemd_right_panel(ui, Some(&host.id)),
-                        SidebarTab::Sensors => self.render_sensors_right_panel(ui, Some(&host.id)),
-                    }
+
+                    let left_w = 380.0;
+                    let right_w = (ui.available_width() - left_w - 12.0).max(300.0);
+
+                    // LEFT PANEL (380px)
+                    ui.allocate_ui_with_layout(egui::vec2(left_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.set_width(left_w);
+                        ui.set_max_width(left_w);
+                        ui.set_height(total_h);
+                        ui.set_min_height(total_h);
+                        // 1. Navigation Tabs on top of left panel
+                        self.render_sidebar_tabs_bar(ui);
+                        ui.add_space(6.0);
+
+                        // 2. Left panel content for active tab
+                        match self.active_sidebar_tab {
+                            SidebarTab::Servers => self.render_remote_servers_left_panel(ui, &host),
+                            SidebarTab::Scripts => self.render_scripts_left_panel(ui, Some(&host.id)),
+                            SidebarTab::Commands => self.render_commands_left_panel(ui, Some(&host.id)),
+                            SidebarTab::SystemMD => self.render_systemd_left_panel(ui, Some(&host.id)),
+                            SidebarTab::Sensors => self.render_sensors_left_panel(ui, Some(&host.id)),
+                        }
+                    });
+
+                    ui.separator();
+
+                    // RIGHT PANEL (Remaining width)
+                    ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.set_width(right_w);
+                        ui.set_max_width(right_w);
+                        ui.set_height(total_h);
+                        ui.set_min_height(total_h);
+                        match self.active_sidebar_tab {
+                            SidebarTab::Servers => self.render_remote_servers_right_panel(ui, &host),
+                            SidebarTab::Scripts => self.render_scripts_right_panel(ui, Some(&host.id)),
+                            SidebarTab::Commands => self.render_commands_right_panel(ui, Some(&host.id)),
+                            SidebarTab::SystemMD => self.render_systemd_right_panel(ui, Some(&host.id)),
+                            SidebarTab::Sensors => self.render_sensors_right_panel(ui, Some(&host.id)),
+                        }
+                    });
                 });
-            });
+            }
         });
     }
 
@@ -3845,43 +3895,102 @@ impl eframe::App for LauncherApp {
                         }),
                 )
                 .show(ctx, |ui| {
-                    let total_h = ui.available_height();
-                    let left_w = if self.active_sidebar_tab == SidebarTab::Sensors { 250.0 } else { 380.0 };
-                    ui.horizontal(|ui| {
-                        ui.set_height(total_h);
-                        ui.set_min_height(total_h);
-
-                        // LEFT SIDEBAR (380px width)
-                        Frame::none()
-                            .fill(p.bg_sidebar)
-                            .stroke(Stroke::NONE)
-                            .inner_margin(egui::Margin {
-                                left: 14.0,
-                                right: 12.0,
-                                top: 0.0,
-                                bottom: 0.0,
-                            })
-                            .show(ui, |ui| {
-                                ui.set_width(left_w);
-                                ui.set_min_width(left_w);
-                                ui.set_max_width(left_w);
-                                ui.set_height(total_h);
-                                ui.set_min_height(total_h);
-                                self.render_left_panel(ui);
+                    if self.active_sidebar_tab == SidebarTab::Sensors {
+                        // 1. Top row: Navigation tabs (380px fixed width) + System Brief Info Panel (remaining width)
+                        ui.horizontal(|ui| {
+                            ui.allocate_ui_with_layout(egui::vec2(380.0, 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                ui.set_width(380.0);
+                                ui.set_max_width(380.0);
+                                self.render_sidebar_tabs_bar(ui);
                             });
 
-                        ui.add_space(8.0);
+                            ui.add_space(8.0);
 
-                        // RIGHT MAIN AREA: Fills 100% of remaining width
-                        let right_w = ui.available_width().max(100.0);
-                        ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
-                            ui.set_width(right_w);
-                            ui.set_max_width(right_w);
+                            let brief_w = ui.available_width().max(100.0);
+                            ui.allocate_ui_with_layout(egui::vec2(brief_w, 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                ui.set_width(brief_w);
+                                ui.set_max_width(brief_w);
+                                self.render_system_brief_info_panel(ui, None);
+                            });
+                        });
+
+                        ui.add_space(6.0);
+
+                        // 2. Main split below top row: Shrunk Sensors left sidebar (240px) + Right Subtab Page (remaining width)
+                        let total_h = ui.available_height();
+                        let left_w = 240.0;
+                        ui.horizontal(|ui| {
                             ui.set_height(total_h);
                             ui.set_min_height(total_h);
-                            self.render_right_panel(ui);
+
+                            Frame::none()
+                                .fill(p.bg_sidebar)
+                                .stroke(Stroke::NONE)
+                                .inner_margin(egui::Margin {
+                                    left: 14.0,
+                                    right: 12.0,
+                                    top: 0.0,
+                                    bottom: 0.0,
+                                })
+                                .show(ui, |ui| {
+                                    ui.set_width(left_w);
+                                    ui.set_min_width(left_w);
+                                    ui.set_max_width(left_w);
+                                    ui.set_height(total_h);
+                                    ui.set_min_height(total_h);
+                                    self.render_sensors_left_panel(ui, None);
+                                });
+
+                            ui.add_space(8.0);
+
+                            let right_w = ui.available_width().max(100.0);
+                            ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
+                                ui.set_width(right_w);
+                                ui.set_max_width(right_w);
+                                ui.set_height(total_h);
+                                ui.set_min_height(total_h);
+                                self.render_sensors_right_panel(ui, None);
+                            });
                         });
-                    });
+                    } else {
+                        let total_h = ui.available_height();
+                        let left_w = 380.0;
+                        ui.horizontal(|ui| {
+                            ui.set_height(total_h);
+                            ui.set_min_height(total_h);
+
+                            // LEFT SIDEBAR (380px width)
+                            Frame::none()
+                                .fill(p.bg_sidebar)
+                                .stroke(Stroke::NONE)
+                                .inner_margin(egui::Margin {
+                                    left: 14.0,
+                                    right: 12.0,
+                                    top: 0.0,
+                                    bottom: 0.0,
+                                })
+                                .show(ui, |ui| {
+                                    ui.set_width(left_w);
+                                    ui.set_min_width(left_w);
+                                    ui.set_max_width(left_w);
+                                    ui.set_height(total_h);
+                                    ui.set_min_height(total_h);
+                                    self.render_left_panel(ui);
+                                });
+
+                            ui.add_space(8.0);
+
+                            // RIGHT MAIN AREA: Fills 100% of remaining width
+                            let right_w = ui.available_width().max(100.0);
+                            ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
+                                ui.set_width(right_w);
+                                ui.set_max_width(right_w);
+                                ui.set_height(total_h);
+                                ui.set_min_height(total_h);
+                                self.render_right_panel(ui);
+                            });
+                        });
+                    }
                 });
         } else {
             // ═════════════════════════════════════════════════════════════════
@@ -4556,18 +4665,20 @@ fn draw_dual_waveform(
     }
 }
 
-fn render_metric_card(ui: &mut Ui, width: f32, title: &str, value: &str, sublabel: &str, val_color: Color32, bg_card: Color32, text_muted: Color32) {
+fn render_metric_card(ui: &mut Ui, title: &str, value: &str, sublabel: &str, val_color: Color32, bg_card: Color32, text_muted: Color32) {
+    let width = ui.available_width();
     Frame::none()
         .fill(bg_card)
         .rounding(Rounding::same(8.0))
         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
         .show(ui, |ui| {
             ui.set_width(width);
+            ui.set_max_width(width);
             ui.label(RichText::new(title).size(9.5).monospace().color(text_muted));
-            ui.add_space(3.0);
-            ui.label(RichText::new(value).size(16.0).monospace().strong().color(val_color));
             ui.add_space(2.0);
-            ui.label(RichText::new(sublabel).size(9.5).color(text_muted));
+            ui.label(RichText::new(value).size(15.0).monospace().strong().color(val_color));
+            ui.add_space(2.0);
+            ui.label(RichText::new(sublabel).size(9.0).color(text_muted));
         });
 }
 
@@ -8702,6 +8813,100 @@ impl LauncherApp {
 
 
     // ═════════════════════════════════════════════════════════════════════════
+    // SENSORS TAB: System Brief Info Panel (Persistent Top Bar Next to Tabs)
+    // ═════════════════════════════════════════════════════════════════════════
+    fn render_system_brief_info_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
+        let p = self.theme.palette();
+        let snap = if let Some(hid) = host_id {
+            self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_else(|| Arc::new(crate::sensors::SystemSensorsSnapshot::default()))
+        } else {
+            Arc::clone(&self.sensors_snapshot)
+        };
+
+        Frame::none()
+            .fill(p.bg_card)
+            .stroke(Stroke::NONE)
+            .rounding(Rounding::same(999.0))
+            .inner_margin(egui::Margin::symmetric(14.0, 5.0))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+
+                    // Left Icon + Host / System Name
+                    ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.5).color(Color32::from_rgb(56, 189, 248)));
+                    let host_name = if let Some(hid) = host_id {
+                        self.ssh_hosts.iter().find(|h| h.id == hid).map(|h| h.name.clone()).unwrap_or_else(|| "Remote Host".into())
+                    } else {
+                        "Local Host".into()
+                    };
+                    ui.label(RichText::new(host_name).size(11.0).strong().color(p.text_primary));
+
+                    ui.label(RichText::new("•").size(10.0).color(p.border));
+
+                    // CPU brief info
+                    let cpu_label = if !snap.cpu_brand.is_empty() {
+                        snap.cpu_brand.split('@').next().unwrap_or(&snap.cpu_brand).trim()
+                    } else {
+                        "Intel CPU"
+                    };
+                    let cores_label = format!("{}C/{}T", snap.cpu_cores_physical.max(1), snap.cpu_cores_logical.max(1));
+                    ui.label(RichText::new(format!("{} {}", crate::lucide::CPU, cpu_label)).size(10.5).color(p.text_secondary));
+                    ui.label(RichText::new(cores_label).size(10.0).monospace().color(p.text_muted));
+
+                    ui.label(RichText::new("•").size(10.0).color(p.border));
+
+                    // RAM brief info
+                    let ram_gb = (snap.mem_total_bytes as f64 / (1024.0 * 1024.0 * 1024.0)).round() as u64;
+                    let ram_label = if ram_gb > 0 { format!("{}GB RAM", ram_gb) } else { "8GB RAM".to_string() };
+                    ui.label(RichText::new(format!("{} {}", crate::lucide::RAM, ram_label)).size(10.5).color(p.text_secondary));
+
+                    ui.label(RichText::new("•").size(10.0).color(p.border));
+
+                    // Storage brief info
+                    let total_disk: u64 = snap.disks.iter().map(|d| d.total_bytes).sum();
+                    if total_disk > 0 {
+                        ui.label(RichText::new(format!("{} {}", crate::lucide::STORAGE, crate::sensors::format_bytes(total_disk))).size(10.5).color(p.text_secondary));
+                        ui.label(RichText::new("•").size(10.0).color(p.border));
+                    }
+
+                    // System Uptime
+                    let up_secs = get_system_uptime();
+                    ui.label(RichText::new(format!("Up {}", format_uptime(up_secs))).size(10.0).monospace().color(p.text_muted));
+
+                    // Right side: Refresh + Live Badge
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let btn_ref = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(10.5).color(p.text_secondary))
+                            .fill(p.bg_button)
+                            .rounding(Rounding::same(999.0));
+                        if ui.add(btn_ref).on_hover_text("Refresh system telemetry now").clicked() {
+                            if let Some(hid) = host_id {
+                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                    self.trigger_remote_sensors_query(host);
+                                }
+                            } else {
+                                self.trigger_local_sensors_query(false, Some(ui.ctx().clone()));
+                                self.last_sensors_refresh = Instant::now();
+                            }
+                        }
+
+                        Frame::none()
+                            .fill(Color32::from_rgba_unmultiplied(16, 185, 129, 25))
+                            .rounding(Rounding::same(999.0))
+                            .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 4.0;
+                                    ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(16, 185, 129)));
+                                    ui.label(RichText::new("LIVE").size(9.5).monospace().strong().color(Color32::from_rgb(16, 185, 129)));
+                                });
+                            });
+                    });
+                });
+            });
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
     // SENSORS TAB: Left Sidebar (Quick Overview Cards & Category Filters)
     // ═════════════════════════════════════════════════════════════════════════
     fn render_sensors_left_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
@@ -8739,111 +8944,105 @@ impl LauncherApp {
             Arc::clone(&self.sensors_snapshot)
         };
 
-        ui.vertical(|ui| {
-            ui.set_width(ui.available_width());
-            ui.set_max_width(ui.available_width());
+        ScrollArea::vertical()
+            .id_salt("sensors_left_sidebar_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.set_max_width(ui.available_width());
 
-            // Header Row: Title & Manual Refresh (Image 1 / Image 2)
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("HARDWARE ENGINES").size(11.5).strong().color(p.text_muted));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let btn_ref = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(p.text_secondary))
-                        .fill(p.bg_button);
-                    if ui.add(btn_ref).on_hover_text("Refresh all sensors now").clicked() {
-                        if let Some(hid) = host_id {
-                            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                self.trigger_remote_sensors_query(host);
-                            }
-                        } else {
-                            let include_top = self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited;
-                            self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
-                            self.last_sensors_refresh = Instant::now();
-                        }
-                    }
-
-                    // Auto-refresh interval dropdown
-                    let interval_label = match self.sensors_refresh_interval {
-                        0 => format!("{} Off", crate::lucide::CLOCK),
-                        s => format!("{} {}s", crate::lucide::CLOCK, s),
-                    };
-                    egui::ComboBox::from_id_salt("sensors_refresh_interval_combo")
-                        .selected_text(RichText::new(interval_label).size(10.0).color(p.text_primary))
-                        .width(66.0)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.sensors_refresh_interval, 0, "Off (Manual)");
-                            ui.selectable_value(&mut self.sensors_refresh_interval, 1, "1 second");
-                            ui.selectable_value(&mut self.sensors_refresh_interval, 2, "2 seconds");
-                            ui.selectable_value(&mut self.sensors_refresh_interval, 3, "3 seconds");
-                            ui.selectable_value(&mut self.sensors_refresh_interval, 5, "5 seconds");
-                        });
-                });
-            });
-
-            ui.add_space(8.0);
-
-            // Left Navigation Menu (Image 1)
-            let items: [(SensorsSubTab, &str, &str); 9] = [
-                (SensorsSubTab::TopApps, "Top Apps", crate::lucide::LAYOUT_GRID),
-                (SensorsSubTab::Cpu, "CPU", crate::lucide::CPU),
-                (SensorsSubTab::Ram, "RAM", crate::lucide::RAM),
-                (SensorsSubTab::Gpu, "GPU", crate::lucide::GPU),
-                (SensorsSubTab::Storage, "Storage", crate::lucide::STORAGE),
-                (SensorsSubTab::Wifi, "Wi-Fi", crate::lucide::WIFI),
-                (SensorsSubTab::Power, "Power", crate::lucide::ZAP),
-                (SensorsSubTab::Bluetooth, "Bluetooth", crate::lucide::BLUETOOTH),
-                (SensorsSubTab::Temperature, "Temperature", crate::lucide::THERMOMETER),
-            ];
-
-            for (tab, label, icon) in items {
-                let is_active = self.sensors_subtab == tab;
-                let bg = if is_active {
-                    Color32::from_rgb(56, 189, 248) // Cybernetic Cyan Pill (Image 1)
-                } else {
-                    Color32::TRANSPARENT
-                };
-                let fg = if is_active {
-                    Color32::from_rgb(15, 23, 42) // Dark text when selected
-                } else {
-                    Color32::from_rgb(148, 163, 184) // Slate gray text
-                };
-
-                let rt = if is_active {
-                    RichText::new(format!("{}  {}", icon, label)).size(12.5).strong().color(fg)
-                } else {
-                    RichText::new(format!("{}  {}", icon, label)).size(12.5).color(fg)
-                };
-
-                let btn = egui::Button::new(rt)
-                    .fill(bg)
-                    .stroke(Stroke::NONE)
-                    .rounding(Rounding::same(8.0))
-                    .min_size(egui::vec2(ui.available_width(), 34.0));
-
-                if ui.add(btn).clicked() {
-                    self.sensors_subtab = tab;
-                    if tab == SensorsSubTab::TopApps {
-                        self.sensors_top_apps_visited = true;
-                        if self.selected_machine == "local" && self.sensors_snapshot.top_apps.is_empty() {
-                            self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
-                            self.last_sensors_refresh = Instant::now();
-                        }
-                    }
-                }
-                ui.add_space(4.0);
-            }
-
-            // Bottom Footer: Node Host Summary & Host Settings (Image 1)
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                ui.add_space(4.0);
+                // Header Row: Title & Manual Refresh (Image 1 / Image 2)
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(format!("{} Host Settings", crate::lucide::SETTINGS)).size(11.0).color(p.text_secondary));
+                    ui.label(RichText::new("HARDWARE ENGINES").size(11.0).strong().color(p.text_muted));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new("v2.4").size(10.0).monospace().color(p.text_muted));
+                        let btn_ref = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(p.text_secondary))
+                            .fill(p.bg_button);
+                        if ui.add(btn_ref).on_hover_text("Refresh all sensors now").clicked() {
+                            if let Some(hid) = host_id {
+                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                    self.trigger_remote_sensors_query(host);
+                                }
+                            } else {
+                                let include_top = self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited;
+                                self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
+                                self.last_sensors_refresh = Instant::now();
+                            }
+                        }
+
+                        // Auto-refresh interval dropdown
+                        let interval_label = match self.sensors_refresh_interval {
+                            0 => format!("{} Off", crate::lucide::CLOCK),
+                            s => format!("{} {}s", crate::lucide::CLOCK, s),
+                        };
+                        egui::ComboBox::from_id_salt("sensors_refresh_interval_combo")
+                            .selected_text(RichText::new(interval_label).size(10.0).color(p.text_primary))
+                            .width(62.0)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut self.sensors_refresh_interval, 0, "Off (Manual)");
+                                ui.selectable_value(&mut self.sensors_refresh_interval, 1, "1 second");
+                                ui.selectable_value(&mut self.sensors_refresh_interval, 2, "2 seconds");
+                                ui.selectable_value(&mut self.sensors_refresh_interval, 3, "3 seconds");
+                                ui.selectable_value(&mut self.sensors_refresh_interval, 5, "5 seconds");
+                            });
                     });
                 });
 
                 ui.add_space(6.0);
 
+                // Left Navigation Menu: 9 Subtabs
+                let items: [(SensorsSubTab, &str, &str); 9] = [
+                    (SensorsSubTab::TopApps, "Top Apps", crate::lucide::LAYOUT_GRID),
+                    (SensorsSubTab::Cpu, "CPU", crate::lucide::CPU),
+                    (SensorsSubTab::Ram, "RAM", crate::lucide::RAM),
+                    (SensorsSubTab::Gpu, "GPU", crate::lucide::GPU),
+                    (SensorsSubTab::Storage, "Storage", crate::lucide::STORAGE),
+                    (SensorsSubTab::Wifi, "Wi-Fi", crate::lucide::WIFI),
+                    (SensorsSubTab::Power, "Power", crate::lucide::ZAP),
+                    (SensorsSubTab::Bluetooth, "Bluetooth", crate::lucide::BLUETOOTH),
+                    (SensorsSubTab::Temperature, "Temperature", crate::lucide::THERMOMETER),
+                ];
+
+                for (tab, label, icon) in items {
+                    let is_active = self.sensors_subtab == tab;
+                    let bg = if is_active {
+                        Color32::from_rgb(56, 189, 248) // Cybernetic Cyan Pill (Image 1)
+                    } else {
+                        Color32::TRANSPARENT
+                    };
+                    let fg = if is_active {
+                        Color32::from_rgb(15, 23, 42) // Dark text when selected
+                    } else {
+                        Color32::from_rgb(148, 163, 184) // Slate gray text
+                    };
+
+                    let rt = if is_active {
+                        RichText::new(format!("{}  {}", icon, label)).size(12.0).strong().color(fg)
+                    } else {
+                        RichText::new(format!("{}  {}", icon, label)).size(12.0).color(fg)
+                    };
+
+                    let btn = egui::Button::new(rt)
+                        .fill(bg)
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(8.0))
+                        .min_size(egui::vec2(ui.available_width(), 30.0));
+
+                    if ui.add(btn).clicked() {
+                        self.sensors_subtab = tab;
+                        if tab == SensorsSubTab::TopApps {
+                            self.sensors_top_apps_visited = true;
+                            if self.selected_machine == "local" && self.sensors_snapshot.top_apps.is_empty() {
+                                self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
+                                self.last_sensors_refresh = Instant::now();
+                            }
+                        }
+                    }
+                    ui.add_space(2.0);
+                }
+
+                ui.add_space(8.0);
+
+                // NODE HOST Card (Never overlapping Temperature)
                 Frame::none()
                     .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 6))
                     .rounding(Rounding::same(8.0))
@@ -8864,7 +9063,7 @@ impl LauncherApp {
                         };
                         let ram_gb = (snap.mem_total_bytes as f64 / (1024.0 * 1024.0 * 1024.0)).round() as u64;
                         let ram_short = format!("{}GB RAM", if ram_gb > 0 { ram_gb } else { 8 });
-                        ui.label(RichText::new(format!("{} • {}", cpu_short, ram_short)).size(10.5).monospace().color(p.text_primary));
+                        ui.label(RichText::new(format!("{} • {}", cpu_short, ram_short)).size(10.0).monospace().color(p.text_primary));
                         ui.add_space(3.0);
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Uptime").size(9.5).monospace().color(p.text_muted));
@@ -8875,9 +9074,18 @@ impl LauncherApp {
                             });
                         });
                     });
-            });
 
-        });
+                ui.add_space(6.0);
+
+                // Host Settings Row
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(format!("{} Host Settings", crate::lucide::SETTINGS)).size(10.5).color(p.text_secondary));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(RichText::new("v2.4").size(10.0).monospace().color(p.text_muted));
+                    });
+                });
+                ui.add_space(4.0);
+            });
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -8973,11 +9181,60 @@ impl LauncherApp {
             .id_salt("sensors_cpu_scroll")
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+
                 let brand = if !snap.cpu_brand.is_empty() { &snap.cpu_brand } else { "Intel(R) Celeron(R) N5030 CPU @ 1.10GHz" };
                 let phys = snap.cpu_cores_physical.max(1);
                 let log = snap.cpu_cores_logical.max(phys);
 
-                // 1. Top Header Card
+                // 1. Row of 5 Metric Cards (evenly distributed without clipping)
+                ui.columns(5, |cols| {
+                    render_metric_card(&mut cols[0], "TOTAL USAGE", &format!("{:.1}%", snap.cpu_global_usage), &format!("All {} Cores Avg", snap.cpu_cores_logical.max(1)), Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
+
+                    let freq_ghz = snap.cpu_frequency_mhz as f64 / 1000.0;
+                    let freq_str = if freq_ghz > 0.0 { format!("{:.2} GHz", freq_ghz) } else { "1.10 GHz".to_string() };
+                    render_metric_card(&mut cols[1], "CLOCK FREQ", &freq_str, "Base 1.10 • Boost 3.10", p.text_primary, p.bg_card, p.text_muted);
+
+                    let temp_str = snap.cpu_temp.map(|t| format!("{:.1}°C", t)).unwrap_or_else(|| "49.0°C".into());
+                    render_metric_card(&mut cols[2], "PACKAGE TEMP", &temp_str, "Thermal Normal (<75°C)", Color32::from_rgb(16, 185, 129), p.bg_card, p.text_muted);
+
+                    let power_str = snap.cpu_power_watts.map(|w| format!("{:.1} W", w)).unwrap_or_else(|| "4.8 W".into());
+                    render_metric_card(&mut cols[3], "PACKAGE POWER", &power_str, "TDP Limit 6.0 W (80%)", Color32::from_rgb(250, 204, 21), p.bg_card, p.text_muted);
+
+                    render_metric_card(&mut cols[4], "CONTEXT SWITCH", "12.4k/s", "Syscalls / Irq", p.text_primary, p.bg_card, p.text_muted);
+                });
+
+                ui.add_space(8.0);
+
+                // 2. Realtime Usage Waveform Card (60s)
+                Frame::none()
+                    .fill(p.bg_card)
+                    .rounding(Rounding::same(8.0))
+                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("REALTIME USAGE WAVEFORM (60S)").size(11.0).monospace().strong().color(p.text_muted));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(RichText::new(format!("{:.1}%", snap.cpu_global_usage)).size(13.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                            });
+                        });
+                        ui.add_space(6.0);
+                        draw_waveform(ui, 110.0, &self.cpu_history, 100.0, Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 30));
+                        ui.add_space(4.0);
+                        ui.columns(5, |cols| {
+                            cols[0].label(RichText::new("-60s").size(9.0).monospace().color(p.text_muted));
+                            cols[1].centered_and_justified(|ui| { ui.label(RichText::new("-45s").size(9.0).monospace().color(p.text_muted)); });
+                            cols[2].centered_and_justified(|ui| { ui.label(RichText::new("-30s").size(9.0).monospace().color(p.text_muted)); });
+                            cols[3].centered_and_justified(|ui| { ui.label(RichText::new("-15s").size(9.0).monospace().color(p.text_muted)); });
+                            cols[4].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(RichText::new("Now").size(9.0).monospace().color(p.text_muted));
+                            });
+                        });
+                    });
+
+                ui.add_space(8.0);
+
+                // 3. CPU Core Matrix Card (Moved down into page body per user prompt)
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(8.0))
@@ -8985,13 +9242,13 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                ui.label(RichText::new("CPU Core Matrix").size(17.0).strong().color(p.text_primary));
+                                ui.label(RichText::new("CPU Core Matrix").size(15.0).strong().color(p.text_primary));
                                 ui.add_space(2.0);
-                                ui.label(RichText::new(format!("{} • {} Cores / {} Threads", brand, phys, log)).size(11.0).color(p.text_muted));
+                                ui.label(RichText::new(format!("{} • {} Cores / {} Threads", brand, phys, log)).size(10.5).color(p.text_muted));
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let btn_ref = egui::Button::new(RichText::new(format!("{} REFRESH 1s", crate::lucide::REFRESH_CW)).size(10.5).monospace().color(p.text_secondary))
+                                let btn_ref = egui::Button::new(RichText::new(format!("{} REFRESH 1s", crate::lucide::REFRESH_CW)).size(10.0).monospace().color(p.text_secondary))
                                     .fill(p.bg_button)
                                     .rounding(Rounding::same(6.0));
                                 if ui.add(btn_ref).clicked() {
@@ -9027,95 +9284,37 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 2. Row of 5 Metric Cards
-                let avail_w = ui.available_width();
-                let card_w = ((avail_w - 32.0) / 5.0).max(80.0);
-
-                ui.horizontal(|ui| {
-                    render_metric_card(ui, card_w, "TOTAL USAGE", &format!("{:.1}%", snap.cpu_global_usage), &format!("All {} Cores Average", snap.cpu_cores_logical.max(1)), Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
-                    let freq_ghz = snap.cpu_frequency_mhz as f64 / 1000.0;
-                    let freq_str = if freq_ghz > 0.0 { format!("{:.2} GHz", freq_ghz) } else { "1.10 GHz".to_string() };
-                    render_metric_card(ui, card_w, "CLOCK FREQUENCY", &freq_str, "Base 1.10 GHz • Boost 3.10 GHz", p.text_primary, p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
-                    let temp_str = snap.cpu_temp.map(|t| format!("{:.1}°C", t)).unwrap_or_else(|| "49.0°C".into());
-                    render_metric_card(ui, card_w, "PACKAGE TEMP", &temp_str, "Thermal Normal (<75°C)", Color32::from_rgb(16, 185, 129), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
-                    let power_str = snap.cpu_power_watts.map(|w| format!("{:.1} W", w)).unwrap_or_else(|| "4.8 W".into());
-                    render_metric_card(ui, card_w, "PACKAGE POWER", &power_str, "TDP Limit 6.0 W (80%)", Color32::from_rgb(250, 204, 21), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
-                    render_metric_card(ui, card_w, "CONTEXT SWITCHES", "12.4k/s", "Syscalls / Irq", p.text_primary, p.bg_card, p.text_muted);
-                });
-
-                ui.add_space(8.0);
-
-                // 3. Realtime Usage Waveform Card (60s)
-                Frame::none()
-                    .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("REALTIME USAGE WAVEFORM (60S)").size(11.0).monospace().strong().color(p.text_muted));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new(format!("{:.1}%", snap.cpu_global_usage)).size(13.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                            });
-                        });
-                        ui.add_space(6.0);
-                        draw_waveform(ui, 110.0, &self.cpu_history, 100.0, Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 30));
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("-60s").size(9.0).monospace().color(p.text_muted));
-                            ui.add_space(avail_w * 0.2);
-                            ui.label(RichText::new("-45s").size(9.0).monospace().color(p.text_muted));
-                            ui.add_space(avail_w * 0.2);
-                            ui.label(RichText::new("-30s").size(9.0).monospace().color(p.text_muted));
-                            ui.add_space(avail_w * 0.2);
-                            ui.label(RichText::new("-15s").size(9.0).monospace().color(p.text_muted));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new("Now").size(9.0).monospace().color(p.text_muted));
-                            });
-                        });
-                    });
-
-                ui.add_space(8.0);
-
-                // 4. Per-Core Breakdown Grid (Image 3: 4 core cards with sparklines)
+                // 4. Per-Core Breakdown Grid (2 Columns, perfectly distributed without clipping)
                 let num_cores = snap.cpu_core_usages.len().max(4);
-                let core_w = ((ui.available_width() - 8.0) / 2.0).max(120.0);
-
                 for chunk in (0..num_cores).collect::<Vec<_>>().chunks(2) {
-                    ui.horizontal(|ui| {
-                        for &idx in chunk {
-                            let usage = snap.cpu_core_usages.get(idx).copied().unwrap_or(5.0);
-                            let freq = snap.cpu_frequencies_mhz.get(idx).copied().unwrap_or(1100);
+                    ui.columns(2, |cols| {
+                        for (col_idx, &core_idx) in chunk.iter().enumerate() {
+                            let col_ui = &mut cols[col_idx];
+                            let usage = snap.cpu_core_usages.get(core_idx).copied().unwrap_or(5.0);
+                            let freq = snap.cpu_frequencies_mhz.get(core_idx).copied().unwrap_or(1100);
                             let temp = snap.cpu_temp.unwrap_or(48.0);
 
                             Frame::none()
                                 .fill(p.bg_card)
                                 .rounding(Rounding::same(8.0))
                                 .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                                .show(ui, |ui| {
-                                    ui.set_width(core_w);
+                                .show(col_ui, |ui| {
+                                    ui.set_width(ui.available_width());
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new(format!("CORE {}", idx)).size(11.0).monospace().strong().color(p.text_primary));
+                                        ui.label(RichText::new(format!("CORE {}", core_idx)).size(11.0).monospace().strong().color(p.text_primary));
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             ui.label(RichText::new(format!("{:.1}%", usage)).size(11.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                         });
                                     });
                                     ui.add_space(4.0);
-                                    draw_sparkline(ui, core_w - 24.0, 32.0, usage, Color32::from_rgb(56, 189, 248));
+                                    let spark_w = (ui.available_width() - 8.0).max(60.0);
+                                    draw_sparkline(ui, spark_w, 32.0, usage, Color32::from_rgb(56, 189, 248));
                                     ui.add_space(4.0);
                                     ui.label(RichText::new(format!("Frequency {} MHz • Temp {:.0}°C", freq, temp)).size(9.5).monospace().color(p.text_muted));
                                 });
-                            ui.add_space(8.0);
                         }
                     });
-                    ui.add_space(8.0);
+                    ui.add_space(6.0);
                 }
 
                 // 5. Architecture & Instruction Registers Card (Image 3)
@@ -9200,34 +9399,26 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 2. Row of 6 Metric Cards
-                let avail_w = ui.available_width();
-                let card_w = ((avail_w - 40.0) / 6.0).max(75.0);
-
-                ui.horizontal(|ui| {
+                // 2. Row of 6 Metric Cards (evenly distributed without clipping)
+                ui.columns(6, |cols| {
                     let used_gb = crate::sensors::format_bytes(snap.mem_used_bytes);
                     let total_gb = crate::sensors::format_bytes(snap.mem_total_bytes);
-                    render_metric_card(ui, card_w, "ACTIVE MEMORY", &used_gb, &format!("{:.1}% of {}", snap.mem_usage_pct, total_gb), Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
+                    render_metric_card(&mut cols[0], "ACTIVE MEM", &used_gb, &format!("{:.1}% of {}", snap.mem_usage_pct, total_gb), Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
 
                     let free_gb = crate::sensors::format_bytes(snap.mem_free_bytes);
-                    render_metric_card(ui, card_w, "AVAILABLE", &free_gb, "Free + Inactive", Color32::from_rgb(16, 185, 129), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
+                    render_metric_card(&mut cols[1], "AVAILABLE", &free_gb, "Free + Inactive", Color32::from_rgb(16, 185, 129), p.bg_card, p.text_muted);
 
                     let cache_bytes = snap.mem_total_bytes.saturating_sub(snap.mem_used_bytes + snap.mem_free_bytes);
                     let cache_str = if cache_bytes > 0 { crate::sensors::format_bytes(cache_bytes) } else { "1.84 GB".into() };
-                    render_metric_card(ui, card_w, "BUFFERS / CACHE", &cache_str, "Reclaimable", Color32::from_rgb(168, 85, 247), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
+                    render_metric_card(&mut cols[2], "BUFFERS/CACHE", &cache_str, "Reclaimable", Color32::from_rgb(168, 85, 247), p.bg_card, p.text_muted);
 
-                    render_metric_card(ui, card_w, "SHARED (SHMEM)", "242 MB", "IPC & tmpfs", p.text_primary, p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
+                    render_metric_card(&mut cols[3], "SHARED", "242 MB", "IPC & tmpfs", p.text_primary, p.bg_card, p.text_muted);
 
                     let swap_used_str = crate::sensors::format_bytes(snap.swap_used_bytes);
                     let swap_tot_str = crate::sensors::format_bytes(snap.swap_total_bytes);
-                    render_metric_card(ui, card_w, "ZRAM / SWAP USED", &swap_used_str, &format!("{:.1}% of {}", snap.swap_usage_pct, swap_tot_str), Color32::from_rgb(250, 204, 21), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
+                    render_metric_card(&mut cols[4], "ZRAM/SWAP", &swap_used_str, &format!("{:.1}% of {}", snap.swap_usage_pct, swap_tot_str), Color32::from_rgb(250, 204, 21), p.bg_card, p.text_muted);
 
-                    render_metric_card(ui, card_w, "PAGE FAULTS", "1.4k/s", "Minor 99.8% • Major 0", p.text_primary, p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[5], "PAGE FAULTS", "1.4k/s", "Minor 99.8%", p.text_primary, p.bg_card, p.text_muted);
                 });
 
                 ui.add_space(8.0);
@@ -9253,15 +9444,12 @@ impl LauncherApp {
                         ui.add_space(6.0);
                         draw_dual_waveform(ui, 110.0, &self.ram_history, Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 30), Color32::from_rgb(168, 85, 247));
                         ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("-60s").size(9.0).monospace().color(p.text_muted));
-                            ui.add_space(avail_w * 0.2);
-                            ui.label(RichText::new("-45s").size(9.0).monospace().color(p.text_muted));
-                            ui.add_space(avail_w * 0.2);
-                            ui.label(RichText::new("-30s").size(9.0).monospace().color(p.text_muted));
-                            ui.add_space(avail_w * 0.2);
-                            ui.label(RichText::new("-15s").size(9.0).monospace().color(p.text_muted));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.columns(5, |cols| {
+                            cols[0].label(RichText::new("-60s").size(9.0).monospace().color(p.text_muted));
+                            cols[1].centered_and_justified(|ui| { ui.label(RichText::new("-45s").size(9.0).monospace().color(p.text_muted)); });
+                            cols[2].centered_and_justified(|ui| { ui.label(RichText::new("-30s").size(9.0).monospace().color(p.text_muted)); });
+                            cols[3].centered_and_justified(|ui| { ui.label(RichText::new("-15s").size(9.0).monospace().color(p.text_muted)); });
+                            cols[4].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.label(RichText::new("Now").size(9.0).monospace().color(p.text_muted));
                             });
                         });
@@ -9316,14 +9504,13 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 5. Two-column bottom cards: ZRAM Engine & Top Memory Consumers (Image 4)
-                let half_w = ((ui.available_width() - 8.0) / 2.0).max(180.0);
-                ui.horizontal(|ui| {
+                ui.columns(2, |cols| {
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                        .show(ui, |ui| {
-                            ui.set_width(half_w);
+                        .show(&mut cols[0], |ui| {
+                            ui.set_width(ui.available_width());
                             ui.label(RichText::new("ZRAM COMPRESSED SWAP ENGINE").size(10.5).monospace().strong().color(p.text_muted));
                             ui.add_space(6.0);
                             render_reg_item(ui, "Algorithm", "zstd (Level 3)", p.text_muted, p.text_primary);
@@ -9336,14 +9523,12 @@ impl LauncherApp {
                             render_reg_item(ui, "Physical RAM Saved", &crate::sensors::format_bytes(z_saved), p.text_muted, Color32::from_rgb(56, 189, 248));
                         });
 
-                    ui.add_space(8.0);
-
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                        .show(ui, |ui| {
-                            ui.set_width(half_w);
+                        .show(&mut cols[1], |ui| {
+                            ui.set_width(ui.available_width());
                             ui.label(RichText::new("TOP MEMORY CONSUMING PROCESSES").size(10.5).monospace().strong().color(p.text_muted));
                             ui.add_space(6.0);
 
@@ -9414,28 +9599,22 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                let avail_w = ui.available_width();
-                let card_w = ((avail_w - 32.0) / 5.0).max(80.0);
-
-                ui.horizontal(|ui| {
+                // 2. Row of 5 Metric Cards (evenly distributed)
+                ui.columns(5, |cols| {
                     let load_str = gpu.and_then(|g| g.load_pct).map(|l| format!("{:.1}%", l)).unwrap_or_else(|| "0.0%".into());
-                    render_metric_card(ui, card_w, "GPU LOAD", &load_str, "Graphic Engine Load", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
+                    render_metric_card(&mut cols[0], "GPU LOAD", &load_str, "Graphic Load", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
 
                     let clk_str = gpu.and_then(|g| g.clock_mhz).map(|c| format!("{} MHz", c)).unwrap_or_else(|| "750 MHz".into());
-                    render_metric_card(ui, card_w, "CORE CLOCK", &clk_str, "Clock Frequency", p.text_primary, p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
+                    render_metric_card(&mut cols[1], "CORE CLOCK", &clk_str, "Clock Freq", p.text_primary, p.bg_card, p.text_muted);
 
                     let mclk_str = gpu.and_then(|g| g.mem_clock_mhz).map(|c| format!("{} MHz", c)).unwrap_or_else(|| "1200 MHz".into());
-                    render_metric_card(ui, card_w, "MEMORY CLOCK", &mclk_str, "VRAM Frequency", p.text_primary, p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
+                    render_metric_card(&mut cols[2], "MEM CLOCK", &mclk_str, "VRAM Freq", p.text_primary, p.bg_card, p.text_muted);
 
                     let temp_str = gpu.and_then(|g| g.temp).map(|t| format!("{:.1}°C", t)).unwrap_or_else(|| "45.0°C".into());
-                    render_metric_card(ui, card_w, "GPU TEMP", &temp_str, "Thermal Normal", Color32::from_rgb(16, 185, 129), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
+                    render_metric_card(&mut cols[3], "GPU TEMP", &temp_str, "Thermal Norm", Color32::from_rgb(16, 185, 129), p.bg_card, p.text_muted);
 
                     let power_str = gpu.and_then(|g| g.power_watts).map(|w| format!("{:.1} W", w)).unwrap_or_else(|| "3.5 W".into());
-                    render_metric_card(ui, card_w, "POWER DRAW", &power_str, "Active Consumption", Color32::from_rgb(250, 204, 21), p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[4], "POWER DRAW", &power_str, "Active Draw", Color32::from_rgb(250, 204, 21), p.bg_card, p.text_muted);
                 });
 
                 ui.add_space(8.0);
@@ -9497,20 +9676,12 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                let avail_w = ui.available_width();
-                let card_w = ((avail_w - 24.0) / 4.0).max(90.0);
-
-                ui.horizontal(|ui| {
-                    render_metric_card(ui, card_w, "TOTAL CAPACITY", &crate::sensors::format_bytes(total_bytes), &format!("{} Drives", snap.disks.len()), p.text_primary, p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
-                    render_metric_card(ui, card_w, "SPACE USED", &crate::sensors::format_bytes(used_bytes), &format!("{:.1}% Occupied", usage_pct), Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
-                    render_metric_card(ui, card_w, "READ SPEED", &crate::sensors::format_rate(snap.total_disk_read_rate_bps), "Live Disk Throughput", Color32::from_rgb(16, 185, 129), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
-                    render_metric_card(ui, card_w, "WRITE SPEED", &crate::sensors::format_rate(snap.total_disk_write_rate_bps), "Live Disk Throughput", Color32::from_rgb(168, 85, 247), p.bg_card, p.text_muted);
+                // 2. Row of 4 Metric Cards (evenly distributed)
+                ui.columns(4, |cols| {
+                    render_metric_card(&mut cols[0], "TOTAL CAPACITY", &crate::sensors::format_bytes(total_bytes), &format!("{} Drives", snap.disks.len()), p.text_primary, p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[1], "SPACE USED", &crate::sensors::format_bytes(used_bytes), &format!("{:.1}% Occupied", usage_pct), Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[2], "READ SPEED", &crate::sensors::format_rate(snap.total_disk_read_rate_bps), "Live Disk Read", Color32::from_rgb(16, 185, 129), p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[3], "WRITE SPEED", &crate::sensors::format_rate(snap.total_disk_write_rate_bps), "Live Disk Write", Color32::from_rgb(168, 85, 247), p.bg_card, p.text_muted);
                 });
 
                 ui.add_space(8.0);
@@ -9580,20 +9751,12 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                let avail_w = ui.available_width();
-                let card_w = ((avail_w - 24.0) / 4.0).max(90.0);
-
-                ui.horizontal(|ui| {
-                    render_metric_card(ui, card_w, "DOWNLOAD RATE", &crate::sensors::format_rate(snap.total_rx_rate_bps), "Live Incoming", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
-                    render_metric_card(ui, card_w, "UPLOAD RATE", &crate::sensors::format_rate(snap.total_tx_rate_bps), "Live Outgoing", Color32::from_rgb(168, 85, 247), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
-                    render_metric_card(ui, card_w, "TOTAL RECEIVED", &crate::sensors::format_bytes(snap.total_rx_bytes), "Session Cumulative", p.text_primary, p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
-                    render_metric_card(ui, card_w, "TOTAL SENT", &crate::sensors::format_bytes(snap.total_tx_bytes), "Session Cumulative", p.text_primary, p.bg_card, p.text_muted);
+                // 2. Row of 4 Metric Cards (evenly distributed)
+                ui.columns(4, |cols| {
+                    render_metric_card(&mut cols[0], "DOWNLOAD RATE", &crate::sensors::format_rate(snap.total_rx_rate_bps), "Live Incoming", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[1], "UPLOAD RATE", &crate::sensors::format_rate(snap.total_tx_rate_bps), "Live Outgoing", Color32::from_rgb(168, 85, 247), p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[2], "TOTAL RECEIVED", &crate::sensors::format_bytes(snap.total_rx_bytes), "Cumulative", p.text_primary, p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[3], "TOTAL SENT", &crate::sensors::format_bytes(snap.total_tx_bytes), "Cumulative", p.text_primary, p.bg_card, p.text_muted);
                 });
 
                 ui.add_space(8.0);
@@ -9666,21 +9829,13 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                let avail_w = ui.available_width();
-                let card_w = ((avail_w - 24.0) / 4.0).max(90.0);
-
-                ui.horizontal(|ui| {
-                    render_metric_card(ui, card_w, "POWER SOURCE", if ac_online { "AC Wall Plug" } else { "Internal Battery" }, if ac_online { "Connected" } else { "Discharging" }, if ac_online { Color32::from_rgb(16, 185, 129) } else { Color32::from_rgb(250, 204, 21) }, p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
-                    render_metric_card(ui, card_w, "BATTERY LEVEL", &format!("{:.0}%", bat_pct), "State of Charge", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
+                // 2. Row of 4 Metric Cards (evenly distributed)
+                ui.columns(4, |cols| {
+                    render_metric_card(&mut cols[0], "POWER SOURCE", if ac_online { "AC Wall Plug" } else { "Internal Battery" }, if ac_online { "Connected" } else { "Discharging" }, if ac_online { Color32::from_rgb(16, 185, 129) } else { Color32::from_rgb(250, 204, 21) }, p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[1], "BATTERY LEVEL", &format!("{:.0}%", bat_pct), "State of Charge", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
                     let rate_str = snap.power.total_power_watts.map(|w| format!("{:.1} W", w)).unwrap_or_else(|| "12.5 W".into());
-                    render_metric_card(ui, card_w, "CONSUMPTION", &rate_str, "Active Power Rate", Color32::from_rgb(250, 204, 21), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
-                    render_metric_card(ui, card_w, "BATTERY HEALTH", "98.5%", "Design Capacity Match", Color32::from_rgb(16, 185, 129), p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[2], "CONSUMPTION", &rate_str, "Active Power Rate", Color32::from_rgb(250, 204, 21), p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[3], "BATTERY HEALTH", "98.5%", "Design Match", Color32::from_rgb(16, 185, 129), p.bg_card, p.text_muted);
                 });
 
                 ui.add_space(8.0);
@@ -9744,20 +9899,12 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                let avail_w = ui.available_width();
-                let card_w = ((avail_w - 24.0) / 4.0).max(90.0);
-
-                ui.horizontal(|ui| {
-                    render_metric_card(ui, card_w, "RADIO STATE", "Powered On", "RFKILL Unblocked", Color32::from_rgb(16, 185, 129), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
-                    render_metric_card(ui, card_w, "PAIRED DEVICES", "2 Devices", "Stored Bonds", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
-                    render_metric_card(ui, card_w, "DISCOVERY", "Idle", "Not Discoverable", p.text_primary, p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
-                    render_metric_card(ui, card_w, "SERVICE DAEMON", "bluetoothd", "Systemd Active", Color32::from_rgb(168, 85, 247), p.bg_card, p.text_muted);
+                // 2. Row of 4 Metric Cards (evenly distributed)
+                ui.columns(4, |cols| {
+                    render_metric_card(&mut cols[0], "RADIO STATE", "Powered On", "RFKILL Unblocked", Color32::from_rgb(16, 185, 129), p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[1], "PAIRED DEVICES", "2 Devices", "Stored Bonds", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[2], "DISCOVERY", "Idle", "Not Discoverable", p.text_primary, p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[3], "SERVICE DAEMON", "bluetoothd", "Systemd Active", Color32::from_rgb(168, 85, 247), p.bg_card, p.text_muted);
                 });
 
                 ui.add_space(8.0);
@@ -9824,20 +9971,12 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                let avail_w = ui.available_width();
-                let card_w = ((avail_w - 24.0) / 4.0).max(90.0);
-
-                ui.horizontal(|ui| {
-                    render_metric_card(ui, card_w, "TOTAL PROBES", &format!("{}", snap.temp_sensors.len()), "Hardware Sensors", p.text_primary, p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
-                    render_metric_card(ui, card_w, "NORMAL (<55°C)", &format!("{}", normal_count), "Optimal Operating Range", Color32::from_rgb(16, 185, 129), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
-                    render_metric_card(ui, card_w, "WARM (55-75°C)", &format!("{}", warm_count), "Elevated Temperature", Color32::from_rgb(245, 158, 11), p.bg_card, p.text_muted);
-                    ui.add_space(8.0);
-
-                    render_metric_card(ui, card_w, "HOT (>75°C)", &format!("{}", hot_count), "Near Throttle Threshold", if hot_count > 0 { Color32::from_rgb(239, 68, 68) } else { p.text_muted }, p.bg_card, p.text_muted);
+                // 2. Row of 4 Metric Cards (evenly distributed)
+                ui.columns(4, |cols| {
+                    render_metric_card(&mut cols[0], "TOTAL PROBES", &format!("{}", snap.temp_sensors.len()), "Hardware Sensors", p.text_primary, p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[1], "NORMAL (<55°C)", &format!("{}", normal_count), "Optimal Operating", Color32::from_rgb(16, 185, 129), p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[2], "WARM (55-75°C)", &format!("{}", warm_count), "Elevated Temp", Color32::from_rgb(245, 158, 11), p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[3], "HOT (>75°C)", &format!("{}", hot_count), "Near Throttle", if hot_count > 0 { Color32::from_rgb(239, 68, 68) } else { p.text_muted }, p.bg_card, p.text_muted);
                 });
 
                 ui.add_space(8.0);

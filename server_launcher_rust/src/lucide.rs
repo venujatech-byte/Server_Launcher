@@ -34,6 +34,9 @@ pub const ZAP: &str = "\u{e1b4}"; // zap
 pub const ACTIVITY: &str = "\u{e038}"; // activity
 pub const FLAME: &str = "\u{e0d2}"; // flame
 pub const GAUGE: &str = "\u{e1bf}"; // gauge
+pub const WIFI: &str = "\u{e1b0}"; // wifi
+pub const BLUETOOTH: &str = "\u{e05c}"; // bluetooth
+pub const LAYOUT_GRID: &str = "\u{e101}"; // layout-grid
 
 // Actions and UI Controls
 pub const SEARCH: &str = "\u{e151}"; // search

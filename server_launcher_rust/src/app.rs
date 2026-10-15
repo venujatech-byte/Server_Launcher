@@ -2465,9 +2465,8 @@ impl LauncherApp {
                 // Split layout below: Shrunk Sensors left sidebar (240px) + Right Subtab Page (remaining width)
                 let total_h = ui.available_height();
                 let left_w = 240.0;
-                let right_w = (ui.available_width() - left_w - 12.0).max(300.0);
 
-                ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                     ui.set_height(total_h);
                     ui.set_min_height(total_h);
 
@@ -2481,6 +2480,7 @@ impl LauncherApp {
 
                     ui.separator();
 
+                    let right_w = ui.available_width().max(100.0);
                     ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
                         ui.set_width(right_w);
                         ui.set_max_width(right_w);
@@ -3919,7 +3919,7 @@ impl eframe::App for LauncherApp {
                         // 2. Main split below top row: Shrunk Sensors left sidebar (240px) + Right Subtab Page (remaining width)
                         let total_h = ui.available_height();
                         let left_w = 240.0;
-                        ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                             ui.set_height(total_h);
                             ui.set_min_height(total_h);
 
@@ -3938,7 +3938,9 @@ impl eframe::App for LauncherApp {
                                     ui.set_max_width(left_w);
                                     ui.set_height(total_h);
                                     ui.set_min_height(total_h);
-                                    self.render_sensors_left_panel(ui, None);
+                                    ui.vertical(|ui| {
+                                        self.render_sensors_left_panel(ui, None);
+                                    });
                                 });
 
                             ui.add_space(8.0);
@@ -8911,181 +8913,187 @@ impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     fn render_sensors_left_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
         let p = self.theme.palette();
-        ui.set_width(ui.available_width());
-        ui.set_max_width(ui.available_width());
+        ui.vertical(|ui| {
+            ui.set_width(ui.available_width());
+            ui.set_max_width(ui.available_width());
 
-        let is_fetching = if let Some(hid) = host_id {
-            self.remote_sensors_in_flight.lock().unwrap().contains(hid)
-        } else {
-            false
-        };
+            let is_fetching = if let Some(hid) = host_id {
+                self.remote_sensors_in_flight.lock().unwrap().contains(hid)
+            } else {
+                false
+            };
 
-        // Fetch or refresh sensors snapshot asynchronously without blocking UI thread
-        let snap = if let Some(hid) = host_id {
-            let has_snap = self.remote_sensors_snapshots.lock().unwrap().contains_key(hid);
-            let last_fetch = self.remote_sensors_last_fetch.lock().unwrap().get(hid).copied();
-            let interval_passed = self.sensors_refresh_interval > 0
-                && last_fetch
-                    .map(|t| t.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64))
-                    .unwrap_or(true);
+            // Fetch or refresh sensors snapshot asynchronously without blocking UI thread
+            let snap = if let Some(hid) = host_id {
+                let has_snap = self.remote_sensors_snapshots.lock().unwrap().contains_key(hid);
+                let last_fetch = self.remote_sensors_last_fetch.lock().unwrap().get(hid).copied();
+                let interval_passed = self.sensors_refresh_interval > 0
+                    && last_fetch
+                        .map(|t| t.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64))
+                        .unwrap_or(true);
 
-            if (!has_snap || interval_passed) && !is_fetching {
-                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                    self.trigger_remote_sensors_query(host);
-                }
-            }
-            self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_else(|| Arc::new(crate::sensors::SystemSensorsSnapshot::default()))
-        } else {
-            if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
-                let include_top = self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited;
-                self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
-                self.last_sensors_refresh = Instant::now();
-            }
-            Arc::clone(&self.sensors_snapshot)
-        };
-
-        ScrollArea::vertical()
-            .id_salt("sensors_left_sidebar_scroll")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.set_max_width(ui.available_width());
-
-                // Header Row: Title & Manual Refresh (Image 1 / Image 2)
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("HARDWARE ENGINES").size(11.0).strong().color(p.text_muted));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let btn_ref = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(p.text_secondary))
-                            .fill(p.bg_button);
-                        if ui.add(btn_ref).on_hover_text("Refresh all sensors now").clicked() {
-                            if let Some(hid) = host_id {
-                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                    self.trigger_remote_sensors_query(host);
-                                }
-                            } else {
-                                let include_top = self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited;
-                                self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
-                                self.last_sensors_refresh = Instant::now();
-                            }
-                        }
-
-                        // Auto-refresh interval dropdown
-                        let interval_label = match self.sensors_refresh_interval {
-                            0 => format!("{} Off", crate::lucide::CLOCK),
-                            s => format!("{} {}s", crate::lucide::CLOCK, s),
-                        };
-                        egui::ComboBox::from_id_salt("sensors_refresh_interval_combo")
-                            .selected_text(RichText::new(interval_label).size(10.0).color(p.text_primary))
-                            .width(62.0)
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut self.sensors_refresh_interval, 0, "Off (Manual)");
-                                ui.selectable_value(&mut self.sensors_refresh_interval, 1, "1 second");
-                                ui.selectable_value(&mut self.sensors_refresh_interval, 2, "2 seconds");
-                                ui.selectable_value(&mut self.sensors_refresh_interval, 3, "3 seconds");
-                                ui.selectable_value(&mut self.sensors_refresh_interval, 5, "5 seconds");
-                            });
-                    });
-                });
-
-                ui.add_space(6.0);
-
-                // Left Navigation Menu: 9 Subtabs
-                let items: [(SensorsSubTab, &str, &str); 9] = [
-                    (SensorsSubTab::TopApps, "Top Apps", crate::lucide::LAYOUT_GRID),
-                    (SensorsSubTab::Cpu, "CPU", crate::lucide::CPU),
-                    (SensorsSubTab::Ram, "RAM", crate::lucide::RAM),
-                    (SensorsSubTab::Gpu, "GPU", crate::lucide::GPU),
-                    (SensorsSubTab::Storage, "Storage", crate::lucide::STORAGE),
-                    (SensorsSubTab::Wifi, "Wi-Fi", crate::lucide::WIFI),
-                    (SensorsSubTab::Power, "Power", crate::lucide::ZAP),
-                    (SensorsSubTab::Bluetooth, "Bluetooth", crate::lucide::BLUETOOTH),
-                    (SensorsSubTab::Temperature, "Temperature", crate::lucide::THERMOMETER),
-                ];
-
-                for (tab, label, icon) in items {
-                    let is_active = self.sensors_subtab == tab;
-                    let bg = if is_active {
-                        Color32::from_rgb(56, 189, 248) // Cybernetic Cyan Pill (Image 1)
-                    } else {
-                        Color32::TRANSPARENT
-                    };
-                    let fg = if is_active {
-                        Color32::from_rgb(15, 23, 42) // Dark text when selected
-                    } else {
-                        Color32::from_rgb(148, 163, 184) // Slate gray text
-                    };
-
-                    let rt = if is_active {
-                        RichText::new(format!("{}  {}", icon, label)).size(12.0).strong().color(fg)
-                    } else {
-                        RichText::new(format!("{}  {}", icon, label)).size(12.0).color(fg)
-                    };
-
-                    let btn = egui::Button::new(rt)
-                        .fill(bg)
-                        .stroke(Stroke::NONE)
-                        .rounding(Rounding::same(8.0))
-                        .min_size(egui::vec2(ui.available_width(), 30.0));
-
-                    if ui.add(btn).clicked() {
-                        self.sensors_subtab = tab;
-                        if tab == SensorsSubTab::TopApps {
-                            self.sensors_top_apps_visited = true;
-                            if self.selected_machine == "local" && self.sensors_snapshot.top_apps.is_empty() {
-                                self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
-                                self.last_sensors_refresh = Instant::now();
-                            }
-                        }
+                if (!has_snap || interval_passed) && !is_fetching {
+                    if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                        self.trigger_remote_sensors_query(host);
                     }
-                    ui.add_space(2.0);
                 }
+                self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_else(|| Arc::new(crate::sensors::SystemSensorsSnapshot::default()))
+            } else {
+                if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
+                    let include_top = self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited;
+                    self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
+                    self.last_sensors_refresh = Instant::now();
+                }
+                Arc::clone(&self.sensors_snapshot)
+            };
 
-                ui.add_space(8.0);
-
-                // NODE HOST Card (Never overlapping Temperature)
-                Frame::none()
-                    .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 6))
-                    .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                    .show(ui, |ui| {
+            ScrollArea::vertical()
+                .id_salt("sensors_left_sidebar_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.vertical(|ui| {
                         ui.set_width(ui.available_width());
+                        ui.set_max_width(ui.available_width());
+
+                        // Header Row: Title & Manual Refresh (Image 1 / Image 2)
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("NODE HOST").size(9.5).monospace().color(p.text_muted));
+                            ui.label(RichText::new("HARDWARE ENGINES").size(11.0).strong().color(p.text_muted));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new("Online").size(9.5).monospace().color(Color32::from_rgb(16, 185, 129)));
+                                let btn_ref = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(p.text_secondary))
+                                    .fill(p.bg_button);
+                                if ui.add(btn_ref).on_hover_text("Refresh all sensors now").clicked() {
+                                    if let Some(hid) = host_id {
+                                        if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                            self.trigger_remote_sensors_query(host);
+                                        }
+                                    } else {
+                                        let include_top = self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited;
+                                        self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
+                                        self.last_sensors_refresh = Instant::now();
+                                    }
+                                }
+
+                                // Auto-refresh interval dropdown
+                                let interval_label = match self.sensors_refresh_interval {
+                                    0 => format!("{} Off", crate::lucide::CLOCK),
+                                    s => format!("{} {}s", crate::lucide::CLOCK, s),
+                                };
+                                egui::ComboBox::from_id_salt("sensors_refresh_interval_combo")
+                                    .selected_text(RichText::new(interval_label).size(10.0).color(p.text_primary))
+                                    .width(62.0)
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut self.sensors_refresh_interval, 0, "Off (Manual)");
+                                        ui.selectable_value(&mut self.sensors_refresh_interval, 1, "1 second");
+                                        ui.selectable_value(&mut self.sensors_refresh_interval, 2, "2 seconds");
+                                        ui.selectable_value(&mut self.sensors_refresh_interval, 3, "3 seconds");
+                                        ui.selectable_value(&mut self.sensors_refresh_interval, 5, "5 seconds");
+                                    });
                             });
                         });
-                        ui.add_space(3.0);
-                        let cpu_short = if !snap.cpu_brand.is_empty() {
-                            snap.cpu_brand.split('@').next().unwrap_or(&snap.cpu_brand).trim().to_string()
-                        } else {
-                            "Intel N5030".to_string()
-                        };
-                        let ram_gb = (snap.mem_total_bytes as f64 / (1024.0 * 1024.0 * 1024.0)).round() as u64;
-                        let ram_short = format!("{}GB RAM", if ram_gb > 0 { ram_gb } else { 8 });
-                        ui.label(RichText::new(format!("{} • {}", cpu_short, ram_short)).size(10.0).monospace().color(p.text_primary));
-                        ui.add_space(3.0);
+
+                        ui.add_space(6.0);
+
+                        // Left Navigation Menu: 9 Subtabs
+                        let items: [(SensorsSubTab, &str, &str); 9] = [
+                            (SensorsSubTab::TopApps, "Top Apps", crate::lucide::LAYOUT_GRID),
+                            (SensorsSubTab::Cpu, "CPU", crate::lucide::CPU),
+                            (SensorsSubTab::Ram, "RAM", crate::lucide::RAM),
+                            (SensorsSubTab::Gpu, "GPU", crate::lucide::GPU),
+                            (SensorsSubTab::Storage, "Storage", crate::lucide::STORAGE),
+                            (SensorsSubTab::Wifi, "Wi-Fi", crate::lucide::WIFI),
+                            (SensorsSubTab::Power, "Power", crate::lucide::ZAP),
+                            (SensorsSubTab::Bluetooth, "Bluetooth", crate::lucide::BLUETOOTH),
+                            (SensorsSubTab::Temperature, "Temperature", crate::lucide::THERMOMETER),
+                        ];
+
+                        for (tab, label, icon) in items {
+                            let is_active = self.sensors_subtab == tab;
+                            let bg = if is_active {
+                                Color32::from_rgb(56, 189, 248) // Cybernetic Cyan Pill (Image 1)
+                            } else {
+                                Color32::TRANSPARENT
+                            };
+                            let fg = if is_active {
+                                Color32::from_rgb(15, 23, 42) // Dark text when selected
+                            } else {
+                                Color32::from_rgb(148, 163, 184) // Slate gray text
+                            };
+
+                            let rt = if is_active {
+                                RichText::new(format!("{}  {}", icon, label)).size(12.0).strong().color(fg)
+                            } else {
+                                RichText::new(format!("{}  {}", icon, label)).size(12.0).color(fg)
+                            };
+
+                            let btn = egui::Button::new(rt)
+                                .fill(bg)
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(8.0))
+                                .min_size(egui::vec2(ui.available_width(), 30.0));
+
+                            if ui.add(btn).clicked() {
+                                self.sensors_subtab = tab;
+                                if tab == SensorsSubTab::TopApps {
+                                    self.sensors_top_apps_visited = true;
+                                    if self.selected_machine == "local" && self.sensors_snapshot.top_apps.is_empty() {
+                                        self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
+                                        self.last_sensors_refresh = Instant::now();
+                                    }
+                                }
+                            }
+                            ui.add_space(2.0);
+                        }
+
+                        ui.add_space(8.0);
+
+                        // NODE HOST Card (Never overlapping Temperature)
+                        Frame::none()
+                            .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 6))
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                            .show(ui, |ui| {
+                                ui.vertical(|ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("NODE HOST").size(9.5).monospace().color(p.text_muted));
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            ui.label(RichText::new("Online").size(9.5).monospace().color(Color32::from_rgb(16, 185, 129)));
+                                        });
+                                    });
+                                    ui.add_space(3.0);
+                                    let cpu_short = if !snap.cpu_brand.is_empty() {
+                                        snap.cpu_brand.split('@').next().unwrap_or(&snap.cpu_brand).trim().to_string()
+                                    } else {
+                                        "Intel N5030".to_string()
+                                    };
+                                    let ram_gb = (snap.mem_total_bytes as f64 / (1024.0 * 1024.0 * 1024.0)).round() as u64;
+                                    let ram_short = format!("{}GB RAM", if ram_gb > 0 { ram_gb } else { 8 });
+                                    ui.label(RichText::new(format!("{} • {}", cpu_short, ram_short)).size(10.0).monospace().color(p.text_primary));
+                                    ui.add_space(3.0);
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("Uptime").size(9.5).monospace().color(p.text_muted));
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            let uptime_secs = get_system_uptime();
+                                            let up_str = format_uptime(uptime_secs);
+                                            ui.label(RichText::new(up_str).size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                        });
+                                    });
+                                });
+                            });
+
+                        ui.add_space(6.0);
+
+                        // Host Settings Row
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Uptime").size(9.5).monospace().color(p.text_muted));
+                            ui.label(RichText::new(format!("{} Host Settings", crate::lucide::SETTINGS)).size(10.5).color(p.text_secondary));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let uptime_secs = get_system_uptime();
-                                let up_str = format_uptime(uptime_secs);
-                                ui.label(RichText::new(up_str).size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("v2.4").size(10.0).monospace().color(p.text_muted));
                             });
                         });
-                    });
-
-                ui.add_space(6.0);
-
-                // Host Settings Row
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(format!("{} Host Settings", crate::lucide::SETTINGS)).size(10.5).color(p.text_secondary));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new("v2.4").size(10.0).monospace().color(p.text_muted));
+                        ui.add_space(4.0);
                     });
                 });
-                ui.add_space(4.0);
-            });
+        });
     }
 
     // ═════════════════════════════════════════════════════════════════════════

@@ -5808,6 +5808,84 @@ fn draw_thermal_dual_waveform(ui: &mut Ui, height: f32, cpu_temp: f32, gpu_temp:
     }
 }
 
+fn draw_power_realtime_waveform(ui: &mut Ui, height: f32, watts: f32, _is_ac: bool) {
+    ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
+    let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
+    let rect = response.rect;
+
+    painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
+
+    let y_bot = rect.bottom() - 12.0;
+    let y_top = rect.top() + 12.0;
+    let plot_h = y_bot - y_top;
+
+    // Dotted guide grid lines at 25%, 50%, 75%
+    for ratio in [0.25_f32, 0.50_f32, 0.75_f32] {
+        let y = y_bot - ratio * plot_h;
+        draw_dotted_hline(&painter, y, rect.left() + 10.0, rect.right() - 10.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 12)), 4.0, 4.0);
+    }
+
+    let n = 48;
+    let step_x = (rect.width() - 20.0) / (n - 1) as f32;
+    let time_sec = ui.input(|i| i.time as f32);
+
+    let max_watts = if watts > 60.0 { 150.0_f32 } else if watts > 30.0 { 65.0_f32 } else { 35.0_f32 };
+    let to_y = |w: f32| -> f32 {
+        let norm = (w / max_watts).clamp(0.08, 0.92);
+        y_bot - norm * plot_h
+    };
+
+    let pts: Vec<egui::Pos2> = (0..n).map(|i| {
+        let x = rect.left() + 10.0 + i as f32 * step_x;
+        let progress = i as f32 / (n - 1) as f32;
+        // Animated smooth ripple
+        let a = progress * std::f32::consts::TAU * 1.5 - time_sec * 1.8;
+        let ripple = (a.sin() * 0.12 + (a * 2.3).cos() * 0.05) * watts;
+        // Center bump / natural telemetry crest
+        let bell = (-(progress - 0.65).powi(2) / 0.08).exp() * (watts * 0.28);
+        let current_w = (watts * 0.85 + bell + ripple).max(1.0);
+        egui::pos2(x, to_y(current_w))
+    }).collect();
+
+    // Gradient Mesh Fill under curve
+    let mut mesh = egui::Mesh::default();
+    let c_top = Color32::from_rgba_unmultiplied(56, 189, 248, 38);
+    let c_bot = Color32::from_rgba_unmultiplied(56, 189, 248, 2);
+    for i in 0..(pts.len() - 1) {
+        let p1 = pts[i];
+        let p2 = pts[i + 1];
+        let b1 = egui::pos2(p1.x, y_bot);
+        let b2 = egui::pos2(p2.x, y_bot);
+        let idx = mesh.vertices.len() as u32;
+        mesh.vertices.push(egui::epaint::Vertex { pos: p1, uv: egui::epaint::WHITE_UV, color: c_top });
+        mesh.vertices.push(egui::epaint::Vertex { pos: p2, uv: egui::epaint::WHITE_UV, color: c_top });
+        mesh.vertices.push(egui::epaint::Vertex { pos: b2, uv: egui::epaint::WHITE_UV, color: c_bot });
+        mesh.vertices.push(egui::epaint::Vertex { pos: b1, uv: egui::epaint::WHITE_UV, color: c_bot });
+        mesh.indices.extend_from_slice(&[idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+
+    // Outer glow line segment
+    for i in 0..(pts.len() - 1) {
+        painter.line_segment([pts[i], pts[i + 1]], Stroke::new(2.4_f32, Color32::from_rgb(56, 189, 248)));
+    }
+
+    // Glowing telemetry head on the rightmost point
+    if let Some(&last_pt) = pts.last() {
+        painter.circle_filled(last_pt, 6.0, Color32::from_rgba_unmultiplied(56, 189, 248, 80));
+        painter.circle_filled(last_pt, 3.0, Color32::from_rgb(241, 245, 249));
+
+        // Floating readout chip
+        let tag_w = 72.0_f32;
+        let tag_h = 16.0_f32;
+        let tag_rect = egui::Rect::from_min_size(egui::pos2(last_pt.x - tag_w - 6.0, (last_pt.y - tag_h - 4.0).max(rect.top() + 4.0)), egui::vec2(tag_w, tag_h));
+        painter.rect_filled(tag_rect, Rounding::same(3.0), Color32::from_rgb(18, 28, 42));
+        painter.rect_stroke(tag_rect, Rounding::same(3.0), Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)));
+        let label_str = format!("{:.1} W LOAD", watts);
+        painter.text(tag_rect.center(), egui::Align2::CENTER_CENTER, label_str, egui::FontId::monospace(8.5), Color32::from_rgb(241, 245, 249));
+    }
+}
+
 
 impl LauncherApp {
     pub fn refresh_server_list(&mut self) {
@@ -14405,39 +14483,94 @@ impl LauncherApp {
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                    .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.vertical(|ui| {
-                                ui.label(RichText::new("HARDWARE ENGINE / POWER & THERMAL MATRIX").size(9.0).monospace().color(p.text_muted));
-                                ui.add_space(2.0);
-                                let title_str = if is_remote {
-                                    format!("Power Supply, TDP & Thermal Matrix • Host '{}'", host_id.unwrap_or("Remote"))
-                                } else {
-                                    "Power Supply, TDP & Battery Health".to_string()
-                                };
-                                ui.label(RichText::new(title_str).size(17.0).strong().color(p.text_primary));
+                        ui.set_width(ui.available_width());
+
+                        ui.vertical(|ui| {
+                            // Row 1: Overline / Subsystem Tag
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("HARDWARE ENGINE / POWER & THERMAL MATRIX").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                             });
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+
+                            ui.add_space(2.0);
+
+                            // Row 2: Title and Status Badge
+                            let avail_w = ui.available_width();
+                            let is_narrow = avail_w < 680.0;
+
+                            let (status_str, status_col, status_bg) = if is_remote && !has_battery {
+                                ("CONTINUOUS AC MAINS • 80 PLUS PLATINUM".to_string(), Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                            } else if ac_online {
+                                if bat_pct >= 99.0 {
+                                    ("AC MAINS ONLINE • FULLY CHARGED (100%)".to_string(), Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                                } else {
+                                    (format!("AC MAINS CHARGING • {:.0}%", bat_pct), Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                                }
+                            } else {
+                                (format!("BATTERY DISCHARGING • {:.0}% REMAINING", bat_pct), Color32::from_rgb(245, 158, 11), Color32::from_rgba_unmultiplied(245, 158, 11, 24))
+                            };
+
+                            let title_str = if is_remote {
+                                format!("Power Supply, TDP & Thermal Matrix • Host '{}'", host_id.unwrap_or("Remote"))
+                            } else {
+                                "Power Supply, TDP & Battery Health".to_string()
+                            };
+
+                            if is_narrow {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(title_str).size(16.5).strong().color(p.text_primary));
+                                });
+                                ui.add_space(4.0);
                                 Frame::none()
-                                    .fill(Color32::from_rgb(18, 28, 42))
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(10.0, 5.0))
+                                    .fill(status_bg)
+                                    .rounding(Rounding::same(4.0))
+                                    .inner_margin(egui::Margin::symmetric(8.0, 3.5))
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 6.0;
-                                            let (d_rect, _) = ui.allocate_exact_size(egui::vec2(7.0, 7.0), egui::Sense::hover());
-                                            ui.painter().circle_filled(d_rect.center(), 3.5, Color32::from_rgb(56, 189, 248));
-                                            let status_str = if is_remote && !has_battery {
-                                                "Continuous AC Mains • Direct Grid-Tied PSU Feed".to_string()
-                                            } else if ac_online {
-                                                format!("AC Mains Connected • Fully Charged ({:.0}%)", bat_pct)
-                                            } else {
-                                                format!("Battery Discharging • Remaining ({:.0}%)", bat_pct)
-                                            };
-                                            ui.label(RichText::new(status_str).size(10.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            ui.spacing_mut().item_spacing.x = 5.0;
+                                            let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                            ui.painter().circle_filled(d_rect.center(), 2.8, status_col);
+                                            ui.label(RichText::new(&status_str).size(9.0).monospace().strong().color(status_col));
                                         });
                                     });
+                            } else {
+                                ui.horizontal(|ui| {
+                                    let right_pill_est = 320.0_f32;
+                                    let left_w = (avail_w - right_pill_est - 16.0).max(100.0);
+                                    ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                        ui.label(RichText::new(title_str).size(16.5).strong().color(p.text_primary));
+                                    });
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        Frame::none()
+                                            .fill(status_bg)
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(8.0, 3.5))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 5.0;
+                                                    let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                                    ui.painter().circle_filled(d_rect.center(), 2.8, status_col);
+                                                    ui.label(RichText::new(&status_str).size(9.0).monospace().strong().color(status_col));
+                                                });
+                                            });
+                                    });
+                                });
+                            }
+
+                            ui.add_space(4.0);
+
+                            // Row 3: Subtitle spanning the full card width underneath
+                            ui.horizontal_wrapped(|ui| {
+                                let sub_str = if is_remote && !has_battery {
+                                    "Continuous grid-tied AC server telemetry, hardware power capping & PCIe ASPM bus energy states"
+                                } else {
+                                    "Realtime ACPI battery health, continuous PSU telemetry, dynamic governor scaling & battery longevity circuits"
+                                };
+                                ui.label(RichText::new(sub_str).size(10.0).color(Color32::from_rgb(148, 163, 184)));
                             });
                         });
                     });
@@ -14598,9 +14731,14 @@ impl LauncherApp {
                                             Frame::none()
                                                 .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 20))
                                                 .rounding(Rounding::same(4.0))
-                                                .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                                .inner_margin(egui::Margin::symmetric(7.0, 2.5))
                                                 .show(ui, |ui| {
-                                                    ui.label(RichText::new("Healthy").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.horizontal(|ui| {
+                                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                                        let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
+                                                        ui.painter().circle_filled(d_rect.center(), 2.5, Color32::from_rgb(56, 189, 248));
+                                                        ui.label(RichText::new("HEALTHY").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                    });
                                                 });
                                         });
                                     });
@@ -14623,6 +14761,14 @@ impl LauncherApp {
                                             ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
                                             let fill_w = bar_r.width() * (bat_pct / 100.0).clamp(0.05, 1.0);
                                             ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                                            ui.add_space(6.0);
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new("Delivery Mode").size(8.5).monospace().color(p.text_muted));
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    let delivery_str = if ac_online { "Mains Bypass" } else { "Discharge" };
+                                                    ui.label(RichText::new(delivery_str).size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                });
+                                            });
                                         });
 
                                         // Col 2: Remaining vs Design
@@ -14635,6 +14781,11 @@ impl LauncherApp {
                                                 ui.label(RichText::new(format!("/ {:.1} Wh", full_wh)).size(11.0).color(p.text_muted));
                                             });
                                             ui.add_space(6.0);
+                                            let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
+                                            ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
+                                            let cap_ratio = if full_wh > 0.0 { (remaining_wh / full_wh).clamp(0.05, 1.0) } else { 1.0 };
+                                            ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * cap_ratio, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                                            ui.add_space(6.0);
                                             ui.horizontal(|ui| {
                                                 ui.label(RichText::new("Relative Health").size(8.5).monospace().color(p.text_muted));
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -14645,20 +14796,30 @@ impl LauncherApp {
 
                                         // Col 3: Lifecycle Cycles
                                         cols[2].vertical(|ui| {
-                                            ui.label(RichText::new("Lifecycle Cycles").size(9.5).monospace().color(p.text_muted));
+                                            ui.label(RichText::new("Lifecycle Endurance").size(9.5).monospace().color(p.text_muted));
                                             ui.add_space(3.0);
                                             let cycles_val = bat.and_then(|b| b.cycle_count).unwrap_or(0);
-                                            let cycles_str = if cycles_val > 0 { format!("{}", cycles_val) } else { "Fresh".to_string() };
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 2.0;
-                                                ui.label(RichText::new(cycles_str).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                                ui.label(RichText::new("cycles").size(11.0).color(p.text_muted));
+                                                if cycles_val > 0 {
+                                                    ui.label(RichText::new(format!("{}", cycles_val)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                                    ui.label(RichText::new("cycles").size(11.0).color(p.text_muted));
+                                                } else {
+                                                    ui.label(RichText::new("Fresh").size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                                    ui.label(RichText::new("pack").size(11.0).color(p.text_muted));
+                                                }
                                             });
+                                            ui.add_space(6.0);
+                                            let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
+                                            ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
+                                            let cycle_ratio = ((cycles_val as f32) / 1000.0).clamp(0.04, 1.0);
+                                            ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * cycle_ratio, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
                                             ui.add_space(6.0);
                                             ui.horizontal(|ui| {
                                                 ui.label(RichText::new("Rated Lifespan").size(8.5).monospace().color(p.text_muted));
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new("1000 Total").size(8.5).monospace().color(p.text_muted));
+                                                    let life_label = if cycles_val == 0 { "1000 (New)" } else { "1000 Total" };
+                                                    ui.label(RichText::new(life_label).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                                 });
                                             });
                                         });
@@ -14666,26 +14827,27 @@ impl LauncherApp {
 
                                     ui.add_space(12.0);
 
-                                    // Row of 4 Sub-chips
+                                    // Row of 4 Sub-chips (Fits cleanly on 1 line without wrapping)
                                     ui.columns(4, |cols| {
                                         let volts_val = bat.and_then(|b| b.voltage_volts).unwrap_or(12.90);
                                         let chem_str = bat.map(|b| b.technology.trim()).filter(|s| !s.is_empty()).unwrap_or("Li-ion");
                                         let temp_val = snap.cpu_temp.unwrap_or(27.4);
+                                        let ac_status = if ac_online { "65W Bypass" } else { "Disconnected" };
                                         let chips = [
                                             ("Terminal Potential", format!("{:.2} V", volts_val), Color32::from_rgb(241, 245, 249)),
                                             ("Chemistry Stack", chem_str.to_string(), Color32::from_rgb(241, 245, 249)),
                                             ("Operating Temp", format!("{:.1} °C", temp_val), Color32::from_rgb(203, 213, 225)),
-                                            ("AC Adapter State", (if ac_online { "65W (Active Bypass)" } else { "Disconnected" }).to_string(), Color32::from_rgb(56, 189, 248)),
+                                            ("AC Adapter State", ac_status.to_string(), Color32::from_rgb(56, 189, 248)),
                                         ];
                                         for (i, (title, val, val_col)) in chips.into_iter().enumerate() {
                                             Frame::none()
                                                 .fill(Color32::from_rgb(10, 15, 29))
-                                                .rounding(Rounding::same(4.0))
+                                                .rounding(Rounding::same(6.0))
                                                 .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                                                 .show(&mut cols[i], |ui| {
                                                     ui.set_width(ui.available_width());
                                                     ui.label(RichText::new(title).size(8.0).monospace().color(p.text_muted));
-                                                    ui.add_space(1.0);
+                                                    ui.add_space(2.0);
                                                     ui.label(RichText::new(val).size(9.5).monospace().strong().color(val_col));
                                                 });
                                         }
@@ -14713,7 +14875,18 @@ impl LauncherApp {
                                         } else {
                                             crate::power::query_current_governor()
                                         };
-                                        ui.label(RichText::new(format!("Current: {}", active_gov)).size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                        Frame::none()
+                                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 4.0;
+                                                    let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
+                                                    ui.painter().circle_filled(d_rect.center(), 2.5, Color32::from_rgb(56, 189, 248));
+                                                    ui.label(RichText::new(format!("ACTIVE: {}", active_gov)).size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                });
+                                            });
                                     });
                                 });
 
@@ -14722,14 +14895,14 @@ impl LauncherApp {
                                 // 3 Presets in row
                                 ui.columns(3, |cols| {
                                     let presets = [
-                                        ("Quiet / Eco", "Continuous\nPL1 Cap", "powersave", 0),
-                                        ("Balanced", "Continuous\nPL1 Cap\n[Active]", "schedutil", 1),
-                                        ("Turbo Boost", "Short Peak\nBurst", "performance", 2),
+                                        ("Quiet / Eco", "Continuous PL1 Cap (6W)", "powersave", 0),
+                                        ("Balanced", "Optimized Dynamic (12W)", "schedutil", 1),
+                                        ("Turbo Boost", "Peak Burst TDP (18W)", "performance", 2),
                                     ];
                                     for &(name, desc, gov_name, idx) in &presets {
                                         let is_sel = self.power_preset == idx;
-                                        let border = if is_sel { Stroke::new(1.2_f32, Color32::from_rgb(56, 189, 248)) } else { Stroke::NONE };
-                                        let bg = if is_sel { Color32::from_rgba_unmultiplied(56, 189, 248, 15) } else { Color32::from_rgb(10, 15, 29) };
+                                        let border = if is_sel { Stroke::new(1.2_f32, Color32::from_rgb(56, 189, 248)) } else { Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)) };
+                                        let bg = if is_sel { Color32::from_rgba_unmultiplied(56, 189, 248, 18) } else { Color32::from_rgb(10, 15, 29) };
 
                                         let frame_resp = Frame::none()
                                             .fill(bg)
@@ -14741,11 +14914,32 @@ impl LauncherApp {
                                                 ui.horizontal(|ui| {
                                                     let title_col = if is_sel { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(241, 245, 249) };
                                                     ui.label(RichText::new(name).size(11.0).strong().color(title_col));
+
+                                                    if is_sel {
+                                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                            Frame::none()
+                                                                .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 30))
+                                                                .rounding(Rounding::same(3.0))
+                                                                .inner_margin(egui::Margin::symmetric(5.0, 1.5))
+                                                                .show(ui, |ui| {
+                                                                    ui.label(RichText::new("ACTIVE").size(7.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                                });
+                                                        });
+                                                    }
                                                 });
-                                                ui.add_space(6.0);
+                                                ui.add_space(4.0);
                                                 ui.label(RichText::new(desc).size(8.5).monospace().color(if is_sel { Color32::from_rgb(56, 189, 248) } else { p.text_muted }));
                                                 ui.add_space(6.0);
-                                                ui.label(RichText::new(gov_name).size(12.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
+                                                Frame::none()
+                                                    .fill(Color32::from_rgb(14, 20, 36))
+                                                    .rounding(Rounding::same(4.0))
+                                                    .inner_margin(egui::Margin::symmetric(6.0, 3.0))
+                                                    .show(ui, |ui| {
+                                                        ui.horizontal(|ui| {
+                                                            ui.label(RichText::new("GOV:").size(8.0).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                                            ui.label(RichText::new(gov_name).size(9.0).monospace().strong().color(if is_sel { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(203, 213, 225) }));
+                                                        });
+                                                    });
                                             });
 
                                         if frame_resp.response.interact(egui::Sense::click()).clicked() {
@@ -14820,26 +15014,18 @@ impl LauncherApp {
 
                                 ui.add_space(8.0);
 
-                                // Smooth wave canvas
-                                let (wave_res, wave_p) = ui.allocate_painter(egui::vec2(ui.available_width(), 64.0), egui::Sense::hover());
-                                let wr = wave_res.rect;
-                                wave_p.rect_filled(wr, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
-
-                                let n_pts = 32;
-                                let step_x = wr.width() / (n_pts - 1) as f32;
-                                let y_mid = wr.center().y;
-                                let pts: Vec<egui::Pos2> = (0..n_pts).map(|i| {
-                                    let x = wr.left() + i as f32 * step_x;
-                                    let a = i as f32 / n_pts as f32 * std::f32::consts::TAU * 1.2;
-                                    let y = y_mid + a.sin() * 14.0 + (a * 2.0).cos() * 4.0;
-                                    egui::pos2(x, y)
-                                }).collect();
-
-                                for i in 0..(pts.len() - 1) {
-                                    wave_p.line_segment([pts[i], pts[i + 1]], Stroke::new(2.2_f32, Color32::from_rgb(56, 189, 248)));
-                                }
+                                // Smooth realtime animated waveform canvas
+                                draw_power_realtime_waveform(ui, 68.0, watts_val, ac_online);
 
                                 ui.add_space(10.0);
+
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("COMPONENT LOAD ALLOCATION").size(8.0).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(RichText::new("ESTIMATED").size(7.5).monospace().color(Color32::from_rgb(71, 85, 105)));
+                                    });
+                                });
+                                ui.add_space(4.0);
 
                                 // Subsystem breakdown bars
                                 let components: [(&str, f32, f32); 4] = if is_remote {
@@ -14860,14 +15046,14 @@ impl LauncherApp {
 
                                 for &(c_name, c_watts, c_max) in &components {
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new(c_name).size(9.0).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                        ui.label(RichText::new(c_name).size(8.5).monospace().color(Color32::from_rgb(203, 213, 225)));
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new(format!("{:.1} W", c_watts)).size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new(format!("{:.1} W", c_watts)).size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                         });
                                     });
                                     ui.add_space(2.0);
-                                    let (br, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 3.5), egui::Sense::hover());
-                                    ui.painter().rect_filled(br, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
+                                    let (br, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
+                                    ui.painter().rect_filled(br, Rounding::same(2.0), Color32::from_rgb(14, 20, 36));
                                     let fill_w = br.width() * (c_watts / c_max).clamp(0.04, 1.0);
                                     ui.painter().rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(fill_w, br.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
                                     ui.add_space(5.0);
@@ -14897,13 +15083,14 @@ impl LauncherApp {
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()
                                         .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
+                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 40)))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 3.0))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 ui.label(RichText::new(crate::lucide::SHIELD).size(10.0).color(Color32::from_rgb(56, 189, 248)));
-                                                ui.label(RichText::new("Always-On High Availability").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new("ALWAYS-ON HIGH AVAILABILITY").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                             });
                                         });
                                 });
@@ -14916,16 +15103,19 @@ impl LauncherApp {
                                 // Col 1: AC Power Loss Recovery
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 15, 29))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                     .show(&mut cols[0], |ui| {
                                         ui.set_width(ui.available_width());
+                                        ui.set_min_height(108.0);
                                         ui.label(RichText::new("AC Power Loss Recovery").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                         ui.add_space(4.0);
                                         ui.label(RichText::new("Firmware resumes system state automatically upon AC grid restoration after outage.").size(8.5).color(p.text_muted));
                                         ui.add_space(8.0);
                                         Frame::none()
-                                            .fill(Color32::from_rgb(18, 28, 42))
+                                            .fill(Color32::from_rgb(14, 20, 36))
+                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)))
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                                             .show(ui, |ui| {
@@ -14941,16 +15131,19 @@ impl LauncherApp {
                                 // Col 2: PCIe ASPM & C-States
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 15, 29))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                     .show(&mut cols[1], |ui| {
                                         ui.set_width(ui.available_width());
+                                        ui.set_min_height(108.0);
                                         ui.label(RichText::new("PCIe ASPM & C-State Governance").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                         ui.add_space(4.0);
                                         ui.label(RichText::new("Dynamically modulates idle PCIe lanes and core sleep states to minimize power drain.").size(8.5).color(p.text_muted));
                                         ui.add_space(8.0);
                                         Frame::none()
-                                            .fill(Color32::from_rgb(18, 28, 42))
+                                            .fill(Color32::from_rgb(14, 20, 36))
+                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)))
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                                             .show(ui, |ui| {
@@ -14966,16 +15159,19 @@ impl LauncherApp {
                                 // Col 3: UPS & Emergency Standby
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 15, 29))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                     .show(&mut cols[2], |ui| {
                                         ui.set_width(ui.available_width());
+                                        ui.set_min_height(108.0);
                                         ui.label(RichText::new("UPS / Remote Power Delivery").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                         ui.add_space(4.0);
                                         ui.label(RichText::new("Compatible with Network UPS Tools (NUT) and IPMI alerts for graceful shutdown.").size(8.5).color(p.text_muted));
                                         ui.add_space(8.0);
                                         Frame::none()
-                                            .fill(Color32::from_rgb(18, 28, 42))
+                                            .fill(Color32::from_rgb(14, 20, 36))
+                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)))
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                                             .show(ui, |ui| {
@@ -15007,13 +15203,14 @@ impl LauncherApp {
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()
                                         .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
+                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 40)))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 3.0))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 ui.label(RichText::new(crate::lucide::SHIELD).size(10.0).color(Color32::from_rgb(56, 189, 248)));
-                                                ui.label(RichText::new("Longevity Protection Active").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new("LONGEVITY PROTECTION ACTIVE").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                             });
                                         });
                                 });
@@ -15026,10 +15223,12 @@ impl LauncherApp {
                                 // Col 1: Conservation Threshold
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 15, 29))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                     .show(&mut cols[0], |ui| {
                                         ui.set_width(ui.available_width());
+                                        ui.set_min_height(108.0);
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new("Conservation Threshold").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -15053,24 +15252,29 @@ impl LauncherApp {
                                                 self.power_ceiling = (ratio * 100.0).round();
                                             }
                                         }
-                                        ui.painter().rect_filled(bar_r, Rounding::same(3.0), Color32::from_rgb(18, 28, 42));
+                                        ui.painter().rect_filled(bar_r, Rounding::same(3.0), Color32::from_rgb(14, 20, 36));
                                         let fill_w = bar_r.width() * (self.power_ceiling / 100.0).clamp(0.1, 1.0);
                                         ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(3.0), Color32::from_rgb(56, 189, 248));
                                         ui.add_space(4.0);
                                         ui.horizontal(|ui| {
-                                            ui.label(RichText::new("50%").size(7.5).monospace().color(p.text_muted));
-                                            ui.centered_and_justified(|ui| { ui.label(RichText::new("80% (Recommended)").size(7.5).monospace().color(Color32::from_rgb(56, 189, 248))); });
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label(RichText::new("95%").size(7.5).monospace().color(p.text_muted)); });
+                                            ui.label(RichText::new("50% MIN").size(7.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.label(RichText::new("95% MAX").size(7.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                                ui.add_space(6.0);
+                                                ui.label(RichText::new("● 80% OPTIMAL").size(7.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            });
                                         });
                                     });
 
                                 // Col 2: Rapid Charge Rate
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 15, 29))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                     .show(&mut cols[1], |ui| {
                                         ui.set_width(ui.available_width());
+                                        ui.set_min_height(108.0);
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new("Rapid Charge Rate").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -15081,13 +15285,15 @@ impl LauncherApp {
                                         ui.label(RichText::new("High-amperage ramp to reach 80% capacity within 45 minutes. Increased thermal load.").size(8.5).color(p.text_muted));
                                         ui.add_space(8.0);
                                         Frame::none()
-                                            .fill(Color32::from_rgb(18, 28, 42))
+                                            .fill(Color32::from_rgb(14, 20, 36))
+                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)))
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                                             .show(ui, |ui| {
                                                 ui.horizontal(|ui| {
-                                                    ui.label(RichText::new(crate::lucide::HELP_CIRCLE).size(10.0).color(p.text_muted));
-                                                    ui.label(RichText::new("Suspended: Bypass mode currently maintains equilibrium.").size(8.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                    ui.spacing_mut().item_spacing.x = 4.0;
+                                                    ui.label(RichText::new(crate::lucide::HELP_CIRCLE).size(10.0).color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new("Suspended: Bypass maintains equilibrium.").size(8.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                                 });
                                             });
                                     });
@@ -15095,10 +15301,12 @@ impl LauncherApp {
                                 // Col 3: USB Always-On Standby
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 15, 29))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                     .show(&mut cols[2], |ui| {
                                         ui.set_width(ui.available_width());
+                                        ui.set_min_height(108.0);
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new("USB Always-On Standby").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -15109,7 +15317,8 @@ impl LauncherApp {
                                         ui.label(RichText::new("Permits Type-C and Type-A downstream ports to charge external devices when suspended.").size(8.5).color(p.text_muted));
                                         ui.add_space(10.0);
                                         Frame::none()
-                                            .fill(Color32::from_rgb(18, 28, 42))
+                                            .fill(Color32::from_rgb(14, 20, 36))
+                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)))
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                                             .show(ui, |ui| {

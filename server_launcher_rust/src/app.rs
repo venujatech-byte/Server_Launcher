@@ -14041,15 +14041,13 @@ impl LauncherApp {
                     .rounding(Rounding::same(8.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                     .show(ui, |ui| {
-                        let total_w = ui.available_width();
-                        let right_w = 210.0_f32;
-                        let left_w = (total_w - right_w - 12.0).max(120.0);
+                        ui.set_width(ui.available_width());
 
                         ui.horizontal(|ui| {
-                            ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.vertical(|ui| {
                                 ui.label(RichText::new("HARDWARE ENGINE / RF-PERIPHERAL-CONTROLLER").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                 ui.add_space(2.0);
-                                ui.horizontal_wrapped(|ui| {
+                                ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
                                     ui.label(RichText::new("Bluetooth Radio & Connected Devices").size(16.5).strong().color(p.text_primary));
                                     let (status_text, status_col) = if self.bt_radio_on {

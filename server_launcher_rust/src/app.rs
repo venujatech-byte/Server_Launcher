@@ -12077,205 +12077,247 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 5. Bottom 2-Column Section: Active Display Output & Graphics API Pipeline
+                // 5. Bottom 2-Column Section: Embedded Display & Hardware Acceleration
                 ui.columns(2, |cols| {
-                    // Left Column: Active Display Output
+                    // Left Column: Embedded Display
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .inner_margin(egui::Margin::symmetric(16.0, 14.0))
                         .show(&mut cols[0], |ui| {
                             ui.set_width(ui.available_width());
+
+                            // Top Header
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("Active Display Output").size(12.5).strong().color(p.text_primary));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 6.0;
-                                        Frame::none()
-                                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new("eDP-1").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                            });
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 3.0;
-                                            ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
-                                            ui.label(RichText::new("ACTIVE SYNC").size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
-                                        });
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                Frame::none()
+                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 20))
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(5.0, 4.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(crate::lucide::MONITOR).size(12.0).color(Color32::from_rgb(56, 189, 248)));
                                     });
+
+                                ui.label(RichText::new("Embedded Display").size(13.0).strong().color(p.text_primary));
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    Frame::none()
+                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                                        .rounding(Rounding::same(999.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 4.0;
+                                                let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
+                                                ui.painter().circle_filled(d_rect.center(), 2.2, Color32::from_rgb(56, 189, 248));
+                                                ui.label(RichText::new("Active (eDP-1)").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            });
+                                        });
                                 });
                             });
 
-                            ui.add_space(8.0);
+                            ui.add_space(14.0);
 
+                            // Hero Resolution & Refresh
+                            ui.label(RichText::new("1920 \u{00D7} 1080").size(26.0).strong().color(p.text_primary));
+                            ui.add_space(2.0);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(crate::lucide::MONITOR).size(18.0).color(Color32::from_rgb(56, 189, 248)));
-                                ui.add_space(6.0);
-
-                                ui.vertical(|ui| {
-                                    ui.label(RichText::new("Embedded Internal Panel").size(12.0).strong().color(p.text_primary));
-                                    ui.label(RichText::new("1920 x 1080 @ 60.00 Hz • 8-bit RGB").size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
-                                });
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                ui.label(RichText::new("@ 60 Hz").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
+                                ui.label(RichText::new("8-bit RGB").size(10.0).monospace().color(p.text_muted));
                             });
 
-                            ui.add_space(8.0);
+                            ui.add_space(14.0);
 
-                            // 4 specs chips (2x2)
+                            // 2x2 Grid of Tiles
                             ui.columns(2, |sub_cols| {
                                 sub_cols[0].vertical(|ui| {
+                                    // Tile 1: Color Space
                                     Frame::none()
-                                        .fill(Color32::from_rgb(10, 15, 29))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 3))
+                                        .rounding(Rounding::same(8.0))
+                                        .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                                         .show(ui, |ui| {
                                             ui.set_width(ui.available_width());
-                                            ui.label(RichText::new("COLOR SPACE").size(8.0).monospace().color(p.text_muted));
-                                            ui.label(RichText::new("sRGB (Rec. 709)").size(9.5).monospace().strong().color(p.text_primary));
+                                            ui.label(RichText::new("Color Space").size(9.0).monospace().color(p.text_muted));
+                                            ui.add_space(3.0);
+                                            ui.label(RichText::new("sRGB (Rec. 709)").size(11.0).monospace().strong().color(p.text_primary));
                                         });
-                                    ui.add_space(4.0);
+
+                                    ui.add_space(6.0);
+
+                                    // Tile 3: Connector
                                     Frame::none()
-                                        .fill(Color32::from_rgb(10, 15, 29))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 3))
+                                        .rounding(Rounding::same(8.0))
+                                        .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                                         .show(ui, |ui| {
                                             ui.set_width(ui.available_width());
-                                            ui.label(RichText::new("CONNECTOR").size(8.0).monospace().color(p.text_muted));
-                                            ui.label(RichText::new("eDP Direct Pipe A").size(9.5).monospace().strong().color(p.text_primary));
+                                            ui.label(RichText::new("Connector").size(9.0).monospace().color(p.text_muted));
+                                            ui.add_space(3.0);
+                                            ui.label(RichText::new("eDP Pipe A").size(11.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                         });
                                 });
 
                                 sub_cols[1].vertical(|ui| {
+                                    // Tile 2: Scaling
                                     Frame::none()
-                                        .fill(Color32::from_rgb(10, 15, 29))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 3))
+                                        .rounding(Rounding::same(8.0))
+                                        .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                                         .show(ui, |ui| {
                                             ui.set_width(ui.available_width());
-                                            ui.label(RichText::new("SCALING GOVERNOR").size(8.0).monospace().color(p.text_muted));
-                                            ui.label(RichText::new("Native (1.0x)").size(9.5).monospace().strong().color(p.text_primary));
+                                            ui.label(RichText::new("Scaling").size(9.0).monospace().color(p.text_muted));
+                                            ui.add_space(3.0);
+                                            ui.label(RichText::new("Native (1.0x)").size(11.0).monospace().strong().color(p.text_primary));
                                         });
-                                    ui.add_space(4.0);
+
+                                    ui.add_space(6.0);
+
+                                    // Tile 4: VRR Support
                                     Frame::none()
-                                        .fill(Color32::from_rgb(10, 15, 29))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 3))
+                                        .rounding(Rounding::same(8.0))
+                                        .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                                         .show(ui, |ui| {
                                             ui.set_width(ui.available_width());
-                                            ui.label(RichText::new("VRR SUPPORT").size(8.0).monospace().color(p.text_muted));
-                                            ui.label(RichText::new("Adaptive Unsupported").size(9.5).monospace().strong().color(p.text_muted));
+                                            ui.label(RichText::new("VRR Support").size(9.0).monospace().color(p.text_muted));
+                                            ui.add_space(3.0);
+                                            ui.label(RichText::new("Standard").size(11.0).monospace().strong().color(p.text_primary));
                                         });
                                 });
                             });
 
-                            ui.add_space(8.0);
+                            ui.add_space(14.0);
 
+                            // Footer
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("HDCP 2.2 Compliant • DPCD v1.4").size(9.0).monospace().color(p.text_muted));
+                                let btn = egui::Button::new(RichText::new("Display Topology Graph →").size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)))
+                                    .fill(Color32::TRANSPARENT)
+                                    .frame(false);
+                                ui.add(btn).on_hover_text("View DRM KMS connector topology");
+
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("Display Topology Graph →").size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new("Port 0x1").size(9.5).monospace().color(p.text_muted));
                                 });
                             });
                         });
 
-                    // Right Column: Graphics API Pipeline & Hardware Acceleration
+                    // Right Column: Hardware Acceleration
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .inner_margin(egui::Margin::symmetric(16.0, 14.0))
                         .show(&mut cols[1], |ui| {
                             ui.set_width(ui.available_width());
+
+                            // Top Header
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("Graphics API Pipeline & Hardware Acceleration").size(12.5).strong().color(p.text_primary));
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                ui.label(RichText::new(">_").size(12.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("Hardware Acceleration").size(13.0).strong().color(p.text_primary));
+
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                        .fill(Color32::from_rgba_unmultiplied(52, 211, 153, 22))
+                                        .rounding(Rounding::same(999.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
                                         .show(ui, |ui| {
-                                            ui.label(RichText::new("DRI3 Active").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 4.0;
+                                                let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
+                                                ui.painter().circle_filled(d_rect.center(), 2.2, Color32::from_rgb(52, 211, 153));
+                                                ui.label(RichText::new("DRI3 Active").size(9.0).monospace().strong().color(Color32::from_rgb(52, 211, 153)));
+                                            });
                                         });
                                 });
                             });
 
-                            ui.add_space(8.0);
+                            ui.add_space(12.0);
 
-                            // 3 API status rows
-                            let apis = [
-                                ("Vulkan API v1.3.280", "✔ Accelerated (ANV Mesa Driver)"),
-                                ("OpenGL Core v4.6", "✔ Accelerated (Iris Classic DRI)"),
-                                ("VA-API / Media v1.22.0", "✔ Direct Video Accel (i965/Intel)"),
+                            // 3 API status item rows
+                            let apis: [(&str, &str, &str, bool); 3] = [
+                                ("Vulkan 1.3", "Mesa Driver", "Accelerated", false),
+                                ("OpenGL 4.6", "Iris Classic DRI", "Accelerated", false),
+                                ("VA-API Media", "Video Accel", "Direct", true),
                             ];
-                            for (name, status) in apis {
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(name).size(10.0).monospace().color(p.text_primary));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new(status).size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
+
+                            for (name, driver, status, is_direct) in apis {
+                                Frame::none()
+                                    .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 3))
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 6.0;
+                                            ui.label(RichText::new("✓").size(11.0).strong().color(Color32::from_rgb(52, 211, 153)));
+                                            ui.label(RichText::new(name).size(10.5).monospace().strong().color(p.text_primary));
+                                            ui.label(RichText::new("•").size(8.0).color(Color32::from_rgb(71, 85, 105)));
+                                            ui.label(RichText::new(driver).size(9.5).monospace().color(p.text_muted));
+
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                let status_color = if is_direct {
+                                                    Color32::from_rgb(52, 211, 153)
+                                                } else {
+                                                    Color32::from_rgb(56, 189, 248)
+                                                };
+                                                ui.label(RichText::new(status).size(10.0).monospace().strong().color(status_color));
+                                            });
+                                        });
                                     });
-                                });
-                                ui.add_space(3.0);
+                                ui.add_space(5.0);
                             }
 
-                            ui.add_space(6.0);
+                            ui.add_space(3.0);
 
-                            // 4 register chips (2x2)
+                            // 2 Micro-cards below API rows
                             ui.columns(2, |sub_cols| {
                                 sub_cols[0].vertical(|ui| {
                                     Frame::none()
-                                        .fill(Color32::from_rgb(10, 15, 29))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 3))
+                                        .rounding(Rounding::same(8.0))
+                                        .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                                         .show(ui, |ui| {
                                             ui.set_width(ui.available_width());
-                                            ui.label(RichText::new("GUC / HUC FIRMWARE").size(8.0).monospace().color(p.text_muted));
                                             ui.horizontal(|ui| {
-                                                ui.spacing_mut().item_spacing.x = 5.0;
-                                                let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                                ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
-                                                ui.label(RichText::new("Loaded & Validated").size(9.5).monospace().strong().color(p.text_primary));
+                                                ui.label(RichText::new("GuC / HuC Firmware").size(9.0).monospace().color(p.text_muted));
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
+                                                    ui.painter().circle_filled(dot_rect.center(), 2.0, Color32::from_rgb(52, 211, 153));
+                                                });
                                             });
-                                        });
-                                    ui.add_space(4.0);
-                                    Frame::none()
-                                        .fill(Color32::from_rgb(10, 15, 29))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                        .show(ui, |ui| {
-                                            ui.set_width(ui.available_width());
-                                            ui.label(RichText::new("REBAR / SMARTACCESS").size(8.0).monospace().color(p.text_muted));
-                                            ui.label(RichText::new("Unsupported (iGPU)").size(9.5).monospace().strong().color(p.text_muted));
+                                            ui.add_space(3.0);
+                                            ui.label(RichText::new("Loaded & Validated").size(11.0).monospace().strong().color(p.text_primary));
                                         });
                                 });
 
                                 sub_cols[1].vertical(|ui| {
                                     Frame::none()
-                                        .fill(Color32::from_rgb(10, 15, 29))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 3))
+                                        .rounding(Rounding::same(8.0))
+                                        .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                                         .show(ui, |ui| {
                                             ui.set_width(ui.available_width());
-                                            ui.label(RichText::new("RENDER GOVERNOR").size(8.0).monospace().color(p.text_muted));
-                                            ui.label(RichText::new("Dynamic RC6 P-State").size(9.5).monospace().strong().color(p.text_primary));
-                                        });
-                                    ui.add_space(4.0);
-                                    Frame::none()
-                                        .fill(Color32::from_rgb(10, 15, 29))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                        .show(ui, |ui| {
-                                            ui.set_width(ui.available_width());
-                                            ui.label(RichText::new("TEARFREE RASTERIZER").size(8.0).monospace().color(p.text_muted));
-                                            ui.label(RichText::new("Enabled (Kernel DRM)").size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new("Render Governor").size(9.0).monospace().color(p.text_muted));
+                                            ui.add_space(3.0);
+                                            ui.label(RichText::new("Dynamic RC6").size(11.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                         });
                                 });
                             });
 
-                            ui.add_space(8.0);
+                            ui.add_space(14.0);
 
+                            // Footer
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("Hardware Security: IOMMU Direct Memory Protection Active").size(9.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new("Gen9 GT2").size(9.5).monospace().color(p.text_muted));
+
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("Extended Capabilities →").size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                    let btn = egui::Button::new(RichText::new("Extended Capabilities →").size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)))
+                                        .fill(Color32::TRANSPARENT)
+                                        .frame(false);
+                                    ui.add(btn).on_hover_text("View DRM driver capabilities and Vulkan extensions");
                                 });
                             });
                         });

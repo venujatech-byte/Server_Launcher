@@ -110,7 +110,7 @@ pub fn query_bluetooth_status() -> BluetoothSnapshot {
                     // Fetch full info for this device
                     let mut dev = query_device_info(&mac);
                     if dev.name.is_empty() {
-                        dev.name = name;
+                        dev.name = clean_device_name(&name);
                     }
                     if dev.paired {
                         snap.devices.push(dev);
@@ -224,7 +224,32 @@ pub fn query_device_info(mac: &str) -> BluetoothDevice {
         dev.name = dev.mac.clone();
     }
 
+    dev.name = clean_device_name(&dev.name);
+
     dev
+}
+
+/// Sanitizes device names to avoid unrenderable Unicode tofu squares (e.g. CJK brand prefixes)
+pub fn clean_device_name(name: &str) -> String {
+    let mut s = name.to_string();
+    s = s.replace("联想", "Lenovo ");
+    s = s.replace("小米", "Xiaomi ");
+    s = s.replace("华为", "Huawei ");
+
+    let cleaned: String = s.chars().map(|c| {
+        if c.is_ascii() || ('\u{00A0}'..='\u{024F}').contains(&c) {
+            c
+        } else {
+            ' '
+        }
+    }).collect();
+
+    let trimmed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    if trimmed.is_empty() {
+        name.to_string()
+    } else {
+        trimmed
+    }
 }
 
 /// Set Bluetooth radio power (ON or OFF)

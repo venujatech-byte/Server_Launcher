@@ -4705,7 +4705,6 @@ fn draw_waveform(ui: &mut Ui, height: f32, values: &VecDeque<f32>, max_val: f32,
 
     // Dark canvas background
     painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 15, 29));
-    painter.rect_stroke(rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)));
 
     // Grid lines with labels at 100%, 75%, 50%, 25%, 0%
     let levels = [(1.00_f32, "100%"), (0.75_f32, "75%"), (0.50_f32, "50%"), (0.25_f32, "25%"), (0.00_f32, "0%")];
@@ -4856,7 +4855,6 @@ fn draw_ram_waveform(
     let rect = response.rect;
 
     painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 15, 29));
-    painter.rect_stroke(rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)));
 
     // Grid line at top
     let top_y = rect.top() + 18.0;
@@ -4953,7 +4951,6 @@ fn draw_disk_waveform(
     let rect = response.rect;
 
     painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 15, 29));
-    painter.rect_stroke(rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)));
 
     // Grid lines: 100 MB/s, 50 MB/s, 0 MB/s
     let levels = [(1.0_f32, "100 MB/s", "-60s"), (0.5_f32, "50 MB/s", "-30s"), (0.0_f32, "0 MB/s", "Now")];
@@ -5185,7 +5182,6 @@ fn render_big_stat_card(
 ) {
     Frame::none()
         .fill(bg_card)
-        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
         .rounding(Rounding::same(8.0))
         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
         .show(ui, |ui| {
@@ -5228,7 +5224,6 @@ fn draw_dual_network_chart(
     let rect = response.rect;
 
     painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
-    painter.rect_stroke(rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)));
 
     let y_base = rect.bottom() - 12.0;
     painter.line_segment(
@@ -5314,7 +5309,6 @@ fn draw_sockets_chart(
     let rect = response.rect;
 
     painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
-    painter.rect_stroke(rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)));
 
     let y_base = rect.bottom() - 12.0;
 
@@ -5564,7 +5558,6 @@ fn draw_interactive_fan_curve(ui: &mut Ui, height: f32, active_temp: f32, active
     let rect = response.rect;
 
     painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
-    painter.rect_stroke(rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)));
 
     let pad_x = 24.0_f32;
     let pad_y = 16.0_f32;
@@ -5658,7 +5651,6 @@ fn draw_rf_frequency_waveform(ui: &mut Ui, height: f32) {
     let rect = response.rect;
 
     painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
-    painter.rect_stroke(rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)));
 
     let y_mid = rect.center().y;
     let n = 40;
@@ -5688,7 +5680,6 @@ fn draw_wifi_realtime_waveform(ui: &mut Ui, height: f32, rx_history: &VecDeque<f
     let rect = response.rect;
 
     painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
-    painter.rect_stroke(rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)));
 
     let y_base = rect.bottom() - 12.0;
     let n = rx_history.len().max(tx_history.len()).max(2);
@@ -5745,7 +5736,6 @@ fn draw_thermal_dual_waveform(ui: &mut Ui, height: f32, cpu_temp: f32, gpu_temp:
     let rect = response.rect;
 
     painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
-    painter.rect_stroke(rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)));
 
     let y_bot = rect.bottom() - 14.0;
     let y_top = rect.top() + 14.0;
@@ -10380,7 +10370,6 @@ impl LauncherApp {
                     // Card 1: CPU
                     Frame::none()
                         .fill(p.bg_card)
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                         .show(&mut cols[0], |ui| {
@@ -10416,7 +10405,6 @@ impl LauncherApp {
                     // Card 2: RAM
                     Frame::none()
                         .fill(p.bg_card)
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                         .show(&mut cols[1], |ui| {
@@ -10458,7 +10446,6 @@ impl LauncherApp {
                     // Card 3: SWAP
                     Frame::none()
                         .fill(p.bg_card)
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                         .show(&mut cols[2], |ui| {
@@ -10494,7 +10481,6 @@ impl LauncherApp {
                     // Card 4: STORAGE
                     Frame::none()
                         .fill(p.bg_card)
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                         .show(&mut cols[3], |ui| {
@@ -10545,7 +10531,6 @@ impl LauncherApp {
                     ui.allocate_ui_with_layout(egui::vec2(left_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(16.0, 14.0))
                             .show(ui, |ui| {
@@ -10582,7 +10567,7 @@ impl LauncherApp {
 
                                 ui.add_space(10.0);
                                 let (sep_rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-                                ui.painter().hline(sep_rect.x_range(), sep_rect.center().y, Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)));
+                                ui.painter().hline(sep_rect.x_range(), sep_rect.center().y, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)));
                                 ui.add_space(8.0);
 
                                 ui.columns(3, |fcols| {
@@ -10618,7 +10603,6 @@ impl LauncherApp {
                     ui.allocate_ui_with_layout(egui::vec2(right_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(16.0, 14.0))
                             .show(ui, |ui| {
@@ -11559,7 +11543,7 @@ impl LauncherApp {
 
                                     if ui.add(egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(p.text_muted))
                                         .fill(Color32::from_rgb(18, 28, 42))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)))
+                                        .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(4.0))).clicked() {
                                         // Reset or re-query
                                     }
@@ -11576,7 +11560,7 @@ impl LauncherApp {
                                         let btn_stroke = if is_selected {
                                             Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248))
                                         } else {
-                                            Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59))
+                                            Stroke::NONE
                                         };
                                         let text_color = if is_selected {
                                             Color32::from_rgb(56, 189, 248)
@@ -11735,7 +11719,6 @@ impl LauncherApp {
                             // Sub-card 1: 3D Engine / Render
                             Frame::none()
                                 .fill(Color32::from_rgb(10, 15, 29))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                 .rounding(Rounding::same(6.0))
                                 .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                                 .show(&mut cols[0], |ui| {
@@ -11764,7 +11747,6 @@ impl LauncherApp {
                             // Sub-card 2: Copy Engine (Blitter)
                             Frame::none()
                                 .fill(Color32::from_rgb(10, 15, 29))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                 .rounding(Rounding::same(6.0))
                                 .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                                 .show(&mut cols[1], |ui| {
@@ -11798,7 +11780,6 @@ impl LauncherApp {
                             // Sub-card 3: Video Decode (Intel QuickSync)
                             Frame::none()
                                 .fill(Color32::from_rgb(10, 15, 29))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                 .rounding(Rounding::same(6.0))
                                 .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                                 .show(&mut cols[0], |ui| {
@@ -11827,7 +11808,6 @@ impl LauncherApp {
                             // Sub-card 4: Video Processing
                             Frame::none()
                                 .fill(Color32::from_rgb(10, 15, 29))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                 .rounding(Rounding::same(6.0))
                                 .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                                 .show(&mut cols[1], |ui| {
@@ -11998,7 +11978,6 @@ impl LauncherApp {
                                 sub_cols[0].vertical(|ui| {
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 15, 29))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                                         .show(ui, |ui| {
@@ -12009,7 +11988,6 @@ impl LauncherApp {
                                     ui.add_space(4.0);
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 15, 29))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                                         .show(ui, |ui| {
@@ -12022,7 +12000,6 @@ impl LauncherApp {
                                 sub_cols[1].vertical(|ui| {
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 15, 29))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                                         .show(ui, |ui| {
@@ -12033,7 +12010,6 @@ impl LauncherApp {
                                     ui.add_space(4.0);
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 15, 29))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                                         .show(ui, |ui| {
@@ -12099,7 +12075,6 @@ impl LauncherApp {
                                 sub_cols[0].vertical(|ui| {
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 15, 29))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                                         .show(ui, |ui| {
@@ -12115,7 +12090,6 @@ impl LauncherApp {
                                     ui.add_space(4.0);
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 15, 29))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                                         .show(ui, |ui| {
@@ -12128,7 +12102,6 @@ impl LauncherApp {
                                 sub_cols[1].vertical(|ui| {
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 15, 29))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                                         .show(ui, |ui| {
@@ -12139,7 +12112,6 @@ impl LauncherApp {
                                     ui.add_space(4.0);
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 15, 29))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                                         .show(ui, |ui| {
@@ -12789,7 +12761,6 @@ impl LauncherApp {
                 // 1. Header Banner
                 Frame::none()
                     .fill(p.bg_card)
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                     .rounding(Rounding::same(8.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                     .show(ui, |ui| {
@@ -12827,11 +12798,10 @@ impl LauncherApp {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
 
-                                // Re-Scan Button
+                                // Re-Scan Button (borderless tonal pill)
                                 let (rescan_rect, rescan_resp) = ui.allocate_exact_size(egui::vec2(90.0, 28.0), egui::Sense::click());
-                                let bg = if rescan_resp.hovered() { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(18, 28, 42) };
+                                let bg = if rescan_resp.hovered() { Color32::from_rgba_unmultiplied(56, 189, 248, 32) } else { Color32::from_rgba_unmultiplied(56, 189, 248, 18) };
                                 ui.painter().rect_filled(rescan_rect, Rounding::same(6.0), bg);
-                                ui.painter().rect_stroke(rescan_rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)));
                                 ui.painter().text(rescan_rect.center(), egui::Align2::CENTER_CENTER, format!("{} Re-Scan", crate::lucide::REFRESH_CW), egui::FontId::monospace(9.5), Color32::from_rgb(56, 189, 248));
                                 if rescan_resp.clicked() {
                                     self.wifi_rescan_anim = true;
@@ -12843,7 +12813,6 @@ impl LauncherApp {
                                 // Badges
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 14, 22))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(8.0, 5.0))
                                     .show(ui, |ui| {
@@ -12852,7 +12821,6 @@ impl LauncherApp {
 
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 14, 22))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(8.0, 5.0))
                                     .show(ui, |ui| {
@@ -12895,7 +12863,6 @@ impl LauncherApp {
                     ui.allocate_ui_with_layout(egui::vec2(left_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
@@ -12944,7 +12911,6 @@ impl LauncherApp {
                                     for (txt, col) in badges {
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 14, 22))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(7.0, 3.0))
                                             .show(ui, |ui| {
@@ -12961,7 +12927,6 @@ impl LauncherApp {
                     ui.allocate_ui_with_layout(egui::vec2(right_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
@@ -12993,7 +12958,6 @@ impl LauncherApp {
                                 ui.add_space(8.0);
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 14, 22))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                                     .show(ui, |ui| {
@@ -13040,7 +13004,6 @@ impl LauncherApp {
                                         let c = &mut cols[j];
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 14, 22))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(6.0, 5.0))
                                             .show(c, |ui| {
@@ -13150,7 +13113,6 @@ impl LauncherApp {
                     ui.allocate_ui_with_layout(egui::vec2(half_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
@@ -13202,7 +13164,6 @@ impl LauncherApp {
                     ui.allocate_ui_with_layout(egui::vec2(half_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
@@ -13217,9 +13178,8 @@ impl LauncherApp {
                                         ui.spacing_mut().item_spacing.x = 6.0;
 
                                         let (mon_rect, mon_resp) = ui.allocate_exact_size(egui::vec2(96.0, 24.0), egui::Sense::click());
-                                        let bg = if mon_resp.hovered() { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(18, 28, 42) };
+                                        let bg = if mon_resp.hovered() { Color32::from_rgba_unmultiplied(56, 189, 248, 28) } else { Color32::from_rgba_unmultiplied(56, 189, 248, 14) };
                                         ui.painter().rect_filled(mon_rect, Rounding::same(4.0), bg);
-                                        ui.painter().rect_stroke(mon_rect, Rounding::same(4.0), Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)));
                                         ui.painter().text(mon_rect.center(), egui::Align2::CENTER_CENTER, "Socket Monitor", egui::FontId::monospace(8.5), Color32::from_rgb(56, 189, 248));
                                         if mon_resp.clicked() {
                                             self.trigger_wifi_query(Some(ui.ctx().clone()));
@@ -13229,7 +13189,6 @@ impl LauncherApp {
                                         let (flush_rect, flush_resp) = ui.allocate_exact_size(egui::vec2(76.0, 24.0), egui::Sense::click());
                                         let bg = if flush_resp.hovered() { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(18, 28, 42) };
                                         ui.painter().rect_filled(flush_rect, Rounding::same(4.0), bg);
-                                        ui.painter().rect_stroke(flush_rect, Rounding::same(4.0), Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)));
                                         ui.painter().text(flush_rect.center(), egui::Align2::CENTER_CENTER, "Flush DNS", egui::FontId::monospace(8.5), Color32::from_rgb(148, 163, 184));
                                         if flush_resp.clicked() {
                                             match crate::wifi::trigger_flush_dns() {
@@ -13336,7 +13295,6 @@ impl LauncherApp {
                         let toast_col = if is_err { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(52, 211, 153) };
                         Frame::none()
                             .fill(toast_col.gamma_multiply(0.12))
-                            .stroke(Stroke::new(1.0_f32, toast_col.gamma_multiply(0.35)))
                             .rounding(Rounding::same(6.0))
                             .inner_margin(egui::Margin::symmetric(10.0, 5.0))
                             .show(ui, |ui| {
@@ -13363,7 +13321,6 @@ impl LauncherApp {
                         // Card 1: PRIMARY CELL TELEMETRY // BAT1
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
@@ -13463,7 +13420,6 @@ impl LauncherApp {
                                     for (i, (title, val, val_col)) in chips.into_iter().enumerate() {
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 15, 29))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                                             .show(&mut cols[i], |ui| {
@@ -13481,7 +13437,6 @@ impl LauncherApp {
                         // Card 2: THERMAL & POWER GOVERNOR PRESET
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
@@ -13508,7 +13463,7 @@ impl LauncherApp {
                                     ];
                                     for &(name, desc, gov_name, idx) in &presets {
                                         let is_sel = self.power_preset == idx;
-                                        let border = if is_sel { Stroke::new(1.2_f32, Color32::from_rgb(56, 189, 248)) } else { Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)) };
+                                        let border = if is_sel { Stroke::new(1.2_f32, Color32::from_rgb(56, 189, 248)) } else { Stroke::NONE };
                                         let bg = if is_sel { Color32::from_rgba_unmultiplied(56, 189, 248, 15) } else { Color32::from_rgb(10, 15, 29) };
 
                                         let frame_resp = Frame::none()
@@ -13547,7 +13502,6 @@ impl LauncherApp {
                     ui.allocate_ui_with_layout(egui::vec2(right_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
@@ -13591,7 +13545,6 @@ impl LauncherApp {
                                 let (wave_res, wave_p) = ui.allocate_painter(egui::vec2(ui.available_width(), 64.0), egui::Sense::hover());
                                 let wr = wave_res.rect;
                                 wave_p.rect_filled(wr, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
-                                wave_p.rect_stroke(wr, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)));
 
                                 let n_pts = 32;
                                 let step_x = wr.width() / (n_pts - 1) as f32;
@@ -13640,7 +13593,6 @@ impl LauncherApp {
                 // 3. Bottom Card: Conservation & Longevity Circuit
                 Frame::none()
                     .fill(p.bg_card)
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                     .rounding(Rounding::same(8.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                     .show(ui, |ui| {
@@ -13675,7 +13627,6 @@ impl LauncherApp {
                             // Col 1: Conservation Threshold
                             Frame::none()
                                 .fill(Color32::from_rgb(10, 15, 29))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                 .rounding(Rounding::same(6.0))
                                 .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                 .show(&mut cols[0], |ui| {
@@ -13717,7 +13668,6 @@ impl LauncherApp {
                             // Col 2: Rapid Charge Rate
                             Frame::none()
                                 .fill(Color32::from_rgb(10, 15, 29))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                 .rounding(Rounding::same(6.0))
                                 .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                 .show(&mut cols[1], |ui| {
@@ -13746,7 +13696,6 @@ impl LauncherApp {
                             // Col 3: USB Always-On Standby
                             Frame::none()
                                 .fill(Color32::from_rgb(10, 15, 29))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                 .rounding(Rounding::same(6.0))
                                 .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                 .show(&mut cols[2], |ui| {
@@ -13811,17 +13760,20 @@ impl LauncherApp {
                 // 1. Header Banner
                 Frame::none()
                     .fill(p.bg_card)
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                     .rounding(Rounding::same(8.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                     .show(ui, |ui| {
+                        let total_w = ui.available_width();
+                        let right_w = 210.0_f32;
+                        let left_w = (total_w - right_w - 12.0).max(120.0);
+
                         ui.horizontal(|ui| {
-                            ui.vertical(|ui| {
+                            ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                                 ui.label(RichText::new("HARDWARE ENGINE / RF-PERIPHERAL-CONTROLLER").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                 ui.add_space(2.0);
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new("Bluetooth Radio & Connected Devices").size(17.0).strong().color(p.text_primary));
-                                    ui.add_space(6.0);
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 8.0;
+                                    ui.label(RichText::new("Bluetooth Radio & Connected Devices").size(16.5).strong().color(p.text_primary));
                                     let (status_text, status_col) = if self.bt_radio_on {
                                         ("ACTIVE LINK", Color32::from_rgb(52, 211, 153))
                                     } else {
@@ -13840,9 +13792,9 @@ impl LauncherApp {
                                             });
                                         });
                                 });
-                                ui.add_space(2.0);
-                                ui.label(RichText::new("Dual-band 2.4 GHz transceiver with LE Audio & aptX Adaptive pipelines").size(10.5).color(Color32::from_rgb(148, 163, 184)));
                                 ui.add_space(3.0);
+                                ui.label(RichText::new("Dual-band 2.4 GHz transceiver with LE Audio & aptX Adaptive pipelines").size(10.0).color(Color32::from_rgb(148, 163, 184)));
+                                ui.add_space(2.0);
                                 let ctrl_desc = if let Some(ref ctrl) = bt_snap.controller {
                                     format!("CONTROLLER: {} ({}) • BlueZ • MAC: {}", ctrl.name, ctrl.alias, ctrl.mac)
                                 } else {
@@ -13854,7 +13806,6 @@ impl LauncherApp {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 14, 22))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(12.0, 8.0))
                                     .show(ui, |ui| {
@@ -13889,7 +13840,6 @@ impl LauncherApp {
                 // 2. Action Toolbar (Pair New Device, Discoverable Toggle, RSSI Floor Slider)
                 Frame::none()
                     .fill(p.bg_card)
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                     .rounding(Rounding::same(8.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                     .show(ui, |ui| {
@@ -13900,7 +13850,7 @@ impl LauncherApp {
                             let btn_label = if is_scanning { "Scanning Nearby..." } else { "+ Scan for Devices" };
                             let (pair_rect, pair_resp) = ui.allocate_exact_size(egui::vec2(140.0, 28.0), egui::Sense::click());
                             let pair_bg = if is_scanning {
-                                Color32::from_rgb(18, 28, 42)
+                                Color32::from_rgba_unmultiplied(56, 189, 248, 28)
                             } else if pair_resp.hovered() {
                                 Color32::from_rgb(14, 165, 233)
                             } else {
@@ -13909,9 +13859,6 @@ impl LauncherApp {
                             let pair_text_col = if is_scanning { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(10, 14, 22) };
 
                             ui.painter().rect_filled(pair_rect, Rounding::same(6.0), pair_bg);
-                            if is_scanning {
-                                ui.painter().rect_stroke(pair_rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)));
-                            }
                             ui.painter().text(pair_rect.center(), egui::Align2::CENTER_CENTER, btn_label, egui::FontId::monospace(10.0), pair_text_col);
 
                             if pair_resp.clicked() && !is_scanning {
@@ -13947,7 +13894,6 @@ impl LauncherApp {
                                     let toast_col = if is_err { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(52, 211, 153) };
                                     Frame::none()
                                         .fill(toast_col.gamma_multiply(0.12))
-                                        .stroke(Stroke::new(1.0_f32, toast_col.gamma_multiply(0.35)))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 3.0))
                                         .show(ui, |ui| {
@@ -13986,7 +13932,6 @@ impl LauncherApp {
                     // Empty state card
                     Frame::none()
                         .fill(p.bg_card)
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(24.0, 18.0))
                         .show(ui, |ui| {
@@ -14004,11 +13949,11 @@ impl LauncherApp {
                     ui.columns(num_cols, |cols| {
                         for (i, dev) in bt_snap.devices.iter().enumerate() {
                             let c = &mut cols[i % num_cols];
+                            let card_bg = if dev.connected { Color32::from_rgb(17, 24, 38) } else { p.bg_card };
                             Frame::none()
-                                .fill(p.bg_card)
-                                .stroke(Stroke::new(1.0_f32, if dev.connected { Color32::from_rgb(30, 58, 90) } else { Color32::from_rgb(26, 34, 48) }))
+                                .fill(card_bg)
                                 .rounding(Rounding::same(8.0))
-                                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                                .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                                 .show(c, |ui| {
                                     ui.set_width(ui.available_width());
                                     
@@ -14054,7 +13999,8 @@ impl LauncherApp {
                                     });
 
                                     ui.add_space(4.0);
-                                    ui.label(RichText::new(&dev.name).size(12.0).strong().color(p.text_primary));
+                                    let clean_name = crate::bluetooth::clean_device_name(&dev.name);
+                                    ui.label(RichText::new(&clean_name).size(12.5).strong().color(p.text_primary));
                                     ui.label(RichText::new(&dev.mac).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
 
                                     ui.add_space(8.0);
@@ -14084,11 +14030,10 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         let btn_w = ui.available_width() - 32.0;
                                         if dev.connected {
-                                            let (dis_rect, dis_resp) = ui.allocate_exact_size(egui::vec2(btn_w, 24.0), egui::Sense::click());
-                                            let dis_bg = if dis_resp.hovered() { Color32::from_rgb(45, 20, 20) } else { Color32::from_rgb(26, 20, 24) };
-                                            ui.painter().rect_filled(dis_rect, Rounding::same(4.0), dis_bg);
-                                            ui.painter().rect_stroke(dis_rect, Rounding::same(4.0), Stroke::new(1.0_f32, Color32::from_rgb(248, 113, 113)));
-                                            ui.painter().text(dis_rect.center(), egui::Align2::CENTER_CENTER, "Disconnect", egui::FontId::monospace(9.0), Color32::from_rgb(248, 113, 113));
+                                            let (dis_rect, dis_resp) = ui.allocate_exact_size(egui::vec2(btn_w, 26.0), egui::Sense::click());
+                                            let dis_bg = if dis_resp.hovered() { Color32::from_rgba_unmultiplied(248, 113, 113, 35) } else { Color32::from_rgba_unmultiplied(248, 113, 113, 18) };
+                                            ui.painter().rect_filled(dis_rect, Rounding::same(6.0), dis_bg);
+                                            ui.painter().text(dis_rect.center(), egui::Align2::CENTER_CENTER, "Disconnect", egui::FontId::monospace(9.5), Color32::from_rgb(248, 113, 113));
 
                                             if dis_resp.clicked() {
                                                 let mac_c = dev.mac.clone();
@@ -14109,11 +14054,10 @@ impl LauncherApp {
                                                 });
                                             }
                                         } else {
-                                            let (conn_rect, conn_resp) = ui.allocate_exact_size(egui::vec2(btn_w, 24.0), egui::Sense::click());
-                                            let conn_bg = if conn_resp.hovered() { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(18, 28, 42) };
-                                            ui.painter().rect_filled(conn_rect, Rounding::same(4.0), conn_bg);
-                                            ui.painter().rect_stroke(conn_rect, Rounding::same(4.0), Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)));
-                                            ui.painter().text(conn_rect.center(), egui::Align2::CENTER_CENTER, "Connect", egui::FontId::monospace(9.0), Color32::from_rgb(56, 189, 248));
+                                            let (conn_rect, conn_resp) = ui.allocate_exact_size(egui::vec2(btn_w, 26.0), egui::Sense::click());
+                                            let conn_bg = if conn_resp.hovered() { Color32::from_rgba_unmultiplied(56, 189, 248, 38) } else { Color32::from_rgba_unmultiplied(56, 189, 248, 18) };
+                                            ui.painter().rect_filled(conn_rect, Rounding::same(6.0), conn_bg);
+                                            ui.painter().text(conn_rect.center(), egui::Align2::CENTER_CENTER, "Connect", egui::FontId::monospace(9.5), Color32::from_rgb(56, 189, 248));
 
                                             if conn_resp.clicked() {
                                                 let mac_c = dev.mac.clone();
@@ -14139,9 +14083,9 @@ impl LauncherApp {
                                         }
 
                                         // Unpair button
-                                        let (unpair_rect, unpair_resp) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::click());
-                                        let u_bg = if unpair_resp.hovered() { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(18, 28, 42) };
-                                        ui.painter().rect_filled(unpair_rect, Rounding::same(4.0), u_bg);
+                                        let (unpair_rect, unpair_resp) = ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::click());
+                                        let u_bg = if unpair_resp.hovered() { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(14, 20, 30) };
+                                        ui.painter().rect_filled(unpair_rect, Rounding::same(6.0), u_bg);
                                         ui.painter().text(unpair_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::TRASH, egui::FontId::monospace(10.0), Color32::from_rgb(148, 163, 184));
                                         if unpair_resp.clicked() {
                                             let mac_c = dev.mac.clone();
@@ -14171,22 +14115,22 @@ impl LauncherApp {
 
                     Frame::none()
                         .fill(p.bg_card)
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                         .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             for disc_dev in &bt_snap.discovered_devices {
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new(crate::lucide::BLUETOOTH).size(12.0).color(Color32::from_rgb(56, 189, 248)));
                                     ui.add_space(4.0);
-                                    ui.label(RichText::new(&disc_dev.name).size(11.0).strong().color(p.text_primary));
+                                    let clean_dname = crate::bluetooth::clean_device_name(&disc_dev.name);
+                                    ui.label(RichText::new(&clean_dname).size(11.5).strong().color(p.text_primary));
                                     ui.label(RichText::new(&disc_dev.mac).size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let (p_rect, p_resp) = ui.allocate_exact_size(egui::vec2(90.0, 22.0), egui::Sense::click());
+                                        let (p_rect, p_resp) = ui.allocate_exact_size(egui::vec2(96.0, 24.0), egui::Sense::click());
                                         let bg = if p_resp.hovered() { Color32::from_rgb(14, 165, 233) } else { Color32::from_rgb(56, 189, 248) };
-                                        ui.painter().rect_filled(p_rect, Rounding::same(4.0), bg);
+                                        ui.painter().rect_filled(p_rect, Rounding::same(6.0), bg);
                                         ui.painter().text(p_rect.center(), egui::Align2::CENTER_CENTER, "+ Pair & Trust", egui::FontId::monospace(8.5), Color32::from_rgb(10, 14, 22));
 
                                         if p_resp.clicked() {
@@ -14223,17 +14167,14 @@ impl LauncherApp {
                     ui.allocate_ui_with_layout(egui::vec2(half_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
+                                
+                                // Header row with title on left and badge on right (no vertical overlap)
                                 ui.horizontal(|ui| {
-                                    ui.vertical(|ui| {
-                                        ui.label(RichText::new("Radio Diagnostics & Channel Stability").size(12.5).strong().color(p.text_primary));
-                                        ui.label(RichText::new("AFH (Adaptive Frequency Hopping) spectrum analysis across 79 channels").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                    });
-
+                                    ui.label(RichText::new("Radio Diagnostics & Channel Stability").size(12.5).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         Frame::none()
                                             .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 16))
@@ -14244,6 +14185,8 @@ impl LauncherApp {
                                             });
                                     });
                                 });
+                                ui.add_space(2.0);
+                                ui.label(RichText::new("AFH (Adaptive Frequency Hopping) spectrum analysis across 79 channels").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
 
                                 ui.add_space(8.0);
                                 draw_rf_frequency_waveform(ui, 100.0);
@@ -14259,7 +14202,6 @@ impl LauncherApp {
                                         let c = &mut cols[j];
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 14, 22))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                             .rounding(Rounding::same(6.0))
                                             .inner_margin(egui::Margin::symmetric(8.0, 7.0))
                                             .show(c, |ui| {
@@ -14280,7 +14222,6 @@ impl LauncherApp {
                     ui.allocate_ui_with_layout(egui::vec2(half_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
@@ -14292,7 +14233,7 @@ impl LauncherApp {
 
                                 ui.add_space(10.0);
 
-                                // Tabs: A2DP Sink vs HFP/HSP
+                                // Tabs: A2DP Sink vs HFP/HSP (borderless pills)
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
                                     let tabs = [
@@ -14301,13 +14242,11 @@ impl LauncherApp {
                                     ];
                                     for (t_name, t_idx) in tabs {
                                         let is_sel = self.bt_audio_profile == t_idx;
-                                        let bg = if is_sel { Color32::from_rgba_unmultiplied(56, 189, 248, 22) } else { Color32::from_rgb(10, 14, 22) };
-                                        let border = if is_sel { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(26, 34, 48) };
+                                        let bg = if is_sel { Color32::from_rgba_unmultiplied(56, 189, 248, 26) } else { Color32::from_rgb(10, 14, 22) };
                                         let txt_col = if is_sel { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(148, 163, 184) };
 
                                         let resp = Frame::none()
                                             .fill(bg)
-                                            .stroke(Stroke::new(1.0_f32, border))
                                             .rounding(Rounding::same(6.0))
                                             .inner_margin(egui::Margin::symmetric(10.0, 5.0))
                                             .show(ui, |ui| {
@@ -14331,7 +14270,7 @@ impl LauncherApp {
 
                                 for (c_name, c_idx) in codecs {
                                     let is_active = self.bt_codec == c_idx;
-                                    let (row_rect, row_resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), egui::Sense::click());
+                                    let (row_rect, row_resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::click());
                                     let row_bg = if is_active {
                                         Color32::from_rgba_unmultiplied(56, 189, 248, 16)
                                     } else if row_resp.hovered() {
@@ -14340,7 +14279,7 @@ impl LauncherApp {
                                         Color32::from_rgb(10, 14, 22)
                                     };
 
-                                    ui.painter().rect_filled(row_rect, Rounding::same(4.0), row_bg);
+                                    ui.painter().rect_filled(row_rect, Rounding::same(6.0), row_bg);
                                     let dot_col = if is_active { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(100, 116, 139) };
                                     ui.painter().circle_filled(egui::pos2(row_rect.left() + 12.0, row_rect.center().y), 3.0, dot_col);
 
@@ -14362,7 +14301,6 @@ impl LauncherApp {
                                 // Auto-switch toggle row
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 14, 22))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(10.0, 7.0))
                                     .show(ui, |ui| {
@@ -14431,7 +14369,6 @@ impl LauncherApp {
                 // 1. Header Banner
                 Frame::none()
                     .fill(p.bg_card)
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                     .rounding(Rounding::same(8.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                     .show(ui, |ui| {
@@ -14447,14 +14384,11 @@ impl LauncherApp {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
 
-                                // Settings button
+                                // Settings button (tonal borderless)
                                 let (btn_rect, btn_resp) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
-                                ui.painter().rect_filled(btn_rect, Rounding::same(6.0), Color32::from_rgb(18, 28, 42));
-                                ui.painter().rect_stroke(btn_rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)));
+                                let btn_bg = if btn_resp.hovered() { Color32::from_rgba_unmultiplied(56, 189, 248, 30) } else { Color32::from_rgb(18, 28, 42) };
+                                ui.painter().rect_filled(btn_rect, Rounding::same(6.0), btn_bg);
                                 ui.painter().text(btn_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::SLIDERS, egui::FontId::monospace(12.0), Color32::from_rgb(148, 163, 184));
-                                if btn_resp.hovered() {
-                                    ui.painter().rect_stroke(btn_rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)));
-                                }
 
                                 // Fan Mode Pills (Turbo Max, Balanced, Silent Mode)
                                 let modes = [
@@ -14470,10 +14404,10 @@ impl LauncherApp {
                                     } else {
                                         Color32::from_rgb(18, 28, 42)
                                     };
-                                    let border_color = if is_active {
-                                        Color32::from_rgb(56, 189, 248)
+                                    let border_stroke = if is_active {
+                                        Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248))
                                     } else {
-                                        Color32::from_rgb(30, 41, 59)
+                                        Stroke::NONE
                                     };
                                     let text_color = if is_active {
                                         Color32::from_rgb(56, 189, 248)
@@ -14483,7 +14417,7 @@ impl LauncherApp {
 
                                     let pill_resp = Frame::none()
                                         .fill(bg)
-                                        .stroke(Stroke::new(1.0_f32, border_color))
+                                        .stroke(border_stroke)
                                         .rounding(Rounding::same(6.0))
                                         .inner_margin(egui::Margin::symmetric(10.0, 5.0))
                                         .show(ui, |ui| {
@@ -14514,7 +14448,6 @@ impl LauncherApp {
                         let c = &mut cols[i];
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                             .show(c, |ui| {
@@ -14554,7 +14487,6 @@ impl LauncherApp {
                 // 3. 60-Second Thermal History Waveform Card
                 Frame::none()
                     .fill(p.bg_card)
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                     .rounding(Rounding::same(8.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                     .show(ui, |ui| {
@@ -14627,7 +14559,6 @@ impl LauncherApp {
                     ui.allocate_ui_with_layout(egui::vec2(left_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
@@ -14659,7 +14590,6 @@ impl LauncherApp {
                                     // Fan 1: CPU Blower
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 14, 22))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                         .rounding(Rounding::same(6.0))
                                         .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                         .show(ui, |ui| {
@@ -14679,7 +14609,6 @@ impl LauncherApp {
                                     // Fan 2: Chassis Exhaust
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 14, 22))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                         .rounding(Rounding::same(6.0))
                                         .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                         .show(ui, |ui| {
@@ -14701,12 +14630,12 @@ impl LauncherApp {
 
                                 // 100% Full Blast Test Button
                                 let is_blasting = self.fan_full_blast;
-                                let blast_border = if is_blasting { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(26, 34, 48) };
+                                let blast_stroke = if is_blasting { Stroke::new(1.0_f32, Color32::from_rgb(248, 113, 113)) } else { Stroke::NONE };
                                 let blast_bg = if is_blasting { Color32::from_rgba_unmultiplied(248, 113, 113, 22) } else { Color32::from_rgb(10, 14, 22) };
 
                                 let blast_resp = Frame::none()
                                     .fill(blast_bg)
-                                    .stroke(Stroke::new(1.0_f32, blast_border))
+                                    .stroke(blast_stroke)
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(12.0, 8.0))
                                     .show(ui, |ui| {
@@ -14737,7 +14666,6 @@ impl LauncherApp {
                     ui.allocate_ui_with_layout(egui::vec2(right_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
@@ -14784,7 +14712,6 @@ impl LauncherApp {
                                     for (lbl, col) in node_chips {
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 14, 22))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(7.0, 3.0))
                                             .show(ui, |ui| {
@@ -14801,7 +14728,6 @@ impl LauncherApp {
                 // 5. Bottom Section: Thermal Sensor Telemetry Matrix (8 Thermistors)
                 Frame::none()
                     .fill(p.bg_card)
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                     .rounding(Rounding::same(8.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                     .show(ui, |ui| {
@@ -14843,7 +14769,6 @@ impl LauncherApp {
                                     let c = &mut cols[i];
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 14, 22))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
                                         .rounding(Rounding::same(6.0))
                                         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                                         .show(c, |ui| {

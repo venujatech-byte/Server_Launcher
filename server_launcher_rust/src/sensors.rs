@@ -127,6 +127,25 @@ pub struct GpuSensorInfo {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct DisplayInfo {
+    pub name: String,
+    pub is_connected: bool,
+    pub is_enabled: bool,
+    pub resolution: String,
+    pub width: u32,
+    pub height: u32,
+    pub refresh_hz: f32,
+    pub bit_depth: String,
+    pub color_space: String,
+    pub connector_type: String,
+    pub connector_id: Option<u32>,
+    pub scaling: String,
+    pub vrr_support: String,
+    pub manufacturer: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct BatteryInfo {
     pub name: String,
     pub present: bool,
@@ -176,8 +195,9 @@ pub struct SystemSensorsSnapshot {
     pub swap_usage_pct: f32,
     pub ram_temp: Option<f32>,
 
-    // GPU
+    // GPU & Displays
     pub gpus: Vec<GpuSensorInfo>,
+    pub displays: Vec<DisplayInfo>,
 
     // Power & Battery
     pub power: PowerSupplyInfo,
@@ -599,8 +619,9 @@ impl SystemSensorsCollector {
             }
         }
 
-        // 7. GPU detection (NVIDIA / Intel / AMD)
+        // 7. GPU & Displays detection (NVIDIA / Intel / AMD / DRM)
         let gpus = detect_gpus(gpu_temp);
+        let displays = detect_displays();
 
         // 8. Power Supply & Battery
         let power = collect_power_supply();
@@ -740,6 +761,7 @@ impl SystemSensorsCollector {
             swap_usage_pct,
             ram_temp,
             gpus,
+            displays,
             power,
             disks,
             physical_disks,
@@ -1408,31 +1430,40 @@ fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
                         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
                         .unwrap_or_default();
 
+                    let device_id = fs::read_to_string(dev.join("device")).unwrap_or_default().trim().to_lowercase();
+
                     let vendor_name = match vendor.as_str() {
-                        "0x8086" => if driver_name == "xe" { "Intel Arc / Xe Graphics" } else { "Intel HD/UHD Graphics" },
-                        "0x1002" => "AMD Radeon Graphics",
-                        "0x10de" => "NVIDIA Corporation",
-                        "0x1af4" => "VirtIO GPU Accelerator",
-                        "0x15ad" => "VMware SVGA II Adapter",
-                        "0x1ab8" => "Parallels Video Adapter",
-                        "0x1234" => "QEMU Standard VGA",
-                        "0x1a03" => "ASPEED Graphics (BMC)",
-                        "0x13d3" | "0x14e4" => "Broadcom VideoCore GPU",
-                        "0x13b5" => "ARM Mali Graphics",
-                        "0x5143" => "Qualcomm Adreno GPU",
+                        "0x8086" => match device_id.as_str() {
+                            "0x3184" => "Intel UHD 605",
+                            "0x3185" => "Intel UHD 600",
+                            "0x3e92" | "0x3e98" | "0x3e9b" => "Intel UHD 630",
+                            "0x5912" | "0x5916" | "0x5917" => "Intel HD 620",
+                            "0x9a49" | "0x9a40" => "Intel Iris Xe",
+                            _ => if driver_name == "xe" { "Intel Arc / Xe" } else { "Intel UHD Graphics" },
+                        },
+                        "0x1002" => "AMD Radeon",
+                        "0x10de" => "NVIDIA GPU",
+                        "0x1af4" => "VirtIO GPU",
+                        "0x15ad" => "VMware SVGA",
+                        "0x1ab8" => "Parallels GPU",
+                        "0x1234" => "QEMU VGA",
+                        "0x1a03" => "ASPEED BMC",
+                        "0x13d3" | "0x14e4" => "Broadcom GPU",
+                        "0x13b5" => "ARM Mali",
+                        "0x5143" => "Adreno GPU",
                         _ => {
                             if !driver_name.is_empty() {
                                 match driver_name.as_str() {
-                                    "i915" | "xe" => "Intel Integrated Graphics",
-                                    "amdgpu" | "radeon" => "AMD Radeon Graphics",
-                                    "nouveau" => "NVIDIA (Nouveau Open Driver)",
+                                    "i915" | "xe" => "Intel Graphics",
+                                    "amdgpu" | "radeon" => "AMD Radeon",
+                                    "nouveau" => "NVIDIA Nouveau",
                                     "virtio-pci" | "virtio_gpu" => "VirtIO GPU",
-                                    "v3d" | "vc4" => "Raspberry Pi VideoCore",
-                                    "panfrost" | "lima" => "ARM Mali GPU",
-                                    _ => "Integrated / Linux GPU",
+                                    "v3d" | "vc4" => "Raspberry Pi GPU",
+                                    "panfrost" | "lima" => "ARM Mali",
+                                    _ => "Integrated GPU",
                                 }
                             } else {
-                                "Integrated / Linux GPU"
+                                "Integrated GPU"
                             }
                         }
                     };
@@ -1603,6 +1634,146 @@ fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
     }
 
     gpus
+}
+
+pub fn detect_displays() -> Vec<DisplayInfo> {
+    let mut displays = Vec::new();
+
+    #[cfg(target_os = "linux")]
+    {
+        let drm_dir = Path::new("/sys/class/drm");
+        if drm_dir.exists() {
+            if let Ok(entries) = fs::read_dir(drm_dir) {
+                let mut conn_entries: Vec<_> = entries
+                    .flatten()
+                    .filter(|e| {
+                        let fname = e.file_name().to_string_lossy().to_string();
+                        fname.starts_with("card") && fname.contains('-')
+                    })
+                    .collect();
+                conn_entries.sort_by_key(|e| e.file_name());
+
+                for e in conn_entries {
+                    let p = e.path();
+                    let raw_name = e.file_name().to_string_lossy().to_string();
+                    let status_p = p.join("status");
+                    let status = fs::read_to_string(&status_p).unwrap_or_default().trim().to_lowercase();
+                    if status != "connected" {
+                        continue;
+                    }
+
+                    let name = raw_name
+                        .split_once('-')
+                        .map(|(_, conn)| conn.to_string())
+                        .unwrap_or(raw_name.clone());
+
+                    let enabled = fs::read_to_string(p.join("enabled"))
+                        .map(|s| s.trim() == "enabled")
+                        .unwrap_or(true);
+
+                    let connector_id = fs::read_to_string(p.join("connector_id"))
+                        .ok()
+                        .and_then(|s| s.trim().parse::<u32>().ok());
+
+                    let connector_type = if name.starts_with("eDP") {
+                        "eDP Pipe A".to_string()
+                    } else if name.starts_with("HDMI") {
+                        "HDMI".to_string()
+                    } else if name.starts_with("DP") {
+                        "DisplayPort".to_string()
+                    } else if name.starts_with("DVI") {
+                        "DVI".to_string()
+                    } else if name.starts_with("VGA") {
+                        "VGA".to_string()
+                    } else {
+                        name.clone()
+                    };
+
+                    let mut mode_w = 0u32;
+                    let mut mode_h = 0u32;
+                    if let Ok(modes_str) = fs::read_to_string(p.join("modes")) {
+                        if let Some(first_line) = modes_str.lines().next() {
+                            if let Some((w_s, h_s)) = first_line.trim().split_once('x') {
+                                mode_w = w_s.trim().parse::<u32>().unwrap_or(0);
+                                mode_h = h_s.trim().parse::<u32>().unwrap_or(0);
+                            }
+                        }
+                    }
+
+                    let mut edid_mfg = String::new();
+                    let mut edid_prod = String::new();
+                    let mut bit_depth = "8-bit RGB".to_string();
+                    let mut refresh_hz = 60.0f32;
+                    let mut edid_w = 0u32;
+                    let mut edid_h = 0u32;
+
+                    if let Ok(edid_bytes) = fs::read(p.join("edid")) {
+                        if edid_bytes.len() >= 128 {
+                            let c1 = ((edid_bytes[8] & 0x7c) >> 2) + b'@';
+                            let c2 = (((edid_bytes[8] & 0x03) << 3) | ((edid_bytes[9] & 0xe0) >> 5)) + b'@';
+                            let c3 = (edid_bytes[9] & 0x1f) + b'@';
+                            if c1.is_ascii_alphabetic() && c2.is_ascii_alphabetic() && c3.is_ascii_alphabetic() {
+                                edid_mfg = format!("{}{}{}", c1 as char, c2 as char, c3 as char);
+                            }
+                            let prod_code = (edid_bytes[10] as u16) | ((edid_bytes[11] as u16) << 8);
+                            edid_prod = format!("{:#06x}", prod_code);
+
+                            let b20 = edid_bytes[20];
+                            if b20 & 0x80 != 0 {
+                                bit_depth = match (b20 >> 4) & 0x07 {
+                                    1 => "6-bit RGB".to_string(),
+                                    2 => "8-bit RGB".to_string(),
+                                    3 => "10-bit RGB".to_string(),
+                                    4 => "12-bit RGB".to_string(),
+                                    5 => "14-bit RGB".to_string(),
+                                    6 => "16-bit RGB".to_string(),
+                                    _ => "8-bit RGB".to_string(),
+                                };
+                            }
+
+                            let pix_clock_10khz = (edid_bytes[54] as u32) | ((edid_bytes[55] as u32) << 8);
+                            let h_act = (edid_bytes[56] as u32) | (((edid_bytes[58] as u32) & 0xf0) << 4);
+                            let h_blank = (edid_bytes[57] as u32) | (((edid_bytes[58] as u32) & 0x0f) << 8);
+                            let v_act = (edid_bytes[59] as u32) | (((edid_bytes[61] as u32) & 0xf0) << 4);
+                            let v_blank = (edid_bytes[60] as u32) | (((edid_bytes[61] as u32) & 0x0f) << 8);
+                            let h_tot = h_act + h_blank;
+                            let v_tot = v_act + v_blank;
+                            if pix_clock_10khz > 0 && h_tot > 0 && v_tot > 0 {
+                                refresh_hz = ((pix_clock_10khz as f64 * 10_000.0) / (h_tot as f64 * v_tot as f64)) as f32;
+                                refresh_hz = (refresh_hz * 10.0).round() / 10.0;
+                            }
+                            edid_w = h_act;
+                            edid_h = v_act;
+                        }
+                    }
+
+                    let final_w = if mode_w > 0 { mode_w } else if edid_w > 0 { edid_w } else { 1920 };
+                    let final_h = if mode_h > 0 { mode_h } else if edid_h > 0 { edid_h } else { 1080 };
+                    let resolution = format!("{} \u{00D7} {}", final_w, final_h);
+
+                    displays.push(DisplayInfo {
+                        name,
+                        is_connected: true,
+                        is_enabled: enabled,
+                        resolution,
+                        width: final_w,
+                        height: final_h,
+                        refresh_hz,
+                        bit_depth,
+                        color_space: "sRGB".to_string(),
+                        connector_type,
+                        connector_id,
+                        scaling: "1.0x".to_string(),
+                        vrr_support: "None".to_string(),
+                        manufacturer: edid_mfg,
+                        model: edid_prod,
+                    });
+                }
+            }
+        }
+    }
+
+    displays
 }
 
 pub fn format_bytes(bytes: u64) -> String {
@@ -2584,6 +2755,7 @@ print(json.dumps(data))
         swap_usage_pct,
         ram_temp,
         gpus,
+        displays: Vec::new(),
         power,
         disks,
         physical_disks,

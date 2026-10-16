@@ -12508,9 +12508,11 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 5. Bottom 2-Column Section: Embedded Display & Hardware Acceleration
+                // 5. Bottom 2-Column Section: Display & Hardware Acceleration
                 ui.columns(2, |cols| {
-                    // Left Column: Embedded Display / Console
+                    let active_disp = snap.displays.first();
+
+                    // Left Column: Display / Console
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
@@ -12529,7 +12531,14 @@ impl LauncherApp {
                                         ui.label(RichText::new(crate::lucide::MONITOR).size(12.0).color(Color32::from_rgb(56, 189, 248)));
                                     });
 
-                                ui.label(RichText::new(if is_remote && gpu.is_none() { "Virtual Console / TTY" } else { "Embedded Display" }).size(13.0).strong().color(p.text_primary));
+                                let disp_title = if is_remote && gpu.is_none() {
+                                    "Virtual Console"
+                                } else if let Some(d) = active_disp {
+                                    if d.name.starts_with("eDP") { "Display (eDP)" } else { "Display" }
+                                } else {
+                                    "Display"
+                                };
+                                ui.label(RichText::new(disp_title).size(13.0).strong().color(p.text_primary));
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()
@@ -12541,7 +12550,13 @@ impl LauncherApp {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
                                                 ui.painter().circle_filled(d_rect.center(), 2.2, Color32::from_rgb(56, 189, 248));
-                                                let disp_badge = if is_remote && gpu.is_none() { "Headless (TTY/SSH)" } else { "Active (eDP-1)" };
+                                                let disp_badge = if let Some(d) = active_disp {
+                                                    format!("Active ({})", d.name)
+                                                } else if is_remote && gpu.is_none() {
+                                                    "Headless (SSH)".to_string()
+                                                } else {
+                                                    "No Display".to_string()
+                                                };
                                                 ui.label(RichText::new(disp_badge).size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                             });
                                         });
@@ -12552,7 +12567,7 @@ impl LauncherApp {
 
                             // Hero Resolution & Refresh
                             if is_remote && gpu.is_none() {
-                                ui.label(RichText::new("Virtual Terminal").size(24.0).strong().color(p.text_primary));
+                                ui.label(RichText::new("Virtual TTY").size(24.0).strong().color(p.text_primary));
                                 ui.add_space(2.0);
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 6.0;
@@ -12560,14 +12575,21 @@ impl LauncherApp {
                                     ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
                                     ui.label(RichText::new("UTF-8 ANSI").size(10.0).monospace().color(p.text_muted));
                                 });
-                            } else {
-                                ui.label(RichText::new("1920 \u{00D7} 1080").size(26.0).strong().color(p.text_primary));
+                            } else if let Some(d) = active_disp {
+                                ui.label(RichText::new(&d.resolution).size(26.0).strong().color(p.text_primary));
                                 ui.add_space(2.0);
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 6.0;
-                                    ui.label(RichText::new("@ 60 Hz").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new(format!("@ {:.0} Hz", d.refresh_hz)).size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                     ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
-                                    ui.label(RichText::new("8-bit RGB").size(10.0).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(&d.bit_depth).size(10.0).monospace().color(p.text_muted));
+                                });
+                            } else {
+                                ui.label(RichText::new("No Display").size(24.0).strong().color(p.text_primary));
+                                ui.add_space(2.0);
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    ui.label(RichText::new("Headless").size(10.0).monospace().color(p.text_muted));
                                 });
                             }
 
@@ -12585,7 +12607,7 @@ impl LauncherApp {
                                             ui.set_width(ui.available_width());
                                             ui.label(RichText::new("Color Space").size(9.0).monospace().color(p.text_muted));
                                             ui.add_space(3.0);
-                                            let cs_txt = if is_remote && gpu.is_none() { "ANSI (256 Colors)" } else { "sRGB (Rec. 709)" };
+                                            let cs_txt = if is_remote && gpu.is_none() { "ANSI (256)" } else if let Some(d) = active_disp { d.color_space.as_str() } else { "sRGB" };
                                             ui.label(RichText::new(cs_txt).size(11.0).monospace().strong().color(p.text_primary));
                                         });
 
@@ -12600,7 +12622,7 @@ impl LauncherApp {
                                             ui.set_width(ui.available_width());
                                             ui.label(RichText::new("Connector").size(9.0).monospace().color(p.text_muted));
                                             ui.add_space(3.0);
-                                            let conn_txt = if is_remote && gpu.is_none() { "Pseudo-Terminal (PTY)" } else { "eDP Pipe A" };
+                                            let conn_txt = if is_remote && gpu.is_none() { "PTY" } else if let Some(d) = active_disp { d.connector_type.as_str() } else { "None" };
                                             ui.label(RichText::new(conn_txt).size(11.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                         });
                                 });
@@ -12615,22 +12637,22 @@ impl LauncherApp {
                                             ui.set_width(ui.available_width());
                                             ui.label(RichText::new("Scaling").size(9.0).monospace().color(p.text_muted));
                                             ui.add_space(3.0);
-                                            let sc_txt = if is_remote && gpu.is_none() { "Auto PTY Rows/Cols" } else { "Native (1.0x)" };
+                                            let sc_txt = if is_remote && gpu.is_none() { "Auto" } else if let Some(d) = active_disp { d.scaling.as_str() } else { "1.0x" };
                                             ui.label(RichText::new(sc_txt).size(11.0).monospace().strong().color(p.text_primary));
                                         });
 
                                     ui.add_space(6.0);
 
-                                    // Tile 4: VRR Support / Framebuffer
+                                    // Tile 4: VRR
                                     Frame::none()
                                         .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 3))
                                         .rounding(Rounding::same(8.0))
                                         .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                                         .show(ui, |ui| {
                                             ui.set_width(ui.available_width());
-                                            ui.label(RichText::new(if is_remote && gpu.is_none() { "Console Driver" } else { "VRR Support" }).size(9.0).monospace().color(p.text_muted));
+                                            ui.label(RichText::new("VRR").size(9.0).monospace().color(p.text_muted));
                                             ui.add_space(3.0);
-                                            let vrr_txt = if is_remote && gpu.is_none() { "Linux fbcon / drm" } else { "Standard" };
+                                            let vrr_txt = if is_remote && gpu.is_none() { "None" } else if let Some(d) = active_disp { d.vrr_support.as_str() } else { "None" };
                                             ui.label(RichText::new(vrr_txt).size(11.0).monospace().strong().color(p.text_primary));
                                         });
                                 });
@@ -12640,13 +12662,19 @@ impl LauncherApp {
 
                             // Footer
                             ui.horizontal(|ui| {
-                                let btn = egui::Button::new(RichText::new("Display Topology Graph →").size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)))
+                                let btn = egui::Button::new(RichText::new("Topology →").size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)))
                                     .fill(Color32::TRANSPARENT)
                                     .frame(false);
                                 ui.add(btn).on_hover_text("View DRM KMS connector topology");
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let port_txt = if is_remote && gpu.is_none() { "/dev/pts" } else { "Port 0x1" };
+                                    let port_txt = if is_remote && gpu.is_none() {
+                                        "/dev/pts".to_string()
+                                    } else if let Some(d) = active_disp {
+                                        d.connector_id.map(|id| format!("ID {}", id)).unwrap_or_else(|| "Port 0x1".to_string())
+                                    } else {
+                                        "Port 0x0".to_string()
+                                    };
                                     ui.label(RichText::new(port_txt).size(9.5).monospace().color(p.text_muted));
                                 });
                             });
@@ -12664,7 +12692,7 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 8.0;
                                 ui.label(RichText::new(">_").size(12.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                ui.label(RichText::new("Hardware Acceleration").size(13.0).strong().color(p.text_primary));
+                                ui.label(RichText::new("HW Accel").size(13.0).strong().color(p.text_primary));
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()
@@ -12676,7 +12704,18 @@ impl LauncherApp {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
                                                 ui.painter().circle_filled(d_rect.center(), 2.2, Color32::from_rgb(52, 211, 153));
-                                                let acc_badge = if is_remote && gpu.is_none() { "Headless Direct" } else { "DRI3 Active" };
+                                                let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
+                                                    || std::env::var("XDG_SESSION_TYPE").map(|s| s == "wayland").unwrap_or(false);
+                                                let is_x11 = std::env::var("DISPLAY").is_ok();
+                                                let acc_badge = if is_wayland {
+                                                    "Wayland EGL"
+                                                } else if is_x11 {
+                                                    "X11 DRI3"
+                                                } else if is_remote && gpu.is_none() {
+                                                    "Headless"
+                                                } else {
+                                                    "DRM Direct"
+                                                };
                                                 ui.label(RichText::new(acc_badge).size(9.0).monospace().strong().color(Color32::from_rgb(52, 211, 153)));
                                             });
                                         });
@@ -12688,15 +12727,20 @@ impl LauncherApp {
                             // 3 API status item rows
                             let apis: [(&str, &str, &str, bool); 3] = if is_remote && gpu.is_none() {
                                 [
-                                    ("Kernel DRM / KMS", "SimpleDRM", "Operational", true),
-                                    ("DRI Direct Render", "Kernel KMS", "Active", true),
-                                    ("SSH X11 Forwarding", "OpenSSH", "Available", false),
+                                    ("DRM / KMS", "SimpleDRM", "Active", true),
+                                    ("DRI Render", "Kernel KMS", "Direct", true),
+                                    ("SSH Forward", "OpenSSH", "Ready", false),
                                 ]
                             } else {
+                                let gl_driver = if gpu.as_ref().map(|g| g.driver.contains("i915") || g.driver.contains("Intel")).unwrap_or(false) {
+                                    "Mesa Iris"
+                                } else {
+                                    "Mesa DRI"
+                                };
                                 [
-                                    ("Vulkan 1.3", "Mesa Driver", "Accelerated", false),
-                                    ("OpenGL 4.6", "Iris Classic DRI", "Accelerated", false),
-                                    ("VA-API Media", "Video Accel", "Direct", true),
+                                    ("Vulkan 1.3", "Mesa", "Active", false),
+                                    ("OpenGL 4.6", gl_driver, "Active", false),
+                                    ("VA-API", "iHD Driver", "Direct", true),
                                 ]
                             };
 
@@ -12739,7 +12783,7 @@ impl LauncherApp {
                                         .show(ui, |ui| {
                                             ui.set_width(ui.available_width());
                                             ui.horizontal(|ui| {
-                                                let mc1_title = if is_remote && gpu.is_none() { "DRM Driver" } else { "GuC / HuC Firmware" };
+                                                let mc1_title = if is_remote && gpu.is_none() { "DRM Driver" } else { "Power State" };
                                                 ui.label(RichText::new(mc1_title).size(9.0).monospace().color(p.text_muted));
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                     let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
@@ -12747,7 +12791,8 @@ impl LauncherApp {
                                                 });
                                             });
                                             ui.add_space(3.0);
-                                            ui.label(RichText::new("Loaded & Validated").size(11.0).monospace().strong().color(p.text_primary));
+                                            let mc1_val = if is_remote && gpu.is_none() { "SimpleDRM" } else { "Active (RC6)" };
+                                            ui.label(RichText::new(mc1_val).size(11.0).monospace().strong().color(p.text_primary));
                                         });
                                 });
 
@@ -12758,10 +12803,16 @@ impl LauncherApp {
                                         .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                                         .show(ui, |ui| {
                                             ui.set_width(ui.available_width());
-                                            ui.label(RichText::new("Render Governor").size(9.0).monospace().color(p.text_muted));
+                                            ui.label(RichText::new("GPU Clock").size(9.0).monospace().color(p.text_muted));
                                             ui.add_space(3.0);
-                                            let gov_txt = if is_remote && gpu.is_none() { "Headless Server" } else { "Dynamic RC6" };
-                                            ui.label(RichText::new(gov_txt).size(11.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            let clk_txt = if let Some(clk) = gpu.as_ref().and_then(|g| g.clock_mhz) {
+                                                format!("{} MHz (Dynamic)", clk)
+                                            } else if is_remote && gpu.is_none() {
+                                                "Headless".to_string()
+                                            } else {
+                                                "Dynamic RC6".to_string()
+                                            };
+                                            ui.label(RichText::new(clk_txt).size(11.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                         });
                                 });
                             });
@@ -12770,11 +12821,23 @@ impl LauncherApp {
 
                             // Footer
                             ui.horizontal(|ui| {
-                                let ft_txt = if is_remote && gpu.is_none() { "Linux DRM Simpledrm" } else { "Gen9 GT2" };
+                                let ft_txt = if is_remote && gpu.is_none() {
+                                    "Linux DRM Simpledrm".to_string()
+                                } else if let Some(g) = gpu.as_ref() {
+                                    if g.name.contains("UHD 605") {
+                                        "Intel Gen9 LP (UHD 605)".to_string()
+                                    } else if !g.name.is_empty() {
+                                        g.name.clone()
+                                    } else {
+                                        "Gen9 LP".to_string()
+                                    }
+                                } else {
+                                    "Gen9 LP".to_string()
+                                };
                                 ui.label(RichText::new(ft_txt).size(9.5).monospace().color(p.text_muted));
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let btn = egui::Button::new(RichText::new("Extended Capabilities →").size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)))
+                                    let btn = egui::Button::new(RichText::new("Details →").size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)))
                                         .fill(Color32::TRANSPARENT)
                                         .frame(false);
                                     ui.add(btn).on_hover_text("View DRM driver capabilities and Vulkan extensions");
@@ -12782,6 +12845,7 @@ impl LauncherApp {
                             });
                         });
                 });
+
 
                 ui.add_space(10.0);
             });

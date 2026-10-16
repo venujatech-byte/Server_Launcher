@@ -10343,14 +10343,6 @@ impl LauncherApp {
                         }
                         ui.add_space(4.0);
 
-                        // Host Settings Row
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(format!("{} Host Settings", crate::lucide::SETTINGS)).size(10.5).color(p.text_secondary));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new("v2.4").size(10.0).monospace().color(p.text_muted));
-                            });
-                        });
-                        ui.add_space(4.0);
                     });
                 });
         });

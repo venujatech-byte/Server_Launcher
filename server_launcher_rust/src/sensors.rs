@@ -1263,11 +1263,11 @@ use egui::Color32;
 
 pub fn temp_color(temp: f32) -> Color32 {
     if temp < 55.0 {
-        Color32::from_rgb(16, 185, 129) // Emerald green
+        Color32::from_rgb(56, 189, 248) // Cybernetic Cyan / Blue
     } else if temp < 75.0 {
-        Color32::from_rgb(245, 158, 11)  // Amber / yellow
+        Color32::from_rgb(148, 163, 184) // Slate grey
     } else {
-        Color32::from_rgb(239, 68, 68)   // Red
+        Color32::from_rgb(248, 250, 252) // Crisp white
     }
 }
 

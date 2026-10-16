@@ -4764,7 +4764,7 @@ fn draw_ram_waveform(
         if i % 2 == 0 {
             painter.line_segment(
                 [cache_pts[i], cache_pts[i + 1]],
-                Stroke::new(1.4_f32, Color32::from_rgb(74, 222, 128)),
+                Stroke::new(1.4_f32, Color32::from_rgb(96, 165, 250)),
             );
         }
     }
@@ -9227,14 +9227,14 @@ impl LauncherApp {
                         }
 
                         Frame::none()
-                            .fill(Color32::from_rgba_unmultiplied(16, 185, 129, 25))
+                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
                             .rounding(Rounding::same(999.0))
                             .inner_margin(egui::Margin::symmetric(8.0, 3.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 4.0;
-                                    ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(16, 185, 129)));
-                                    ui.label(RichText::new("LIVE").size(9.5).monospace().strong().color(Color32::from_rgb(16, 185, 129)));
+                                    ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new("LIVE").size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                 });
                             });
                     });
@@ -9391,7 +9391,7 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         ui.label(RichText::new("NODE HOST").size(9.5).monospace().color(p.text_muted));
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new("Online").size(9.5).monospace().color(Color32::from_rgb(16, 185, 129)));
+                                            ui.label(RichText::new("Online").size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
                                         });
                                     });
                                     ui.add_space(3.0);
@@ -9524,13 +9524,13 @@ impl LauncherApp {
                 if let Some(err_msg) = self.remote_sensors_errors.lock().unwrap().get(hid) {
                     ui.add_space(4.0);
                     Frame::none()
-                        .fill(Color32::from_rgba_premultiplied(239, 68, 68, 25))
+                        .fill(Color32::from_rgba_premultiplied(56, 189, 248, 25))
                         .stroke(Stroke::NONE)
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(format!("{} Remote sensor query notice:", crate::lucide::ALERT_TRIANGLE)).size(11.5).strong().color(Color32::from_rgb(239, 68, 68)));
+                                ui.label(RichText::new(format!("{} Remote sensor query notice:", crate::lucide::ALERT_TRIANGLE)).size(11.5).strong().color(Color32::from_rgb(56, 189, 248)));
                                 ui.label(RichText::new(err_msg).size(11.0).color(p.text_secondary));
                             });
                         });
@@ -9622,15 +9622,15 @@ impl LauncherApp {
 
                                 // PL1 Limit badge
                                 Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(34, 197, 94, 25))
+                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
                                     .rounding(Rounding::same(4.0))
                                     .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 4.0;
-                                            ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(34, 197, 94)));
+                                            ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(56, 189, 248)));
                                             let pl1 = snap.cpu_tdp_watts.unwrap_or(12.0);
-                                            ui.label(RichText::new(format!("PL1 Limit: {:.1}W", pl1)).size(10.0).monospace().strong().color(Color32::from_rgb(34, 197, 94)));
+                                            ui.label(RichText::new(format!("PL1 Limit: {:.1}W", pl1)).size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                         });
                                     });
                             });
@@ -9754,7 +9754,7 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("Offset").size(10.0).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("Adaptive").size(10.0).monospace().strong().color(Color32::from_rgb(34, 197, 94)));
+                                    ui.label(RichText::new("Adaptive").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                 });
                             });
                         });
@@ -9783,8 +9783,8 @@ impl LauncherApp {
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.0;
-                                        ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(34, 197, 94)));
-                                        ui.label(RichText::new("Active").size(10.0).monospace().strong().color(Color32::from_rgb(34, 197, 94)));
+                                        ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(56, 189, 248)));
+                                        ui.label(RichText::new("Active").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                     });
                                 });
                             });
@@ -9844,9 +9844,9 @@ impl LauncherApp {
                             let freq_str = format!("{:.2}", if freq_ghz > 0.0 { freq_ghz } else { 2.25 });
 
                             let dot_color = if core_idx % 2 == 0 {
-                                Color32::from_rgb(34, 197, 94) // Green
+                                Color32::from_rgb(96, 165, 250) // Soft Blue
                             } else {
-                                Color32::from_rgb(56, 189, 248) // Cyan
+                                Color32::from_rgb(56, 189, 248) // Cybernetic Cyan
                             };
 
                             Frame::none()
@@ -9947,8 +9947,8 @@ impl LauncherApp {
                                 ui.add_space(2.0);
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 4.0;
-                                    ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(34, 197, 94)));
-                                    ui.label(RichText::new("Enabled").size(14.5).strong().color(Color32::from_rgb(34, 197, 94)));
+                                    ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new("Enabled").size(14.5).strong().color(Color32::from_rgb(56, 189, 248)));
                                 });
                                 ui.add_space(1.0);
                                 ui.label(RichText::new("Intel VT-x (SLAT)").size(9.5).monospace().color(p.text_muted));
@@ -10035,7 +10035,7 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 4.0;
                                     ui.label(RichText::new(format!("{} DDR4-2400 • 1x 8GB SODIMM Micron MT40A • 195 MB Hardware Reserved •", total_ram_str)).size(10.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new("1.20V Normal").size(10.5).monospace().strong().color(Color32::from_rgb(74, 222, 128)));
+                                    ui.label(RichText::new("1.20V Normal").size(10.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                 });
                             });
 
@@ -10103,7 +10103,7 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("AVAILABLE").size(10.0).monospace().strong().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::CHECK).size(11.0).color(Color32::from_rgb(74, 222, 128)));
+                                    ui.label(RichText::new(crate::lucide::CHECK).size(11.0).color(Color32::from_rgb(56, 189, 248)));
                                 });
                             });
                             ui.add_space(4.0);
@@ -10116,7 +10116,7 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("Headroom").size(9.5).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(format!("{:.1}%", avail_pct)).size(9.5).monospace().strong().color(Color32::from_rgb(74, 222, 128)));
+                                    ui.label(RichText::new(format!("{:.1}%", avail_pct)).size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                 });
                             });
                         });
@@ -10262,7 +10262,7 @@ impl LauncherApp {
 
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.0;
-                                        ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(74, 222, 128)));
+                                        ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(96, 165, 250)));
                                         ui.label(RichText::new("Cached Buffer").size(9.5).monospace().color(p.text_muted));
                                     });
 
@@ -10307,7 +10307,7 @@ impl LauncherApp {
 
                         ui.add_space(8.0);
 
-                        // Segmented Bar (In Use: cyan, Modified: coral, Standby: mint, Free: dark slate)
+                        // Segmented Bar (In Use: cyan, Modified: coral, Standby: soft blue, Free: dark slate)
                         let in_use_frac = (used_pct / 100.0).clamp(0.05, 0.85);
                         let mod_frac = 0.02_f32;
                         let standby_frac = (cache_bytes as f32 / snap.mem_total_bytes.max(1) as f32).clamp(0.05, 0.35);
@@ -10323,8 +10323,8 @@ impl LauncherApp {
                         let w4 = br.width() * free_frac;
 
                         bar_p.rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(w1, br.height())), Rounding::same(3.0), Color32::from_rgb(112, 213, 228));
-                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w1 + 1.0, br.min.y), egui::vec2(w2, br.height())), Rounding::ZERO, Color32::from_rgb(248, 113, 113));
-                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w1 + w2 + 2.0, br.min.y), egui::vec2(w3, br.height())), Rounding::ZERO, Color32::from_rgb(74, 222, 128));
+                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w1 + 1.0, br.min.y), egui::vec2(w2, br.height())), Rounding::ZERO, Color32::from_rgb(148, 163, 184));
+                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w1 + w2 + 2.0, br.min.y), egui::vec2(w3, br.height())), Rounding::ZERO, Color32::from_rgb(96, 165, 250));
                         bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w1 + w2 + w3 + 3.0, br.min.y), egui::vec2(w4, br.height())), Rounding::same(3.0), Color32::from_rgb(51, 65, 85));
 
                         ui.add_space(8.0);
@@ -10343,7 +10343,7 @@ impl LauncherApp {
 
                             cols[1].vertical(|ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("■").size(9.0).color(Color32::from_rgb(248, 113, 113)));
+                                    ui.label(RichText::new("■").size(9.0).color(Color32::from_rgb(148, 163, 184)));
                                     ui.label(RichText::new("MODIFIED").size(9.5).monospace().strong().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
@@ -10353,7 +10353,7 @@ impl LauncherApp {
 
                             cols[2].vertical(|ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("■").size(9.0).color(Color32::from_rgb(74, 222, 128)));
+                                    ui.label(RichText::new("■").size(9.0).color(Color32::from_rgb(96, 165, 250)));
                                     ui.label(RichText::new("STANDBY / CACHED").size(9.5).monospace().strong().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
@@ -10387,16 +10387,16 @@ impl LauncherApp {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(Color32::from_rgb(74, 222, 128)));
+                                ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(Color32::from_rgb(56, 189, 248)));
                                 ui.label(RichText::new("Linux ZRAM Dynamic Swap").size(12.5).strong().color(p.text_primary));
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(34, 197, 94, 25))
+                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                         .show(ui, |ui| {
-                                            ui.label(RichText::new("OPTIMAL").size(9.0).monospace().strong().color(Color32::from_rgb(74, 222, 128)));
+                                            ui.label(RichText::new("OPTIMAL").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                         });
                                 });
                             });
@@ -10422,7 +10422,7 @@ impl LauncherApp {
                                     let (br, bp) = ui.allocate_painter(egui::vec2(ui.available_width(), 3.5), egui::Sense::hover());
                                     bp.rect_filled(br.rect, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
                                     let fw = br.rect.width() * (sw_pct / 100.0).clamp(0.02, 1.0);
-                                    bp.rect_filled(egui::Rect::from_min_size(br.rect.min, egui::vec2(fw, 3.5)), Rounding::same(2.0), Color32::from_rgb(74, 222, 128));
+                                    bp.rect_filled(egui::Rect::from_min_size(br.rect.min, egui::vec2(fw, 3.5)), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
                                 });
 
                                 // Sub-col 2: COMPRESSION RATIO
@@ -10433,7 +10433,7 @@ impl LauncherApp {
                                     ui.add_space(2.0);
                                     ui.label(RichText::new("235 MB RAM backing 566 MB data").size(8.5).monospace().color(p.text_muted));
                                     ui.add_space(4.0);
-                                    ui.label(RichText::new("↗ +58.3% Physical saved").size(8.5).monospace().strong().color(Color32::from_rgb(74, 222, 128)));
+                                    ui.label(RichText::new("↗ +58.3% Physical saved").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                 });
 
                                 // Sub-col 3: PAGE I/O TRANSFER
@@ -10450,8 +10450,8 @@ impl LauncherApp {
                                     ui.add_space(4.0);
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 3.0;
-                                        ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(74, 222, 128)));
-                                        ui.label(RichText::new("Zero thrashing detected").size(8.5).monospace().strong().color(Color32::from_rgb(74, 222, 128)));
+                                        ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
+                                        ui.label(RichText::new("Zero thrashing detected").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                     });
                                 });
                             });
@@ -10573,7 +10573,7 @@ impl LauncherApp {
                             ui.vertical(|ui| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 4.0;
-                                    ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(74, 222, 128)));
+                                    ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
                                     ui.label(RichText::new("GPU ENGINE #0 • ACTIVE DISPATCH").size(9.0).monospace().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
@@ -10765,11 +10765,11 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("ACTIVE POWER").size(9.5).monospace().strong().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(Color32::from_rgb(250, 204, 21)));
+                                    ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(Color32::from_rgb(56, 189, 248)));
                                 });
                             });
                             ui.add_space(2.0);
-                            ui.label(RichText::new(format!("{:.1} W", power_val)).size(18.0).monospace().strong().color(Color32::from_rgb(250, 204, 21)));
+                            ui.label(RichText::new(format!("{:.1} W", power_val)).size(18.0).monospace().strong().color(p.text_primary));
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("Package Limit 6.0W").size(8.5).monospace().color(p.text_muted));
@@ -10795,17 +10795,17 @@ impl LauncherApp {
                                     ui.spacing_mut().item_spacing.x = 12.0;
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 3.0;
-                                        ui.label(RichText::new("—").size(9.0).strong().color(Color32::from_rgb(168, 85, 247)));
+                                        ui.label(RichText::new("—").size(9.0).strong().color(Color32::from_rgb(96, 165, 250)));
                                         ui.label(RichText::new("Media Enhance").size(9.0).monospace().color(p.text_muted));
                                     });
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 3.0;
-                                        ui.label(RichText::new("—").size(9.0).strong().color(Color32::from_rgb(248, 113, 113)));
+                                        ui.label(RichText::new("—").size(9.0).strong().color(Color32::from_rgb(148, 163, 184)));
                                         ui.label(RichText::new("Media Decode").size(9.0).monospace().color(p.text_muted));
                                     });
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 3.0;
-                                        ui.label(RichText::new("—").size(9.0).strong().color(Color32::from_rgb(74, 222, 128)));
+                                        ui.label(RichText::new("—").size(9.0).strong().color(Color32::from_rgb(56, 189, 248)));
                                         ui.label(RichText::new("Blitter (Copy)").size(9.0).monospace().color(p.text_muted));
                                     });
                                     ui.horizontal(|ui| {
@@ -10866,7 +10866,7 @@ impl LauncherApp {
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             ui.vertical(|ui| {
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new(format!("{:.1} %", cur_copy)).size(15.0).monospace().strong().color(Color32::from_rgb(74, 222, 128)));
+                                                    ui.label(RichText::new(format!("{:.1} %", cur_copy)).size(15.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                                 });
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                     ui.label(RichText::new("Peak: 6.2%").size(8.5).monospace().color(p.text_muted));
@@ -10876,7 +10876,7 @@ impl LauncherApp {
                                     });
                                     ui.add_space(6.0);
                                     let spark_w = ui.available_width();
-                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, self.gpu_copy_history.make_contiguous(), Color32::from_rgb(74, 222, 128), false);
+                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, self.gpu_copy_history.make_contiguous(), Color32::from_rgb(56, 189, 248), false);
                                 });
                         });
 
@@ -10910,7 +10910,7 @@ impl LauncherApp {
                                     });
                                     ui.add_space(6.0);
                                     let spark_w = ui.available_width();
-                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, &[], Color32::from_rgb(248, 113, 113), true);
+                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, &[], Color32::from_rgb(148, 163, 184), true);
                                 });
 
                             // Sub-card 4: Video Processing
@@ -10929,7 +10929,7 @@ impl LauncherApp {
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             ui.vertical(|ui| {
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new("0.8 %").size(15.0).monospace().strong().color(Color32::from_rgb(168, 85, 247)));
+                                                    ui.label(RichText::new("0.8 %").size(15.0).monospace().strong().color(Color32::from_rgb(96, 165, 250)));
                                                 });
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                     ui.label(RichText::new("Filter State: Passthrough").size(8.5).monospace().color(p.text_muted));
@@ -10940,7 +10940,7 @@ impl LauncherApp {
                                     ui.add_space(6.0);
                                     let spark_w = ui.available_width();
                                     static VP_SPARK: [f32; 16] = [0.6, 0.7, 0.8, 0.9, 0.8, 0.8, 0.7, 0.8, 0.9, 0.8, 0.8, 0.7, 0.9, 0.8, 0.8, 0.8];
-                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, &VP_SPARK, Color32::from_rgb(168, 85, 247), false);
+                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, &VP_SPARK, Color32::from_rgb(96, 165, 250), false);
                                 });
                         });
                     });
@@ -10968,7 +10968,7 @@ impl LauncherApp {
                                     });
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.0;
-                                        ui.label(RichText::new("■").size(8.5).color(Color32::from_rgb(74, 222, 128)));
+                                        ui.label(RichText::new("■").size(8.5).color(Color32::from_rgb(96, 165, 250)));
                                         ui.label(RichText::new("Dynamic Committed: 312 MB").size(9.0).monospace().color(p.text_muted));
                                     });
                                     ui.horizontal(|ui| {
@@ -10992,7 +10992,7 @@ impl LauncherApp {
                         let w_free = (br.width() - w_ded - w_dyn - 2.0).max(10.0);
 
                         bar_p.rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(w_ded, br.height())), Rounding::same(3.0), Color32::from_rgb(56, 189, 248));
-                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w_ded + 1.0, br.min.y), egui::vec2(w_dyn, br.height())), Rounding::ZERO, Color32::from_rgb(74, 222, 128));
+                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w_ded + 1.0, br.min.y), egui::vec2(w_dyn, br.height())), Rounding::ZERO, Color32::from_rgb(96, 165, 250));
                         bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w_ded + w_dyn + 2.0, br.min.y), egui::vec2(w_free, br.height())), Rounding::same(3.0), Color32::from_rgb(51, 65, 85));
 
                         ui.add_space(8.0);
@@ -11011,11 +11011,11 @@ impl LauncherApp {
 
                             cols[1].vertical(|ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("■").size(8.5).color(Color32::from_rgb(74, 222, 128)));
+                                    ui.label(RichText::new("■").size(8.5).color(Color32::from_rgb(96, 165, 250)));
                                     ui.label(RichText::new("SHARED SYSTEM MEMORY").size(9.0).monospace().strong().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
-                                ui.label(RichText::new("312.4 MB / 3.9 GB").size(14.0).strong().color(Color32::from_rgb(74, 222, 128)));
+                                ui.label(RichText::new("312.4 MB / 3.9 GB").size(14.0).strong().color(Color32::from_rgb(96, 165, 250)));
                                 ui.label(RichText::new("Dynamic Page Pool (OS Managed)").size(8.5).monospace().color(p.text_muted));
                             });
 
@@ -11056,8 +11056,8 @@ impl LauncherApp {
                                             });
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 3.0;
-                                            ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(74, 222, 128)));
-                                            ui.label(RichText::new("ACTIVE SYNC").size(9.0).monospace().color(Color32::from_rgb(74, 222, 128)));
+                                            ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new("ACTIVE SYNC").size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
                                         });
                                     });
                                 });
@@ -11154,11 +11154,11 @@ impl LauncherApp {
                                 ui.label(RichText::new("Graphics API Pipeline & Hardware Acceleration").size(12.5).strong().color(p.text_primary));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(74, 222, 128, 25))
+                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                         .show(ui, |ui| {
-                                            ui.label(RichText::new("DRI3 Active").size(9.0).monospace().strong().color(Color32::from_rgb(74, 222, 128)));
+                                            ui.label(RichText::new("DRI3 Active").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                         });
                                 });
                             });
@@ -11175,7 +11175,7 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new(name).size(10.0).monospace().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new(status).size(9.5).monospace().color(Color32::from_rgb(74, 222, 128)));
+                                        ui.label(RichText::new(status).size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
                                     });
                                 });
                                 ui.add_space(3.0);
@@ -11196,7 +11196,7 @@ impl LauncherApp {
                                             ui.label(RichText::new("GUC / HUC FIRMWARE").size(8.0).monospace().color(p.text_muted));
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                                ui.label(RichText::new("●").size(6.0).color(Color32::from_rgb(74, 222, 128)));
+                                                ui.label(RichText::new("●").size(6.0).color(Color32::from_rgb(56, 189, 248)));
                                                 ui.label(RichText::new("Loaded & Validated").size(9.5).monospace().strong().color(p.text_primary));
                                             });
                                         });
@@ -11233,7 +11233,7 @@ impl LauncherApp {
                                         .show(ui, |ui| {
                                             ui.set_width(ui.available_width());
                                             ui.label(RichText::new("TEARFREE RASTERIZER").size(8.0).monospace().color(p.text_muted));
-                                            ui.label(RichText::new("Enabled (Kernel DRM)").size(9.5).monospace().strong().color(Color32::from_rgb(74, 222, 128)));
+                                            ui.label(RichText::new("Enabled (Kernel DRM)").size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                         });
                                 });
                             });
@@ -11277,6 +11277,7 @@ impl LauncherApp {
                     .rounding(Rounding::same(8.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                     .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
                                 ui.label(RichText::new("SUBSYSTEM TELEMETRY • I/O SUPERVISOR").size(9.0).monospace().color(p.text_muted));
@@ -11291,7 +11292,7 @@ impl LauncherApp {
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                                ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(74, 222, 128)));
+                                                ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
                                                 ui.label(RichText::new("All Devices Synchronized").size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
                                             });
                                         });
@@ -11299,23 +11300,21 @@ impl LauncherApp {
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 16.0;
+                                ui.spacing_mut().item_spacing.x = 24.0;
 
-                                    ui.vertical(|ui| {
-                                        ui.label(RichText::new("AGGREGATE I/O").size(8.5).monospace().color(p.text_muted));
-                                        ui.label(RichText::new(&agg_io_str).size(13.5).monospace().strong().color(p.text_primary));
-                                    });
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new("AGGREGATE I/O").size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(&agg_io_str).size(13.5).monospace().strong().color(p.text_primary));
+                                });
 
-                                    ui.vertical(|ui| {
-                                        ui.label(RichText::new("PHYSICAL DRIVES").size(8.5).monospace().color(p.text_muted));
-                                        ui.label(RichText::new(format!("{} ACTIVE", drive_count)).size(13.5).monospace().strong().color(Color32::from_rgb(74, 222, 128)));
-                                    });
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new("PHYSICAL DRIVES").size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(format!("{} ACTIVE", drive_count)).size(13.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                });
 
-                                    ui.vertical(|ui| {
-                                        ui.label(RichText::new("TOTAL STORAGE").size(8.5).monospace().color(p.text_muted));
-                                        ui.label(RichText::new(&pool_str).size(13.5).monospace().strong().color(p.text_primary));
-                                    });
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new("TOTAL STORAGE").size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(&pool_str).size(13.5).monospace().strong().color(p.text_primary));
                                 });
                             });
                         });
@@ -11352,7 +11351,7 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.0;
                                         ui.label(RichText::new("Disk 1 (C: / Root)").size(13.0).strong().color(p.text_primary));
-                                        ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(74, 222, 128)));
+                                        ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
                                     });
                                     ui.label(RichText::new("NVMe SSD • Kingston SNV2S 500GB").size(9.5).monospace().color(p.text_muted));
                                 });
@@ -11401,7 +11400,7 @@ impl LauncherApp {
                                 });
                                 scols[2].vertical(|ui| {
                                     ui.label(RichText::new("AVG RESPONSE").size(8.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new("1.4 ms").size(12.5).monospace().strong().color(Color32::from_rgb(74, 222, 128)));
+                                    ui.label(RichText::new("1.4 ms").size(12.5).monospace().strong().color(p.text_primary));
                                 });
                             });
                         });
@@ -11426,14 +11425,14 @@ impl LauncherApp {
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::same(6.0))
                                     .show(ui, |ui| {
-                                        ui.label(RichText::new(crate::lucide::HARD_DRIVE).size(13.0).color(Color32::from_rgb(74, 222, 128)));
+                                        ui.label(RichText::new(crate::lucide::HARD_DRIVE).size(13.0).color(Color32::from_rgb(56, 189, 248)));
                                     });
 
                                 ui.vertical(|ui| {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.0;
                                         ui.label(RichText::new("Disk 0 (D: / Data)").size(13.0).strong().color(p.text_primary));
-                                        ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(74, 222, 128)));
+                                        ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
                                     });
                                     ui.label(RichText::new("SATA HDD • Seagate BarraCuda 1TB").size(9.5).monospace().color(p.text_muted));
                                 });
@@ -11445,7 +11444,7 @@ impl LauncherApp {
 
                             ui.add_space(8.0);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("Mount: /mnt/storage (btrfs)").size(10.0).monospace().color(Color32::from_rgb(74, 222, 128)));
+                                ui.label(RichText::new("Mount: /mnt/storage (btrfs)").size(10.0).monospace().color(Color32::from_rgb(56, 189, 248)));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new(format!("{:.1} GB / {:.1} GB ({:.0}%)", d2_used, d2_tot, d2_pct)).size(10.0).monospace().color(p.text_secondary));
                                 });
@@ -11455,7 +11454,7 @@ impl LauncherApp {
                             let (br, bp) = ui.allocate_painter(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
                             bp.rect_filled(br.rect, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
                             let fill_w = br.rect.width() * (d2_pct / 100.0).clamp(0.02, 1.0);
-                            bp.rect_filled(egui::Rect::from_min_size(br.rect.min, egui::vec2(fill_w, 4.0)), Rounding::same(2.0), Color32::from_rgb(74, 222, 128));
+                            bp.rect_filled(egui::Rect::from_min_size(br.rect.min, egui::vec2(fill_w, 4.0)), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
 
                             ui.add_space(8.0);
                             ui.columns(3, |scols| {
@@ -11469,7 +11468,7 @@ impl LauncherApp {
                                 });
                                 scols[2].vertical(|ui| {
                                     ui.label(RichText::new("AVG RESPONSE").size(8.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new("0.1 ms").size(12.5).monospace().strong().color(Color32::from_rgb(74, 222, 128)));
+                                    ui.label(RichText::new("0.1 ms").size(12.5).monospace().strong().color(p.text_primary));
                                 });
                             });
                         });
@@ -11519,7 +11518,7 @@ impl LauncherApp {
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 4.0;
-                            ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(74, 222, 128)));
+                            ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
                             ui.label(RichText::new("Buffer: DMA Ring Buffer 0 (Kernel Direct Pass-through)").size(9.0).monospace().color(p.text_muted));
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -11555,8 +11554,8 @@ impl LauncherApp {
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(74, 222, 128)));
-                                ui.label(RichText::new("Optimal State").size(9.0).monospace().strong().color(Color32::from_rgb(74, 222, 128)));
+                                ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("Optimal State").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new("Max: 70°C").size(9.0).monospace().color(p.text_muted));
                                 });
@@ -11573,7 +11572,7 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("S.M.A.R.T. HEALTH").size(9.5).monospace().strong().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::SHIELD).size(11.0).color(Color32::from_rgb(74, 222, 128)));
+                                    ui.label(RichText::new(crate::lucide::SHIELD).size(11.0).color(Color32::from_rgb(56, 189, 248)));
                                 });
                             });
                             ui.add_space(4.0);
@@ -11586,7 +11585,7 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("0 Bad Sectors").size(9.0).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("Pristine").size(9.0).monospace().strong().color(Color32::from_rgb(74, 222, 128)));
+                                    ui.label(RichText::new("Pristine").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                 });
                             });
                         });
@@ -11670,7 +11669,7 @@ impl LauncherApp {
                                         ui.label(RichText::new("Unallocated").size(9.0).monospace().color(p.text_muted));
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new("■").size(8.0).color(Color32::from_rgb(74, 222, 128)));
+                                        ui.label(RichText::new("■").size(8.0).color(Color32::from_rgb(96, 165, 250)));
                                         ui.label(RichText::new("Swap Space").size(9.0).monospace().color(p.text_muted));
                                     });
                                     ui.horizontal(|ui| {
@@ -11710,7 +11709,7 @@ impl LauncherApp {
 
                         // P3: Swap
                         let r_swap = egui::Rect::from_min_size(egui::pos2(pr.min.x + w_efi + w_root + 4.0, pr.min.y), egui::vec2(w_swap, pr.height()));
-                        part_p.rect_filled(r_swap, Rounding::same(3.0), Color32::from_rgb(74, 222, 128));
+                        part_p.rect_filled(r_swap, Rounding::same(3.0), Color32::from_rgb(96, 165, 250));
                         part_p.text(r_swap.center(), egui::Align2::CENTER_CENTER, "SWAP", egui::FontId::monospace(8.5), Color32::from_rgb(10, 15, 29));
 
                         // P4: RES
@@ -11726,7 +11725,7 @@ impl LauncherApp {
                                 ui.label(RichText::new("P1 • EFI SYSTEM").size(9.0).monospace().strong().color(p.text_muted));
                                 ui.add_space(2.0);
                                 ui.label(RichText::new("512 MB vfat").size(13.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("/boot/efi (Active)").size(9.0).monospace().color(Color32::from_rgb(74, 222, 128)));
+                                ui.label(RichText::new("/boot/efi (Active)").size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
                             });
 
                             cols[1].vertical(|ui| {
@@ -11740,7 +11739,7 @@ impl LauncherApp {
                                 ui.label(RichText::new("P3 • LINUX SWAP").size(9.0).monospace().strong().color(p.text_muted));
                                 ui.add_space(2.0);
                                 ui.label(RichText::new("16.0 GB swap").size(13.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("swapon priority 1").size(9.0).monospace().color(Color32::from_rgb(74, 222, 128)));
+                                ui.label(RichText::new("swapon priority 1").size(9.0).monospace().color(Color32::from_rgb(96, 165, 250)));
                             });
 
                             cols[3].vertical(|ui| {
@@ -11780,11 +11779,11 @@ impl LauncherApp {
                             });
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(16, 185, 129, 25))
+                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                     .show(ui, |ui| {
-                                        ui.label(RichText::new("CONNECTED").size(10.0).monospace().strong().color(Color32::from_rgb(16, 185, 129)));
+                                        ui.label(RichText::new("CONNECTED").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                     });
                             });
                         });
@@ -11795,7 +11794,7 @@ impl LauncherApp {
                 // 2. Row of 4 Metric Cards (evenly distributed)
                 ui.columns(4, |cols| {
                     render_metric_card(&mut cols[0], "DOWNLOAD RATE", &crate::sensors::format_rate(snap.total_rx_rate_bps), "Live Incoming", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
-                    render_metric_card(&mut cols[1], "UPLOAD RATE", &crate::sensors::format_rate(snap.total_tx_rate_bps), "Live Outgoing", Color32::from_rgb(168, 85, 247), p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[1], "UPLOAD RATE", &crate::sensors::format_rate(snap.total_tx_rate_bps), "Live Outgoing", Color32::from_rgb(96, 165, 250), p.bg_card, p.text_muted);
                     render_metric_card(&mut cols[2], "TOTAL RECEIVED", &crate::sensors::format_bytes(snap.total_rx_bytes), "Cumulative", p.text_primary, p.bg_card, p.text_muted);
                     render_metric_card(&mut cols[3], "TOTAL SENT", &crate::sensors::format_bytes(snap.total_tx_bytes), "Cumulative", p.text_primary, p.bg_card, p.text_muted);
                 });
@@ -11816,7 +11815,7 @@ impl LauncherApp {
                                 ui.label(RichText::new(format!("{} {}", icon, &net.name)).size(11.5).strong().color(p.text_primary));
                                 ui.add_space(8.0);
                                 ui.label(RichText::new(format!("↓ {}", crate::sensors::format_rate(net.rx_rate_bps))).size(10.5).monospace().color(Color32::from_rgb(56, 189, 248)));
-                                ui.label(RichText::new(format!("↑ {}", crate::sensors::format_rate(net.tx_rate_bps))).size(10.5).monospace().color(Color32::from_rgb(168, 85, 247)));
+                                ui.label(RichText::new(format!("↑ {}", crate::sensors::format_rate(net.tx_rate_bps))).size(10.5).monospace().color(Color32::from_rgb(96, 165, 250)));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new(format!("Total: ↓{} / ↑{}", crate::sensors::format_bytes(net.rx_bytes), crate::sensors::format_bytes(net.tx_bytes))).size(10.0).monospace().color(p.text_muted));
                                 });
@@ -11856,7 +11855,7 @@ impl LauncherApp {
                                 ui.label(RichText::new(power_src).size(11.0).color(p.text_muted));
                             });
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let (badge_txt, badge_col) = if ac_online { ("AC ONLINE", Color32::from_rgb(16, 185, 129)) } else { ("ON BATTERY", Color32::from_rgb(250, 204, 21)) };
+                                let (badge_txt, badge_col) = if ac_online { ("AC ONLINE", Color32::from_rgb(56, 189, 248)) } else { ("ON BATTERY", Color32::from_rgb(148, 163, 184)) };
                                 Frame::none()
                                     .fill(badge_col.gamma_multiply(0.15))
                                     .rounding(Rounding::same(6.0))
@@ -11872,11 +11871,11 @@ impl LauncherApp {
 
                 // 2. Row of 4 Metric Cards (evenly distributed)
                 ui.columns(4, |cols| {
-                    render_metric_card(&mut cols[0], "POWER SOURCE", if ac_online { "AC Wall Plug" } else { "Internal Battery" }, if ac_online { "Connected" } else { "Discharging" }, if ac_online { Color32::from_rgb(16, 185, 129) } else { Color32::from_rgb(250, 204, 21) }, p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[0], "POWER SOURCE", if ac_online { "AC Wall Plug" } else { "Internal Battery" }, if ac_online { "Connected" } else { "Discharging" }, if ac_online { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(148, 163, 184) }, p.bg_card, p.text_muted);
                     render_metric_card(&mut cols[1], "BATTERY LEVEL", &format!("{:.0}%", bat_pct), "State of Charge", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
                     let rate_str = snap.power.total_power_watts.map(|w| format!("{:.1} W", w)).unwrap_or_else(|| "12.5 W".into());
-                    render_metric_card(&mut cols[2], "CONSUMPTION", &rate_str, "Active Power Rate", Color32::from_rgb(250, 204, 21), p.bg_card, p.text_muted);
-                    render_metric_card(&mut cols[3], "BATTERY HEALTH", "98.5%", "Design Match", Color32::from_rgb(16, 185, 129), p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[2], "CONSUMPTION", &rate_str, "Active Power Rate", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[3], "BATTERY HEALTH", "98.5%", "Design Match", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
                 });
 
                 ui.add_space(8.0);
@@ -11891,12 +11890,12 @@ impl LauncherApp {
                         if let Some(bat) = snap.power.batteries.first() {
                             render_reg_item(ui, "Model", &bat.model_name, p.text_muted, p.text_primary);
                             render_reg_item(ui, "Vendor", &bat.manufacturer, p.text_muted, p.text_primary);
-                            render_reg_item(ui, "Status", &bat.status, p.text_muted, Color32::from_rgb(16, 185, 129));
+                            render_reg_item(ui, "Status", &bat.status, p.text_muted, Color32::from_rgb(56, 189, 248));
                             let e_wh = bat.energy_wh.unwrap_or(0.0);
                             let ef_wh = bat.energy_full_wh.unwrap_or(0.0);
                             render_reg_item(ui, "Capacity", &format!("{:.1} / {:.1} Wh", e_wh, ef_wh), p.text_muted, p.text_primary);
                         } else {
-                            render_reg_item(ui, "Power Supply", "Continuous Main AC Power", p.text_muted, Color32::from_rgb(16, 185, 129));
+                            render_reg_item(ui, "Power Supply", "Continuous Main AC Power", p.text_muted, Color32::from_rgb(56, 189, 248));
                         }
                     });
 
@@ -11928,11 +11927,11 @@ impl LauncherApp {
                             });
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(16, 185, 129, 25))
+                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                     .show(ui, |ui| {
-                                        ui.label(RichText::new("ACTIVE / RUNNING").size(10.0).monospace().strong().color(Color32::from_rgb(16, 185, 129)));
+                                        ui.label(RichText::new("ACTIVE / RUNNING").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                     });
                             });
                         });
@@ -11942,10 +11941,10 @@ impl LauncherApp {
 
                 // 2. Row of 4 Metric Cards (evenly distributed)
                 ui.columns(4, |cols| {
-                    render_metric_card(&mut cols[0], "RADIO STATE", "Powered On", "RFKILL Unblocked", Color32::from_rgb(16, 185, 129), p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[0], "RADIO STATE", "Powered On", "RFKILL Unblocked", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
                     render_metric_card(&mut cols[1], "PAIRED DEVICES", "2 Devices", "Stored Bonds", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
                     render_metric_card(&mut cols[2], "DISCOVERY", "Idle", "Not Discoverable", p.text_primary, p.bg_card, p.text_muted);
-                    render_metric_card(&mut cols[3], "SERVICE DAEMON", "bluetoothd", "Systemd Active", Color32::from_rgb(168, 85, 247), p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[3], "SERVICE DAEMON", "bluetoothd", "Systemd Active", Color32::from_rgb(96, 165, 250), p.bg_card, p.text_muted);
                 });
 
                 ui.add_space(8.0);
@@ -11957,7 +11956,7 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.label(RichText::new("PAIRED BLUETOOTH PERIPHERALS").size(10.5).monospace().strong().color(p.text_muted));
                         ui.add_space(6.0);
-                        render_reg_item(ui, "Logitech MX Master 3S", "Connected (Battery 85%)", p.text_muted, Color32::from_rgb(16, 185, 129));
+                        render_reg_item(ui, "Logitech MX Master 3S", "Connected (Battery 85%)", p.text_muted, Color32::from_rgb(56, 189, 248));
                         render_reg_item(ui, "Sony WH-1000XM4", "Paired (Audio Sink)", p.text_muted, Color32::from_rgb(56, 189, 248));
                     });
 
@@ -11993,11 +11992,11 @@ impl LauncherApp {
                             });
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 let (status_txt, status_col) = if hot_count > 0 {
-                                    ("THERMAL ALERT", Color32::from_rgb(239, 68, 68))
+                                    ("THERMAL ALERT", Color32::from_rgb(248, 250, 252))
                                 } else if warm_count > 0 {
-                                    ("WARM", Color32::from_rgb(245, 158, 11))
+                                    ("WARM", Color32::from_rgb(148, 163, 184))
                                 } else {
-                                    ("NOMINAL", Color32::from_rgb(16, 185, 129))
+                                    ("NOMINAL", Color32::from_rgb(56, 189, 248))
                                 };
                                 Frame::none()
                                     .fill(status_col.gamma_multiply(0.15))
@@ -12015,9 +12014,9 @@ impl LauncherApp {
                 // 2. Row of 4 Metric Cards (evenly distributed)
                 ui.columns(4, |cols| {
                     render_metric_card(&mut cols[0], "TOTAL PROBES", &format!("{}", snap.temp_sensors.len()), "Hardware Sensors", p.text_primary, p.bg_card, p.text_muted);
-                    render_metric_card(&mut cols[1], "NORMAL (<55°C)", &format!("{}", normal_count), "Optimal Operating", Color32::from_rgb(16, 185, 129), p.bg_card, p.text_muted);
-                    render_metric_card(&mut cols[2], "WARM (55-75°C)", &format!("{}", warm_count), "Elevated Temp", Color32::from_rgb(245, 158, 11), p.bg_card, p.text_muted);
-                    render_metric_card(&mut cols[3], "HOT (>75°C)", &format!("{}", hot_count), "Near Throttle", if hot_count > 0 { Color32::from_rgb(239, 68, 68) } else { p.text_muted }, p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[1], "NORMAL (<55°C)", &format!("{}", normal_count), "Optimal Operating", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[2], "WARM (55-75°C)", &format!("{}", warm_count), "Elevated Temp", Color32::from_rgb(148, 163, 184), p.bg_card, p.text_muted);
+                    render_metric_card(&mut cols[3], "HOT (>75°C)", &format!("{}", hot_count), "Near Throttle", if hot_count > 0 { Color32::from_rgb(248, 250, 252) } else { p.text_muted }, p.bg_card, p.text_muted);
                 });
 
                 ui.add_space(8.0);
@@ -12140,7 +12139,7 @@ impl LauncherApp {
             } else if norm_cpu < 50.0 {
                 Color32::from_rgba_unmultiplied(0, 120, 215, 155)
             } else {
-                Color32::from_rgba_unmultiplied(217, 119, 6, 140) // Amber alert for high load
+                Color32::from_rgba_unmultiplied(0, 120, 215, 210) // High load accent blue block
             }
         };
 
@@ -12238,9 +12237,9 @@ impl LauncherApp {
                                 RichText::new(format!("{} End task (PID {})", crate::lucide::X, sel_pid))
                                     .size(11.0)
                                     .strong()
-                                    .color(Color32::WHITE),
+                                    .color(Color32::from_rgb(15, 23, 42)),
                             )
-                            .fill(p.danger)
+                            .fill(Color32::from_rgb(56, 189, 248))
                             .rounding(Rounding::same(999.0))
                             .min_size(egui::vec2(0.0, 28.0))
                         } else {
@@ -12332,15 +12331,15 @@ impl LauncherApp {
                     if timestamp.elapsed() < Duration::from_secs(4) {
                         ui.add_space(6.0);
                         Frame::none()
-                            .fill(if is_err { p.danger.gamma_multiply(0.15) } else { Color32::from_rgba_premultiplied(16, 185, 129, 25) })
-                            .stroke(Stroke::new(1.0_f32, if is_err { p.danger.gamma_multiply(0.6) } else { Color32::from_rgb(16, 185, 129) }))
+                            .fill(Color32::from_rgba_premultiplied(56, 189, 248, 25))
+                            .stroke(Stroke::new(1.0_f32, if is_err { Color32::from_rgb(148, 163, 184) } else { Color32::from_rgb(56, 189, 248) }))
                             .rounding(Rounding::same(999.0))
                             .inner_margin(egui::Margin::symmetric(12.0, 5.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     let icon = if is_err { crate::lucide::ALERT_TRIANGLE } else { crate::lucide::CHECK };
-                                    ui.label(RichText::new(icon).size(11.0).color(if is_err { p.danger } else { Color32::from_rgb(16, 185, 129) }));
-                                    ui.label(RichText::new(msg).size(11.0).strong().color(if is_err { p.danger } else { Color32::from_rgb(16, 185, 129) }));
+                                    ui.label(RichText::new(icon).size(11.0).color(if is_err { Color32::from_rgb(148, 163, 184) } else { Color32::from_rgb(56, 189, 248) }));
+                                    ui.label(RichText::new(msg).size(11.0).strong().color(if is_err { p.text_primary } else { Color32::from_rgb(56, 189, 248) }));
                                 });
                             });
                     }

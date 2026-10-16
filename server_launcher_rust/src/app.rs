@@ -4521,8 +4521,8 @@ impl eframe::App for LauncherApp {
         } else if is_scanning || has_remote_bg_work {
             ctx.request_repaint_after(std::time::Duration::from_millis(250));
         } else if self.active_sidebar_tab == SidebarTab::Sensors && self.sensors_refresh_interval > 0 {
-            // Repaint dynamically matching sensors interval (e.g. 5s)
-            ctx.request_repaint_after(std::time::Duration::from_secs(self.sensors_refresh_interval.max(1) as u64));
+            // Repaint at 1-second intervals on Sensors tab so real-time waveforms and second-by-second telemetry scroll smoothly
+            ctx.request_repaint_after(std::time::Duration::from_millis(1000));
         } else if any_running {
             // When servers are running, align repaint with the 2.0s polling cycle
             ctx.request_repaint_after(std::time::Duration::from_millis(2000));
@@ -5691,55 +5691,127 @@ fn draw_wifi_realtime_waveform(ui: &mut Ui, height: f32, rx_history: &VecDeque<f
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let rect = response.rect;
 
-    painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
+    painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 15, 29));
 
-    let y_base = rect.bottom() - 12.0;
-    let n = rx_history.len().max(tx_history.len()).max(2);
-    let step_x = (rect.width() - 20.0) / (n - 1) as f32;
-    let max_v = 1500.0_f32;
+    let n = rx_history.len().max(tx_history.len());
+    if n < 2 {
+        return;
+    }
 
-    let rx_pts: Vec<egui::Pos2> = rx_history.iter().enumerate().map(|(i, &v)| {
-        let x = rect.left() + 10.0 + i as f32 * step_x;
-        let norm = (v / max_v).clamp(0.04, 0.94);
-        let y = y_base - norm * (y_base - rect.top() - 12.0);
-        egui::pos2(x, y)
-    }).collect();
+    // Dynamic scale ceiling calculation from current throughput telemetry (values are in MB/s)
+    let observed_max = rx_history.iter().chain(tx_history.iter()).copied().fold(0.0_f32, f32::max);
+    let scale_max = if observed_max <= 0.5 {
+        1.0_f32
+    } else if observed_max <= 2.0 {
+        2.5_f32
+    } else if observed_max <= 5.0 {
+        5.0_f32
+    } else if observed_max <= 10.0 {
+        10.0_f32
+    } else if observed_max <= 25.0 {
+        25.0_f32
+    } else if observed_max <= 50.0 {
+        50.0_f32
+    } else if observed_max <= 100.0 {
+        100.0_f32
+    } else {
+        (observed_max * 1.25).ceil()
+    };
 
-    let mut mesh = egui::Mesh::default();
-    let c_top = Color32::from_rgba_unmultiplied(56, 189, 248, 45);
-    let c_bot = Color32::from_rgba_unmultiplied(56, 189, 248, 2);
+    let left_offset = 55.0_f32;
+    let right_offset = 35.0_f32;
+    let y_top = rect.top() + 14.0;
+    let y_base = rect.bottom() - 14.0;
+    let plot_h = (y_base - y_top).max(20.0);
+
+    // Subtle horizontal grid lines at 100%, 50%, 0%
+    let levels = [
+        (1.0_f32, format!("{:.1} MB/s", scale_max), "-60s"),
+        (0.5_f32, format!("{:.1} MB/s", scale_max * 0.5), "-30s"),
+        (0.0_f32, "0 B/s".to_string(), "Now"),
+    ];
+
+    for (pct, left_label, right_label) in levels {
+        let y = y_base - plot_h * pct;
+        painter.line_segment(
+            [egui::pos2(rect.left() + left_offset, y), egui::pos2(rect.right() - right_offset, y)],
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)),
+        );
+        painter.text(
+            egui::pos2(rect.left() + 8.0, y),
+            egui::Align2::LEFT_CENTER,
+            left_label,
+            egui::FontId::monospace(8.0),
+            Color32::from_rgb(100, 116, 139),
+        );
+        painter.text(
+            egui::pos2(rect.right() - 6.0, y),
+            egui::Align2::RIGHT_CENTER,
+            right_label,
+            egui::FontId::monospace(8.0),
+            Color32::from_rgb(100, 116, 139),
+        );
+    }
+
+    let graph_w = (rect.width() - left_offset - right_offset).max(20.0);
+    let step_x = graph_w / (n - 1) as f32;
+
+    // 1. RX Points (Electric Cyan with gradient mesh underneath)
+    let rx_pts: Vec<egui::Pos2> = rx_history
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            let x = rect.left() + left_offset + i as f32 * step_x;
+            let norm = (v / scale_max).clamp(0.0, 1.0);
+            let y = y_base - norm * plot_h;
+            egui::pos2(x, y)
+        })
+        .collect();
+
+    let mut mesh_rx = egui::Mesh::default();
     for i in 0..(rx_pts.len() - 1) {
         let p1 = rx_pts[i];
         let p2 = rx_pts[i + 1];
         let b1 = egui::pos2(p1.x, y_base);
         let b2 = egui::pos2(p2.x, y_base);
-        let idx = mesh.vertices.len() as u32;
-        mesh.vertices.push(egui::epaint::Vertex { pos: p1, uv: egui::epaint::WHITE_UV, color: c_top });
-        mesh.vertices.push(egui::epaint::Vertex { pos: p2, uv: egui::epaint::WHITE_UV, color: c_top });
-        mesh.vertices.push(egui::epaint::Vertex { pos: b2, uv: egui::epaint::WHITE_UV, color: c_bot });
-        mesh.vertices.push(egui::epaint::Vertex { pos: b1, uv: egui::epaint::WHITE_UV, color: c_bot });
-        mesh.indices.extend_from_slice(&[idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
+        let idx = mesh_rx.vertices.len() as u32;
+        let c_top = Color32::from_rgba_unmultiplied(56, 189, 248, 35);
+        let c_bot = Color32::from_rgba_unmultiplied(56, 189, 248, 2);
+        mesh_rx.vertices.push(egui::epaint::Vertex { pos: p1, uv: egui::epaint::WHITE_UV, color: c_top });
+        mesh_rx.vertices.push(egui::epaint::Vertex { pos: p2, uv: egui::epaint::WHITE_UV, color: c_top });
+        mesh_rx.vertices.push(egui::epaint::Vertex { pos: b2, uv: egui::epaint::WHITE_UV, color: c_bot });
+        mesh_rx.vertices.push(egui::epaint::Vertex { pos: b1, uv: egui::epaint::WHITE_UV, color: c_bot });
+        mesh_rx.indices.extend_from_slice(&[idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
     }
-    painter.add(egui::Shape::mesh(mesh));
+    painter.add(egui::Shape::mesh(mesh_rx));
 
     for i in 0..(rx_pts.len() - 1) {
-        painter.line_segment([rx_pts[i], rx_pts[i + 1]], Stroke::new(2.2_f32, Color32::from_rgb(56, 189, 248)));
+        painter.line_segment([rx_pts[i], rx_pts[i + 1]], Stroke::new(2.0_f32, Color32::from_rgb(56, 189, 248)));
     }
 
-    let tx_pts: Vec<egui::Pos2> = tx_history.iter().enumerate().map(|(i, &v)| {
-        let x = rect.left() + 10.0 + i as f32 * step_x;
-        let norm = (v / max_v).clamp(0.02, 0.90);
-        let y = y_base - norm * (y_base - rect.top() - 12.0);
-        egui::pos2(x, y)
-    }).collect();
+    // 2. TX Points (Slate / Light Gray line)
+    let tx_pts: Vec<egui::Pos2> = tx_history
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            let x = rect.left() + left_offset + i as f32 * step_x;
+            let norm = (v / scale_max).clamp(0.0, 1.0);
+            let y = y_base - norm * plot_h;
+            egui::pos2(x, y)
+        })
+        .collect();
 
     for i in 0..(tx_pts.len() - 1) {
-        painter.line_segment([tx_pts[i], tx_pts[i + 1]], Stroke::new(1.8_f32, Color32::from_rgb(148, 163, 184)));
+        painter.line_segment([tx_pts[i], tx_pts[i + 1]], Stroke::new(1.6_f32, Color32::from_rgb(203, 213, 225)));
     }
 
-    if let Some(&last_pt) = rx_pts.last() {
-        painter.circle_filled(last_pt, 5.0, Color32::from_rgba_unmultiplied(56, 189, 248, 90));
-        painter.circle_filled(last_pt, 2.8, Color32::from_rgb(241, 245, 249));
+    // Glowing endpoint indicators at "Now"
+    if let Some(&last_tx) = tx_pts.last() {
+        painter.circle_filled(last_tx, 3.5, Color32::from_rgb(203, 213, 225));
+    }
+    if let Some(&last_rx) = rx_pts.last() {
+        painter.circle_filled(last_rx, 6.0, Color32::from_rgba_unmultiplied(56, 189, 248, 90));
+        painter.circle_filled(last_rx, 3.5, Color32::from_rgb(241, 245, 249));
     }
 }
 
@@ -13893,6 +13965,15 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
+                                let (disp_rx_bps, disp_tx_bps) = if !is_remote {
+                                    snap.networks.iter()
+                                        .find(|n| n.name == wifi_snap.interface || n.is_wireless)
+                                        .map(|n| (n.rx_rate_bps, n.tx_rate_bps))
+                                        .unwrap_or((snap.total_rx_rate_bps, snap.total_tx_rate_bps))
+                                } else {
+                                    (snap.total_rx_rate_bps, snap.total_tx_rate_bps)
+                                };
+
                                 ui.horizontal(|ui| {
                                     ui.vertical(|ui| {
                                         ui.label(RichText::new("60-Second Realtime Waveform").size(12.5).strong().color(p.text_primary));
@@ -13907,7 +13988,7 @@ impl LauncherApp {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                                 ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(148, 163, 184));
-                                                ui.label(RichText::new(format!("TX: {}", crate::sensors::format_rate(snap.total_tx_rate_bps))).size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                                ui.label(RichText::new(format!("TX: {}", crate::sensors::format_rate(disp_tx_bps))).size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
                                             });
 
                                             // RX indicator
@@ -13915,7 +13996,7 @@ impl LauncherApp {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                                 ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
-                                                ui.label(RichText::new(format!("RX: {}", crate::sensors::format_rate(snap.total_rx_rate_bps))).size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new(format!("RX: {}", crate::sensors::format_rate(disp_rx_bps))).size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
                                             });
                                         });
                                     });
@@ -13927,12 +14008,12 @@ impl LauncherApp {
                                 ui.add_space(8.0);
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
-                                    let rx_rate = crate::sensors::format_rate(snap.total_rx_rate_bps);
-                                    let tx_rate = crate::sensors::format_rate(snap.total_tx_rate_bps);
+                                    let rx_rate = crate::sensors::format_rate(disp_rx_bps);
+                                    let tx_rate = crate::sensors::format_rate(disp_tx_bps);
                                     let badges = [
                                         (format!("RECEIVE (R): {}", rx_rate), Color32::from_rgb(56, 189, 248)),
                                         (format!("SEND (S): {}", tx_rate), Color32::from_rgb(203, 213, 225)),
-                                        (format!("PEAK: {:.2} MB/s", self.net_peak_mb.max(snap.total_rx_rate_bps as f32 / 1_000_000.0)), Color32::from_rgb(96, 165, 250)),
+                                        (format!("PEAK: {:.2} MB/s", self.net_peak_mb.max((disp_rx_bps / 1_000_000.0) as f32)), Color32::from_rgb(96, 165, 250)),
                                     ];
                                     for (txt, col) in badges {
                                         Frame::none()

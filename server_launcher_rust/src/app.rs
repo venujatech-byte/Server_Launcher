@@ -15982,7 +15982,6 @@ impl LauncherApp {
                     .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        let is_narrow = ui.available_width() < 720.0;
 
                         let tag_str = if is_remote {
                             "REMOTE HOST HARDWARE MONITOR · LINUX HWMON & KERNEL THERMAL ZONES"
@@ -15997,25 +15996,51 @@ impl LauncherApp {
                         let sub_str = if is_remote {
                             "Direct Linux hwmon sysfs endpoints, processor package temperatures, and chassis airflow."
                         } else {
-                            "Dual dynamic blowers with customizable acoustic trigger thresholds."
+                            "Dual dynamic blowers with customizable acoustic trigger thresholds and embedded zone sensors."
                         };
 
-                        if is_narrow {
-                            ui.vertical(|ui| {
+                        ui.vertical(|ui| {
+                            // Row 1: Overline / Subsystem Tag
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
                                 ui.label(RichText::new(tag_str).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                ui.add_space(2.0);
-                                ui.label(RichText::new(title_str).size(17.0).strong().color(p.text_primary));
-                                ui.add_space(2.0);
-                                ui.label(RichText::new(sub_str).size(10.5).color(Color32::from_rgb(148, 163, 184)));
-                                ui.add_space(8.0);
+                            });
+
+                            ui.add_space(2.0);
+
+                            // Row 2: Title on Left, Fan Mode Buttons on Right
+                            let avail_w = ui.available_width();
+                            let right_w = 320.0_f32;
+                            let is_narrow = avail_w < 680.0;
+
+                            if is_narrow {
+                                // Narrow viewport: Title row followed by dedicated mode buttons row
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 8.0;
+                                    ui.label(RichText::new(&title_str).size(16.5).strong().color(p.text_primary));
+                                    Frame::none()
+                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                        .show(ui, |ui| {
+                                            let badge = if is_remote { "HWMON ACTIVE" } else { "EC-THERMAL OK" };
+                                            ui.label(RichText::new(badge).size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                        });
+                                });
+
+                                ui.add_space(6.0);
+
+                                // Mode Buttons on their own row
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 6.0;
                                     let modes = [
-                                        ("Silent Mode", 0),
-                                        ("Balanced", 1),
-                                        ("Turbo Max", 2),
+                                        ("Silent Mode", 0, "Silent acoustic profile with active dynamic fan curve"),
+                                        ("Balanced", 1, "Optimized performance and acoustic balance"),
+                                        ("Turbo Max", 2, "Maximum cooling duty cycle for sustained workloads"),
                                     ];
-                                    for (mode_label, mode_idx) in modes {
+
+                                    for (mode_label, mode_idx, tooltip) in modes {
                                         let is_active = self.fan_mode == mode_idx;
                                         let bg = if is_active {
                                             Color32::from_rgba_unmultiplied(56, 189, 248, 28)
@@ -16042,6 +16067,7 @@ impl LauncherApp {
                                                 ui.label(RichText::new(mode_label).size(10.0).monospace().strong().color(text_color));
                                             }).response;
 
+                                        let pill_resp = pill_resp.on_hover_text(tooltip);
                                         if pill_resp.interact(egui::Sense::click()).clicked() {
                                             self.fan_mode = mode_idx;
                                         }
@@ -16052,68 +16078,86 @@ impl LauncherApp {
                                     let btn_bg = if btn_resp.hovered() { Color32::from_rgba_unmultiplied(56, 189, 248, 30) } else { Color32::from_rgb(18, 28, 42) };
                                     ui.painter().rect_filled(btn_rect, Rounding::same(6.0), btn_bg);
                                     ui.painter().text(btn_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::SLIDERS, egui::FontId::monospace(12.0), Color32::from_rgb(148, 163, 184));
+                                    btn_resp.on_hover_text("Calibrate dynamic fan curve profiles");
                                 });
-                            });
-                        } else {
-                            ui.horizontal(|ui| {
-                                ui.vertical(|ui| {
-                                    ui.label(RichText::new(tag_str).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                    ui.add_space(2.0);
-                                    ui.label(RichText::new(title_str).size(17.0).strong().color(p.text_primary));
-                                    ui.add_space(2.0);
-                                    ui.label(RichText::new(sub_str).size(10.5).color(Color32::from_rgb(148, 163, 184)));
-                                });
+                            } else {
+                                // Wide viewport: Title on Left, Mode Buttons on Right
+                                ui.horizontal(|ui| {
+                                    let left_w = (avail_w - right_w - 12.0).max(100.0);
 
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.spacing_mut().item_spacing.x = 6.0;
-
-                                    // Settings button (tonal borderless)
-                                    let (btn_rect, btn_resp) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
-                                    let btn_bg = if btn_resp.hovered() { Color32::from_rgba_unmultiplied(56, 189, 248, 30) } else { Color32::from_rgb(18, 28, 42) };
-                                    ui.painter().rect_filled(btn_rect, Rounding::same(6.0), btn_bg);
-                                    ui.painter().text(btn_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::SLIDERS, egui::FontId::monospace(12.0), Color32::from_rgb(148, 163, 184));
-
-                                    // Fan Mode Pills (Turbo Max, Balanced, Silent Mode)
-                                    let modes = [
-                                        ("Turbo Max", 2),
-                                        ("Balanced", 1),
-                                        ("Silent Mode", 0),
-                                    ];
-
-                                    for (mode_label, mode_idx) in modes {
-                                        let is_active = self.fan_mode == mode_idx;
-                                        let bg = if is_active {
-                                            Color32::from_rgba_unmultiplied(56, 189, 248, 28)
-                                        } else {
-                                            Color32::from_rgb(18, 28, 42)
-                                        };
-                                        let border_stroke = if is_active {
-                                            Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248))
-                                        } else {
-                                            Stroke::NONE
-                                        };
-                                        let text_color = if is_active {
-                                            Color32::from_rgb(56, 189, 248)
-                                        } else {
-                                            Color32::from_rgb(148, 163, 184)
-                                        };
-
-                                        let pill_resp = Frame::none()
-                                            .fill(bg)
-                                            .stroke(border_stroke)
-                                            .rounding(Rounding::same(6.0))
-                                            .inner_margin(egui::Margin::symmetric(10.0, 5.0))
+                                    ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                        ui.spacing_mut().item_spacing.x = 8.0;
+                                        ui.label(RichText::new(&title_str).size(16.5).strong().color(p.text_primary));
+                                        Frame::none()
+                                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                             .show(ui, |ui| {
-                                                ui.label(RichText::new(mode_label).size(10.0).monospace().strong().color(text_color));
-                                            }).response;
+                                                let badge = if is_remote { "HWMON ACTIVE" } else { "EC-THERMAL OK" };
+                                                ui.label(RichText::new(badge).size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            });
+                                    });
 
-                                        if pill_resp.interact(egui::Sense::click()).clicked() {
-                                            self.fan_mode = mode_idx;
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.spacing_mut().item_spacing.x = 6.0;
+
+                                        // Settings button (tonal borderless)
+                                        let (btn_rect, btn_resp) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
+                                        let btn_bg = if btn_resp.hovered() { Color32::from_rgba_unmultiplied(56, 189, 248, 30) } else { Color32::from_rgb(18, 28, 42) };
+                                        ui.painter().rect_filled(btn_rect, Rounding::same(6.0), btn_bg);
+                                        ui.painter().text(btn_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::SLIDERS, egui::FontId::monospace(12.0), Color32::from_rgb(148, 163, 184));
+                                        btn_resp.on_hover_text("Calibrate dynamic fan curve profiles");
+
+                                        // Fan Mode Pills: Turbo Max, Balanced, Silent Mode (right-to-left layout places Silent Mode leftmost)
+                                        let modes = [
+                                            ("Turbo Max", 2, "Maximum cooling duty cycle for sustained workloads"),
+                                            ("Balanced", 1, "Optimized performance and acoustic balance"),
+                                            ("Silent Mode", 0, "Silent acoustic profile with active dynamic fan curve"),
+                                        ];
+
+                                        for (mode_label, mode_idx, tooltip) in modes {
+                                            let is_active = self.fan_mode == mode_idx;
+                                            let bg = if is_active {
+                                                Color32::from_rgba_unmultiplied(56, 189, 248, 28)
+                                            } else {
+                                                Color32::from_rgb(18, 28, 42)
+                                            };
+                                            let border_stroke = if is_active {
+                                                Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248))
+                                            } else {
+                                                Stroke::NONE
+                                            };
+                                            let text_color = if is_active {
+                                                Color32::from_rgb(56, 189, 248)
+                                            } else {
+                                                Color32::from_rgb(148, 163, 184)
+                                            };
+
+                                            let pill_resp = Frame::none()
+                                                .fill(bg)
+                                                .stroke(border_stroke)
+                                                .rounding(Rounding::same(6.0))
+                                                .inner_margin(egui::Margin::symmetric(10.0, 5.0))
+                                                .show(ui, |ui| {
+                                                    ui.label(RichText::new(mode_label).size(10.0).monospace().strong().color(text_color));
+                                                }).response;
+
+                                            let pill_resp = pill_resp.on_hover_text(tooltip);
+                                            if pill_resp.interact(egui::Sense::click()).clicked() {
+                                                self.fan_mode = mode_idx;
+                                            }
                                         }
-                                    }
+                                    });
                                 });
+                            }
+
+                            ui.add_space(4.0);
+
+                            // Row 3: Full-width Subtitle spanning card width underneath Row 2 (Never collides or overlaps)
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new(sub_str).size(10.5).color(Color32::from_rgb(148, 163, 184)));
                             });
-                        }
+                        });
                     });
 
                 ui.add_space(8.0);
@@ -16419,7 +16463,12 @@ impl LauncherApp {
                                                 .rounding(Rounding::same(4.0))
                                                 .inner_margin(egui::Margin::symmetric(6.0, 3.0))
                                                 .show(ui, |ui| {
-                                                    ui.label(RichText::new("PROFILE: SILENT/DYNAMIC").size(8.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                                                    let prof_str = match self.fan_mode {
+                                                        0 => "PROFILE: SILENT/DYNAMIC",
+                                                        1 => "PROFILE: BALANCED",
+                                                        _ => "PROFILE: TURBO MAX",
+                                                    };
+                                                    ui.label(RichText::new(prof_str).size(8.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                                                 });
                                         });
                                     });

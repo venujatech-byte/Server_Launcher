@@ -1508,7 +1508,20 @@ fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
                         .and_then(|s| s.trim().parse::<f32>().ok())
                         .unwrap_or(1200.0);
 
-                    let load_pct = freq_mhz.map(|f| ((f / max_freq_mhz) * 100.0).clamp(0.0, 100.0));
+                    let min_freq_mhz = fs::read_to_string(e.path().join("gt_min_freq_mhz"))
+                        .or_else(|_| fs::read_to_string(e.path().join("gt/gt0/rps_min_freq_mhz")))
+                        .or_else(|_| fs::read_to_string(dev.join("gt_min_freq_mhz")))
+                        .ok()
+                        .and_then(|s| s.trim().parse::<f32>().ok())
+                        .unwrap_or(0.0);
+
+                    let load_pct = freq_mhz.map(|f| {
+                        if max_freq_mhz > min_freq_mhz {
+                            ((f - min_freq_mhz) / (max_freq_mhz - min_freq_mhz) * 100.0).clamp(0.0, 100.0)
+                        } else {
+                            0.0
+                        }
+                    });
 
                     let mut core_clock = freq_mhz.map(|f| f as u32);
                     let mut mem_clock = None;

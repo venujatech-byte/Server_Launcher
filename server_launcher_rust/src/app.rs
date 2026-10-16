@@ -3765,8 +3765,9 @@ impl eframe::App for LauncherApp {
                                         .rounding(Rounding::same(999.0))
                                         .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                         .show(ui, |ui| {
-                                            let err_short = if err.len() > 24 {
-                                                format!("{}...", &err[..21])
+                                            let err_chars = err.chars().count();
+                                            let err_short = if err_chars > 24 {
+                                                format!("{}...", err.chars().take(21).collect::<String>())
                                             } else {
                                                 err.clone()
                                             };
@@ -11813,7 +11814,7 @@ impl LauncherApp {
                             let render_proc_row = |ui: &mut egui::Ui, name: &str, pid: u32, desc: &str, mem_bytes: u64, mem_str: &str, ico: &'static str| {
                                 let frac = (mem_bytes as f32 / total_mem as f32).clamp(0.005, 1.0);
                                 let pct_val = (frac * 100.0).clamp(0.1, 100.0);
-                                let short_name = if name.len() > 22 { format!("{}…", &name[..20]) } else { name.to_string() };
+                                let short_name = if name.chars().count() > 22 { format!("{}…", name.chars().take(20).collect::<String>()) } else { name.to_string() };
 
                                 Frame::none()
                                     .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 4))
@@ -12066,7 +12067,7 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 2. Row of 4 Big Metric Cards
-                let cur_gpu_load = gpu.and_then(|g| g.load_pct).unwrap_or_else(|| self.gpu_load_history.back().copied().unwrap_or(if is_remote { 0.0 } else { 13.3 }));
+                let cur_gpu_load = gpu.and_then(|g| g.load_pct).unwrap_or_else(|| self.gpu_load_history.back().copied().unwrap_or(0.0));
                 let cur_3d = if is_remote && gpu.is_none() { 0.0 } else { self.gpu_3d_history.back().copied().unwrap_or(3.0) };
                 let cur_copy = if is_remote && gpu.is_none() { 0.0 } else { self.gpu_copy_history.back().copied().unwrap_or(1.1) };
                 let clock_val = gpu.and_then(|g| g.clock_mhz).unwrap_or(if is_remote { 0 } else { 750 });
@@ -13205,7 +13206,8 @@ impl LauncherApp {
                                         let short_path = if let Some(last_slash) = mount_pt.rfind('/') {
                                             format!("…{}", &mount_pt[last_slash..])
                                         } else {
-                                            format!("…{}", &mount_pt[mount_pt.len().saturating_sub(16)..])
+                                            let count = mount_pt.chars().count();
+                                            format!("…{}", mount_pt.chars().skip(count.saturating_sub(16)).collect::<String>())
                                         };
                                         format!("Mount: {} ({})", short_path, d_fs)
                                     } else {
@@ -13792,9 +13794,6 @@ impl LauncherApp {
             });
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // SENSORS PAGE: Wi-Fi & Network Dashboard
-    // ─────────────────────────────────────────────────────────────────────────
     // ─────────────────────────────────────────────────────────────────────────
     // SENSORS PAGE: Wi-Fi & Network Dashboard
     // ─────────────────────────────────────────────────────────────────────────
@@ -14852,7 +14851,8 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 5.0;
-                                        ui.label(RichText::new("Y").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                        let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
+                                        ui.painter().circle_filled(d_rect.center(), 2.0, Color32::from_rgb(56, 189, 248));
                                         ui.label(RichText::new("Filter: TCP Listen").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     });
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -18309,8 +18309,9 @@ impl LauncherApp {
                                                     grp.display_name.clone()
                                                 };
 
-                                                let short_disp = if disp_str.len() > 34 {
-                                                    format!("{}…", &disp_str[..32])
+                                                let char_count = disp_str.chars().count();
+                                                let short_disp = if char_count > 34 {
+                                                    format!("{}…", disp_str.chars().take(32).collect::<String>())
                                                 } else {
                                                     disp_str.clone()
                                                 };
@@ -18321,7 +18322,7 @@ impl LauncherApp {
                                                         .strong()
                                                         .color(if is_group_selected { p.accent_light } else { p.text_primary }),
                                                 );
-                                                if disp_str.len() > 34 {
+                                                if char_count > 34 {
                                                     label.on_hover_text(&disp_str);
                                                 }
 

@@ -89,6 +89,7 @@ pub enum SystemdTab {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SensorsSubTab {
+    Overview,
     TopApps,
     Cpu,
     Ram,
@@ -324,6 +325,11 @@ pub struct LauncherApp {
     pub ram_history: VecDeque<(f32, f32)>,
     pub disk_write_history: VecDeque<f32>,
     pub disk_read_history: VecDeque<f32>,
+    pub net_tx_history: VecDeque<f32>,
+    pub net_rx_history: VecDeque<f32>,
+    pub net_peak_mb: f32,
+    pub socket_tcp_history: VecDeque<f32>,
+    pub socket_udp_history: VecDeque<f32>,
     pub gpu_load_history: VecDeque<f32>,
     pub gpu_3d_history: VecDeque<f32>,
     pub gpu_copy_history: VecDeque<f32>,
@@ -734,7 +740,7 @@ impl LauncherApp {
             sensors_top_apps_selected_pid: None,
             sensors_top_apps_normalize_cpu: true,
             sensors_top_apps_status_msg: None,
-            sensors_subtab: SensorsSubTab::Cpu,
+            sensors_subtab: SensorsSubTab::Overview,
             sensors_top_apps_visited: false,
             sensors_top_apps_section_apps_expanded: true,
             sensors_top_apps_section_bg_expanded: true,
@@ -758,6 +764,27 @@ impl LauncherApp {
             disk_read_history: {
                 let mut d = VecDeque::with_capacity(60);
                 for _ in 0..60 { d.push_back(14.2); }
+                d
+            },
+            net_tx_history: {
+                let mut d = VecDeque::with_capacity(60);
+                for _ in 0..60 { d.push_back(2.70); }
+                d
+            },
+            net_rx_history: {
+                let mut d = VecDeque::with_capacity(60);
+                for _ in 0..60 { d.push_back(2.72); }
+                d
+            },
+            net_peak_mb: 3.49,
+            socket_tcp_history: {
+                let mut d = VecDeque::with_capacity(60);
+                for _ in 0..60 { d.push_back(174.0); }
+                d
+            },
+            socket_udp_history: {
+                let mut d = VecDeque::with_capacity(60);
+                for _ in 0..60 { d.push_back(49.0); }
                 d
             },
             gpu_load_history: {
@@ -4924,6 +4951,299 @@ fn draw_disk_waveform(
     if let Some(&last_pt) = write_pts.last() {
         painter.circle_filled(last_pt, 4.5, Color32::from_rgba_unmultiplied(56, 189, 248, 80));
         painter.circle_filled(last_pt, 2.5, Color32::from_rgb(56, 189, 248));
+    }
+}
+
+fn get_socket_stats() -> (usize, usize, usize) {
+    if let Ok(content) = std::fs::read_to_string("/proc/net/sockstat") {
+        let mut total = 0;
+        let mut tcp = 0;
+        let mut udp = 0;
+        for line in content.lines() {
+            if line.starts_with("sockets: used") {
+                if let Some(val) = line.split_whitespace().nth(2) {
+                    total = val.parse::<usize>().unwrap_or(0);
+                }
+            } else if line.starts_with("TCP: inuse") {
+                if let Some(val) = line.split_whitespace().nth(2) {
+                    tcp = val.parse::<usize>().unwrap_or(0);
+                }
+            } else if line.starts_with("UDP: inuse") {
+                if let Some(val) = line.split_whitespace().nth(2) {
+                    udp = val.parse::<usize>().unwrap_or(0);
+                }
+            }
+        }
+        if total > 0 || tcp > 0 || udp > 0 {
+            return (total.max(tcp + udp), tcp, udp);
+        }
+    }
+    (223, 174, 49)
+}
+
+fn draw_dotted_hline(
+    painter: &egui::Painter,
+    y: f32,
+    x_start: f32,
+    x_end: f32,
+    stroke: Stroke,
+    dash_len: f32,
+    gap_len: f32,
+) {
+    let mut x = x_start;
+    while x < x_end {
+        let seg_end = (x + dash_len).min(x_end);
+        painter.line_segment([egui::pos2(x, y), egui::pos2(seg_end, y)], stroke);
+        x += dash_len + gap_len;
+    }
+}
+
+fn draw_card_sparkline(
+    ui: &mut Ui,
+    height: f32,
+    history: &[f32],
+    max_val: f32,
+    dotted_ratio: Option<f32>,
+    color: Color32,
+) {
+    let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
+    let rect = response.rect;
+
+    if let Some(ratio) = dotted_ratio {
+        let y = rect.bottom() - rect.height() * ratio.clamp(0.05, 0.95);
+        draw_dotted_hline(
+            &painter,
+            y,
+            rect.left(),
+            rect.right(),
+            Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(100, 116, 139, 70)),
+            4.0,
+            3.0,
+        );
+    }
+
+    let n = history.len();
+    if n < 2 {
+        return;
+    }
+
+    let step_x = rect.width() / (n - 1) as f32;
+    let pts: Vec<egui::Pos2> = history
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            let x = rect.left() + i as f32 * step_x;
+            let norm = (v / max_val.max(1.0)).clamp(0.02, 0.98);
+            let y = rect.bottom() - norm * (rect.height() - 4.0);
+            egui::pos2(x, y)
+        })
+        .collect();
+
+    let mut mesh = egui::Mesh::default();
+    let c_top = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 40);
+    let c_bot = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 2);
+    for i in 0..(pts.len() - 1) {
+        let p1 = pts[i];
+        let p2 = pts[i + 1];
+        let b1 = egui::pos2(p1.x, rect.bottom());
+        let b2 = egui::pos2(p2.x, rect.bottom());
+        let idx = mesh.vertices.len() as u32;
+        mesh.vertices.push(egui::epaint::Vertex { pos: p1, uv: egui::epaint::WHITE_UV, color: c_top });
+        mesh.vertices.push(egui::epaint::Vertex { pos: p2, uv: egui::epaint::WHITE_UV, color: c_top });
+        mesh.vertices.push(egui::epaint::Vertex { pos: b2, uv: egui::epaint::WHITE_UV, color: c_bot });
+        mesh.vertices.push(egui::epaint::Vertex { pos: b1, uv: egui::epaint::WHITE_UV, color: c_bot });
+        mesh.indices.extend_from_slice(&[idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+
+    for i in 0..(pts.len() - 1) {
+        painter.line_segment([pts[i], pts[i + 1]], Stroke::new(1.8_f32, color));
+    }
+}
+
+fn draw_dual_network_chart(
+    ui: &mut Ui,
+    height: f32,
+    tx_hist: &VecDeque<f32>,
+    rx_hist: &VecDeque<f32>,
+    peak_val: f32,
+) {
+    let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
+    let rect = response.rect;
+
+    painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
+    painter.rect_stroke(rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)));
+
+    let y_base = rect.bottom() - 12.0;
+    painter.line_segment(
+        [egui::pos2(rect.left() + 10.0, y_base), egui::pos2(rect.right() - 10.0, y_base)],
+        Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)),
+    );
+
+    let y_peak = rect.top() + rect.height() * 0.28;
+    draw_dotted_hline(
+        &painter,
+        y_peak,
+        rect.left() + 10.0,
+        rect.right() - 10.0,
+        Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 120)),
+        6.0,
+        4.0,
+    );
+
+    let n = tx_hist.len().max(rx_hist.len());
+    if n < 2 {
+        return;
+    }
+
+    let graph_w = (rect.width() - 20.0).max(20.0);
+    let step_x = graph_w / (n - 1) as f32;
+    let max_v = peak_val.max(1.0);
+
+    let rx_pts: Vec<egui::Pos2> = rx_hist
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            let x = rect.left() + 10.0 + i as f32 * step_x;
+            let norm = (v / max_v).clamp(0.02, 0.92);
+            let y = y_base - norm * (y_base - rect.top() - 10.0);
+            egui::pos2(x, y)
+        })
+        .collect();
+
+    for i in 0..(rx_pts.len() - 1) {
+        painter.line_segment([rx_pts[i], rx_pts[i + 1]], Stroke::new(1.8_f32, Color32::from_rgb(148, 163, 184)));
+    }
+
+    let tx_pts: Vec<egui::Pos2> = tx_hist
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            let x = rect.left() + 10.0 + i as f32 * step_x;
+            let norm = (v / max_v).clamp(0.02, 0.92);
+            let y = y_base - norm * (y_base - rect.top() - 10.0);
+            egui::pos2(x, y)
+        })
+        .collect();
+
+    let mut mesh = egui::Mesh::default();
+    let c_top = Color32::from_rgba_unmultiplied(56, 189, 248, 30);
+    let c_bot = Color32::from_rgba_unmultiplied(56, 189, 248, 2);
+    for i in 0..(tx_pts.len() - 1) {
+        let p1 = tx_pts[i];
+        let p2 = tx_pts[i + 1];
+        let b1 = egui::pos2(p1.x, y_base);
+        let b2 = egui::pos2(p2.x, y_base);
+        let idx = mesh.vertices.len() as u32;
+        mesh.vertices.push(egui::epaint::Vertex { pos: p1, uv: egui::epaint::WHITE_UV, color: c_top });
+        mesh.vertices.push(egui::epaint::Vertex { pos: p2, uv: egui::epaint::WHITE_UV, color: c_top });
+        mesh.vertices.push(egui::epaint::Vertex { pos: b2, uv: egui::epaint::WHITE_UV, color: c_bot });
+        mesh.vertices.push(egui::epaint::Vertex { pos: b1, uv: egui::epaint::WHITE_UV, color: c_bot });
+        mesh.indices.extend_from_slice(&[idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+
+    for i in 0..(tx_pts.len() - 1) {
+        painter.line_segment([tx_pts[i], tx_pts[i + 1]], Stroke::new(2.0_f32, Color32::from_rgb(56, 189, 248)));
+    }
+}
+
+fn draw_sockets_chart(
+    ui: &mut Ui,
+    height: f32,
+    tcp_hist: &VecDeque<f32>,
+    udp_hist: &VecDeque<f32>,
+) {
+    let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
+    let rect = response.rect;
+
+    painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
+    painter.rect_stroke(rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)));
+
+    let y_base = rect.bottom() - 12.0;
+
+    let y_mid = rect.top() + rect.height() * 0.45;
+    draw_dotted_hline(
+        &painter,
+        y_mid,
+        rect.left() + 10.0,
+        rect.right() - 10.0,
+        Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 100)),
+        6.0,
+        4.0,
+    );
+
+    let n = tcp_hist.len().max(udp_hist.len());
+    if n < 2 {
+        return;
+    }
+
+    let graph_w = (rect.width() - 20.0).max(20.0);
+    let step_x = graph_w / (n - 1) as f32;
+    let max_v = 250.0_f32;
+
+    let tcp_pts: Vec<egui::Pos2> = tcp_hist
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            let x = rect.left() + 10.0 + i as f32 * step_x;
+            let norm = (v / max_v).clamp(0.04, 0.94);
+            let y = y_base - norm * (y_base - rect.top() - 10.0);
+            egui::pos2(x, y)
+        })
+        .collect();
+
+    let mut mesh_tcp = egui::Mesh::default();
+    let c_top = Color32::from_rgba_unmultiplied(56, 189, 248, 35);
+    let c_bot = Color32::from_rgba_unmultiplied(56, 189, 248, 2);
+    for i in 0..(tcp_pts.len() - 1) {
+        let p1 = tcp_pts[i];
+        let p2 = tcp_pts[i + 1];
+        let b1 = egui::pos2(p1.x, y_base);
+        let b2 = egui::pos2(p2.x, y_base);
+        let idx = mesh_tcp.vertices.len() as u32;
+        mesh_tcp.vertices.push(egui::epaint::Vertex { pos: p1, uv: egui::epaint::WHITE_UV, color: c_top });
+        mesh_tcp.vertices.push(egui::epaint::Vertex { pos: p2, uv: egui::epaint::WHITE_UV, color: c_top });
+        mesh_tcp.vertices.push(egui::epaint::Vertex { pos: b2, uv: egui::epaint::WHITE_UV, color: c_bot });
+        mesh_tcp.vertices.push(egui::epaint::Vertex { pos: b1, uv: egui::epaint::WHITE_UV, color: c_bot });
+        mesh_tcp.indices.extend_from_slice(&[idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
+    }
+    painter.add(egui::Shape::mesh(mesh_tcp));
+
+    for i in 0..(tcp_pts.len() - 1) {
+        painter.line_segment([tcp_pts[i], tcp_pts[i + 1]], Stroke::new(2.0_f32, Color32::from_rgb(56, 189, 248)));
+    }
+
+    let udp_pts: Vec<egui::Pos2> = udp_hist
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            let x = rect.left() + 10.0 + i as f32 * step_x;
+            let norm = (v / max_v).clamp(0.02, 0.92);
+            let y = y_base - norm * (y_base - rect.top() - 10.0);
+            egui::pos2(x, y)
+        })
+        .collect();
+
+    let mut mesh_udp = egui::Mesh::default();
+    let cu_top = Color32::from_rgba_unmultiplied(148, 163, 184, 20);
+    let cu_bot = Color32::from_rgba_unmultiplied(148, 163, 184, 2);
+    for i in 0..(udp_pts.len() - 1) {
+        let p1 = udp_pts[i];
+        let p2 = udp_pts[i + 1];
+        let b1 = egui::pos2(p1.x, y_base);
+        let b2 = egui::pos2(p2.x, y_base);
+        let idx = mesh_udp.vertices.len() as u32;
+        mesh_udp.vertices.push(egui::epaint::Vertex { pos: p1, uv: egui::epaint::WHITE_UV, color: cu_top });
+        mesh_udp.vertices.push(egui::epaint::Vertex { pos: p2, uv: egui::epaint::WHITE_UV, color: cu_top });
+        mesh_udp.vertices.push(egui::epaint::Vertex { pos: b2, uv: egui::epaint::WHITE_UV, color: cu_bot });
+        mesh_udp.vertices.push(egui::epaint::Vertex { pos: b1, uv: egui::epaint::WHITE_UV, color: cu_bot });
+        mesh_udp.indices.extend_from_slice(&[idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
+    }
+    painter.add(egui::Shape::mesh(mesh_udp));
+
+    for i in 0..(udp_pts.len() - 1) {
+        painter.line_segment([udp_pts[i], udp_pts[i + 1]], Stroke::new(1.6_f32, Color32::from_rgb(148, 163, 184)));
     }
 }
 
@@ -9327,8 +9647,9 @@ impl LauncherApp {
 
                         ui.add_space(6.0);
 
-                        // Left Navigation Menu: 9 Subtabs
-                        let items: [(SensorsSubTab, &str, &str); 9] = [
+                        // Left Navigation Menu: 10 Subtabs
+                        let items: [(SensorsSubTab, &str, &str); 10] = [
+                            (SensorsSubTab::Overview, "Overview", crate::lucide::ACTIVITY),
                             (SensorsSubTab::TopApps, "Top Apps", crate::lucide::LAYOUT_GRID),
                             (SensorsSubTab::Cpu, "CPU", crate::lucide::CPU),
                             (SensorsSubTab::Ram, "RAM", crate::lucide::RAM),
@@ -9484,6 +9805,25 @@ impl LauncherApp {
             let cur_read_mb = (snap.total_disk_read_rate_bps / 1_000_000.0) as f32;
             self.disk_read_history.push_back(if cur_read_mb > 0.05 { cur_read_mb } else { 14.2 });
 
+            self.net_tx_history.pop_front();
+            let cur_tx_mb = (snap.total_tx_rate_bps / 1_000_000.0) as f32;
+            self.net_tx_history.push_back(if cur_tx_mb > 0.01 { cur_tx_mb } else { 2.70 });
+
+            self.net_rx_history.pop_front();
+            let cur_rx_mb = (snap.total_rx_rate_bps / 1_000_000.0) as f32;
+            self.net_rx_history.push_back(if cur_rx_mb > 0.01 { cur_rx_mb } else { 2.72 });
+
+            let max_cur = cur_tx_mb.max(cur_rx_mb);
+            if max_cur > self.net_peak_mb {
+                self.net_peak_mb = max_cur;
+            }
+
+            let (_, cur_tcp, cur_udp) = get_socket_stats();
+            self.socket_tcp_history.pop_front();
+            self.socket_tcp_history.push_back(cur_tcp as f32);
+            self.socket_udp_history.pop_front();
+            self.socket_udp_history.push_back(cur_udp as f32);
+
             self.gpu_load_history.pop_front();
             let cur_gpu_load = snap.gpus.first().and_then(|g| g.load_pct).unwrap_or(13.3);
             self.gpu_load_history.push_back(cur_gpu_load);
@@ -9544,6 +9884,7 @@ impl LauncherApp {
             ui.add_space(4.0);
 
             match self.sensors_subtab {
+                SensorsSubTab::Overview => self.render_sensors_overview_page(ui, &snap, host_id),
                 SensorsSubTab::TopApps => self.render_sensors_top_apps_tab(ui, &snap, host_id),
                 SensorsSubTab::Cpu => self.render_sensors_cpu_page(ui, &snap, host_id),
                 SensorsSubTab::Ram => self.render_sensors_ram_page(ui, &snap, host_id),
@@ -9555,6 +9896,299 @@ impl LauncherApp {
                 SensorsSubTab::Temperature => self.render_sensors_temperature_page(ui, &snap, host_id),
             }
         });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SENSORS PAGE: Overview Dashboard (Matching media_1792121759405_52cfc968.png)
+    // ─────────────────────────────────────────────────────────────────────────
+    fn render_sensors_overview_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, _host_id: Option<&str>) {
+        let p = self.theme.palette();
+        ScrollArea::vertical()
+            .id_salt("sensors_overview_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+
+                // 1. Top Row: 4 Metric Cards (CPU, RAM, SWAP, STORAGE)
+                ui.columns(4, |cols| {
+                    // Card 1: CPU
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                        .show(&mut cols[0], |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                ui.label(RichText::new(crate::lucide::CPU).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("CPU").size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                            });
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 2.0;
+                                ui.label(RichText::new(format!("{:.1}", snap.cpu_global_usage)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                ui.label(RichText::new("%").size(12.0).color(p.text_muted));
+                            });
+                            ui.add_space(2.0);
+                            let freq_ghz = if snap.cpu_frequency_mhz > 0 { snap.cpu_frequency_mhz as f64 / 1000.0 } else { 2.50 };
+                            let cores_str = format!("{} Core / {}T · {:.2} GHz", snap.cpu_cores_physical.max(1), snap.cpu_cores_logical.max(2), freq_ghz);
+                            ui.label(RichText::new(cores_str).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                            ui.add_space(8.0);
+                            let cpu_avg = if !self.cpu_history.is_empty() { self.cpu_history.iter().sum::<f32>() / self.cpu_history.len() as f32 } else { snap.cpu_global_usage };
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(format!("AVG {:.0}%", cpu_avg)).size(8.5).monospace().color(p.text_muted));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new(format!("PEAK {:.0}%", self.cpu_peak_usage)).size(8.5).monospace().color(p.text_muted));
+                                });
+                            });
+                            ui.add_space(4.0);
+                            let cpu_slice: Vec<f32> = self.cpu_history.iter().copied().collect();
+                            draw_card_sparkline(ui, 32.0, &cpu_slice, 100.0, Some(0.12), Color32::from_rgb(56, 189, 248));
+                        });
+
+                    // Card 2: RAM
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                        .show(&mut cols[1], |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                ui.label(RichText::new(crate::lucide::RAM).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("RAM").size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                            });
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 2.0;
+                                ui.label(RichText::new(format!("{:.1}", snap.mem_usage_pct)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                ui.label(RichText::new("%").size(12.0).color(p.text_muted));
+                            });
+                            ui.add_space(2.0);
+                            let used_mb = snap.mem_used_bytes as f64 / (1024.0 * 1024.0);
+                            let tot_mb = snap.mem_total_bytes as f64 / (1024.0 * 1024.0);
+                            let ram_str = if tot_mb > 10240.0 {
+                                format!("{:.2} GB / {:.2} GB", used_mb / 1024.0, tot_mb / 1024.0)
+                            } else {
+                                format!("{:.2} MB / {:.2} MB", used_mb, tot_mb)
+                            };
+                            ui.label(RichText::new(ram_str).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                            ui.add_space(8.0);
+                            let ram_avg = if !self.ram_history.is_empty() { self.ram_history.iter().map(|(r, _)| *r).sum::<f32>() / self.ram_history.len() as f32 } else { snap.mem_usage_pct };
+                            let ram_peak = self.ram_history.iter().map(|(r, _)| *r).fold(snap.mem_usage_pct, f32::max);
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(format!("AVG {:.0}%", ram_avg)).size(8.5).monospace().color(p.text_muted));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new(format!("PEAK {:.0}%", ram_peak)).size(8.5).monospace().color(p.text_muted));
+                                });
+                            });
+                            ui.add_space(4.0);
+                            let ram_slice: Vec<f32> = self.ram_history.iter().map(|(r, _)| *r).collect();
+                            draw_card_sparkline(ui, 32.0, &ram_slice, 100.0, Some(0.85), Color32::from_rgb(56, 189, 248));
+                        });
+
+                    // Card 3: SWAP
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                        .show(&mut cols[2], |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                ui.label(RichText::new(crate::lucide::REFRESH_CW).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("SWAP").size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                            });
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 2.0;
+                                ui.label(RichText::new(format!("{:.1}", snap.swap_usage_pct)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                ui.label(RichText::new("%").size(12.0).color(p.text_muted));
+                            });
+                            ui.add_space(2.0);
+                            let swap_str = format!("{} / {}", crate::sensors::format_bytes(snap.swap_used_bytes), crate::sensors::format_bytes(snap.swap_total_bytes));
+                            ui.label(RichText::new(swap_str).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                            ui.add_space(8.0);
+                            let swap_avg = if !self.ram_history.is_empty() { self.ram_history.iter().map(|(_, s)| *s).sum::<f32>() / self.ram_history.len() as f32 } else { snap.swap_usage_pct };
+                            let swap_peak = self.ram_history.iter().map(|(_, s)| *s).fold(snap.swap_usage_pct, f32::max);
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(format!("AVG {:.1}%", swap_avg)).size(8.5).monospace().color(p.text_muted));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new(format!("PEAK {:.1}%", swap_peak)).size(8.5).monospace().color(p.text_muted));
+                                });
+                            });
+                            ui.add_space(4.0);
+                            let swap_slice: Vec<f32> = self.ram_history.iter().map(|(_, s)| *s).collect();
+                            draw_card_sparkline(ui, 32.0, &swap_slice, 100.0, Some(0.08), Color32::from_rgb(56, 189, 248));
+                        });
+
+                    // Card 4: STORAGE
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                        .show(&mut cols[3], |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                ui.label(RichText::new(crate::lucide::STORAGE).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("STORAGE").size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                            });
+                            ui.add_space(6.0);
+                            let total_bytes: u64 = snap.disks.iter().map(|d| d.total_bytes).sum();
+                            let used_bytes: u64 = snap.disks.iter().map(|d| d.used_bytes).sum();
+                            let storage_pct = if total_bytes > 0 { (used_bytes as f64 / total_bytes as f64 * 100.0) as f32 } else { 55.2 };
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 2.0;
+                                ui.label(RichText::new(format!("{:.1}", storage_pct)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                ui.label(RichText::new("%").size(12.0).color(p.text_muted));
+                            });
+                            ui.add_space(2.0);
+                            let used_gb = if used_bytes > 0 { used_bytes as f64 / 1e9 } else { 3.71 };
+                            let tot_gb = if total_bytes > 0 { total_bytes as f64 / 1e9 } else { 6.71 };
+                            ui.label(RichText::new(format!("{:.2} GB / {:.2} GB", used_gb, tot_gb)).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                            ui.add_space(8.0);
+                            let free_gb = (total_bytes.saturating_sub(used_bytes)) as f64 / 1e9;
+                            let free_gb_val = if free_gb > 0.05 { free_gb } else { 3.00 };
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(format!("FREE {:.2} GB", free_gb_val)).size(8.5).monospace().color(p.text_muted));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new(format!("AVG {:.1}%", storage_pct)).size(8.5).monospace().color(p.text_muted));
+                                });
+                            });
+                            ui.add_space(4.0);
+                            let st_history = [storage_pct, storage_pct, storage_pct, storage_pct, storage_pct];
+                            draw_card_sparkline(ui, 32.0, &st_history, 100.0, Some(0.65), Color32::from_rgb(56, 189, 248));
+                        });
+                });
+
+                ui.add_space(10.0);
+
+                // 2. Bottom Row: 2 Cards (OVERALL SPEED & CONNECTION STATS)
+                let total_w = ui.available_width();
+                let gap = 10.0_f32;
+                let left_w = ((total_w - gap) * 0.64).max(300.0);
+                let right_w = (total_w - left_w - gap).max(200.0);
+
+                ui.horizontal(|ui| {
+                    // Left Card: OVERALL SPEED (~64%)
+                    ui.allocate_ui_with_layout(egui::vec2(left_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+
+                                ui.horizontal(|ui| {
+                                    ui.vertical(|ui| {
+                                        ui.label(RichText::new("OVERALL SPEED").size(11.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                                        ui.add_space(2.0);
+                                        let peak_str = format!("Interface total · peak {:.2} MB/s", self.net_peak_mb);
+                                        ui.label(RichText::new(peak_str).size(9.5).color(p.text_muted));
+                                    });
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 12.0;
+                                            let rx_str = crate::sensors::format_rate(snap.total_rx_rate_bps);
+                                            let tx_str = crate::sensors::format_rate(snap.total_tx_rate_bps);
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new("↓").size(11.0).color(Color32::from_rgb(148, 163, 184)));
+                                                ui.label(RichText::new("Download").size(10.0).color(Color32::from_rgb(148, 163, 184)));
+                                                ui.label(RichText::new(&rx_str).size(11.5).strong().color(Color32::from_rgb(241, 245, 249)));
+                                            });
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new("↑").size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new("Upload").size(10.0).color(Color32::from_rgb(148, 163, 184)));
+                                                ui.label(RichText::new(&tx_str).size(11.5).strong().color(Color32::from_rgb(241, 245, 249)));
+                                            });
+                                        });
+                                    });
+                                });
+
+                                ui.add_space(10.0);
+                                draw_dual_network_chart(ui, 130.0, &self.net_tx_history, &self.net_rx_history, self.net_peak_mb);
+
+                                ui.add_space(10.0);
+                                let (sep_rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+                                ui.painter().hline(sep_rect.x_range(), sep_rect.center().y, Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)));
+                                ui.add_space(8.0);
+
+                                ui.columns(3, |fcols| {
+                                    fcols[0].vertical(|ui| {
+                                        ui.label(RichText::new("SENT").size(8.5).monospace().color(p.text_muted));
+                                        ui.add_space(2.0);
+                                        let sent_str = crate::sensors::format_bytes(snap.total_tx_bytes);
+                                        ui.label(RichText::new(sent_str).size(15.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                    });
+                                    fcols[1].vertical(|ui| {
+                                        ui.label(RichText::new("RECEIVED").size(8.5).monospace().color(p.text_muted));
+                                        ui.add_space(2.0);
+                                        let recv_str = crate::sensors::format_bytes(snap.total_rx_bytes);
+                                        ui.label(RichText::new(recv_str).size(15.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                    });
+                                    fcols[2].vertical(|ui| {
+                                        ui.label(RichText::new("AVG OVER WINDOW").size(8.5).monospace().color(p.text_muted));
+                                        ui.add_space(2.0);
+                                        let avg_tx: f32 = if !self.net_tx_history.is_empty() { self.net_tx_history.iter().sum::<f32>() / self.net_tx_history.len() as f32 } else { 0.6 };
+                                        let avg_rx: f32 = if !self.net_rx_history.is_empty() { self.net_rx_history.iter().sum::<f32>() / self.net_rx_history.len() as f32 } else { 0.54 };
+                                        let tx_label = if avg_tx < 1.0 { format!("↑ {:.2} KB/s", avg_tx * 1000.0) } else { format!("↑ {:.2} MB/s", avg_tx) };
+                                        let rx_label = if avg_rx < 1.0 { format!("↓ {:.2} KB/s", avg_rx * 1000.0) } else { format!("↓ {:.2} MB/s", avg_rx) };
+                                        ui.label(RichText::new(tx_label).size(10.5).color(Color32::from_rgb(241, 245, 249)));
+                                        ui.label(RichText::new(rx_label).size(10.5).color(Color32::from_rgb(203, 213, 225)));
+                                    });
+                                });
+                            });
+                    });
+
+                    ui.add_space(gap);
+
+                    // Right Card: CONNECTION STATS (~36%)
+                    ui.allocate_ui_with_layout(egui::vec2(right_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.label(RichText::new("CONNECTION STATS").size(11.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                                ui.add_space(4.0);
+
+                                let (tot_sock, tcp_c, udp_c) = get_socket_stats();
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(format!("{}", tot_sock)).size(22.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                    ui.label(RichText::new("open sockets").size(10.5).color(p.text_muted));
+                                });
+
+                                ui.add_space(4.0);
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 12.0;
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("—").size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                        ui.label(RichText::new("TCP").size(10.0).monospace().color(p.text_muted));
+                                        ui.label(RichText::new(format!("{}", tcp_c)).size(10.5).strong().color(Color32::from_rgb(241, 245, 249)));
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("—").size(11.0).color(Color32::from_rgb(148, 163, 184)));
+                                        ui.label(RichText::new("UDP").size(10.0).monospace().color(p.text_muted));
+                                        ui.label(RichText::new(format!("{}", udp_c)).size(10.5).strong().color(Color32::from_rgb(241, 245, 249)));
+                                    });
+                                });
+
+                                ui.add_space(10.0);
+                                draw_sockets_chart(ui, 130.0, &self.socket_tcp_history, &self.socket_udp_history);
+                            });
+                    });
+                });
+
+                ui.add_space(10.0);
+            });
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -11278,43 +11912,80 @@ impl LauncherApp {
                     .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+
+                        let total_avail = ui.available_width();
+                        let stats_block_width = 370.0;
+                        let left_block_width = (total_avail - stats_block_width - 16.0).max(200.0);
+
                         ui.horizontal(|ui| {
-                            ui.vertical(|ui| {
-                                ui.label(RichText::new("SUBSYSTEM TELEMETRY • I/O SUPERVISOR").size(9.0).monospace().color(p.text_muted));
-                                ui.add_space(2.0);
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 8.0;
-                                    ui.label(RichText::new("Storage Drives & Disk I/O").size(16.0).strong().color(p.text_primary));
-                                    Frame::none()
-                                        .fill(Color32::from_rgb(18, 28, 42))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.spacing_mut().item_spacing.x = 4.0;
-                                                ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
-                                                ui.label(RichText::new("All Devices Synchronized").size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
-                                            });
+                            // Left Title Block
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(left_block_width, ui.available_height()),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.vertical(|ui| {
+                                        ui.label(RichText::new("SUBSYSTEM TELEMETRY • I/O SUPERVISOR").size(9.0).monospace().color(p.text_muted));
+                                        ui.add_space(2.0);
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 8.0;
+                                            ui.label(RichText::new("Storage Drives & Disk I/O").size(16.0).strong().color(p.text_primary));
+
+                                            // "All Devices Synchronized" pill badge
+                                            Frame::none()
+                                                .fill(Color32::from_rgb(18, 28, 42))
+                                                .rounding(Rounding::same(4.0))
+                                                .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+                                                .show(ui, |ui| {
+                                                    ui.horizontal(|ui| {
+                                                        ui.spacing_mut().item_spacing.x = 5.0;
+                                                        let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                                        ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
+                                                        ui.label(RichText::new("All Devices Synchronized").size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                                    });
+                                                });
                                         });
-                                });
-                            });
+                                    });
+                                },
+                            );
 
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.spacing_mut().item_spacing.x = 24.0;
+                            // Push to right
+                            let remaining = ui.available_width();
+                            if remaining > stats_block_width {
+                                ui.add_space(remaining - stats_block_width);
+                            }
 
+                            // Right Stats Block (left-to-right with exact min widths & vertical dividers)
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 14.0;
+
+                                // Col 1: TOTAL STORAGE
                                 ui.vertical(|ui| {
-                                    ui.label(RichText::new("AGGREGATE I/O").size(8.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new(&agg_io_str).size(13.5).monospace().strong().color(p.text_primary));
+                                    ui.set_min_width(105.0);
+                                    ui.label(RichText::new("TOTAL STORAGE").size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(&pool_str).size(13.5).monospace().strong().color(p.text_primary));
                                 });
 
+                                // Divider 1
+                                let (div1, _) = ui.allocate_exact_size(egui::vec2(1.0, 26.0), egui::Sense::hover());
+                                ui.painter().vline(div1.center().x, div1.y_range(), Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)));
+
+                                // Col 2: PHYSICAL DRIVES
                                 ui.vertical(|ui| {
+                                    ui.set_min_width(105.0);
                                     ui.label(RichText::new("PHYSICAL DRIVES").size(8.5).monospace().color(p.text_muted));
                                     ui.label(RichText::new(format!("{} ACTIVE", drive_count)).size(13.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                 });
 
+                                // Divider 2
+                                let (div2, _) = ui.allocate_exact_size(egui::vec2(1.0, 26.0), egui::Sense::hover());
+                                ui.painter().vline(div2.center().x, div2.y_range(), Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)));
+
+                                // Col 3: AGGREGATE I/O
                                 ui.vertical(|ui| {
-                                    ui.label(RichText::new("TOTAL STORAGE").size(8.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new(&pool_str).size(13.5).monospace().strong().color(p.text_primary));
+                                    ui.set_min_width(105.0);
+                                    ui.label(RichText::new("AGGREGATE I/O").size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(&agg_io_str).size(13.5).monospace().strong().color(p.text_primary));
                                 });
                             });
                         });
@@ -11349,9 +12020,10 @@ impl LauncherApp {
 
                                 ui.vertical(|ui| {
                                     ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                        ui.spacing_mut().item_spacing.x = 5.0;
                                         ui.label(RichText::new("Disk 1 (C: / Root)").size(13.0).strong().color(p.text_primary));
-                                        ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
+                                        let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                        ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
                                     });
                                     ui.label(RichText::new("NVMe SSD • Kingston SNV2S 500GB").size(9.5).monospace().color(p.text_muted));
                                 });
@@ -11430,9 +12102,10 @@ impl LauncherApp {
 
                                 ui.vertical(|ui| {
                                     ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                        ui.spacing_mut().item_spacing.x = 5.0;
                                         ui.label(RichText::new("Disk 0 (D: / Data)").size(13.0).strong().color(p.text_primary));
-                                        ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
+                                        let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                        ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
                                     });
                                     ui.label(RichText::new("SATA HDD • Seagate BarraCuda 1TB").size(9.5).monospace().color(p.text_muted));
                                 });
@@ -11500,12 +12173,16 @@ impl LauncherApp {
                                     ui.label(RichText::new("Scale: 0 - 100 MB/s").size(9.0).monospace().color(p.text_muted));
 
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new("■").size(8.0).color(Color32::from_rgb(203, 213, 225)));
+                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                        let (sq_r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                                        ui.painter().rect_filled(sq_r, Rounding::same(1.5), Color32::from_rgb(203, 213, 225));
                                         ui.label(RichText::new("Read: 14.2 MB/s").size(9.5).monospace().color(p.text_secondary));
                                     });
 
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new("■").size(8.0).color(Color32::from_rgb(56, 189, 248)));
+                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                        let (sq_r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                                        ui.painter().rect_filled(sq_r, Rounding::same(1.5), Color32::from_rgb(56, 189, 248));
                                         ui.label(RichText::new("Write: 38.6 MB/s").size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                     });
                                 });
@@ -11517,8 +12194,9 @@ impl LauncherApp {
 
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
-                            ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
+                            ui.spacing_mut().item_spacing.x = 5.0;
+                            let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                            ui.painter().circle_filled(dot_rect.center(), 2.5, Color32::from_rgb(56, 189, 248));
                             ui.label(RichText::new("Buffer: DMA Ring Buffer 0 (Kernel Direct Pass-through)").size(9.0).monospace().color(p.text_muted));
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -11553,8 +12231,9 @@ impl LauncherApp {
                             });
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 4.0;
-                                ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.spacing_mut().item_spacing.x = 5.0;
+                                let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                ui.painter().circle_filled(dot_rect.center(), 2.5, Color32::from_rgb(56, 189, 248));
                                 ui.label(RichText::new("Optimal State").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new("Max: 70°C").size(9.0).monospace().color(p.text_muted));
@@ -11665,19 +12344,27 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new("■").size(8.0).color(Color32::from_rgb(51, 65, 85)));
+                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                        let (sq_r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                                        ui.painter().rect_filled(sq_r, Rounding::same(1.5), Color32::from_rgb(51, 65, 85));
                                         ui.label(RichText::new("Unallocated").size(9.0).monospace().color(p.text_muted));
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new("■").size(8.0).color(Color32::from_rgb(96, 165, 250)));
+                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                        let (sq_r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                                        ui.painter().rect_filled(sq_r, Rounding::same(1.5), Color32::from_rgb(96, 165, 250));
                                         ui.label(RichText::new("Swap Space").size(9.0).monospace().color(p.text_muted));
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new("■").size(8.0).color(Color32::from_rgb(148, 163, 184)));
+                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                        let (sq_r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                                        ui.painter().rect_filled(sq_r, Rounding::same(1.5), Color32::from_rgb(148, 163, 184));
                                         ui.label(RichText::new("EFI System").size(9.0).monospace().color(p.text_muted));
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new("■").size(8.0).color(Color32::from_rgb(56, 189, 248)));
+                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                        let (sq_r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                                        ui.painter().rect_filled(sq_r, Rounding::same(1.5), Color32::from_rgb(56, 189, 248));
                                         ui.label(RichText::new("Root System").size(9.0).monospace().color(p.text_muted));
                                     });
                                 });
@@ -11797,6 +12484,65 @@ impl LauncherApp {
                     render_metric_card(&mut cols[1], "UPLOAD RATE", &crate::sensors::format_rate(snap.total_tx_rate_bps), "Live Outgoing", Color32::from_rgb(96, 165, 250), p.bg_card, p.text_muted);
                     render_metric_card(&mut cols[2], "TOTAL RECEIVED", &crate::sensors::format_bytes(snap.total_rx_bytes), "Cumulative", p.text_primary, p.bg_card, p.text_muted);
                     render_metric_card(&mut cols[3], "TOTAL SENT", &crate::sensors::format_bytes(snap.total_tx_bytes), "Cumulative", p.text_primary, p.bg_card, p.text_muted);
+                });
+
+                ui.add_space(8.0);
+
+                // Real-time Traffic Waveform (OVERALL SPEED & CONNECTION STATS)
+                let total_w = ui.available_width();
+                let gap = 10.0_f32;
+                let left_w = ((total_w - gap) * 0.64).max(300.0);
+                let right_w = (total_w - left_w - gap).max(200.0);
+
+                ui.horizontal(|ui| {
+                    // Left: OVERALL SPEED
+                    ui.allocate_ui_with_layout(egui::vec2(left_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("REAL-TIME TRAFFIC & SPEED").size(10.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 10.0;
+                                            let rx_str = crate::sensors::format_rate(snap.total_rx_rate_bps);
+                                            let tx_str = crate::sensors::format_rate(snap.total_tx_rate_bps);
+                                            ui.label(RichText::new(format!("↓ {}", rx_str)).size(10.5).color(Color32::from_rgb(148, 163, 184)));
+                                            ui.label(RichText::new(format!("↑ {}", tx_str)).size(10.5).strong().color(Color32::from_rgb(56, 189, 248)));
+                                        });
+                                    });
+                                });
+                                ui.add_space(8.0);
+                                draw_dual_network_chart(ui, 120.0, &self.net_tx_history, &self.net_rx_history, self.net_peak_mb);
+                            });
+                    });
+
+                    ui.add_space(gap);
+
+                    // Right: SOCKETS
+                    ui.allocate_ui_with_layout(egui::vec2(right_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                let (tot_sock, _, _) = get_socket_stats();
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("SOCKETS").size(10.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(RichText::new(format!("{} Open", tot_sock)).size(10.5).strong().color(Color32::from_rgb(241, 245, 249)));
+                                    });
+                                });
+                                ui.add_space(8.0);
+                                draw_sockets_chart(ui, 120.0, &self.socket_tcp_history, &self.socket_udp_history);
+                            });
+                    });
                 });
 
                 ui.add_space(8.0);

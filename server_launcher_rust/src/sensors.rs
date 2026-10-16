@@ -107,6 +107,7 @@ pub struct NetInterfaceInfo {
     pub tx_bytes: u64,
     pub rx_rate_bps: f64,
     pub tx_rate_bps: f64,
+    pub is_wireless: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -202,6 +203,15 @@ pub struct SystemSensorsSnapshot {
     // OS info
     pub os_name: String,
     pub os_version: String,
+
+    // CPU Governor
+    pub cpu_governor: Option<String>,
+
+    // System uptime & sockets
+    pub uptime_secs: u64,
+    pub socket_total: usize,
+    pub socket_tcp: usize,
+    pub socket_udp: usize,
 
     pub timestamp: Option<Instant>,
 }
@@ -459,12 +469,24 @@ impl SystemSensorsCollector {
             self.prev_net_rx.insert(name.clone(), rx);
             self.prev_net_tx.insert(name.clone(), tx);
 
+            let is_wireless = {
+                #[cfg(target_os = "linux")]
+                {
+                    Path::new(&format!("/sys/class/net/{}/wireless", name)).exists()
+                        || Path::new(&format!("/sys/class/net/{}/phy80211", name)).exists()
+                        || name.starts_with("wl")
+                }
+                #[cfg(not(target_os = "linux"))]
+                false
+            };
+
             networks.push(NetInterfaceInfo {
                 name: name.clone(),
                 rx_bytes: rx,
                 tx_bytes: tx,
                 rx_rate_bps: rx_rate,
                 tx_rate_bps: tx_rate,
+                is_wireless,
             });
         }
         networks.sort_by(|a, b| a.name.cmp(&b.name));
@@ -587,6 +609,53 @@ impl SystemSensorsCollector {
             top_apps.truncate(150);
         }
 
+        let cpu_governor = {
+            #[cfg(target_os = "linux")]
+            {
+                fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+                    .ok()
+                    .map(|s| s.trim().to_string())
+            }
+            #[cfg(not(target_os = "linux"))]
+            None
+        };
+        let uptime_secs = {
+            #[cfg(target_os = "linux")]
+            {
+                fs::read_to_string("/proc/uptime")
+                    .ok()
+                    .and_then(|s| s.split_whitespace().next().and_then(|v| v.parse::<f64>().ok()))
+                    .map(|s| s as u64)
+                    .unwrap_or(0)
+            }
+            #[cfg(not(target_os = "linux"))]
+            0
+        };
+        let (socket_total, socket_tcp, socket_udp) = {
+            let mut total = 0;
+            let mut tcp = 0;
+            let mut udp = 0;
+            #[cfg(target_os = "linux")]
+            if let Ok(content) = fs::read_to_string("/proc/net/sockstat") {
+                for line in content.lines() {
+                    if line.starts_with("sockets: used") {
+                        if let Some(val) = line.split_whitespace().nth(2) {
+                            total = val.parse::<usize>().unwrap_or(0);
+                        }
+                    } else if line.starts_with("TCP: inuse") {
+                        if let Some(val) = line.split_whitespace().nth(2) {
+                            tcp = val.parse::<usize>().unwrap_or(0);
+                        }
+                    } else if line.starts_with("UDP: inuse") {
+                        if let Some(val) = line.split_whitespace().nth(2) {
+                            udp = val.parse::<usize>().unwrap_or(0);
+                        }
+                    }
+                }
+            }
+            (total.max(tcp + udp), tcp, udp)
+        };
+
         SystemSensorsSnapshot {
             cpu_brand,
             cpu_cores_physical,
@@ -622,6 +691,11 @@ impl SystemSensorsCollector {
             top_apps,
             os_name: System::name().unwrap_or_default(),
             os_version: System::os_version().unwrap_or_default(),
+            cpu_governor,
+            uptime_secs,
+            socket_total,
+            socket_tcp,
+            socket_udp,
             timestamp: Some(now),
         }
     }
@@ -1703,7 +1777,8 @@ try:
                 if len(fields) >= 9:
                     rx = int(fields[0])
                     tx = int(fields[8])
-                    networks.append({"name": ifname, "rx_bytes": rx, "tx_bytes": tx})
+                    is_wl = os.path.exists("/sys/class/net/" + ifname + "/wireless") or os.path.exists("/sys/class/net/" + ifname + "/phy80211") or ifname.startswith(("wl", "wifi"))
+                    networks.append({"name": ifname, "rx_bytes": rx, "tx_bytes": tx, "is_wireless": is_wl})
 except:
     pass
 
@@ -1815,6 +1890,94 @@ if not os_name:
     except:
         pass
 
+uptime = 0
+try:
+    with open("/proc/uptime") as f:
+        uptime = int(float(f.read().split()[0]))
+except:
+    pass
+
+socket_stats = [0, 0, 0]
+try:
+    with open("/proc/net/sockstat") as f:
+        tot = 0
+        tcp = 0
+        udp = 0
+        for line in f:
+            if line.startswith("sockets: used"):
+                tot = int(line.split()[2])
+            elif line.startswith("TCP: inuse"):
+                tcp = int(line.split()[2])
+            elif line.startswith("UDP: inuse"):
+                udp = int(line.split()[2])
+        socket_stats = [max(tot, tcp + udp), tcp, udp]
+except:
+    pass
+
+cpu_governor = ""
+for p in ["/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"]:
+    if os.path.exists(p):
+        try:
+            cpu_governor = open(p).read().strip()
+        except:
+            pass
+
+phys_disks = []
+try:
+    for dev in sorted(glob.glob("/sys/block/*")):
+        dev_name = os.path.basename(dev)
+        if dev_name.startswith(("loop", "ram", "zram", "dm-")):
+            continue
+        if any(dev_name.startswith(pfx) for pfx in ["sd", "vd", "hd", "xvd"]):
+            if dev_name[-1].isdigit():
+                continue
+        elif dev_name.startswith(("nvme", "mmcblk")):
+            if "p" in dev_name:
+                continue
+        sz = 0
+        try:
+            sz = int(open(dev + "/size").read().strip()) * 512
+        except:
+            continue
+        if sz == 0:
+            continue
+        model = "Disk Drive"
+        for mp in [dev + "/device/model", dev + "/device/name"]:
+            if os.path.exists(mp):
+                try:
+                    m = open(mp).read().strip()
+                    if m:
+                        model = m
+                        break
+                except:
+                    pass
+        rot = "1"
+        try:
+            rot = open(dev + "/queue/rotational").read().strip()
+        except:
+            pass
+        is_ssd = (rot == "0") or dev_name.startswith("nvme")
+        parts = []
+        for part in sorted(glob.glob(dev + "/*/partition")):
+            p_dir = os.path.dirname(part)
+            p_name = os.path.basename(p_dir)
+            try:
+                p_num = int(open(part).read().strip())
+                p_sz = int(open(p_dir + "/size").read().strip()) * 512
+                parts.append({"name": p_name, "partition_num": p_num, "size_bytes": p_sz})
+            except:
+                pass
+        phys_disks.append({
+            "name": dev_name,
+            "model": model,
+            "total_bytes": sz,
+            "is_ssd": is_ssd,
+            "partition_count": len(parts),
+            "partitions": parts
+        })
+except:
+    pass
+
 data = {
     "cpu_model": cpu_model,
     "cores": max(cores, 1),
@@ -1839,7 +2002,11 @@ data = {
     },
     "top_apps": top_apps,
     "os_name": os_name,
-    "os_version": os_version
+    "os_version": os_version,
+    "uptime": uptime,
+    "socket_stats": socket_stats,
+    "cpu_governor": cpu_governor,
+    "physical_disks": phys_disks
 }
 print(json.dumps(data))
 '
@@ -2053,12 +2220,14 @@ print(json.dumps(data))
             let tx = n["tx_bytes"].as_u64().unwrap_or(0);
             total_rx_bytes += rx;
             total_tx_bytes += tx;
+            let is_wireless = n["is_wireless"].as_bool().unwrap_or(false);
             networks.push(NetInterfaceInfo {
                 name,
                 rx_bytes: rx,
                 tx_bytes: tx,
                 rx_rate_bps: 0.0,
                 tx_rate_bps: 0.0,
+                is_wireless,
             });
         }
     }
@@ -2086,6 +2255,41 @@ print(json.dumps(data))
         }
     }
 
+    let uptime_secs = parsed["uptime"].as_u64().unwrap_or(0);
+    let socket_total = parsed["socket_stats"].get(0).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let socket_tcp = parsed["socket_stats"].get(1).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let socket_udp = parsed["socket_stats"].get(2).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let cpu_governor = parsed["cpu_governor"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string());
+
+    let mut physical_disks = Vec::new();
+    if let Some(arr) = parsed["physical_disks"].as_array() {
+        for p in arr {
+            let name = p["name"].as_str().unwrap_or("").to_string();
+            let model = p["model"].as_str().unwrap_or("Disk Drive").to_string();
+            let total_bytes = p["total_bytes"].as_u64().unwrap_or(0);
+            let is_ssd = p["is_ssd"].as_bool().unwrap_or(false);
+            let partition_count = p["partition_count"].as_u64().unwrap_or(0) as usize;
+            let mut partitions = Vec::new();
+            if let Some(parts) = p["partitions"].as_array() {
+                for part in parts {
+                    partitions.push(DiskPartitionInfo {
+                        name: part["name"].as_str().unwrap_or("").to_string(),
+                        size_bytes: part["size_bytes"].as_u64().unwrap_or(0),
+                        partition_num: part["partition_num"].as_u64().unwrap_or(0) as u32,
+                    });
+                }
+            }
+            physical_disks.push(PhysicalDiskInfo {
+                name,
+                model,
+                total_bytes,
+                is_ssd,
+                partition_count,
+                partitions,
+            });
+        }
+    }
+
     Ok(SystemSensorsSnapshot {
         cpu_brand,
         cpu_cores_physical: cpu_cores,
@@ -2108,7 +2312,7 @@ print(json.dumps(data))
         gpus,
         power,
         disks,
-        physical_disks: Vec::new(),
+        physical_disks,
         storage_temp,
         total_disk_read_rate_bps,
         total_disk_write_rate_bps,
@@ -2121,6 +2325,11 @@ print(json.dumps(data))
         top_apps,
         os_name: parsed["os_name"].as_str().unwrap_or("").to_string(),
         os_version: parsed["os_version"].as_str().unwrap_or("").to_string(),
+        cpu_governor,
+        uptime_secs,
+        socket_total,
+        socket_tcp,
+        socket_udp,
         timestamp: Some(Instant::now()),
     })
 }

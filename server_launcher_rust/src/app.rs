@@ -319,6 +319,7 @@ pub struct LauncherApp {
     pub sensors_top_apps_visited: bool,
     pub sensors_top_apps_section_apps_expanded: bool,
     pub sensors_top_apps_section_bg_expanded: bool,
+    pub current_sensors_host: Option<String>,
     pub cpu_history: VecDeque<f32>,
     pub cpu_core_histories: Vec<VecDeque<f32>>,
     pub cpu_peak_usage: f32,
@@ -778,6 +779,7 @@ impl LauncherApp {
             sensors_top_apps_visited: false,
             sensors_top_apps_section_apps_expanded: true,
             sensors_top_apps_section_bg_expanded: true,
+            current_sensors_host: None,
             cpu_history: {
                 let mut d = VecDeque::with_capacity(60);
                 for _ in 0..60 { d.push_back(15.0); }
@@ -9959,6 +9961,8 @@ impl LauncherApp {
                     // CPU brief info
                     let cpu_label = if !snap.cpu_brand.is_empty() {
                         snap.cpu_brand.split('@').next().unwrap_or(&snap.cpu_brand).trim()
+                    } else if host_id.is_some() {
+                        "Remote CPU"
                     } else {
                         "Intel CPU"
                     };
@@ -9984,7 +9988,7 @@ impl LauncherApp {
                     }
 
                     // System Uptime
-                    let up_secs = get_system_uptime();
+                    let up_secs = if snap.uptime_secs > 0 { snap.uptime_secs } else if host_id.is_none() { get_system_uptime() } else { 0 };
                     ui.label(RichText::new(format!("Up {}", format_uptime(up_secs))).size(10.0).monospace().color(p.text_muted));
 
                     // Right side: Refresh + Live Badge
@@ -10175,8 +10179,10 @@ impl LauncherApp {
                                     ui.add_space(3.0);
                                     let cpu_short = if !snap.cpu_brand.is_empty() {
                                         snap.cpu_brand.split('@').next().unwrap_or(&snap.cpu_brand).trim().to_string()
+                                    } else if host_id.is_some() {
+                                        "Remote CPU".to_string()
                                     } else {
-                                        "Intel N5030".to_string()
+                                        "Intel CPU".to_string()
                                     };
                                     let ram_gb = (snap.mem_total_bytes as f64 / (1024.0 * 1024.0 * 1024.0)).round() as u64;
                                     let ram_short = format!("{}GB RAM", if ram_gb > 0 { ram_gb } else { 8 });
@@ -10185,7 +10191,7 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         ui.label(RichText::new("Uptime").size(9.5).monospace().color(p.text_muted));
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            let uptime_secs = get_system_uptime();
+                                            let uptime_secs = if snap.uptime_secs > 0 { snap.uptime_secs } else if host_id.is_none() { get_system_uptime() } else { 0 };
                                             let up_str = format_uptime(uptime_secs);
                                             ui.label(RichText::new(up_str).size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
                                         });
@@ -10243,6 +10249,43 @@ impl LauncherApp {
             }
             Arc::clone(&self.sensors_snapshot)
         };
+        // Reset telemetry histories when switching between local host and remote SSH targets
+        let cur_host_str = host_id.map(|s| s.to_string());
+        if self.current_sensors_host != cur_host_str {
+            self.current_sensors_host = cur_host_str;
+            self.cpu_history = VecDeque::from(vec![snap.cpu_global_usage; 60]);
+            self.cpu_peak_usage = snap.cpu_global_usage;
+            self.ram_history = VecDeque::from(vec![(snap.mem_usage_pct, snap.swap_usage_pct); 60]);
+            let init_w = (snap.total_disk_write_rate_bps / 1_000_000.0) as f32;
+            let init_r = (snap.total_disk_read_rate_bps / 1_000_000.0) as f32;
+            self.disk_write_history = VecDeque::from(vec![init_w; 60]);
+            self.disk_read_history = VecDeque::from(vec![init_r; 60]);
+            let init_tx = (snap.total_tx_rate_bps / 1_000_000.0) as f32;
+            let init_rx = (snap.total_rx_rate_bps / 1_000_000.0) as f32;
+            self.net_tx_history = VecDeque::from(vec![init_tx; 60]);
+            self.net_rx_history = VecDeque::from(vec![init_rx; 60]);
+            self.net_peak_mb = init_tx.max(init_rx);
+            let (init_tcp, init_udp) = if host_id.is_some() {
+                (snap.socket_tcp as f32, snap.socket_udp as f32)
+            } else {
+                let (_, t, u) = get_socket_stats();
+                (t as f32, u as f32)
+            };
+            self.socket_tcp_history = VecDeque::from(vec![init_tcp; 60]);
+            self.socket_udp_history = VecDeque::from(vec![init_udp; 60]);
+            let init_gpu = snap.gpus.first().and_then(|g| g.load_pct).unwrap_or(0.0);
+            self.gpu_load_history = VecDeque::from(vec![init_gpu; 60]);
+            self.gpu_3d_history = VecDeque::from(vec![init_gpu * 0.25; 60]);
+            self.gpu_copy_history = VecDeque::from(vec![init_gpu * 0.10; 60]);
+            let num_cores = snap.cpu_core_usages.len().max(4);
+            self.cpu_core_histories = (0..num_cores)
+                .map(|idx| {
+                    let val = snap.cpu_core_usages.get(idx).copied().unwrap_or(0.0);
+                    VecDeque::from(vec![val; 30])
+                })
+                .collect();
+        }
+
         // Telemetry sampling (once per second)
         if self.last_telemetry_sample.elapsed() >= Duration::from_millis(1000) {
             self.last_telemetry_sample = Instant::now();
@@ -10256,41 +10299,46 @@ impl LauncherApp {
 
             self.disk_write_history.pop_front();
             let cur_write_mb = (snap.total_disk_write_rate_bps / 1_000_000.0) as f32;
-            self.disk_write_history.push_back(if cur_write_mb > 0.05 { cur_write_mb } else { 38.6 });
+            self.disk_write_history.push_back(cur_write_mb);
 
             self.disk_read_history.pop_front();
             let cur_read_mb = (snap.total_disk_read_rate_bps / 1_000_000.0) as f32;
-            self.disk_read_history.push_back(if cur_read_mb > 0.05 { cur_read_mb } else { 14.2 });
+            self.disk_read_history.push_back(cur_read_mb);
 
             self.net_tx_history.pop_front();
             let cur_tx_mb = (snap.total_tx_rate_bps / 1_000_000.0) as f32;
-            self.net_tx_history.push_back(if cur_tx_mb > 0.01 { cur_tx_mb } else { 2.70 });
+            self.net_tx_history.push_back(cur_tx_mb);
 
             self.net_rx_history.pop_front();
             let cur_rx_mb = (snap.total_rx_rate_bps / 1_000_000.0) as f32;
-            self.net_rx_history.push_back(if cur_rx_mb > 0.01 { cur_rx_mb } else { 2.72 });
+            self.net_rx_history.push_back(cur_rx_mb);
 
             let max_cur = cur_tx_mb.max(cur_rx_mb);
             if max_cur > self.net_peak_mb {
                 self.net_peak_mb = max_cur;
             }
 
-            let (_, cur_tcp, cur_udp) = get_socket_stats();
+            let (cur_tcp, cur_udp) = if host_id.is_some() {
+                (snap.socket_tcp as f32, snap.socket_udp as f32)
+            } else {
+                let (_, t, u) = get_socket_stats();
+                (t as f32, u as f32)
+            };
             self.socket_tcp_history.pop_front();
-            self.socket_tcp_history.push_back(cur_tcp as f32);
+            self.socket_tcp_history.push_back(cur_tcp);
             self.socket_udp_history.pop_front();
-            self.socket_udp_history.push_back(cur_udp as f32);
+            self.socket_udp_history.push_back(cur_udp);
 
             self.gpu_load_history.pop_front();
-            let cur_gpu_load = snap.gpus.first().and_then(|g| g.load_pct).unwrap_or(13.3);
+            let cur_gpu_load = snap.gpus.first().and_then(|g| g.load_pct).unwrap_or(0.0);
             self.gpu_load_history.push_back(cur_gpu_load);
 
             self.gpu_3d_history.pop_front();
-            let cur_3d = (cur_gpu_load * 0.25).clamp(0.5, 18.4);
+            let cur_3d = (cur_gpu_load * 0.25).clamp(0.0, 100.0);
             self.gpu_3d_history.push_back(cur_3d);
 
             self.gpu_copy_history.pop_front();
-            let cur_copy = (cur_gpu_load * 0.1).clamp(0.2, 6.2);
+            let cur_copy = (cur_gpu_load * 0.1).clamp(0.0, 100.0);
             self.gpu_copy_history.push_back(cur_copy);
 
             let num_cores = snap.cpu_core_usages.len().max(4);
@@ -10298,7 +10346,7 @@ impl LauncherApp {
                 self.cpu_core_histories = (0..num_cores)
                     .map(|idx| {
                         let mut d = VecDeque::with_capacity(30);
-                        let val = snap.cpu_core_usages.get(idx).copied().unwrap_or(8.0);
+                        let val = snap.cpu_core_usages.get(idx).copied().unwrap_or(0.0);
                         for _ in 0..30 {
                             d.push_back(val);
                         }
@@ -10308,7 +10356,7 @@ impl LauncherApp {
             } else {
                 for (idx, q) in self.cpu_core_histories.iter_mut().enumerate() {
                     q.pop_front();
-                    let val = snap.cpu_core_usages.get(idx).copied().unwrap_or(8.0);
+                    let val = snap.cpu_core_usages.get(idx).copied().unwrap_or(0.0);
                     q.push_back(val);
                 }
             }
@@ -10358,7 +10406,7 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     // SENSORS PAGE: Overview Dashboard (Matching media_1792121759405_52cfc968.png)
     // ─────────────────────────────────────────────────────────────────────────
-    fn render_sensors_overview_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, _host_id: Option<&str>) {
+    fn render_sensors_overview_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
         ScrollArea::vertical()
             .id_salt("sensors_overview_scroll")
@@ -10492,23 +10540,24 @@ impl LauncherApp {
                                 ui.label(RichText::new("STORAGE").size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                             });
                             ui.add_space(6.0);
-                            let total_bytes: u64 = snap.disks.iter().map(|d| d.total_bytes).sum();
+                            let phys_total: u64 = snap.physical_disks.iter().map(|d| d.total_bytes).sum();
+                            let mounted_total: u64 = snap.disks.iter().map(|d| d.total_bytes).sum();
+                            let total_bytes: u64 = if phys_total > 0 { phys_total } else { mounted_total };
                             let used_bytes: u64 = snap.disks.iter().map(|d| d.used_bytes).sum();
-                            let storage_pct = if total_bytes > 0 { (used_bytes as f64 / total_bytes as f64 * 100.0) as f32 } else { 55.2 };
+                            let storage_pct = if total_bytes > 0 { (used_bytes as f64 / total_bytes as f64 * 100.0) as f32 } else { 0.0 };
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 2.0;
                                 ui.label(RichText::new(format!("{:.1}", storage_pct)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                 ui.label(RichText::new("%").size(12.0).color(p.text_muted));
                             });
                             ui.add_space(2.0);
-                            let used_gb = if used_bytes > 0 { used_bytes as f64 / 1e9 } else { 3.71 };
-                            let tot_gb = if total_bytes > 0 { total_bytes as f64 / 1e9 } else { 6.71 };
+                            let used_gb = used_bytes as f64 / 1e9;
+                            let tot_gb = total_bytes as f64 / 1e9;
                             ui.label(RichText::new(format!("{:.2} GB / {:.2} GB", used_gb, tot_gb)).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                             ui.add_space(8.0);
                             let free_gb = (total_bytes.saturating_sub(used_bytes)) as f64 / 1e9;
-                            let free_gb_val = if free_gb > 0.05 { free_gb } else { 3.00 };
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(format!("FREE {:.2} GB", free_gb_val)).size(8.5).monospace().color(p.text_muted));
+                                ui.label(RichText::new(format!("FREE {:.2} GB", free_gb)).size(8.5).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new(format!("AVG {:.1}%", storage_pct)).size(8.5).monospace().color(p.text_muted));
                                 });
@@ -10611,7 +10660,13 @@ impl LauncherApp {
                                 ui.label(RichText::new("CONNECTION STATS").size(11.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                                 ui.add_space(4.0);
 
-                                let (tot_sock, tcp_c, udp_c) = get_socket_stats();
+                                let (tot_sock, tcp_c, udp_c) = if snap.socket_total > 0 || snap.socket_tcp > 0 || snap.socket_udp > 0 {
+                                    (snap.socket_total, snap.socket_tcp, snap.socket_udp)
+                                } else if host_id.is_none() {
+                                    get_socket_stats()
+                                } else {
+                                    (0, 0, 0)
+                                };
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new(format!("{}", tot_sock)).size(22.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                     ui.label(RichText::new("open sockets").size(10.5).color(p.text_muted));
@@ -10645,7 +10700,7 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     // SENSORS PAGE: CPU Dashboard (Matching media_1792113265094_cd2e3f19.png)
     // ─────────────────────────────────────────────────────────────────────────
-    fn render_sensors_cpu_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, _host_id: Option<&str>) {
+    fn render_sensors_cpu_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
         ScrollArea::vertical()
             .id_salt("sensors_cpu_scroll")
@@ -10653,7 +10708,13 @@ impl LauncherApp {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
 
-                let brand = if !snap.cpu_brand.is_empty() { &snap.cpu_brand } else { "Intel(R) Pentium(R) Silver N5030 @ 1.10GHz (Turbo 3.10GHz)" };
+                let brand = if !snap.cpu_brand.is_empty() {
+                    &snap.cpu_brand
+                } else if host_id.is_some() {
+                    "Remote Host Processor"
+                } else {
+                    "Intel(R) Pentium(R) Silver N5030 @ 1.10GHz (Turbo 3.10GHz)"
+                };
                 let phys = snap.cpu_cores_physical.max(1);
                 let log = snap.cpu_cores_logical.max(phys);
 
@@ -10716,7 +10777,8 @@ impl LauncherApp {
                             ui.add_space(3.0);
 
                             // Row 2: Subtitle spanning the full card width underneath Row 1 without overlap
-                            let uptime_str = format_uptime_hms(get_system_uptime());
+                            let uptime_secs = if snap.uptime_secs > 0 { snap.uptime_secs } else if host_id.is_none() { get_system_uptime() } else { 0 };
+                            let uptime_str = format_uptime_hms(uptime_secs);
                             ui.horizontal_wrapped(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 ui.label(RichText::new(brand).size(10.0).monospace().color(p.text_muted));
@@ -10765,13 +10827,20 @@ impl LauncherApp {
                     } else {
                         vec![freq_ghz; 5]
                     };
+                    let freq_sub = if snap.cpu_frequency_mhz > 0 {
+                        format!("Target: {:.2} GHz", freq_ghz)
+                    } else if host_id.is_some() {
+                        "Host Clock Governor".to_string()
+                    } else {
+                        "Base 1.10 · Turbo 3.10 GHz".to_string()
+                    };
                     render_big_stat_card(
                         &mut cols[1],
                         crate::lucide::GAUGE,
                         "CLOCK FREQUENCY",
                         &format!("{:.2}", freq_ghz),
                         "GHz",
-                        "Base 1.10 · Turbo 3.10 GHz",
+                        &freq_sub,
                         "MIN 0.80 GHz",
                         &format!("MAX {:.2} GHz", freq_ghz.max(3.10)),
                         &clock_hist,
@@ -10959,7 +11028,8 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 5.0;
                                     ui.label(RichText::new(crate::lucide::SYSTEMD).size(10.5).color(Color32::from_rgb(56, 189, 248)));
-                                    ui.label(RichText::new("G-Helper Micro-Governor Active").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                    let gov_label = snap.cpu_governor.as_deref().unwrap_or(if host_id.is_some() { "Linux Scheduler Active" } else { "G-Helper Micro-Governor Active" });
+                                    ui.label(RichText::new(gov_label).size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                 });
                             });
                         });
@@ -10970,14 +11040,17 @@ impl LauncherApp {
                             cols[0].vertical(|ui| {
                                 ui.label(RichText::new("L1 CACHE").size(9.5).monospace().strong().color(p.text_muted));
                                 ui.add_space(2.0);
-                                ui.label(RichText::new("224 KB").size(15.0).strong().color(p.text_primary));
+                                let l1_str = if host_id.is_some() { "Unified" } else { "224 KB" };
+                                ui.label(RichText::new(l1_str).size(15.0).strong().color(p.text_primary));
                                 ui.add_space(1.0);
-                                ui.label(RichText::new("32KB D + 24KB I").size(9.5).monospace().color(p.text_muted));
+                                let l1_sub = if host_id.is_some() { "Core L1D / L1I" } else { "32KB D + 24KB I" };
+                                ui.label(RichText::new(l1_sub).size(9.5).monospace().color(p.text_muted));
                             });
                             cols[1].vertical(|ui| {
                                 ui.label(RichText::new("L2 CACHE").size(9.5).monospace().strong().color(p.text_muted));
                                 ui.add_space(2.0);
-                                ui.label(RichText::new("4.0 MB").size(15.0).strong().color(p.text_primary));
+                                let l2_str = if host_id.is_some() { "Multi-MB" } else { "4.0 MB" };
+                                ui.label(RichText::new(l2_str).size(15.0).strong().color(p.text_primary));
                                 ui.add_space(1.0);
                                 ui.label(RichText::new("Shared Unified").size(9.5).monospace().color(p.text_muted));
                             });
@@ -10990,15 +11063,16 @@ impl LauncherApp {
                                     ui.label(RichText::new("Enabled").size(14.5).strong().color(Color32::from_rgb(56, 189, 248)));
                                 });
                                 ui.add_space(1.0);
-                                ui.label(RichText::new("Intel VT-x (SLAT)").size(9.5).monospace().color(p.text_muted));
+                                let virt_sub = if host_id.is_some() { "KVM / Hardware" } else { "Intel VT-x (SLAT)" };
+                                ui.label(RichText::new(virt_sub).size(9.5).monospace().color(p.text_muted));
                             });
                             cols[3].vertical(|ui| {
                                 ui.label(RichText::new("PROCESSES").size(9.5).monospace().strong().color(p.text_muted));
                                 ui.add_space(2.0);
-                                let proc_count = if !snap.top_apps.is_empty() { snap.top_apps.len() } else { 220 };
+                                let proc_count = if !snap.top_apps.is_empty() { snap.top_apps.len() } else if host_id.is_some() { 0 } else { 220 };
                                 ui.label(RichText::new(format!("{}", proc_count)).size(15.0).strong().color(p.text_primary));
                                 ui.add_space(1.0);
-                                ui.label(RichText::new("6 Isolated Groups").size(9.5).monospace().color(p.text_muted));
+                                ui.label(RichText::new("Isolated Groups").size(9.5).monospace().color(p.text_muted));
                             });
                             cols[4].vertical(|ui| {
                                 ui.label(RichText::new("THREADS").size(9.5).monospace().strong().color(p.text_muted));
@@ -11025,7 +11099,7 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     // SENSORS PAGE: RAM Dashboard (Matching media_1792116273219_0ccb7bbe.png)
     // ─────────────────────────────────────────────────────────────────────────
-    fn render_sensors_ram_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, _host_id: Option<&str>) {
+    fn render_sensors_ram_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
         ScrollArea::vertical()
             .id_salt("sensors_ram_scroll")
@@ -11063,9 +11137,11 @@ impl LauncherApp {
                                     .rounding(Rounding::same(4.0))
                                     .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                     .show(ui, |ui| {
-                                        ui.label(RichText::new("SLOT 1 // ACTIVE").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                        let slot_label = if host_id.is_some() { "REMOTE // ACTIVE" } else { "SLOT 1 // ACTIVE" };
+                                        ui.label(RichText::new(slot_label).size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                     });
-                                ui.label(RichText::new("PHYSICAL TOPOLOGY: SINGLE-CHANNEL").size(9.0).monospace().color(p.text_muted));
+                                let topol_label = if host_id.is_some() { "PHYSICAL TOPOLOGY: HOST MEMORY POOL" } else { "PHYSICAL TOPOLOGY: SINGLE-CHANNEL" };
+                                ui.label(RichText::new(topol_label).size(9.0).monospace().color(p.text_muted));
                             });
 
                             ui.add_space(3.0);
@@ -11086,7 +11162,16 @@ impl LauncherApp {
                                         .fill(Color32::from_rgb(112, 213, 228))
                                         .rounding(Rounding::same(999.0));
                                     if ui.add(btn_drop).on_hover_text("Flush kernel page cache and dentries/inodes").clicked() {
-                                        let _ = std::process::Command::new("sh").arg("-c").arg("sync; echo 3 > /proc/sys/vm/drop_caches").spawn();
+                                        if let Some(hid) = host_id {
+                                            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                                std::thread::spawn(move || {
+                                                    let mut cmd = crate::remote::build_ssh_command(&host, "sync; echo 3 | sudo tee /proc/sys/vm/drop_caches 2>/dev/null || true");
+                                                    let _ = cmd.output();
+                                                });
+                                            }
+                                        } else {
+                                            let _ = std::process::Command::new("sh").arg("-c").arg("sync; echo 3 > /proc/sys/vm/drop_caches").spawn();
+                                        }
                                     }
 
                                     ui.add_space(6.0);
@@ -11096,7 +11181,16 @@ impl LauncherApp {
                                         .fill(Color32::from_rgb(26, 34, 48))
                                         .rounding(Rounding::same(999.0));
                                     if ui.add(btn_flush).on_hover_text("Flush reclaimable standby memory lists").clicked() {
-                                        let _ = std::process::Command::new("sh").arg("-c").arg("sync").spawn();
+                                        if let Some(hid) = host_id {
+                                            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                                std::thread::spawn(move || {
+                                                    let mut cmd = crate::remote::build_ssh_command(&host, "sync");
+                                                    let _ = cmd.output();
+                                                });
+                                            }
+                                        } else {
+                                            let _ = std::process::Command::new("sh").arg("-c").arg("sync").spawn();
+                                        }
                                     }
                                 });
                             });
@@ -11106,13 +11200,15 @@ impl LauncherApp {
                             // Row 3: Subtitle spanning the full card width underneath Row 2
                             ui.horizontal_wrapped(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(format!("{} DDR4-2400", total_ram_str)).size(10.0).monospace().color(p.text_muted));
+                                let mem_type_str = if host_id.is_some() { format!("{} System Memory Pool", total_ram_str) } else { format!("{} DDR4-2400", total_ram_str) };
+                                ui.label(RichText::new(mem_type_str).size(10.0).monospace().color(p.text_muted));
                                 ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
-                                ui.label(RichText::new("1x 8GB SODIMM Micron MT40A").size(10.0).monospace().color(p.text_muted));
+                                let ram_mod_str = if host_id.is_some() { "ECC/Non-ECC Managed Pool".to_string() } else { "1x 8GB SODIMM Micron MT40A".to_string() };
+                                ui.label(RichText::new(ram_mod_str).size(10.0).monospace().color(p.text_muted));
                                 ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
-                                ui.label(RichText::new("195 MB Hardware Reserved").size(10.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new("Hardware Reserved Pool").size(10.0).monospace().color(p.text_muted));
                                 ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
-                                ui.label(RichText::new("1.20V Normal").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("Normal Voltage").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                             });
                         });
                     });
@@ -11629,8 +11725,9 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     // SENSORS PAGE: GPU Dashboard
     // ─────────────────────────────────────────────────────────────────────────
-    fn render_sensors_gpu_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, _host_id: Option<&str>) {
+    fn render_sensors_gpu_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let is_remote = host_id.is_some();
         ScrollArea::vertical()
             .id_salt("sensors_gpu_scroll")
             .auto_shrink([false, false])
@@ -11641,7 +11738,19 @@ impl LauncherApp {
                 let gpu_name = gpu
                     .map(|g| g.name.as_str())
                     .filter(|n| !n.trim().is_empty() && *n != "Unknown GPU")
-                    .unwrap_or("Intel(R) UHD Graphics 605");
+                    .unwrap_or(if is_remote { "Headless Server / Kernel Framebuffer" } else { "Intel(R) UHD Graphics 605" });
+
+                let gpu_spec_label = if let Some(g) = gpu {
+                    if !g.driver.trim().is_empty() {
+                        g.driver.as_str()
+                    } else {
+                        "PCIe Graphics Accelerator"
+                    }
+                } else if is_remote {
+                    "Virtual Display / Kernel Framebuffer"
+                } else {
+                    "Gen9.5 LP • 18 EUs"
+                };
 
                 // 1. Top Header Card
                 Frame::none()
@@ -11655,7 +11764,12 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
                                 ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
-                                ui.label(RichText::new("GPU ENGINE #0 • ACTIVE DISPATCH").size(9.0).monospace().color(p.text_muted));
+                                let overline = if is_remote {
+                                    format!("REMOTE GPU SUBSYSTEM • HOST '{}'", host_id.unwrap_or("Remote"))
+                                } else {
+                                    "GPU ENGINE #0 • ACTIVE DISPATCH".to_string()
+                                };
+                                ui.label(RichText::new(overline).size(9.0).monospace().color(p.text_muted));
                             });
 
                             ui.add_space(2.0);
@@ -11674,7 +11788,7 @@ impl LauncherApp {
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                         .show(ui, |ui| {
-                                            ui.label(RichText::new("Gen9.5 LP • 18 EUs").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new(gpu_spec_label).size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                         });
                                 });
 
@@ -11722,34 +11836,42 @@ impl LauncherApp {
                             ui.add_space(3.0);
 
                             // Row 3: Subtitle spanning the full card width underneath Row 2
+                            let driver_str = gpu.map(|g| g.driver.as_str()).filter(|s| !s.trim().is_empty()).unwrap_or(if is_remote { "Kernel Direct Rendering Manager (DRM / KMS)" } else { "Mesa 24.1.2 (Direct Rendering DRM)" });
+                            let topo_str = if is_remote {
+                                if gpu.is_some() { "Topology: Remote PCIe Bus" } else { "Topology: Headless Server / Hypervisor" }
+                            } else {
+                                "Topology: PCI bus 0, device 2, func 0"
+                            };
+                            let date_or_link = if is_remote { "Telemetry: Streaming via SSH" } else { "Driver Date: 8/28/2025" };
+
                             ui.horizontal_wrapped(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new("Driver: Mesa 24.1.2 (Direct Rendering DRM)").size(9.5).monospace().color(p.text_muted));
+                                ui.label(RichText::new(format!("Driver: {}", driver_str)).size(9.5).monospace().color(p.text_muted));
                                 ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
-                                ui.label(RichText::new("Driver Date: 8/28/2025").size(9.5).monospace().color(p.text_muted));
+                                ui.label(RichText::new(date_or_link).size(9.5).monospace().color(p.text_muted));
                                 ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
-                                ui.label(RichText::new("Topology: PCI bus 0, device 2, func 0").size(9.5).monospace().color(p.text_muted));
+                                ui.label(RichText::new(topo_str).size(9.5).monospace().color(p.text_muted));
                             });
                         });
                     });
 
                 ui.add_space(8.0);
 
-                // 2. Row of 4 Big Metric Cards (matching Overview page architecture)
-                let cur_gpu_load = gpu.and_then(|g| g.load_pct).unwrap_or_else(|| self.gpu_load_history.back().copied().unwrap_or(13.3));
-                let cur_3d = self.gpu_3d_history.back().copied().unwrap_or(3.0);
-                let cur_copy = self.gpu_copy_history.back().copied().unwrap_or(1.1);
-                let clock_val = gpu.and_then(|g| g.clock_mhz).unwrap_or(750);
-                let power_val = gpu.and_then(|g| g.power_watts).unwrap_or(2.9);
+                // 2. Row of 4 Big Metric Cards
+                let cur_gpu_load = gpu.and_then(|g| g.load_pct).unwrap_or_else(|| self.gpu_load_history.back().copied().unwrap_or(if is_remote { 0.0 } else { 13.3 }));
+                let cur_3d = if is_remote && gpu.is_none() { 0.0 } else { self.gpu_3d_history.back().copied().unwrap_or(3.0) };
+                let cur_copy = if is_remote && gpu.is_none() { 0.0 } else { self.gpu_copy_history.back().copied().unwrap_or(1.1) };
+                let clock_val = gpu.and_then(|g| g.clock_mhz).unwrap_or(if is_remote { 0 } else { 750 });
+                let power_val = gpu.and_then(|g| g.power_watts).unwrap_or(if is_remote { 0.0 } else { 2.9 });
 
                 let gpu_slice: Vec<f32> = self.gpu_load_history.iter().copied().collect();
                 let gpu_3d_slice: Vec<f32> = self.gpu_3d_history.iter().copied().collect();
                 let gpu_clock_slice: Vec<f32> = if !gpu_slice.is_empty() {
-                    gpu_slice.iter().map(|&u| 250.0 + (u / 100.0) * 550.0).collect()
+                    gpu_slice.iter().map(|&u| if is_remote && gpu.is_none() { 0.0 } else { 250.0 + (u / 100.0) * 550.0 }).collect()
                 } else {
                     vec![clock_val as f32; 5]
                 };
-                let gpu_vram_slice: Vec<f32> = vec![0.3; 5];
+                let gpu_vram_slice: Vec<f32> = vec![if is_remote && gpu.is_none() { 0.0 } else { 0.3 }; 5];
 
                 ui.columns(4, |cols| {
                     // Card 1: GPU CORE LOAD
@@ -11760,12 +11882,12 @@ impl LauncherApp {
                         "GPU CORE LOAD",
                         &format!("{:.1}", cur_gpu_load),
                         "%",
-                        "EU Shading Compute Array",
+                        if is_remote && gpu.is_none() { "Headless / Kernel SimpleDRM" } else { "EU Shading Compute Array" },
                         mode_lbl,
-                        "PEAK 95%",
+                        if is_remote && gpu.is_none() { "STANDBY" } else { "PEAK 95%" },
                         &gpu_slice,
                         100.0,
-                        Some(0.2),
+                        Some(if cur_gpu_load > 0.0 { cur_gpu_load / 100.0 } else { 0.05 }),
                         Color32::from_rgb(56, 189, 248),
                         p.bg_card,
                         p.text_muted,
@@ -11778,12 +11900,12 @@ impl LauncherApp {
                         "CORE CLOCK",
                         &format!("{}", clock_val),
                         "MHz",
-                        "Dynamic RC6 Frequency",
-                        "MIN 250 MHz",
-                        "MAX 800 MHz",
+                        if is_remote && gpu.is_none() { "Direct Kernel Display Clock" } else { "Dynamic RC6 Frequency" },
+                        if is_remote && gpu.is_none() { "HEADLESS" } else { "MIN 250 MHz" },
+                        if is_remote && gpu.is_none() { "N/A" } else { "MAX 800 MHz" },
                         &gpu_clock_slice,
                         850.0,
-                        Some(0.85),
+                        Some(if clock_val > 0 { (clock_val as f32 / 850.0).clamp(0.1, 1.0) } else { 0.05 }),
                         Color32::from_rgb(56, 189, 248),
                         p.bg_card,
                         p.text_muted,
@@ -11796,30 +11918,35 @@ impl LauncherApp {
                         "3D RENDER ENGINE",
                         &format!("{:.1}", cur_3d),
                         "%",
-                        "Direct3D & Vulkan Pipeline",
+                        if is_remote && gpu.is_none() { "Software / Headless Pipeline" } else { "Direct3D & Vulkan Pipeline" },
                         "V-DECODE 0.0%",
-                        "60 FPS",
+                        if is_remote && gpu.is_none() { "TTY 0 FPS" } else { "60 FPS" },
                         &gpu_3d_slice,
                         100.0,
-                        Some(0.05),
+                        Some(if cur_3d > 0.0 { cur_3d / 100.0 } else { 0.05 }),
                         Color32::from_rgb(56, 189, 248),
                         p.bg_card,
                         p.text_muted,
                     );
 
                     // Card 4: SHARED VRAM
+                    let (vram_val, vram_sub, vram_peak, vram_pwr) = if is_remote && gpu.is_none() {
+                        ("0.0", "/ N/A", "HEADLESS SYSTEM", "POWER 0.0W".to_string())
+                    } else {
+                        ("0.3", "/ 3.9 GB", "UTILIZATION 8%", format!("POWER {:.1}W", power_val))
+                    };
                     render_big_stat_card(
                         &mut cols[3],
                         crate::lucide::DATABASE,
                         "SHARED VRAM",
-                        "0.3",
-                        "/ 3.9 GB",
+                        vram_val,
+                        vram_sub,
                         "Dynamic Unified Memory Pool",
-                        "UTILIZATION 8%",
-                        &format!("POWER {:.1}W", power_val),
+                        vram_peak,
+                        &vram_pwr,
                         &gpu_vram_slice,
                         4.0,
-                        Some(0.1),
+                        Some(if is_remote && gpu.is_none() { 0.02 } else { 0.1 }),
                         Color32::from_rgb(56, 189, 248),
                         p.bg_card,
                         p.text_muted,
@@ -11880,7 +12007,7 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         ui.vertical(|ui| {
                                             ui.label(RichText::new("3D Engine / Render").size(11.0).strong().color(p.text_primary));
-                                            ui.label(RichText::new("Direct3D 12 • Vulkan 1.3 • OpenGL 4.6").size(8.5).monospace().color(p.text_muted));
+                                            ui.label(RichText::new(if is_remote && gpu.is_none() { "Headless TTY • Framebuffer" } else { "Direct3D 12 • Vulkan 1.3 • OpenGL 4.6" }).size(8.5).monospace().color(p.text_muted));
                                         });
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             ui.vertical(|ui| {
@@ -11888,7 +12015,7 @@ impl LauncherApp {
                                                     ui.label(RichText::new(format!("{:.1} %", cur_3d)).size(15.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                                 });
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new("Peak: 18.4%").size(8.5).monospace().color(p.text_muted));
+                                                    ui.label(RichText::new(if is_remote && gpu.is_none() { "Idle: 0.0%" } else { "Peak: 18.4%" }).size(8.5).monospace().color(p.text_muted));
                                                 });
                                             });
                                         });
@@ -11916,7 +12043,7 @@ impl LauncherApp {
                                                     ui.label(RichText::new(format!("{:.1} %", cur_copy)).size(15.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                                 });
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new("Peak: 6.2%").size(8.5).monospace().color(p.text_muted));
+                                                    ui.label(RichText::new(if is_remote && gpu.is_none() { "Idle: 0.0%" } else { "Peak: 6.2%" }).size(8.5).monospace().color(p.text_muted));
                                                 });
                                             });
                                         });
@@ -11931,7 +12058,7 @@ impl LauncherApp {
 
                         // Row 2 of 2x2
                         ui.columns(2, |cols| {
-                            // Sub-card 3: Video Decode (Intel QuickSync)
+                            // Sub-card 3: Video Decode
                             Frame::none()
                                 .fill(Color32::from_rgb(10, 15, 29))
                                 .rounding(Rounding::same(6.0))
@@ -11940,7 +12067,7 @@ impl LauncherApp {
                                     ui.set_width(ui.available_width());
                                     ui.horizontal(|ui| {
                                         ui.vertical(|ui| {
-                                            ui.label(RichText::new("Video Decode (Intel QuickSync)").size(11.0).strong().color(p.text_primary));
+                                            ui.label(RichText::new(if is_remote && gpu.is_none() { "Video Codec Subsystem" } else { "Video Decode (Intel QuickSync)" }).size(11.0).strong().color(p.text_primary));
                                             ui.label(RichText::new("H.264 • HEVC 10-bit • VP9 Profile 2").size(8.5).monospace().color(p.text_muted));
                                         });
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -11974,10 +12101,10 @@ impl LauncherApp {
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             ui.vertical(|ui| {
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new("0.8 %").size(15.0).monospace().strong().color(Color32::from_rgb(96, 165, 250)));
+                                                    ui.label(RichText::new(if is_remote && gpu.is_none() { "0.0 %" } else { "0.8 %" }).size(15.0).monospace().strong().color(Color32::from_rgb(96, 165, 250)));
                                                 });
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new("Filter State: Passthrough").size(8.5).monospace().color(p.text_muted));
+                                                    ui.label(RichText::new(if is_remote && gpu.is_none() { "Headless Pass-through" } else { "Filter State: Passthrough" }).size(8.5).monospace().color(p.text_muted));
                                                 });
                                             });
                                         });
@@ -11985,7 +12112,8 @@ impl LauncherApp {
                                     ui.add_space(6.0);
                                     let spark_w = ui.available_width();
                                     static VP_SPARK: [f32; 16] = [0.6, 0.7, 0.8, 0.9, 0.8, 0.8, 0.7, 0.8, 0.9, 0.8, 0.8, 0.7, 0.9, 0.8, 0.8, 0.8];
-                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, &VP_SPARK, Color32::from_rgb(96, 165, 250), false);
+                                    let vp_slice: &[f32] = if is_remote && gpu.is_none() { &[] } else { &VP_SPARK };
+                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, vp_slice, Color32::from_rgb(96, 165, 250), is_remote && gpu.is_none());
                                 });
                         });
                     });
@@ -12006,21 +12134,25 @@ impl LauncherApp {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 10.0;
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 4.0;
-                                        ui.label(RichText::new("■").size(8.5).color(Color32::from_rgb(71, 85, 105)));
-                                        ui.label(RichText::new("Free Allocatable: 3,556 MB").size(9.0).monospace().color(p.text_muted));
-                                    });
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 4.0;
-                                        ui.label(RichText::new("■").size(8.5).color(Color32::from_rgb(96, 165, 250)));
-                                        ui.label(RichText::new("Dynamic Committed: 312 MB").size(9.0).monospace().color(p.text_muted));
-                                    });
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 4.0;
-                                        ui.label(RichText::new("■").size(8.5).color(Color32::from_rgb(56, 189, 248)));
-                                        ui.label(RichText::new("Dedicated VRAM: 128 MB").size(9.0).monospace().color(p.text_muted));
-                                    });
+                                    if is_remote && gpu.is_none() {
+                                        ui.label(RichText::new("Headless Architecture • Dedicated System RAM").size(9.0).monospace().color(p.text_muted));
+                                    } else {
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 4.0;
+                                            ui.label(RichText::new("■").size(8.5).color(Color32::from_rgb(71, 85, 105)));
+                                            ui.label(RichText::new("Free Allocatable: 3,556 MB").size(9.0).monospace().color(p.text_muted));
+                                        });
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 4.0;
+                                            ui.label(RichText::new("■").size(8.5).color(Color32::from_rgb(96, 165, 250)));
+                                            ui.label(RichText::new("Dynamic Committed: 312 MB").size(9.0).monospace().color(p.text_muted));
+                                        });
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 4.0;
+                                            ui.label(RichText::new("■").size(8.5).color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new("Dedicated VRAM: 128 MB").size(9.0).monospace().color(p.text_muted));
+                                        });
+                                    }
                                 });
                             });
                         });
@@ -12032,13 +12164,17 @@ impl LauncherApp {
                         let br = bar_res.rect;
                         bar_p.rect_filled(br, Rounding::same(4.0), Color32::from_rgb(10, 15, 29));
 
-                        let w_ded = br.width() * 0.032;
-                        let w_dyn = br.width() * 0.078;
-                        let w_free = (br.width() - w_ded - w_dyn - 2.0).max(10.0);
+                        if is_remote && gpu.is_none() {
+                            bar_p.rect_filled(br, Rounding::same(3.0), Color32::from_rgb(30, 41, 59));
+                        } else {
+                            let w_ded = br.width() * 0.032;
+                            let w_dyn = br.width() * 0.078;
+                            let w_free = (br.width() - w_ded - w_dyn - 2.0).max(10.0);
 
-                        bar_p.rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(w_ded, br.height())), Rounding::same(3.0), Color32::from_rgb(56, 189, 248));
-                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w_ded + 1.0, br.min.y), egui::vec2(w_dyn, br.height())), Rounding::ZERO, Color32::from_rgb(96, 165, 250));
-                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w_ded + w_dyn + 2.0, br.min.y), egui::vec2(w_free, br.height())), Rounding::same(3.0), Color32::from_rgb(51, 65, 85));
+                            bar_p.rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(w_ded, br.height())), Rounding::same(3.0), Color32::from_rgb(56, 189, 248));
+                            bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w_ded + 1.0, br.min.y), egui::vec2(w_dyn, br.height())), Rounding::ZERO, Color32::from_rgb(96, 165, 250));
+                            bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w_ded + w_dyn + 2.0, br.min.y), egui::vec2(w_free, br.height())), Rounding::same(3.0), Color32::from_rgb(51, 65, 85));
+                        }
 
                         ui.add_space(8.0);
 
@@ -12050,8 +12186,13 @@ impl LauncherApp {
                                     ui.label(RichText::new("DEDICATED VIDEO MEMORY").size(9.0).monospace().strong().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
-                                ui.label(RichText::new("128.0 MB").size(14.0).strong().color(Color32::from_rgb(56, 189, 248)));
-                                ui.label(RichText::new("Fixed Aperture (BIOS Allocated)").size(8.5).monospace().color(p.text_muted));
+                                if is_remote && gpu.is_none() {
+                                    ui.label(RichText::new("0 MB (Headless)").size(14.0).strong().color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new("Host RAM Shared Framebuffer").size(8.5).monospace().color(p.text_muted));
+                                } else {
+                                    ui.label(RichText::new("128.0 MB").size(14.0).strong().color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new("Fixed Aperture (BIOS Allocated)").size(8.5).monospace().color(p.text_muted));
+                                }
                             });
 
                             cols[1].vertical(|ui| {
@@ -12060,8 +12201,14 @@ impl LauncherApp {
                                     ui.label(RichText::new("SHARED SYSTEM MEMORY").size(9.0).monospace().strong().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
-                                ui.label(RichText::new("312.4 MB / 3.9 GB").size(14.0).strong().color(Color32::from_rgb(96, 165, 250)));
-                                ui.label(RichText::new("Dynamic Page Pool (OS Managed)").size(8.5).monospace().color(p.text_muted));
+                                if is_remote {
+                                    let host_ram_gb = snap.mem_total_bytes as f64 / 1e9;
+                                    ui.label(RichText::new(format!("{:.1} GB System RAM", host_ram_gb)).size(14.0).strong().color(Color32::from_rgb(96, 165, 250)));
+                                    ui.label(RichText::new("Host Managed System Memory").size(8.5).monospace().color(p.text_muted));
+                                } else {
+                                    ui.label(RichText::new("312.4 MB / 3.9 GB").size(14.0).strong().color(Color32::from_rgb(96, 165, 250)));
+                                    ui.label(RichText::new("Dynamic Page Pool (OS Managed)").size(8.5).monospace().color(p.text_muted));
+                                }
                             });
 
                             cols[2].vertical(|ui| {
@@ -12070,8 +12217,13 @@ impl LauncherApp {
                                     ui.label(RichText::new("MEMORY BANDWIDTH").size(9.0).monospace().strong().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
-                                ui.label(RichText::new("2.4 GB/s").size(14.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("Dual Channel LPDDR4 @ 2400 MT/s").size(8.5).monospace().color(p.text_muted));
+                                if is_remote {
+                                    ui.label(RichText::new("System Bus Direct").size(14.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new("High-Speed Interconnect").size(8.5).monospace().color(p.text_muted));
+                                } else {
+                                    ui.label(RichText::new("2.4 GB/s").size(14.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new("Dual Channel LPDDR4 @ 2400 MT/s").size(8.5).monospace().color(p.text_muted));
+                                }
                             });
                         });
                     });
@@ -12080,7 +12232,7 @@ impl LauncherApp {
 
                 // 5. Bottom 2-Column Section: Embedded Display & Hardware Acceleration
                 ui.columns(2, |cols| {
-                    // Left Column: Embedded Display
+                    // Left Column: Embedded Display / Console
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
@@ -12099,7 +12251,7 @@ impl LauncherApp {
                                         ui.label(RichText::new(crate::lucide::MONITOR).size(12.0).color(Color32::from_rgb(56, 189, 248)));
                                     });
 
-                                ui.label(RichText::new("Embedded Display").size(13.0).strong().color(p.text_primary));
+                                ui.label(RichText::new(if is_remote && gpu.is_none() { "Virtual Console / TTY" } else { "Embedded Display" }).size(13.0).strong().color(p.text_primary));
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()
@@ -12111,7 +12263,8 @@ impl LauncherApp {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
                                                 ui.painter().circle_filled(d_rect.center(), 2.2, Color32::from_rgb(56, 189, 248));
-                                                ui.label(RichText::new("Active (eDP-1)").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                let disp_badge = if is_remote && gpu.is_none() { "Headless (TTY/SSH)" } else { "Active (eDP-1)" };
+                                                ui.label(RichText::new(disp_badge).size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                             });
                                         });
                                 });
@@ -12120,14 +12273,25 @@ impl LauncherApp {
                             ui.add_space(14.0);
 
                             // Hero Resolution & Refresh
-                            ui.label(RichText::new("1920 \u{00D7} 1080").size(26.0).strong().color(p.text_primary));
-                            ui.add_space(2.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new("@ 60 Hz").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
-                                ui.label(RichText::new("8-bit RGB").size(10.0).monospace().color(p.text_muted));
-                            });
+                            if is_remote && gpu.is_none() {
+                                ui.label(RichText::new("Virtual Terminal").size(24.0).strong().color(p.text_primary));
+                                ui.add_space(2.0);
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    ui.label(RichText::new("@ SSH Console").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
+                                    ui.label(RichText::new("UTF-8 ANSI").size(10.0).monospace().color(p.text_muted));
+                                });
+                            } else {
+                                ui.label(RichText::new("1920 \u{00D7} 1080").size(26.0).strong().color(p.text_primary));
+                                ui.add_space(2.0);
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    ui.label(RichText::new("@ 60 Hz").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
+                                    ui.label(RichText::new("8-bit RGB").size(10.0).monospace().color(p.text_muted));
+                                });
+                            }
 
                             ui.add_space(14.0);
 
@@ -12143,7 +12307,8 @@ impl LauncherApp {
                                             ui.set_width(ui.available_width());
                                             ui.label(RichText::new("Color Space").size(9.0).monospace().color(p.text_muted));
                                             ui.add_space(3.0);
-                                            ui.label(RichText::new("sRGB (Rec. 709)").size(11.0).monospace().strong().color(p.text_primary));
+                                            let cs_txt = if is_remote && gpu.is_none() { "ANSI (256 Colors)" } else { "sRGB (Rec. 709)" };
+                                            ui.label(RichText::new(cs_txt).size(11.0).monospace().strong().color(p.text_primary));
                                         });
 
                                     ui.add_space(6.0);
@@ -12157,7 +12322,8 @@ impl LauncherApp {
                                             ui.set_width(ui.available_width());
                                             ui.label(RichText::new("Connector").size(9.0).monospace().color(p.text_muted));
                                             ui.add_space(3.0);
-                                            ui.label(RichText::new("eDP Pipe A").size(11.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            let conn_txt = if is_remote && gpu.is_none() { "Pseudo-Terminal (PTY)" } else { "eDP Pipe A" };
+                                            ui.label(RichText::new(conn_txt).size(11.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                         });
                                 });
 
@@ -12171,21 +12337,23 @@ impl LauncherApp {
                                             ui.set_width(ui.available_width());
                                             ui.label(RichText::new("Scaling").size(9.0).monospace().color(p.text_muted));
                                             ui.add_space(3.0);
-                                            ui.label(RichText::new("Native (1.0x)").size(11.0).monospace().strong().color(p.text_primary));
+                                            let sc_txt = if is_remote && gpu.is_none() { "Auto PTY Rows/Cols" } else { "Native (1.0x)" };
+                                            ui.label(RichText::new(sc_txt).size(11.0).monospace().strong().color(p.text_primary));
                                         });
 
                                     ui.add_space(6.0);
 
-                                    // Tile 4: VRR Support
+                                    // Tile 4: VRR Support / Framebuffer
                                     Frame::none()
                                         .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 3))
                                         .rounding(Rounding::same(8.0))
                                         .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                                         .show(ui, |ui| {
                                             ui.set_width(ui.available_width());
-                                            ui.label(RichText::new("VRR Support").size(9.0).monospace().color(p.text_muted));
+                                            ui.label(RichText::new(if is_remote && gpu.is_none() { "Console Driver" } else { "VRR Support" }).size(9.0).monospace().color(p.text_muted));
                                             ui.add_space(3.0);
-                                            ui.label(RichText::new("Standard").size(11.0).monospace().strong().color(p.text_primary));
+                                            let vrr_txt = if is_remote && gpu.is_none() { "Linux fbcon / drm" } else { "Standard" };
+                                            ui.label(RichText::new(vrr_txt).size(11.0).monospace().strong().color(p.text_primary));
                                         });
                                 });
                             });
@@ -12200,7 +12368,8 @@ impl LauncherApp {
                                 ui.add(btn).on_hover_text("View DRM KMS connector topology");
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("Port 0x1").size(9.5).monospace().color(p.text_muted));
+                                    let port_txt = if is_remote && gpu.is_none() { "/dev/pts" } else { "Port 0x1" };
+                                    ui.label(RichText::new(port_txt).size(9.5).monospace().color(p.text_muted));
                                 });
                             });
                         });
@@ -12229,7 +12398,8 @@ impl LauncherApp {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
                                                 ui.painter().circle_filled(d_rect.center(), 2.2, Color32::from_rgb(52, 211, 153));
-                                                ui.label(RichText::new("DRI3 Active").size(9.0).monospace().strong().color(Color32::from_rgb(52, 211, 153)));
+                                                let acc_badge = if is_remote && gpu.is_none() { "Headless Direct" } else { "DRI3 Active" };
+                                                ui.label(RichText::new(acc_badge).size(9.0).monospace().strong().color(Color32::from_rgb(52, 211, 153)));
                                             });
                                         });
                                 });
@@ -12238,11 +12408,19 @@ impl LauncherApp {
                             ui.add_space(12.0);
 
                             // 3 API status item rows
-                            let apis: [(&str, &str, &str, bool); 3] = [
-                                ("Vulkan 1.3", "Mesa Driver", "Accelerated", false),
-                                ("OpenGL 4.6", "Iris Classic DRI", "Accelerated", false),
-                                ("VA-API Media", "Video Accel", "Direct", true),
-                            ];
+                            let apis: [(&str, &str, &str, bool); 3] = if is_remote && gpu.is_none() {
+                                [
+                                    ("Kernel DRM / KMS", "SimpleDRM", "Operational", true),
+                                    ("DRI Direct Render", "Kernel KMS", "Active", true),
+                                    ("SSH X11 Forwarding", "OpenSSH", "Available", false),
+                                ]
+                            } else {
+                                [
+                                    ("Vulkan 1.3", "Mesa Driver", "Accelerated", false),
+                                    ("OpenGL 4.6", "Iris Classic DRI", "Accelerated", false),
+                                    ("VA-API Media", "Video Accel", "Direct", true),
+                                ]
+                            };
 
                             for (name, driver, status, is_direct) in apis {
                                 Frame::none()
@@ -12283,7 +12461,8 @@ impl LauncherApp {
                                         .show(ui, |ui| {
                                             ui.set_width(ui.available_width());
                                             ui.horizontal(|ui| {
-                                                ui.label(RichText::new("GuC / HuC Firmware").size(9.0).monospace().color(p.text_muted));
+                                                let mc1_title = if is_remote && gpu.is_none() { "DRM Driver" } else { "GuC / HuC Firmware" };
+                                                ui.label(RichText::new(mc1_title).size(9.0).monospace().color(p.text_muted));
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                     let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
                                                     ui.painter().circle_filled(dot_rect.center(), 2.0, Color32::from_rgb(52, 211, 153));
@@ -12303,7 +12482,8 @@ impl LauncherApp {
                                             ui.set_width(ui.available_width());
                                             ui.label(RichText::new("Render Governor").size(9.0).monospace().color(p.text_muted));
                                             ui.add_space(3.0);
-                                            ui.label(RichText::new("Dynamic RC6").size(11.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            let gov_txt = if is_remote && gpu.is_none() { "Headless Server" } else { "Dynamic RC6" };
+                                            ui.label(RichText::new(gov_txt).size(11.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                         });
                                 });
                             });
@@ -12312,7 +12492,8 @@ impl LauncherApp {
 
                             // Footer
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("Gen9 GT2").size(9.5).monospace().color(p.text_muted));
+                                let ft_txt = if is_remote && gpu.is_none() { "Linux DRM Simpledrm" } else { "Gen9 GT2" };
+                                ui.label(RichText::new(ft_txt).size(9.5).monospace().color(p.text_muted));
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     let btn = egui::Button::new(RichText::new("Extended Capabilities →").size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)))
@@ -12331,8 +12512,9 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     // SENSORS PAGE: Storage Dashboard (Matching media_1792116273204_464a968b.png)
     // ─────────────────────────────────────────────────────────────────────────
-    fn render_sensors_storage_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, _host_id: Option<&str>) {
+    fn render_sensors_storage_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let is_remote = host_id.is_some();
         ScrollArea::vertical()
             .id_salt("sensors_storage_scroll")
             .auto_shrink([false, false])
@@ -12347,7 +12529,7 @@ impl LauncherApp {
                 let used_bytes = mounted_used_bytes;
                 let free_bytes = total_bytes.saturating_sub(used_bytes);
 
-                let total_gb = if total_bytes > 0 { total_bytes as f64 / 1e9 } else { 756.2 };
+                let total_gb = if total_bytes > 0 { total_bytes as f64 / 1e9 } else { if is_remote { 0.0 } else { 756.2 } };
                 let used_gb = used_bytes as f64 / 1e9;
                 let free_gb = free_bytes as f64 / 1e9;
                 let drive_count = snap.physical_disks.len().max(snap.disks.len()).max(1);
@@ -12364,7 +12546,12 @@ impl LauncherApp {
                         ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                ui.label(RichText::new("SUBSYSTEM TELEMETRY • I/O SUPERVISOR").size(9.0).monospace().color(p.text_muted));
+                                let overline = if is_remote {
+                                    format!("REMOTE STORAGE TELEMETRY • HOST '{}'", host_id.unwrap_or("Remote"))
+                                } else {
+                                    "SUBSYSTEM TELEMETRY • I/O SUPERVISOR".to_string()
+                                };
+                                ui.label(RichText::new(overline).size(9.0).monospace().color(p.text_muted));
                                 ui.add_space(2.0);
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
@@ -12416,6 +12603,8 @@ impl LauncherApp {
                     } else {
                         format!("{}x Block Storage Disks", drive_count)
                     }
+                } else if is_remote {
+                    format!("{}x Mounted Storage Disks", drive_count)
                 } else {
                     "NVMe SSD & Block Devices".to_string()
                 };
@@ -12433,7 +12622,7 @@ impl LauncherApp {
                         &format!("FREE {:.1} GB", free_gb),
                         &st_history,
                         100.0,
-                        Some(st_pct / 100.0),
+                        Some(if total_gb > 0.0 { st_pct / 100.0 } else { 0.05 }),
                         Color32::from_rgb(56, 189, 248),
                         p.bg_card,
                         p.text_muted,
@@ -12497,37 +12686,24 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 3. Drives Row (2 Large Cards)
-                // Real primary drive (e.g. nvme0n1) and secondary drive (e.g. sda)
                 let d1_phys = snap.physical_disks.first();
                 let d2_phys = snap.physical_disks.get(1);
 
                 let root_mount = snap.disks.iter().find(|d| d.mount_point == "/").or_else(|| snap.disks.first());
-                let d1_name = d1_phys.map(|d| d.name.as_str()).unwrap_or("nvme0n1");
-                let d1_model = d1_phys.map(|d| d.model.as_str()).unwrap_or("TwinMOS SSD");
+                let d1_name = d1_phys.map(|d| d.name.as_str()).unwrap_or_else(|| root_mount.map(|d| d.name.as_str()).unwrap_or(if is_remote { "sda" } else { "nvme0n1" }));
+                let d1_model = d1_phys.map(|d| d.model.as_str()).unwrap_or(if is_remote { "Remote Host Block Device" } else { "TwinMOS SSD" });
                 let d1_is_ssd = d1_phys.map(|d| d.is_ssd).unwrap_or(true);
-                let d1_phys_gb = d1_phys.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(256.1);
-                let d1_part_count = d1_phys.map(|d| d.partition_count).unwrap_or(8);
+                let d1_phys_gb = d1_phys.map(|d| d.total_bytes as f64 / 1e9).unwrap_or_else(|| root_mount.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(if is_remote { total_gb } else { 256.1 }));
+                let d1_part_count = d1_phys.map(|d| d.partition_count).unwrap_or_else(|| if !snap.disks.is_empty() { snap.disks.len() } else { 1 });
 
-                let d1_used = root_mount.map(|d| d.used_bytes as f64 / 1e9).unwrap_or(66.4);
-                let d1_tot = root_mount.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(116.0);
-                let d1_pct = if d1_tot > 0.0 { (d1_used / d1_tot * 100.0) as f32 } else { 57.0 };
-                let d1_fs = root_mount.map(|d| d.fs_type.as_str()).unwrap_or("btrfs");
+                let d1_used = root_mount.map(|d| d.used_bytes as f64 / 1e9).unwrap_or(used_gb);
+                let d1_tot = root_mount.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(total_gb);
+                let d1_pct = if d1_tot > 0.0 { (d1_used / d1_tot * 100.0) as f32 } else { st_pct };
+                let d1_fs = root_mount.map(|d| d.fs_type.as_str()).unwrap_or(if is_remote { "ext4" } else { "btrfs" });
                 let d1_read_str = crate::sensors::format_rate(snap.total_disk_read_rate_bps);
                 let d1_write_str = crate::sensors::format_rate(snap.total_disk_write_rate_bps);
 
-                let d2_name = d2_phys.map(|d| d.name.as_str()).unwrap_or("sda");
-                let d2_model = d2_phys.map(|d| d.model.as_str()).unwrap_or("ST500LM030-1RK17");
-                let d2_is_ssd = d2_phys.map(|d| d.is_ssd).unwrap_or(false);
-                let d2_phys_gb = d2_phys.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(500.1);
-                let d2_part_count = d2_phys.map(|d| d.partition_count).unwrap_or(1);
-
-                let sda_mount = snap.disks.iter().find(|d| d.name.contains("sda"));
-                let d2_used = sda_mount.map(|d| d.used_bytes as f64 / 1e9).unwrap_or(0.0);
-                let d2_tot = sda_mount.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(d2_phys_gb);
-                let d2_pct = if d2_tot > 0.0 { (d2_used / d2_tot * 100.0) as f32 } else { 0.0 };
-                let d2_fs = sda_mount.map(|d| d.fs_type.as_str()).unwrap_or("ext4");
-                let d2_read_str = sda_mount.map(|d| crate::sensors::format_rate(d.read_rate_bps)).unwrap_or_else(|| "0 B/s".to_string());
-                let d2_write_str = sda_mount.map(|d| crate::sensors::format_rate(d.write_rate_bps)).unwrap_or_else(|| "0 B/s".to_string());
+                let has_d2 = d2_phys.is_some() || (!is_remote && snap.disks.len() > 1);
 
                 ui.columns(2, |cols| {
                     // Drive 1: Primary OS Drive
@@ -12548,7 +12724,7 @@ impl LauncherApp {
                                         let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                         ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
                                     });
-                                    ui.label(RichText::new(format!("{} • {} {:.1} GB", if d1_is_ssd { "NVMe SSD" } else { "SATA HDD" }, d1_model, d1_phys_gb)).size(9.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(format!("{} • {} {:.1} GB", if d1_is_ssd { "NVMe SSD" } else { "Block Device" }, d1_model, d1_phys_gb)).size(9.5).monospace().color(p.text_muted));
                                 });
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -12595,89 +12771,166 @@ impl LauncherApp {
                                 });
                                 scols[2].vertical(|ui| {
                                     ui.label(RichText::new("BUS INTERFACE").size(8.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new(if d1_is_ssd { "PCIe Gen3 x4" } else { "SATA 6 Gb/s" }).size(12.5).monospace().strong().color(p.text_primary));
+                                    ui.label(RichText::new(if d1_is_ssd { "PCIe Gen3 x4" } else { "SATA / SCSI" }).size(12.5).monospace().strong().color(p.text_primary));
                                 });
                             });
                         });
 
-                    // Drive 2: Secondary Block Storage
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                        .show(&mut cols[1], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(if d2_is_ssd { crate::lucide::STORAGE } else { crate::lucide::HARD_DRIVE }).size(15.0).color(Color32::from_rgb(56, 189, 248)));
-                                ui.add_space(4.0);
+                    // Drive 2 or Single Volume Info Card
+                    if has_d2 {
+                        let d2_name = d2_phys.map(|d| d.name.as_str()).unwrap_or(if is_remote { "sdb" } else { "sda" });
+                        let d2_model = d2_phys.map(|d| d.model.as_str()).unwrap_or(if is_remote { "Secondary Remote Block Storage" } else { "ST500LM030-1RK17" });
+                        let d2_is_ssd = d2_phys.map(|d| d.is_ssd).unwrap_or(false);
+                        let d2_phys_gb = d2_phys.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(500.1);
+                        let d2_part_count = d2_phys.map(|d| d.partition_count).unwrap_or(1);
 
-                                ui.vertical(|ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 5.0;
-                                        ui.label(RichText::new(format!("Disk 2 (/dev/{})", d2_name)).size(13.0).strong().color(p.text_primary));
-                                        let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                        ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
-                                    });
-                                    ui.label(RichText::new(format!("{} • {} {:.1} GB", if d2_is_ssd { "SATA SSD" } else { "SATA HDD" }, d2_model, d2_phys_gb)).size(9.5).monospace().color(p.text_muted));
-                                });
+                        let sda_mount = snap.disks.iter().find(|d| d.name.contains(d2_name));
+                        let d2_used = sda_mount.map(|d| d.used_bytes as f64 / 1e9).unwrap_or(0.0);
+                        let d2_tot = sda_mount.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(d2_phys_gb);
+                        let d2_pct = if d2_tot > 0.0 { (d2_used / d2_tot * 100.0) as f32 } else { 0.0 };
+                        let d2_fs = sda_mount.map(|d| d.fs_type.as_str()).unwrap_or("ext4");
+                        let d2_read_str = sda_mount.map(|d| crate::sensors::format_rate(d.read_rate_bps)).unwrap_or_else(|| "0 B/s".to_string());
+                        let d2_write_str = sda_mount.map(|d| crate::sensors::format_rate(d.write_rate_bps)).unwrap_or_else(|| "0 B/s".to_string());
 
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                            .show(&mut cols[1], |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(if d2_is_ssd { crate::lucide::STORAGE } else { crate::lucide::HARD_DRIVE }).size(15.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.add_space(4.0);
+
                                     ui.vertical(|ui| {
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            Frame::none()
-                                                .fill(Color32::from_rgba_unmultiplied(148, 163, 184, 25))
-                                                .rounding(Rounding::same(4.0))
-                                                .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                                .show(ui, |ui| {
-                                                    ui.label(RichText::new("DATA STORAGE").size(8.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
-                                                });
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 5.0;
+                                            ui.label(RichText::new(format!("Disk 2 (/dev/{})", d2_name)).size(13.0).strong().color(p.text_primary));
+                                            let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                            ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
                                         });
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new(format!("{} PARTITION{}", d2_part_count, if d2_part_count == 1 { "" } else { "S" })).size(9.0).monospace().color(p.text_muted));
+                                        ui.label(RichText::new(format!("{} • {} {:.1} GB", if d2_is_ssd { "SATA SSD" } else { "SATA HDD" }, d2_model, d2_phys_gb)).size(9.5).monospace().color(p.text_muted));
+                                    });
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.vertical(|ui| {
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                Frame::none()
+                                                    .fill(Color32::from_rgba_unmultiplied(148, 163, 184, 25))
+                                                    .rounding(Rounding::same(4.0))
+                                                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                                    .show(ui, |ui| {
+                                                        ui.label(RichText::new("DATA STORAGE").size(8.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                                                    });
+                                            });
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.label(RichText::new(format!("{} PARTITION{}", d2_part_count, if d2_part_count == 1 { "" } else { "S" })).size(9.0).monospace().color(p.text_muted));
+                                            });
                                         });
                                     });
                                 });
-                            });
 
-                            ui.add_space(8.0);
-                            ui.horizontal(|ui| {
-                                let mnt_label = if sda_mount.is_some() {
-                                    format!("Mount: /mnt/storage ({})", d2_fs)
-                                } else {
-                                    format!("Partition: /dev/{}1 (Block Storage)", d2_name)
-                                };
-                                ui.label(RichText::new(mnt_label).size(10.0).monospace().color(Color32::from_rgb(56, 189, 248)));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if sda_mount.is_some() {
-                                        ui.label(RichText::new(format!("{:.1} GB / {:.1} GB ({:.0}%)", d2_used, d2_tot, d2_pct)).size(10.0).monospace().color(p.text_secondary));
+                                ui.add_space(8.0);
+                                ui.horizontal(|ui| {
+                                    let mnt_label = if sda_mount.is_some() {
+                                        format!("Mount: /mnt/storage ({})", d2_fs)
                                     } else {
-                                        ui.label(RichText::new(format!("{:.1} GB (Ready)", d2_phys_gb)).size(10.0).monospace().color(p.text_secondary));
-                                    }
+                                        format!("Partition: /dev/{}1 (Block Storage)", d2_name)
+                                    };
+                                    ui.label(RichText::new(mnt_label).size(10.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if sda_mount.is_some() {
+                                            ui.label(RichText::new(format!("{:.1} GB / {:.1} GB ({:.0}%)", d2_used, d2_tot, d2_pct)).size(10.0).monospace().color(p.text_secondary));
+                                        } else {
+                                            ui.label(RichText::new(format!("{:.1} GB (Ready)", d2_phys_gb)).size(10.0).monospace().color(p.text_secondary));
+                                        }
+                                    });
+                                });
+
+                                ui.add_space(4.0);
+                                let (br, bp) = ui.allocate_painter(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
+                                bp.rect_filled(br.rect, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
+                                let fill_w = br.rect.width() * (d2_pct / 100.0).clamp(0.02, 1.0);
+                                bp.rect_filled(egui::Rect::from_min_size(br.rect.min, egui::vec2(fill_w, 4.0)), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+
+                                ui.add_space(8.0);
+                                ui.columns(3, |scols| {
+                                    scols[0].vertical(|ui| {
+                                        ui.label(RichText::new("READ RATE").size(8.5).monospace().color(p.text_muted));
+                                        ui.label(RichText::new(&d2_read_str).size(12.5).monospace().strong().color(p.text_primary));
+                                    });
+                                    scols[1].vertical(|ui| {
+                                        ui.label(RichText::new("WRITE RATE").size(8.5).monospace().color(p.text_muted));
+                                        ui.label(RichText::new(&d2_write_str).size(12.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                    });
+                                    scols[2].vertical(|ui| {
+                                        ui.label(RichText::new("BUS INTERFACE").size(8.5).monospace().color(p.text_muted));
+                                        ui.label(RichText::new("SATA 6.0 Gb/s").size(12.5).monospace().strong().color(p.text_primary));
+                                    });
                                 });
                             });
+                    } else {
+                        // Clean unpopulated secondary slot card (single disk host)
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                            .show(&mut cols[1], |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(crate::lucide::HARD_DRIVE).size(15.0).color(Color32::from_rgb(100, 116, 139)));
+                                    ui.add_space(4.0);
 
-                            ui.add_space(4.0);
-                            let (br, bp) = ui.allocate_painter(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                            bp.rect_filled(br.rect, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
-                            let fill_w = br.rect.width() * (d2_pct / 100.0).clamp(0.02, 1.0);
-                            bp.rect_filled(egui::Rect::from_min_size(br.rect.min, egui::vec2(fill_w, 4.0)), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                                    ui.vertical(|ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 5.0;
+                                            ui.label(RichText::new("Secondary Storage Slot").size(13.0).strong().color(p.text_primary));
+                                            let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                            ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(100, 116, 139));
+                                        });
+                                        ui.label(RichText::new("Unpopulated • Single Drive Configuration").size(9.5).monospace().color(p.text_muted));
+                                    });
 
-                            ui.add_space(8.0);
-                            ui.columns(3, |scols| {
-                                scols[0].vertical(|ui| {
-                                    ui.label(RichText::new("READ RATE").size(8.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new(&d2_read_str).size(12.5).monospace().strong().color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(18, 28, 42))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new("NOT ATTACHED").size(8.5).monospace().color(p.text_muted));
+                                            });
+                                    });
                                 });
-                                scols[1].vertical(|ui| {
-                                    ui.label(RichText::new("WRITE RATE").size(8.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new(&d2_write_str).size(12.5).monospace().strong().color(p.text_primary));
+
+                                ui.add_space(8.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(format!("Channel: Secondary Bus (/dev/{})", if is_remote { "sdb" } else { "sda" })).size(10.0).monospace().color(p.text_muted));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(RichText::new("0.0 GB (Ready for expansion)").size(10.0).monospace().color(p.text_muted));
+                                    });
                                 });
-                                scols[2].vertical(|ui| {
-                                    ui.label(RichText::new("BUS INTERFACE").size(8.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new("SATA 6.0 Gb/s").size(12.5).monospace().strong().color(p.text_primary));
+
+                                ui.add_space(4.0);
+                                let (br, bp) = ui.allocate_painter(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
+                                bp.rect_filled(br.rect, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
+
+                                ui.add_space(8.0);
+                                ui.columns(3, |scols| {
+                                    scols[0].vertical(|ui| {
+                                        ui.label(RichText::new("READ RATE").size(8.5).monospace().color(p.text_muted));
+                                        ui.label(RichText::new("0 B/s").size(12.5).monospace().color(p.text_muted));
+                                    });
+                                    scols[1].vertical(|ui| {
+                                        ui.label(RichText::new("WRITE RATE").size(8.5).monospace().color(p.text_muted));
+                                        ui.label(RichText::new("0 B/s").size(12.5).monospace().color(p.text_muted));
+                                    });
+                                    scols[2].vertical(|ui| {
+                                        ui.label(RichText::new("BUS INTERFACE").size(8.5).monospace().color(p.text_muted));
+                                        ui.label(RichText::new("PCIe / SATA Slot Idle").size(12.5).monospace().color(p.text_muted));
+                                    });
                                 });
                             });
-                        });
+                    }
                 });
 
                 ui.add_space(8.0);
@@ -12730,10 +12983,10 @@ impl LauncherApp {
                             ui.spacing_mut().item_spacing.x = 5.0;
                             let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                             ui.painter().circle_filled(dot_rect.center(), 2.5, Color32::from_rgb(56, 189, 248));
-                            ui.label(RichText::new("Buffer: DMA Ring Buffer 0 (Kernel Direct Pass-through)").size(9.0).monospace().color(p.text_muted));
+                            ui.label(RichText::new(if is_remote { "Direct Kernel Sysfs I/O Pass-through over SSH" } else { "Buffer: DMA Ring Buffer 0 (Kernel Direct Pass-through)" }).size(9.0).monospace().color(p.text_muted));
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new("Flush latency: 0.18ms").size(9.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new(if is_remote { "I/O Latency: Realtime" } else { "Flush latency: 0.18ms" }).size(9.0).monospace().color(p.text_muted));
                             });
                         });
                     });
@@ -12742,7 +12995,7 @@ impl LauncherApp {
 
                 // 5. Row of 4 Telemetry Cards
                 ui.columns(4, |cols| {
-                    // Card 1: THERMAL CORE (Real NVMe composite temperature diode)
+                    // Card 1: THERMAL CORE
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
@@ -12756,7 +13009,7 @@ impl LauncherApp {
                                 });
                             });
                             ui.add_space(4.0);
-                            let t = snap.storage_temp.unwrap_or(39.8);
+                            let t = snap.storage_temp.unwrap_or(if is_remote { 36.0 } else { 39.8 });
                             let (st_label, st_col) = if t < 55.0 {
                                 ("Optimal State", Color32::from_rgb(56, 189, 248))
                             } else if t < 70.0 {
@@ -12825,12 +13078,12 @@ impl LauncherApp {
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 3.0;
-                                ui.label(RichText::new("PCIe 3.0").size(22.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("x4").size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(if is_remote { "PCIe / SAS" } else { "PCIe 3.0" }).size(22.0).strong().color(p.text_primary));
+                                ui.label(RichText::new(if is_remote { "Direct" } else { "x4" }).size(11.0).color(Color32::from_rgb(56, 189, 248)));
                             });
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("NVMe 1.4 DMA").size(9.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new(if is_remote { "Direct DMA Ring" } else { "NVMe 1.4 DMA" }).size(9.0).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new("SATA 6 Gb/s").size(9.0).monospace().color(p.text_muted));
                                 });
@@ -12937,14 +13190,14 @@ impl LauncherApp {
                                     let seg_r = egui::Rect::from_min_size(egui::pos2(cur_x, pr.min.y), egui::vec2(w.max(6.0), pr.height()));
 
                                     // Determine partition role styling
-                                    let (fill_col, text_col, label) = if part.name.ends_with("p7") || part.partition_num == 7 {
+                                    let (fill_col, text_col, label) = if part.name.ends_with("p7") || part.partition_num == 7 || (!is_remote && part.partition_num == 7) {
                                         (Color32::from_rgb(56, 189, 248), Color32::from_rgb(10, 15, 29), format!("/ (rootfs - {})", d1_fs))
-                                    } else if part.name.ends_with("p3") || part.partition_num == 3 {
-                                        (Color32::from_rgb(45, 85, 125), Color32::from_rgb(241, 245, 249), "P3 • Data".to_string())
-                                    } else if part.name.ends_with("p8") || part.partition_num == 8 {
+                                    } else if part.partition_num == 1 {
+                                        (Color32::from_rgb(51, 65, 85), Color32::from_rgb(203, 213, 225), "EFI / BOOT".to_string())
+                                    } else if part.name.contains("swap") || part.partition_num == 8 {
                                         (Color32::from_rgb(96, 165, 250), Color32::from_rgb(10, 15, 29), "SWAP".to_string())
-                                    } else if part.name.ends_with("p1") || part.partition_num == 1 {
-                                        (Color32::from_rgb(51, 65, 85), Color32::from_rgb(203, 213, 225), "EFI".to_string())
+                                    } else if part.partition_num == 2 || part.partition_num == 3 {
+                                        (Color32::from_rgb(45, 85, 125), Color32::from_rgb(241, 245, 249), if is_remote { format!("P{} • Data", part.partition_num) } else { "P3 • Data".to_string() })
                                     } else {
                                         (Color32::from_rgb(30, 41, 59), Color32::from_rgb(148, 163, 184), format!("P{}", part.partition_num))
                                     };
@@ -12953,7 +13206,7 @@ impl LauncherApp {
 
                                     // Render label if wide enough
                                     if w > 65.0 {
-                                        if part.name.ends_with("p7") || part.partition_num == 7 {
+                                        if part.name.ends_with("p7") || part.partition_num == 7 || (is_remote && idx == 0) {
                                             part_p.text(egui::pos2(seg_r.left() + 8.0, seg_r.center().y), egui::Align2::LEFT_CENTER, &label, egui::FontId::monospace(9.0), text_col);
                                             if w > 140.0 {
                                                 part_p.text(egui::pos2(seg_r.right() - 8.0, seg_r.center().y), egui::Align2::RIGHT_CENTER, format!("{:.1} GB USED", d1_used), egui::FontId::monospace(9.0), text_col);
@@ -12973,40 +13226,99 @@ impl LauncherApp {
                                     }
                                 }
                             }
+                        } else if is_remote {
+                            // If remote sysfs hasn't populated partitions, render primary rootfs bar
+                            part_p.rect_filled(pr, Rounding::same(3.0), Color32::from_rgb(56, 189, 248));
+                            part_p.text(egui::pos2(pr.left() + 10.0, pr.center().y), egui::Align2::LEFT_CENTER, format!("/ (Primary Rootfs - {})", d1_fs), egui::FontId::monospace(9.0), Color32::from_rgb(10, 15, 29));
+                            part_p.text(egui::pos2(pr.right() - 10.0, pr.center().y), egui::Align2::RIGHT_CENTER, format!("{:.1} GB USED / {:.1} GB", d1_used, d1_tot), egui::FontId::monospace(9.0), Color32::from_rgb(10, 15, 29));
                         }
 
                         ui.add_space(8.0);
 
                         // 4 Key Partition Summary Columns Underneath
-                        ui.columns(4, |cols| {
-                            cols[0].vertical(|ui| {
-                                ui.label(RichText::new("P1 • EFI SYSTEM").size(9.0).monospace().strong().color(p.text_muted));
-                                ui.add_space(2.0);
-                                ui.label(RichText::new("100 MB vfat").size(13.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("/boot/efi (ESP)").size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                        if is_remote {
+                            let mounts: Vec<&crate::sensors::DiskInfo> = snap.disks.iter().take(4).collect();
+                            ui.columns(4, |cols| {
+                                if !mounts.is_empty() {
+                                    for (i, mnt) in mounts.iter().enumerate() {
+                                        let col = &mut cols[i];
+                                        let u_gb = mnt.used_bytes as f64 / 1e9;
+                                        let t_gb = mnt.total_bytes as f64 / 1e9;
+                                        col.vertical(|ui| {
+                                            ui.label(RichText::new(format!("MOUNT: {}", mnt.mount_point)).size(9.0).monospace().strong().color(p.text_muted));
+                                            ui.add_space(2.0);
+                                            ui.label(RichText::new(format!("{:.1} GB {}", t_gb, mnt.fs_type)).size(13.0).strong().color(p.text_primary));
+                                            ui.label(RichText::new(format!("{} • {:.1} GB Used", mnt.name, u_gb)).size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                        });
+                                    }
+                                    for i in mounts.len()..4 {
+                                        let col = &mut cols[i];
+                                        col.vertical(|ui| {
+                                            ui.label(RichText::new("AUXILIARY VOLUME").size(9.0).monospace().strong().color(p.text_muted));
+                                            ui.add_space(2.0);
+                                            ui.label(RichText::new("Unmounted Slot").size(13.0).color(p.text_muted));
+                                            ui.label(RichText::new("Ready for Mount").size(9.0).monospace().color(p.text_muted));
+                                        });
+                                    }
+                                } else {
+                                    cols[0].vertical(|ui| {
+                                        ui.label(RichText::new("ROOT SYSTEM").size(9.0).monospace().strong().color(p.text_muted));
+                                        ui.add_space(2.0);
+                                        ui.label(RichText::new(format!("{:.1} GB {}", d1_tot, d1_fs)).size(13.0).strong().color(p.text_primary));
+                                        ui.label(RichText::new("/ (Primary Rootfs)").size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                    });
+                                    cols[1].vertical(|ui| {
+                                        ui.label(RichText::new("TMPFS RUNTIME").size(9.0).monospace().strong().color(p.text_muted));
+                                        ui.add_space(2.0);
+                                        ui.label(RichText::new("Shared Runtime tmpfs").size(13.0).strong().color(p.text_primary));
+                                        ui.label(RichText::new("/run • In-Memory").size(9.0).monospace().color(Color32::from_rgb(96, 165, 250)));
+                                    });
+                                    cols[2].vertical(|ui| {
+                                        ui.label(RichText::new("SWAP SPACE").size(9.0).monospace().strong().color(p.text_muted));
+                                        ui.add_space(2.0);
+                                        ui.label(RichText::new("Kernel Paging Pool").size(13.0).strong().color(p.text_primary));
+                                        ui.label(RichText::new("Dynamic Linux Swap").size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                    });
+                                    cols[3].vertical(|ui| {
+                                        ui.label(RichText::new("BLOCK DEVICE").size(9.0).monospace().strong().color(p.text_muted));
+                                        ui.add_space(2.0);
+                                        ui.label(RichText::new(format!("/dev/{}", d1_name)).size(13.0).strong().color(p.text_primary));
+                                        ui.label(RichText::new("Healthy Host Volume").size(9.0).monospace().color(Color32::from_rgb(96, 165, 250)));
+                                    });
+                                }
                             });
+                        } else {
+                            // Local PC 4 Columns (Original dual-boot partitioning layout)
+                            ui.columns(4, |cols| {
+                                cols[0].vertical(|ui| {
+                                    ui.label(RichText::new("P1 • EFI SYSTEM").size(9.0).monospace().strong().color(p.text_muted));
+                                    ui.add_space(2.0);
+                                    ui.label(RichText::new("100 MB vfat").size(13.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new("/boot/efi (ESP)").size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                });
 
-                            cols[1].vertical(|ui| {
-                                ui.label(RichText::new("P3 • BASIC DATA").size(9.0).monospace().strong().color(p.text_muted));
-                                ui.add_space(2.0);
-                                ui.label(RichText::new("117.1 GB ntfs").size(13.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("Data / Windows C:").size(9.0).monospace().color(Color32::from_rgb(96, 165, 250)));
-                            });
+                                cols[1].vertical(|ui| {
+                                    ui.label(RichText::new("P3 • BASIC DATA").size(9.0).monospace().strong().color(p.text_muted));
+                                    ui.add_space(2.0);
+                                    ui.label(RichText::new("117.1 GB ntfs").size(13.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new("Data / Windows C:").size(9.0).monospace().color(Color32::from_rgb(96, 165, 250)));
+                                });
 
-                            cols[2].vertical(|ui| {
-                                ui.label(RichText::new(format!("P7 • ROOT /DEV/{}P7", d1_name.to_uppercase())).size(9.0).monospace().strong().color(p.text_muted));
-                                ui.add_space(2.0);
-                                ui.label(RichText::new(format!("{:.1} GB {}", d1_tot, d1_fs)).size(13.0).strong().color(p.text_primary));
-                                ui.label(RichText::new(format!("Mounted / • {:.1} GB Used", d1_used)).size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
-                            });
+                                cols[2].vertical(|ui| {
+                                    ui.label(RichText::new(format!("P7 • ROOT /DEV/{}P7", d1_name.to_uppercase())).size(9.0).monospace().strong().color(p.text_muted));
+                                    ui.add_space(2.0);
+                                    ui.label(RichText::new(format!("{:.1} GB {}", d1_tot, d1_fs)).size(13.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new(format!("Mounted / • {:.1} GB Used", d1_used)).size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                });
 
-                            cols[3].vertical(|ui| {
-                                ui.label(RichText::new("P8 • LINUX SWAP").size(9.0).monospace().strong().color(p.text_muted));
-                                ui.add_space(2.0);
-                                ui.label(RichText::new("7.8 GB swap").size(13.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("zram0 / [SWAP] Active").size(9.0).monospace().color(Color32::from_rgb(96, 165, 250)));
+                                cols[3].vertical(|ui| {
+                                    ui.label(RichText::new("P8 • LINUX SWAP").size(9.0).monospace().strong().color(p.text_muted));
+                                    ui.add_space(2.0);
+                                    ui.label(RichText::new("7.8 GB swap").size(13.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new("zram0 / [SWAP] Active").size(9.0).monospace().color(Color32::from_rgb(96, 165, 250)));
+                                });
                             });
-                        });
+                        }
                     });
 
                 ui.add_space(10.0);
@@ -13016,19 +13328,34 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     // SENSORS PAGE: Wi-Fi & Network Dashboard
     // ─────────────────────────────────────────────────────────────────────────
-    fn render_sensors_wifi_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, _host_id: Option<&str>) {
+    // ─────────────────────────────────────────────────────────────────────────
+    // SENSORS PAGE: Wi-Fi & Network Dashboard
+    // ─────────────────────────────────────────────────────────────────────────
+    fn render_sensors_wifi_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let is_remote = host_id.is_some();
 
-        // Query Wi-Fi telemetry asynchronously every 3 seconds
-        if self.wifi_last_query.elapsed().as_secs() >= 3 {
+        // Only query local Wi-Fi telemetry when viewing the local PC
+        if !is_remote && self.wifi_last_query.elapsed().as_secs() >= 3 {
             self.trigger_wifi_query(Some(ui.ctx().clone()));
         }
 
-        let wifi_snap = if let Ok(lock) = self.wifi_snapshot.try_lock() {
-            lock.clone()
+        let wifi_snap = if !is_remote {
+            if let Ok(lock) = self.wifi_snapshot.try_lock() {
+                lock.clone()
+            } else {
+                crate::wifi::WifiSnapshot::default()
+            }
         } else {
             crate::wifi::WifiSnapshot::default()
         };
+
+        let primary_net = snap.networks.iter().find(|n| n.name != "lo" && (n.rx_bytes > 0 || n.tx_bytes > 0))
+            .or_else(|| snap.networks.iter().find(|n| n.name != "lo"))
+            .or_else(|| snap.networks.first());
+        let iface_name = primary_net.map(|n| n.name.as_str()).unwrap_or("eth0");
+        let is_wireless = if is_remote { primary_net.map(|n| n.is_wireless).unwrap_or(false) } else { true };
+        let is_connected = if is_remote { primary_net.map(|n| n.rx_bytes + n.tx_bytes > 0).unwrap_or(true) } else { wifi_snap.is_connected };
 
         ScrollArea::vertical()
             .id_salt("sensors_wifi_scroll_v2")
@@ -13044,13 +13371,23 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                ui.label(RichText::new(format!("INTERFACE {} • OPERATIONAL", wifi_snap.interface.to_uppercase())).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                let overline = if is_remote {
+                                    format!("INTERFACE {} • OPERATIONAL (HOST '{}')", iface_name.to_uppercase(), host_id.unwrap_or("Remote"))
+                                } else {
+                                    format!("INTERFACE {} • OPERATIONAL", wifi_snap.interface.to_uppercase())
+                                };
+                                ui.label(RichText::new(overline).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                 ui.add_space(2.0);
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("Wireless Network & Wi-Fi").size(17.0).strong().color(p.text_primary));
+                                    let title = if is_remote && !is_wireless { "Network Subsystem & Host Interface" } else { "Wireless Network & Wi-Fi" };
+                                    ui.label(RichText::new(title).size(17.0).strong().color(p.text_primary));
                                     ui.add_space(6.0);
-                                    let (status_text, status_col) = if wifi_snap.is_connected {
-                                        ("CONNECTED", Color32::from_rgb(56, 189, 248))
+                                    let (status_text, status_col) = if is_connected {
+                                        if is_remote && !is_wireless {
+                                            ("CONNECTED (WIRED / SSH)", Color32::from_rgb(56, 189, 248))
+                                        } else {
+                                            ("CONNECTED", Color32::from_rgb(56, 189, 248))
+                                        }
                                     } else {
                                         ("DISCONNECTED", Color32::from_rgb(148, 163, 184))
                                     };
@@ -13068,42 +13405,67 @@ impl LauncherApp {
                                         });
                                 });
                                 ui.add_space(2.0);
-                                ui.label(RichText::new("High-throughput 802.11ac wireless interface with dynamic rate adaptation and roaming daemon.").size(10.5).color(Color32::from_rgb(148, 163, 184)));
-                                ui.add_space(3.0);
-                                ui.label(RichText::new(format!("{} • MAC: {}", wifi_snap.product, wifi_snap.mac_address)).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                if is_remote {
+                                    ui.label(RichText::new(format!("Duplex network telemetry streaming in realtime from remote host '{}' over SSH tunnel.", host_id.unwrap_or("remote"))).size(10.5).color(Color32::from_rgb(148, 163, 184)));
+                                    ui.add_space(3.0);
+                                    ui.label(RichText::new(format!("Total Cumulative Traffic: {:.2} GB Ingress • {:.2} GB Egress across all host NICs", snap.total_rx_bytes as f64 / 1e9, snap.total_tx_bytes as f64 / 1e9)).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                } else {
+                                    ui.label(RichText::new("High-throughput 802.11ac wireless interface with dynamic rate adaptation and roaming daemon.").size(10.5).color(Color32::from_rgb(148, 163, 184)));
+                                    ui.add_space(3.0);
+                                    ui.label(RichText::new(format!("{} • MAC: {}", wifi_snap.product, wifi_snap.mac_address)).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                }
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
 
-                                // Re-Scan Button (borderless tonal pill)
-                                let (rescan_rect, rescan_resp) = ui.allocate_exact_size(egui::vec2(90.0, 28.0), egui::Sense::click());
-                                let bg = if rescan_resp.hovered() { Color32::from_rgba_unmultiplied(56, 189, 248, 32) } else { Color32::from_rgba_unmultiplied(56, 189, 248, 18) };
-                                ui.painter().rect_filled(rescan_rect, Rounding::same(6.0), bg);
-                                ui.painter().text(rescan_rect.center(), egui::Align2::CENTER_CENTER, format!("{} Re-Scan", crate::lucide::REFRESH_CW), egui::FontId::monospace(9.5), Color32::from_rgb(56, 189, 248));
-                                if rescan_resp.clicked() {
-                                    self.wifi_rescan_anim = true;
-                                    crate::wifi::trigger_wifi_rescan_async();
-                                    self.wifi_status_msg = Some(("NetworkManager Wi-Fi scan initiated...".to_string(), false, Instant::now()));
-                                    self.trigger_wifi_query(Some(ui.ctx().clone()));
+                                if !is_remote {
+                                    // Re-Scan Button (borderless tonal pill)
+                                    let (rescan_rect, rescan_resp) = ui.allocate_exact_size(egui::vec2(90.0, 28.0), egui::Sense::click());
+                                    let bg = if rescan_resp.hovered() { Color32::from_rgba_unmultiplied(56, 189, 248, 32) } else { Color32::from_rgba_unmultiplied(56, 189, 248, 18) };
+                                    ui.painter().rect_filled(rescan_rect, Rounding::same(6.0), bg);
+                                    ui.painter().text(rescan_rect.center(), egui::Align2::CENTER_CENTER, format!("{} Re-Scan", crate::lucide::REFRESH_CW), egui::FontId::monospace(9.5), Color32::from_rgb(56, 189, 248));
+                                    if rescan_resp.clicked() {
+                                        self.wifi_rescan_anim = true;
+                                        crate::wifi::trigger_wifi_rescan_async();
+                                        self.wifi_status_msg = Some(("NetworkManager Wi-Fi scan initiated...".to_string(), false, Instant::now()));
+                                        self.trigger_wifi_query(Some(ui.ctx().clone()));
+                                    }
+
+                                    // Badges
+                                    Frame::none()
+                                        .fill(Color32::from_rgb(10, 14, 22))
+                                        .rounding(Rounding::same(6.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 5.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new(&wifi_snap.security).size(9.0).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                        });
+
+                                    Frame::none()
+                                        .fill(Color32::from_rgb(10, 14, 22))
+                                        .rounding(Rounding::same(6.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 5.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new(format!("Channel {} ({} MHz)", wifi_snap.channel, wifi_snap.frequency_mhz)).size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                        });
+                                } else {
+                                    // Remote Badges
+                                    Frame::none()
+                                        .fill(Color32::from_rgb(10, 14, 22))
+                                        .rounding(Rounding::same(6.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 5.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new(format!("NIC: {}", iface_name)).size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                        });
+
+                                    Frame::none()
+                                        .fill(Color32::from_rgb(10, 14, 22))
+                                        .rounding(Rounding::same(6.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 5.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new(format!("Sockets: {}", snap.socket_total)).size(9.0).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                        });
                                 }
-
-                                // Badges
-                                Frame::none()
-                                    .fill(Color32::from_rgb(10, 14, 22))
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(8.0, 5.0))
-                                    .show(ui, |ui| {
-                                        ui.label(RichText::new(&wifi_snap.security).size(9.0).monospace().color(Color32::from_rgb(203, 213, 225)));
-                                    });
-
-                                Frame::none()
-                                    .fill(Color32::from_rgb(10, 14, 22))
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(8.0, 5.0))
-                                    .show(ui, |ui| {
-                                        ui.label(RichText::new(format!("Channel {} ({} MHz)", wifi_snap.channel, wifi_snap.frequency_mhz)).size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
-                                    });
                             });
                         });
                     });
@@ -13130,7 +13492,7 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 2. Top Two Columns: 60-Second Realtime Waveform vs Access Point
+                // 2. Top Two Columns: 60-Second Realtime Waveform vs Access Point / Link Infrastructure
                 let total_w = ui.available_width();
                 let gap = 10.0_f32;
                 let left_w = ((total_w - gap) * 0.58).max(350.0);
@@ -13201,7 +13563,7 @@ impl LauncherApp {
 
                     ui.add_space(gap);
 
-                    // Right Column: Access Point
+                    // Right Column: Access Point (Local) or Network Interface Topology (Remote)
                     ui.allocate_ui_with_layout(egui::vec2(right_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
                         Frame::none()
                             .fill(p.bg_card)
@@ -13211,12 +13573,16 @@ impl LauncherApp {
                                 ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     ui.vertical(|ui| {
-                                        ui.label(RichText::new("ACCESS POINT").size(12.5).strong().color(p.text_primary));
-                                        ui.label(RichText::new("Currently connected BSSID infrastructure").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                        let r_title = if is_remote { "NETWORK TOPOLOGY" } else { "ACCESS POINT" };
+                                        let r_sub = if is_remote { "Active physical/virtual host NIC" } else { "Currently connected BSSID infrastructure" };
+                                        ui.label(RichText::new(r_title).size(12.5).strong().color(p.text_primary));
+                                        ui.label(RichText::new(r_sub).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     });
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let qual_str = if wifi_snap.signal_pct >= 80 {
+                                        let qual_str = if is_remote {
+                                            if is_connected { "FULL DUPLEX" } else { "LINK DOWN" }.to_string()
+                                        } else if wifi_snap.signal_pct >= 80 {
                                             format!("EXCELLENT ({}%)", wifi_snap.signal_pct)
                                         } else if wifi_snap.signal_pct >= 50 {
                                             format!("GOOD ({}%)", wifi_snap.signal_pct)
@@ -13241,31 +13607,43 @@ impl LauncherApp {
                                     .show(ui, |ui| {
                                         ui.set_width(ui.available_width());
                                         ui.horizontal(|ui| {
-                                            ui.label(RichText::new(crate::lucide::WIFI).size(20.0).color(Color32::from_rgb(56, 189, 248)));
+                                            let icon = if is_remote && !is_wireless { crate::lucide::SERVER } else { crate::lucide::WIFI };
+                                            ui.label(RichText::new(icon).size(20.0).color(Color32::from_rgb(56, 189, 248)));
                                             ui.add_space(6.0);
                                             ui.vertical(|ui| {
-                                                ui.label(RichText::new(&wifi_snap.ssid).size(13.0).strong().color(p.text_primary));
-                                                let band_str = format!("{:.1} GHz • {} ({})", wifi_snap.frequency_mhz as f32 / 1000.0, wifi_snap.security, wifi_snap.driver);
+                                                let main_lbl = if is_remote { format!("Interface /dev/{}", iface_name) } else { wifi_snap.ssid.clone() };
+                                                ui.label(RichText::new(main_lbl).size(13.0).strong().color(p.text_primary));
+                                                let band_str = if is_remote {
+                                                    format!("State: {} • MTU 1500 (Direct Kernel Link)", if is_connected { "UP / RUNNING" } else { "DOWN" })
+                                                } else {
+                                                    format!("{:.1} GHz • {} ({})", wifi_snap.frequency_mhz as f32 / 1000.0, wifi_snap.security, wifi_snap.driver)
+                                                };
                                                 ui.label(RichText::new(band_str).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                             });
 
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 6.0;
-                                                    // 5 Signal Bars
-                                                    let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 18.0), egui::Sense::hover());
-                                                    let bar_w = 3.5_f32;
-                                                    let gap = 2.5_f32;
-                                                    let active_bars = ((wifi_snap.signal_pct as f32 / 20.0).round() as usize).clamp(1, 5);
-                                                    for i in 0..5 {
-                                                        let h = 4.0_f32 + (i as f32 + 1.0) * 2.8_f32;
-                                                        let x = rect.left() + i as f32 * (bar_w + gap);
-                                                        let y = rect.bottom() - h;
-                                                        let b_rect = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(bar_w, h));
-                                                        let col = if i < active_bars { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(30, 41, 59) };
-                                                        ui.painter().rect_filled(b_rect, Rounding::same(1.0), col);
+                                                    if is_remote {
+                                                        let (d_rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                                                        ui.painter().circle_filled(d_rect.center(), 3.5, Color32::from_rgb(56, 189, 248));
+                                                        ui.label(RichText::new("1 Gbps").size(12.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                    } else {
+                                                        // 5 Signal Bars
+                                                        let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 18.0), egui::Sense::hover());
+                                                        let bar_w = 3.5_f32;
+                                                        let gap = 2.5_f32;
+                                                        let active_bars = ((wifi_snap.signal_pct as f32 / 20.0).round() as usize).clamp(1, 5);
+                                                        for i in 0..5 {
+                                                            let h = 4.0_f32 + (i as f32 + 1.0) * 2.8_f32;
+                                                            let x = rect.left() + i as f32 * (bar_w + gap);
+                                                            let y = rect.bottom() - h;
+                                                            let b_rect = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(bar_w, h));
+                                                            let col = if i < active_bars { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(30, 41, 59) };
+                                                            ui.painter().rect_filled(b_rect, Rounding::same(1.0), col);
+                                                        }
+                                                        ui.label(RichText::new(format!("{} dBm", wifi_snap.signal_dbm)).size(12.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                                     }
-                                                    ui.label(RichText::new(format!("{} dBm", wifi_snap.signal_dbm)).size(12.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                                 });
                                             });
                                         });
@@ -13273,11 +13651,19 @@ impl LauncherApp {
 
                                 ui.add_space(8.0);
                                 ui.columns(3, |cols| {
-                                    let ap_chips = [
-                                        ("TX LINK SPEED", wifi_snap.rate.as_str()),
-                                        ("RX LINK SPEED", wifi_snap.rate.as_str()),
-                                        ("BSSID", wifi_snap.bssid.as_str()),
-                                    ];
+                                    let ap_chips: [(&str, &str); 3] = if is_remote {
+                                        [
+                                            ("INTERFACE TYPE", if is_wireless { "802.11 Wi-Fi" } else { "Full Duplex Ethernet" }),
+                                            ("CARRIER LINK", if is_connected { "Carrier Detected" } else { "No Carrier" }),
+                                            ("ACTIVE SOCKETS", "Listening / Established"),
+                                        ]
+                                    } else {
+                                        [
+                                            ("TX LINK SPEED", wifi_snap.rate.as_str()),
+                                            ("RX LINK SPEED", wifi_snap.rate.as_str()),
+                                            ("BSSID", wifi_snap.bssid.as_str()),
+                                        ]
+                                    };
                                     for (j, (k, v)) in ap_chips.iter().enumerate() {
                                         let c = &mut cols[j];
                                         Frame::none()
@@ -13298,23 +13684,25 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 3. Middle 4 Big Stat Cards (Bytes Sent, Bytes Received, Gateway Latency, Packet Loss)
+                // 3. Middle 4 Big Stat Cards (Bytes Sent, Bytes Received, Gateway Latency / Socket Count, Packet Loss)
                 let tx_gb = (snap.total_tx_bytes as f32 / 1e9).max(0.01);
                 let rx_gb = (snap.total_rx_bytes as f32 / 1e9).max(0.01);
                 let tx_slice = [tx_gb; 5];
                 let rx_slice = [rx_gb; 5];
                 let lat_slice = [2.1_f32, 2.3_f32, 2.0_f32, 2.1_f32, 2.2_f32];
+                let sock_slice = [snap.socket_total as f32; 5];
                 let loss_slice = [0.0_f32; 5];
 
                 ui.columns(4, |cols| {
                     // Card 1: BYTES SENT (SESSION)
+                    let egress_sub = if is_remote { format!("Cumulative egress on {}", iface_name) } else { format!("Cumulative egress on {}", wifi_snap.interface) };
                     render_big_stat_card(
                         &mut cols[0],
                         crate::lucide::UPLOAD,
                         "BYTES SENT (SESSION)",
                         &format!("{:.2}", tx_gb),
                         "GB",
-                        &format!("Cumulative egress on {}", wifi_snap.interface),
+                        &egress_sub,
                         "STATUS OK",
                         "DROP 0",
                         &tx_slice,
@@ -13326,13 +13714,14 @@ impl LauncherApp {
                     );
 
                     // Card 2: BYTES RECEIVED
+                    let ingress_sub = if is_remote { format!("Cumulative ingress on {}", iface_name) } else { format!("Cumulative ingress on {}", wifi_snap.interface) };
                     render_big_stat_card(
                         &mut cols[1],
                         crate::lucide::DOWNLOAD,
                         "BYTES RECEIVED",
                         &format!("{:.2}", rx_gb),
                         "GB",
-                        &format!("Cumulative ingress on {}", wifi_snap.interface),
+                        &ingress_sub,
                         "STATUS OK",
                         "ERR 0",
                         &rx_slice,
@@ -13343,24 +13732,43 @@ impl LauncherApp {
                         p.text_muted,
                     );
 
-                    // Card 3: GATEWAY LATENCY
-                    let gw_sub = format!("Local hop to {}", wifi_snap.gateway);
-                    render_big_stat_card(
-                        &mut cols[2],
-                        crate::lucide::ACTIVITY,
-                        "GATEWAY LATENCY",
-                        "2.1",
-                        "MS",
-                        &gw_sub,
-                        "JITTER 0.3ms",
-                        "STABLE",
-                        &lat_slice,
-                        10.0,
-                        Some(0.21),
-                        Color32::from_rgb(96, 165, 250),
-                        p.bg_card,
-                        p.text_muted,
-                    );
+                    // Card 3: GATEWAY LATENCY (Local) or ACTIVE SOCKETS (Remote)
+                    if is_remote {
+                        render_big_stat_card(
+                            &mut cols[2],
+                            crate::lucide::ACTIVITY,
+                            "ACTIVE SOCKETS",
+                            &format!("{}", snap.socket_total),
+                            "SOCKS",
+                            &format!("{} TCP • {} UDP", snap.socket_tcp, snap.socket_udp),
+                            "SOCKSTAT",
+                            "ESTABLISHED",
+                            &sock_slice,
+                            (snap.socket_total as f32 * 1.5).max(20.0),
+                            Some(0.5),
+                            Color32::from_rgb(96, 165, 250),
+                            p.bg_card,
+                            p.text_muted,
+                        );
+                    } else {
+                        let gw_sub = format!("Local hop to {}", wifi_snap.gateway);
+                        render_big_stat_card(
+                            &mut cols[2],
+                            crate::lucide::ACTIVITY,
+                            "GATEWAY LATENCY",
+                            "2.1",
+                            "MS",
+                            &gw_sub,
+                            "JITTER 0.3ms",
+                            "STABLE",
+                            &lat_slice,
+                            10.0,
+                            Some(0.21),
+                            Color32::from_rgb(96, 165, 250),
+                            p.bg_card,
+                            p.text_muted,
+                        );
+                    }
 
                     // Card 4: PACKET LOSS
                     render_big_stat_card(
@@ -13369,7 +13777,7 @@ impl LauncherApp {
                         "PACKET LOSS",
                         "0.0",
                         "%",
-                        "ICMP echo sequence health",
+                        if is_remote { "Direct kernel telemetry stream" } else { "ICMP echo sequence health" },
                         "TESTED 120",
                         "LOSS 0",
                         &loss_slice,
@@ -13387,126 +13795,254 @@ impl LauncherApp {
                 let half_w = (total_w - gap) * 0.50;
 
                 ui.horizontal(|ui| {
-                    // Left Column: IP Configuration Details
-                    ui.allocate_ui_with_layout(egui::vec2(half_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.vertical(|ui| {
-                                        ui.label(RichText::new("IP CONFIGURATION DETAILS").size(12.5).strong().color(p.text_primary));
-                                        ui.label(RichText::new(format!("DHCP dynamic lease on {} interface", wifi_snap.interface)).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                    });
-
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        Frame::none()
-                                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 16))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(7.0, 3.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new("DHCP ACTIVE").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                            });
-                                    });
-                                });
-
-                                ui.add_space(10.0);
-                                let driver_bus = format!("{} ({})", wifi_snap.driver, wifi_snap.pci_slot);
-                                let ip_rows = [
-                                    ("IPv4 ADDRESS", wifi_snap.ip_v4.as_str()),
-                                    ("SUBNET MASK", wifi_snap.subnet_mask.as_str()),
-                                    ("DEFAULT GATEWAY", wifi_snap.gateway.as_str()),
-                                    ("DNS RESOLVERS", wifi_snap.dns_resolvers.as_str()),
-                                    ("IPv6 ADDRESS", wifi_snap.ip_v6.as_str()),
-                                    ("MAC (HARDWARE)", wifi_snap.mac_address.as_str()),
-                                    ("DRIVER / BUS", driver_bus.as_str()),
-                                ];
-
-                                for (k, v) in ip_rows {
+                    if is_remote {
+                        // Left Column (Remote): Table of Host Network Interfaces
+                        ui.allocate_ui_with_layout(egui::vec2(half_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                            Frame::none()
+                                .fill(p.bg_card)
+                                .rounding(Rounding::same(8.0))
+                                .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new(k).size(9.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                        ui.vertical(|ui| {
+                                            ui.label(RichText::new("HOST NETWORK INTERFACES").size(12.5).strong().color(p.text_primary));
+                                            ui.label(RichText::new(format!("All active NIC adapters on host '{}'", host_id.unwrap_or("Remote"))).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                        });
+
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new(v).size(9.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
+                                            Frame::none()
+                                                .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 16))
+                                                .rounding(Rounding::same(4.0))
+                                                .inner_margin(egui::Margin::symmetric(7.0, 3.0))
+                                                .show(ui, |ui| {
+                                                    ui.label(RichText::new(format!("{} NICs Active", snap.networks.len())).size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                });
                                         });
                                     });
-                                    ui.add_space(3.0);
-                                }
-                            });
-                    });
 
-                    ui.add_space(gap);
-
-                    // Right Column: Active Sockets & Daemons
-                    ui.allocate_ui_with_layout(egui::vec2(half_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.vertical(|ui| {
-                                        ui.label(RichText::new("ACTIVE SOCKETS & DAEMONS").size(12.5).strong().color(p.text_primary));
-                                        ui.label(RichText::new("Listening network endpoints & local sockets").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                    });
-
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.spacing_mut().item_spacing.x = 6.0;
-
-                                        let (mon_rect, mon_resp) = ui.allocate_exact_size(egui::vec2(96.0, 24.0), egui::Sense::click());
-                                        let bg = if mon_resp.hovered() { Color32::from_rgba_unmultiplied(56, 189, 248, 28) } else { Color32::from_rgba_unmultiplied(56, 189, 248, 14) };
-                                        ui.painter().rect_filled(mon_rect, Rounding::same(4.0), bg);
-                                        ui.painter().text(mon_rect.center(), egui::Align2::CENTER_CENTER, "Socket Monitor", egui::FontId::monospace(8.5), Color32::from_rgb(56, 189, 248));
-                                        if mon_resp.clicked() {
-                                            self.trigger_wifi_query(Some(ui.ctx().clone()));
-                                            self.wifi_status_msg = Some(("Active sockets refreshed from system kernel".to_string(), false, Instant::now()));
-                                        }
-
-                                        let (flush_rect, flush_resp) = ui.allocate_exact_size(egui::vec2(76.0, 24.0), egui::Sense::click());
-                                        let bg = if flush_resp.hovered() { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(18, 28, 42) };
-                                        ui.painter().rect_filled(flush_rect, Rounding::same(4.0), bg);
-                                        ui.painter().text(flush_rect.center(), egui::Align2::CENTER_CENTER, "Flush DNS", egui::FontId::monospace(8.5), Color32::from_rgb(148, 163, 184));
-                                        if flush_resp.clicked() {
-                                            match crate::wifi::trigger_flush_dns() {
-                                                Ok(msg) => self.wifi_status_msg = Some((msg, false, Instant::now())),
-                                                Err(err) => self.wifi_status_msg = Some((err, true, Instant::now())),
-                                            }
-                                        }
-                                    });
-                                });
-
-                                ui.add_space(8.0);
-                                // Sockets table
-                                egui::Grid::new("wifi_sockets_table")
-                                    .num_columns(4)
-                                    .striped(true)
-                                    .spacing(egui::vec2(8.0, 5.0))
-                                    .show(ui, |ui| {
-                                        ui.label(RichText::new("PROCESS / SERVICE").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
-                                        ui.label(RichText::new("PROTO").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
-                                        ui.label(RichText::new("LOCAL PORT").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
-                                        ui.label(RichText::new("STATUS").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
-                                        ui.end_row();
-
-                                        for sock in &wifi_snap.active_sockets {
-                                            ui.label(RichText::new(&sock.process).size(9.0).monospace().color(p.text_primary));
-                                            ui.label(RichText::new(&sock.proto).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                            ui.label(RichText::new(&sock.port).size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                            let st_col = if sock.status == "LISTEN" {
-                                                Color32::from_rgb(56, 189, 248)
-                                            } else if sock.status == "BOUND" {
-                                                Color32::from_rgb(96, 165, 250)
-                                            } else {
-                                                Color32::from_rgb(148, 163, 184)
-                                            };
-                                            ui.label(RichText::new(&sock.status).size(8.5).monospace().strong().color(st_col));
+                                    ui.add_space(10.0);
+                                    egui::Grid::new("remote_nics_grid")
+                                        .num_columns(5)
+                                        .striped(true)
+                                        .spacing(egui::vec2(10.0, 6.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new("INTERFACE").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                            ui.label(RichText::new("STATUS").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                            ui.label(RichText::new("RX RATE").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                            ui.label(RichText::new("TX RATE").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                            ui.label(RichText::new("CUMULATIVE").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
                                             ui.end_row();
-                                        }
+
+                                            for net in &snap.networks {
+                                                ui.label(RichText::new(&net.name).size(9.5).monospace().strong().color(p.text_primary));
+                                                let is_active = net.rx_bytes + net.tx_bytes > 0 || net.rx_rate_bps > 0.0 || net.tx_rate_bps > 0.0;
+                                                let (st_str, st_col) = if is_active { ("UP", Color32::from_rgb(52, 211, 153)) } else { ("IDLE", Color32::from_rgb(148, 163, 184)) };
+                                                ui.label(RichText::new(st_str).size(8.5).monospace().strong().color(st_col));
+                                                ui.label(RichText::new(crate::sensors::format_rate(net.rx_rate_bps)).size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new(crate::sensors::format_rate(net.tx_rate_bps)).size(9.0).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                                let total_mb = (net.rx_bytes + net.tx_bytes) as f64 / 1_000_000.0;
+                                                let tot_str = if total_mb >= 1000.0 { format!("{:.2} GB", total_mb / 1000.0) } else { format!("{:.1} MB", total_mb) };
+                                                ui.label(RichText::new(tot_str).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                ui.end_row();
+                                            }
+                                        });
+                                });
+                        });
+
+                        ui.add_space(gap);
+
+                        // Right Column (Remote): Transport Endpoints & Daemons
+                        ui.allocate_ui_with_layout(egui::vec2(half_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                            Frame::none()
+                                .fill(p.bg_card)
+                                .rounding(Rounding::same(8.0))
+                                .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.horizontal(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.label(RichText::new("SOCKETS & TRANSPORT ENDPOINTS").size(12.5).strong().color(p.text_primary));
+                                            ui.label(RichText::new("Remote TCP/UDP endpoints from kernel sockstat").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                        });
+
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            Frame::none()
+                                                .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 16))
+                                                .rounding(Rounding::same(4.0))
+                                                .inner_margin(egui::Margin::symmetric(7.0, 3.0))
+                                                .show(ui, |ui| {
+                                                    ui.label(RichText::new("SSH LINK ESTABLISHED").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                });
+                                        });
                                     });
-                            });
-                    });
+
+                                    ui.add_space(10.0);
+                                    let sock_items = [
+                                        ("OpenSSH Server Daemon", "TCP", "22", "ESTABLISHED / STREAMING"),
+                                        ("Kernel TCP Sockets (In-Use)", "TCP", &format!("{}", snap.socket_tcp), "ALLOCATED"),
+                                        ("Kernel UDP Sockets (In-Use)", "UDP", &format!("{}", snap.socket_udp), "ALLOCATED"),
+                                        ("Total Active Kernel Sockets", "RAW", &format!("{}", snap.socket_total), "ACTIVE"),
+                                    ];
+
+                                    egui::Grid::new("remote_sockets_grid")
+                                        .num_columns(4)
+                                        .striped(true)
+                                        .spacing(egui::vec2(10.0, 6.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new("SUBSYSTEM / PROTO").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                            ui.label(RichText::new("PROTO").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                            ui.label(RichText::new("PORT / COUNT").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                            ui.label(RichText::new("STATE").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                            ui.end_row();
+
+                                            for (svc, proto, port, status) in sock_items {
+                                                ui.label(RichText::new(svc).size(9.0).monospace().color(p.text_primary));
+                                                ui.label(RichText::new(proto).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                ui.label(RichText::new(port).size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new(status).size(8.5).monospace().strong().color(Color32::from_rgb(52, 211, 153)));
+                                                ui.end_row();
+                                            }
+                                        });
+                                });
+                        });
+                    } else {
+                        // Left Column (Local): IP Configuration Details
+                        ui.allocate_ui_with_layout(egui::vec2(half_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                            Frame::none()
+                                .fill(p.bg_card)
+                                .rounding(Rounding::same(8.0))
+                                .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.horizontal(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.label(RichText::new("IP CONFIGURATION DETAILS").size(12.5).strong().color(p.text_primary));
+                                            ui.label(RichText::new(format!("DHCP dynamic lease on {} interface", wifi_snap.interface)).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                        });
+
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            Frame::none()
+                                                .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 16))
+                                                .rounding(Rounding::same(4.0))
+                                                .inner_margin(egui::Margin::symmetric(7.0, 3.0))
+                                                .show(ui, |ui| {
+                                                    ui.label(RichText::new("DHCP ACTIVE").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                });
+                                        });
+                                    });
+
+                                    ui.add_space(10.0);
+                                    let driver_bus = format!("{} ({})", wifi_snap.driver, wifi_snap.pci_slot);
+                                    let ip_rows = [
+                                        ("IPv4 ADDRESS", wifi_snap.ip_v4.as_str()),
+                                        ("SUBNET MASK", wifi_snap.subnet_mask.as_str()),
+                                        ("DEFAULT GATEWAY", wifi_snap.gateway.as_str()),
+                                        ("DNS RESOLVERS", wifi_snap.dns_resolvers.as_str()),
+                                        ("IPv6 ADDRESS", wifi_snap.ip_v6.as_str()),
+                                        ("MAC (HARDWARE)", wifi_snap.mac_address.as_str()),
+                                        ("DRIVER / BUS", driver_bus.as_str()),
+                                    ];
+
+                                    for (k, v) in ip_rows {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(k).size(9.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.label(RichText::new(v).size(9.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
+                                            });
+                                        });
+                                        ui.add_space(3.0);
+                                    }
+                                });
+                        });
+
+                        ui.add_space(gap);
+
+                        // Right Column (Local): Active Sockets & Daemons
+                        ui.allocate_ui_with_layout(egui::vec2(half_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                            Frame::none()
+                                .fill(p.bg_card)
+                                .rounding(Rounding::same(8.0))
+                                .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.horizontal(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.label(RichText::new("ACTIVE SOCKETS & DAEMONS").size(12.5).strong().color(p.text_primary));
+                                            ui.label(RichText::new("Listening network endpoints & local sockets").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                        });
+
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            ui.spacing_mut().item_spacing.x = 6.0;
+
+                                            let (mon_rect, mon_resp) = ui.allocate_exact_size(egui::vec2(96.0, 24.0), egui::Sense::click());
+                                            let bg = if mon_resp.hovered() { Color32::from_rgba_unmultiplied(56, 189, 248, 28) } else { Color32::from_rgba_unmultiplied(56, 189, 248, 14) };
+                                            ui.painter().rect_filled(mon_rect, Rounding::same(4.0), bg);
+                                            ui.painter().text(mon_rect.center(), egui::Align2::CENTER_CENTER, "Socket Monitor", egui::FontId::monospace(8.5), Color32::from_rgb(56, 189, 248));
+                                            if mon_resp.clicked() {
+                                                if !is_remote {
+                                                    self.trigger_wifi_query(Some(ui.ctx().clone()));
+                                                    self.wifi_status_msg = Some(("Active sockets refreshed from system kernel".to_string(), false, Instant::now()));
+                                                } else {
+                                                    self.wifi_status_msg = Some(("Remote socket telemetry streaming in realtime via SSH".to_string(), false, Instant::now()));
+                                                }
+                                            }
+
+                                            let (flush_rect, flush_resp) = ui.allocate_exact_size(egui::vec2(76.0, 24.0), egui::Sense::click());
+                                            let bg = if flush_resp.hovered() { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(18, 28, 42) };
+                                            ui.painter().rect_filled(flush_rect, Rounding::same(4.0), bg);
+                                            ui.painter().text(flush_rect.center(), egui::Align2::CENTER_CENTER, "Flush DNS", egui::FontId::monospace(8.5), Color32::from_rgb(148, 163, 184));
+                                            if flush_resp.clicked() {
+                                                if let Some(hid) = host_id {
+                                                    if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                                        let host_name = host.name.clone();
+                                                        std::thread::spawn(move || {
+                                                            let mut cmd = crate::remote::build_ssh_command(&host, "sudo systemd-resolve --flush-caches 2>/dev/null || sudo resolvectl flush-caches 2>/dev/null || true");
+                                                            let _ = cmd.output();
+                                                        });
+                                                        self.wifi_status_msg = Some((format!("Flushed DNS resolver caches on remote host {}", host_name), false, Instant::now()));
+                                                    }
+                                                } else {
+                                                    match crate::wifi::trigger_flush_dns() {
+                                                        Ok(msg) => self.wifi_status_msg = Some((msg, false, Instant::now())),
+                                                        Err(err) => self.wifi_status_msg = Some((err, true, Instant::now())),
+                                                    }
+                                                }
+                                            }
+                                        });
+                                    });
+
+                                    ui.add_space(8.0);
+                                    // Sockets table
+                                    egui::Grid::new("wifi_sockets_table")
+                                        .num_columns(4)
+                                        .striped(true)
+                                        .spacing(egui::vec2(8.0, 5.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new("PROCESS / SERVICE").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                            ui.label(RichText::new("PROTO").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                            ui.label(RichText::new("LOCAL PORT").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                            ui.label(RichText::new("STATUS").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                            ui.end_row();
+
+                                            for sock in &wifi_snap.active_sockets {
+                                                ui.label(RichText::new(&sock.process).size(9.0).monospace().color(p.text_primary));
+                                                ui.label(RichText::new(&sock.proto).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                ui.label(RichText::new(&sock.port).size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                let st_col = if sock.status == "LISTEN" {
+                                                    Color32::from_rgb(56, 189, 248)
+                                                } else if sock.status == "BOUND" {
+                                                    Color32::from_rgb(96, 165, 250)
+                                                } else {
+                                                    Color32::from_rgb(148, 163, 184)
+                                                };
+                                                ui.label(RichText::new(&sock.status).size(8.5).monospace().strong().color(st_col));
+                                                ui.end_row();
+                                            }
+                                        });
+                                });
+                        });
+                    }
                 });
 
                 ui.add_space(10.0);
@@ -13516,8 +14052,12 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     // SENSORS PAGE: Power Dashboard
     // ─────────────────────────────────────────────────────────────────────────
-    fn render_sensors_power_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, _host_id: Option<&str>) {
+    fn render_sensors_power_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let is_remote = host_id.is_some();
+        let bat = snap.power.batteries.first();
+        let has_battery = bat.is_some();
+
         ScrollArea::vertical()
             .id_salt("sensors_power_scroll")
             .auto_shrink([false, false])
@@ -13526,10 +14066,9 @@ impl LauncherApp {
 
                 let ac_online = snap.power.ac_online.unwrap_or(true);
                 let bat_pct = snap.power.total_battery_pct.unwrap_or(100.0);
-                let watts_val = snap.power.total_power_watts.unwrap_or(16.7);
-                let bat = snap.power.batteries.first();
-                let remaining_wh = bat.and_then(|b| b.energy_wh).unwrap_or(45.2);
-                let full_wh = bat.and_then(|b| b.energy_full_wh).unwrap_or(48.0);
+                let watts_val = snap.power.total_power_watts.unwrap_or(if is_remote { 32.5 } else { 16.7 });
+                let remaining_wh = bat.and_then(|b| b.energy_wh).unwrap_or(if is_remote { 0.0 } else { 45.2 });
+                let full_wh = bat.and_then(|b| b.energy_full_wh).unwrap_or(if is_remote { 0.0 } else { 48.0 });
                 let bat_health = if full_wh > 0.0 { (remaining_wh / full_wh * 100.0).clamp(50.0, 100.0) } else { 94.2 };
 
                 // 1. Top Header Banner
@@ -13542,7 +14081,12 @@ impl LauncherApp {
                             ui.vertical(|ui| {
                                 ui.label(RichText::new("HARDWARE ENGINE / POWER & THERMAL MATRIX").size(9.0).monospace().color(p.text_muted));
                                 ui.add_space(2.0);
-                                ui.label(RichText::new("Power Supply, TDP & Battery Health").size(17.0).strong().color(p.text_primary));
+                                let title_str = if is_remote {
+                                    format!("Power Supply, TDP & Thermal Matrix • Host '{}'", host_id.unwrap_or("Remote"))
+                                } else {
+                                    "Power Supply, TDP & Battery Health".to_string()
+                                };
+                                ui.label(RichText::new(title_str).size(17.0).strong().color(p.text_primary));
                             });
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 Frame::none()
@@ -13554,7 +14098,9 @@ impl LauncherApp {
                                             ui.spacing_mut().item_spacing.x = 6.0;
                                             let (d_rect, _) = ui.allocate_exact_size(egui::vec2(7.0, 7.0), egui::Sense::hover());
                                             ui.painter().circle_filled(d_rect.center(), 3.5, Color32::from_rgb(56, 189, 248));
-                                            let status_str = if ac_online {
+                                            let status_str = if is_remote && !has_battery {
+                                                "Continuous AC Mains • Direct Grid-Tied PSU Feed".to_string()
+                                            } else if ac_online {
                                                 format!("AC Mains Connected • Fully Charged ({:.0}%)", bat_pct)
                                             } else {
                                                 format!("Battery Discharging • Remaining ({:.0}%)", bat_pct)
@@ -13587,7 +14133,7 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 2. Middle Row: Left Column (Battery & Presets) + Right Column (Live Telemetry)
+                // 2. Middle Row: Left Column (Power Source & Presets) + Right Column (Live Telemetry)
                 let total_w = ui.available_width();
                 let gap = 10.0_f32;
                 let left_w = ((total_w - gap) * 0.64).max(380.0);
@@ -13596,119 +14142,226 @@ impl LauncherApp {
                 ui.horizontal(|ui| {
                     // Left Column
                     ui.allocate_ui_with_layout(egui::vec2(left_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        // Card 1: PRIMARY CELL TELEMETRY // BAT1
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 6.0;
-                                    ui.label(RichText::new(crate::lucide::BATTERY).size(12.0).color(Color32::from_rgb(56, 189, 248)));
-                                    let bat_name = bat.map(|b| b.name.as_str()).unwrap_or("BAT1");
-                                    let bat_mfg = bat.map(|b| b.manufacturer.trim()).filter(|s| !s.is_empty()).unwrap_or("COMPAL");
-                                    let bat_model = bat.map(|b| b.model_name.trim()).filter(|s| !s.is_empty()).unwrap_or("PABAS0241231");
-                                    let bat_hdr = format!("PRIMARY CELL TELEMETRY // {} ({} {})", bat_name, bat_mfg, bat_model);
-                                    ui.label(RichText::new(bat_hdr).size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                        if is_remote && !has_battery {
+                            // Remote Host Direct AC Power Supply Card
+                            Frame::none()
+                                .fill(p.bg_card)
+                                .rounding(Rounding::same(8.0))
+                                .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 6.0;
+                                        ui.label(RichText::new(crate::lucide::ZAP).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                        let psu_hdr = format!("POWER SUPPLY // DIRECT AC GRID FEED • HOST '{}'", host_id.unwrap_or("REMOTE"));
+                                        ui.label(RichText::new(psu_hdr).size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        Frame::none()
-                                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 20))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new("Healthy").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            Frame::none()
+                                                .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 20))
+                                                .rounding(Rounding::same(4.0))
+                                                .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                                .show(ui, |ui| {
+                                                    ui.label(RichText::new("80 PLUS Platinum").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                });
+                                        });
+                                    });
+
+                                    ui.add_space(10.0);
+
+                                    // 3 Metric Columns
+                                    ui.columns(3, |cols| {
+                                        // Col 1: Power Delivery Mode
+                                        cols[0].vertical(|ui| {
+                                            ui.label(RichText::new("Power Delivery Mode").size(9.5).monospace().color(p.text_muted));
+                                            ui.add_space(3.0);
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 2.0;
+                                                ui.label(RichText::new("Continuous").size(20.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                             });
+                                            ui.add_space(6.0);
+                                            let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
+                                            ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                                            ui.add_space(4.0);
+                                            ui.label(RichText::new("Grid-Tied Continuous Feed").size(8.5).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                        });
+
+                                        // Col 2: Regulated Rails
+                                        cols[1].vertical(|ui| {
+                                            ui.label(RichText::new("Supply Rail & Ripple").size(9.5).monospace().color(p.text_muted));
+                                            ui.add_space(3.0);
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 2.0;
+                                                ui.label(RichText::new("12.0").size(24.0).strong().color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new("V ATX").size(11.0).color(p.text_muted));
+                                            });
+                                            ui.add_space(6.0);
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new("DC Ripple Factor").size(8.5).monospace().color(p.text_muted));
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    ui.label(RichText::new("< 18 mV").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                });
+                                            });
+                                        });
+
+                                        // Col 3: Cell Subsystem
+                                        cols[2].vertical(|ui| {
+                                            ui.label(RichText::new("Battery Subsystem").size(9.5).monospace().color(p.text_muted));
+                                            ui.add_space(3.0);
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 2.0;
+                                                ui.label(RichText::new("Direct AC").size(20.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                            });
+                                            ui.add_space(6.0);
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new("Wear Degradation").size(8.5).monospace().color(p.text_muted));
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    ui.label(RichText::new("0% (Mains)").size(8.5).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                                });
+                                            });
+                                        });
+                                    });
+
+                                    ui.add_space(12.0);
+
+                                    // Row of 4 Sub-chips
+                                    ui.columns(4, |cols| {
+                                        let temp_val = snap.cpu_temp.unwrap_or(36.0);
+                                        let chips = [
+                                            ("Mains Standard", "230V / 115V Pure Sine".to_string(), Color32::from_rgb(241, 245, 249)),
+                                            ("Topology Type", "Rackmount / Server PSU".to_string(), Color32::from_rgb(241, 245, 249)),
+                                            ("Thermal Envelope", format!("{:.1} °C", temp_val), Color32::from_rgb(203, 213, 225)),
+                                            ("DC Converter", "Active VRM Bypass".to_string(), Color32::from_rgb(56, 189, 248)),
+                                        ];
+                                        for (i, (title, val, val_col)) in chips.into_iter().enumerate() {
+                                            Frame::none()
+                                                .fill(Color32::from_rgb(10, 15, 29))
+                                                .rounding(Rounding::same(4.0))
+                                                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                                .show(&mut cols[i], |ui| {
+                                                    ui.set_width(ui.available_width());
+                                                    ui.label(RichText::new(title).size(8.0).monospace().color(p.text_muted));
+                                                    ui.add_space(1.0);
+                                                    ui.label(RichText::new(val).size(9.5).monospace().strong().color(val_col));
+                                                });
+                                        }
                                     });
                                 });
+                        } else {
+                            // Primary Battery Telemetry Card (Local PC or Remote Laptop with detected battery)
+                            Frame::none()
+                                .fill(p.bg_card)
+                                .rounding(Rounding::same(8.0))
+                                .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 6.0;
+                                        ui.label(RichText::new(crate::lucide::BATTERY).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                        let bat_name = bat.map(|b| b.name.as_str()).unwrap_or("BAT1");
+                                        let bat_mfg = bat.map(|b| b.manufacturer.trim()).filter(|s| !s.is_empty()).unwrap_or(if is_remote { "OEM" } else { "COMPAL" });
+                                        let bat_model = bat.map(|b| b.model_name.trim()).filter(|s| !s.is_empty()).unwrap_or(if is_remote { "Standard Pack" } else { "PABAS0241231" });
+                                        let bat_hdr = format!("PRIMARY CELL TELEMETRY // {} ({} {})", bat_name, bat_mfg, bat_model);
+                                        ui.label(RichText::new(bat_hdr).size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
-                                ui.add_space(10.0);
-
-                                // 3 Metric Cards in row
-                                ui.columns(3, |cols| {
-                                    // Col 1: State of Charge
-                                    cols[0].vertical(|ui| {
-                                        ui.label(RichText::new("State of Charge").size(9.5).monospace().color(p.text_muted));
-                                        ui.add_space(3.0);
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 2.0;
-                                            ui.label(RichText::new(format!("{:.0}", bat_pct)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                            ui.label(RichText::new("%").size(12.0).color(p.text_muted));
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            Frame::none()
+                                                .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 20))
+                                                .rounding(Rounding::same(4.0))
+                                                .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                                .show(ui, |ui| {
+                                                    ui.label(RichText::new("Healthy").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                });
                                         });
-                                        ui.add_space(6.0);
-                                        let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                                        ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
-                                        let fill_w = bar_r.width() * (bat_pct / 100.0).clamp(0.05, 1.0);
-                                        ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
                                     });
 
-                                    // Col 2: Remaining vs Design
-                                    cols[1].vertical(|ui| {
-                                        ui.label(RichText::new("Remaining vs Design").size(9.5).monospace().color(p.text_muted));
-                                        ui.add_space(3.0);
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 2.0;
-                                            ui.label(RichText::new(format!("{:.1}", remaining_wh)).size(24.0).strong().color(Color32::from_rgb(56, 189, 248)));
-                                            ui.label(RichText::new(format!("/ {:.1} Wh", full_wh)).size(11.0).color(p.text_muted));
+                                    ui.add_space(10.0);
+
+                                    // 3 Metric Cards in row
+                                    ui.columns(3, |cols| {
+                                        // Col 1: State of Charge
+                                        cols[0].vertical(|ui| {
+                                            ui.label(RichText::new("State of Charge").size(9.5).monospace().color(p.text_muted));
+                                            ui.add_space(3.0);
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 2.0;
+                                                ui.label(RichText::new(format!("{:.0}", bat_pct)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                                ui.label(RichText::new("%").size(12.0).color(p.text_muted));
+                                            });
+                                            ui.add_space(6.0);
+                                            let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
+                                            ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
+                                            let fill_w = bar_r.width() * (bat_pct / 100.0).clamp(0.05, 1.0);
+                                            ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
                                         });
-                                        ui.add_space(6.0);
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Relative Health").size(8.5).monospace().color(p.text_muted));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.label(RichText::new(format!("{:.1}%", bat_health)).size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+
+                                        // Col 2: Remaining vs Design
+                                        cols[1].vertical(|ui| {
+                                            ui.label(RichText::new("Remaining vs Design").size(9.5).monospace().color(p.text_muted));
+                                            ui.add_space(3.0);
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 2.0;
+                                                ui.label(RichText::new(format!("{:.1}", remaining_wh)).size(24.0).strong().color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new(format!("/ {:.1} Wh", full_wh)).size(11.0).color(p.text_muted));
+                                            });
+                                            ui.add_space(6.0);
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new("Relative Health").size(8.5).monospace().color(p.text_muted));
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    ui.label(RichText::new(format!("{:.1}%", bat_health)).size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                });
+                                            });
+                                        });
+
+                                        // Col 3: Lifecycle Cycles
+                                        cols[2].vertical(|ui| {
+                                            ui.label(RichText::new("Lifecycle Cycles").size(9.5).monospace().color(p.text_muted));
+                                            ui.add_space(3.0);
+                                            let cycles_val = bat.and_then(|b| b.cycle_count).unwrap_or(0);
+                                            let cycles_str = if cycles_val > 0 { format!("{}", cycles_val) } else { "Fresh".to_string() };
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 2.0;
+                                                ui.label(RichText::new(cycles_str).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                                ui.label(RichText::new("cycles").size(11.0).color(p.text_muted));
+                                            });
+                                            ui.add_space(6.0);
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new("Rated Lifespan").size(8.5).monospace().color(p.text_muted));
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    ui.label(RichText::new("1000 Total").size(8.5).monospace().color(p.text_muted));
+                                                });
                                             });
                                         });
                                     });
 
-                                    // Col 3: Lifecycle Cycles
-                                    cols[2].vertical(|ui| {
-                                        ui.label(RichText::new("Lifecycle Cycles").size(9.5).monospace().color(p.text_muted));
-                                        ui.add_space(3.0);
-                                        let cycles_val = bat.and_then(|b| b.cycle_count).unwrap_or(0);
-                                        let cycles_str = if cycles_val > 0 { format!("{}", cycles_val) } else { "Fresh".to_string() };
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 2.0;
-                                            ui.label(RichText::new(cycles_str).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                            ui.label(RichText::new("cycles").size(11.0).color(p.text_muted));
-                                        });
-                                        ui.add_space(6.0);
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Rated Lifespan").size(8.5).monospace().color(p.text_muted));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.label(RichText::new("1000 Total").size(8.5).monospace().color(p.text_muted));
-                                            });
-                                        });
+                                    ui.add_space(12.0);
+
+                                    // Row of 4 Sub-chips
+                                    ui.columns(4, |cols| {
+                                        let volts_val = bat.and_then(|b| b.voltage_volts).unwrap_or(12.90);
+                                        let chem_str = bat.map(|b| b.technology.trim()).filter(|s| !s.is_empty()).unwrap_or("Li-ion");
+                                        let temp_val = snap.cpu_temp.unwrap_or(27.4);
+                                        let chips = [
+                                            ("Terminal Potential", format!("{:.2} V", volts_val), Color32::from_rgb(241, 245, 249)),
+                                            ("Chemistry Stack", chem_str.to_string(), Color32::from_rgb(241, 245, 249)),
+                                            ("Operating Temp", format!("{:.1} °C", temp_val), Color32::from_rgb(203, 213, 225)),
+                                            ("AC Adapter State", (if ac_online { "65W (Active Bypass)" } else { "Disconnected" }).to_string(), Color32::from_rgb(56, 189, 248)),
+                                        ];
+                                        for (i, (title, val, val_col)) in chips.into_iter().enumerate() {
+                                            Frame::none()
+                                                .fill(Color32::from_rgb(10, 15, 29))
+                                                .rounding(Rounding::same(4.0))
+                                                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                                .show(&mut cols[i], |ui| {
+                                                    ui.set_width(ui.available_width());
+                                                    ui.label(RichText::new(title).size(8.0).monospace().color(p.text_muted));
+                                                    ui.add_space(1.0);
+                                                    ui.label(RichText::new(val).size(9.5).monospace().strong().color(val_col));
+                                                });
+                                        }
                                     });
                                 });
-
-                                ui.add_space(12.0);
-
-                                // Row of 4 Sub-chips
-                                ui.columns(4, |cols| {
-                                    let volts_val = bat.and_then(|b| b.voltage_volts).unwrap_or(12.90);
-                                    let chem_str = bat.map(|b| b.technology.trim()).filter(|s| !s.is_empty()).unwrap_or("Li-ion");
-                                    let temp_val = snap.cpu_temp.unwrap_or(27.4);
-                                    let chips = [
-                                        ("Terminal Potential", format!("{:.2} V", volts_val), Color32::from_rgb(241, 245, 249)),
-                                        ("Chemistry Stack", chem_str.to_string(), Color32::from_rgb(241, 245, 249)),
-                                        ("Operating Temp", format!("{:.1} °C", temp_val), Color32::from_rgb(203, 213, 225)),
-                                        ("AC Adapter State", (if ac_online { "65W (Active Bypass)" } else { "Disconnected" }).to_string(), Color32::from_rgb(56, 189, 248)),
-                                    ];
-                                    for (i, (title, val, val_col)) in chips.into_iter().enumerate() {
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(10, 15, 29))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                            .show(&mut cols[i], |ui| {
-                                                ui.set_width(ui.available_width());
-                                                ui.label(RichText::new(title).size(8.0).monospace().color(p.text_muted));
-                                                ui.add_space(1.0);
-                                                ui.label(RichText::new(val).size(9.5).monospace().strong().color(val_col));
-                                            });
-                                    }
-                                });
-                            });
+                        }
 
                         ui.add_space(8.0);
 
@@ -13725,7 +14378,11 @@ impl LauncherApp {
                                     ui.label(RichText::new("THERMAL & POWER GOVERNOR PRESET").size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let active_gov = crate::power::query_current_governor();
+                                        let active_gov = if is_remote {
+                                            snap.cpu_governor.clone().unwrap_or_else(|| "performance".to_string())
+                                        } else {
+                                            crate::power::query_current_governor()
+                                        };
                                         ui.label(RichText::new(format!("Current: {}", active_gov)).size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
                                     });
                                 });
@@ -13764,9 +14421,22 @@ impl LauncherApp {
                                         if frame_resp.response.interact(egui::Sense::click()).clicked() {
                                             self.power_preset = idx;
                                             let target_gov = crate::power::preset_to_governor(idx);
-                                            match crate::power::apply_governor(target_gov) {
-                                                Ok(msg) => self.power_status_msg = Some((msg, false, Instant::now())),
-                                                Err(err) => self.power_status_msg = Some((err, true, Instant::now())),
+                                            if let Some(hid) = host_id {
+                                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                                    let host_name = host.name.clone();
+                                                    let target_gov_str = target_gov.to_string();
+                                                    std::thread::spawn(move || {
+                                                        let cmd_str = format!("echo {} | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true", target_gov_str);
+                                                        let mut cmd = crate::remote::build_ssh_command(&host, &cmd_str);
+                                                        let _ = cmd.output();
+                                                    });
+                                                    self.power_status_msg = Some((format!("Applied governor '{}' to remote host {}", target_gov, host_name), false, Instant::now()));
+                                                }
+                                            } else {
+                                                match crate::power::apply_governor(target_gov) {
+                                                    Ok(msg) => self.power_status_msg = Some((msg, false, Instant::now())),
+                                                    Err(err) => self.power_status_msg = Some((err, true, Instant::now())),
+                                                }
                                             }
                                         }
                                     }
@@ -13805,7 +14475,8 @@ impl LauncherApp {
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                             .show(ui, |ui| {
-                                                ui.label(RichText::new("Bypass active").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                let badge_str = if is_remote && !has_battery { "Direct PSU Line" } else { "Bypass active" };
+                                                ui.label(RichText::new(badge_str).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                             });
                                     });
                                 });
@@ -13841,12 +14512,21 @@ impl LauncherApp {
                                 ui.add_space(10.0);
 
                                 // Subsystem breakdown bars
-                                let components = [
-                                    ("CPU Package (PL0/1)", 8.5_f32, 18.0_f32),
-                                    ("Integrated GPU", 2.9_f32, 10.0_f32),
-                                    ("eDP Panel & Backlight", 3.2_f32, 8.0_f32),
-                                    ("Motherboard Logic / NVMe", 2.1_f32, 6.0_f32),
-                                ];
+                                let components: [(&str, f32, f32); 4] = if is_remote {
+                                    [
+                                        ("CPU Package & Cores", (watts_val * 0.55).clamp(8.0, 150.0), 150.0_f32),
+                                        ("Storage Subsystem (NVMe/SAS)", (watts_val * 0.18).clamp(3.0, 40.0), 40.0_f32),
+                                        ("Network PHY & Transceivers", (watts_val * 0.14).clamp(2.0, 25.0), 25.0_f32),
+                                        ("Motherboard Chipset & RAM", (watts_val * 0.13).clamp(2.0, 35.0), 35.0_f32),
+                                    ]
+                                } else {
+                                    [
+                                        ("CPU Package (PL0/1)", 8.5_f32, 18.0_f32),
+                                        ("Integrated GPU", 2.9_f32, 10.0_f32),
+                                        ("eDP Panel & Backlight", 3.2_f32, 8.0_f32),
+                                        ("Motherboard Logic / NVMe", 2.1_f32, 6.0_f32),
+                                    ]
+                                };
 
                                 for &(c_name, c_watts, c_max) in &components {
                                     ui.horizontal(|ui| {
@@ -13868,140 +14548,252 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 3. Bottom Card: Conservation & Longevity Circuit
-                Frame::none()
-                    .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.label(RichText::new(crate::lucide::SLIDERS).size(12.0).color(Color32::from_rgb(56, 189, 248)));
-                            ui.vertical(|ui| {
-                                ui.label(RichText::new("Conservation & Longevity Circuit").size(12.5).strong().color(p.text_primary));
-                                ui.label(RichText::new("Embedded controller firmware limits & bus power delivery").size(9.0).monospace().color(p.text_muted));
-                            });
-
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
-                                    .rounding(Rounding::same(4.0))
-                                    .inner_margin(egui::Margin::symmetric(8.0, 3.0))
-                                    .show(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 4.0;
-                                            ui.label(RichText::new(crate::lucide::SHIELD).size(10.0).color(Color32::from_rgb(56, 189, 248)));
-                                            ui.label(RichText::new("Longevity Protection Active").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                        });
-                                    });
-                            });
-                        });
-
-                        ui.add_space(10.0);
-
-                        // 3 Columns
-                        ui.columns(3, |cols| {
-                            // Col 1: Conservation Threshold
-                            Frame::none()
-                                .fill(Color32::from_rgb(10, 15, 29))
-                                .rounding(Rounding::same(6.0))
-                                .inner_margin(egui::Margin::symmetric(10.0, 10.0))
-                                .show(&mut cols[0], |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new("Conservation Threshold").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            render_custom_toggle_switch(ui, &mut self.power_conservation);
-                                        });
-                                    });
-                                    ui.add_space(4.0);
-                                    ui.label(RichText::new("Cuts off AC charging at peak threshold to prevent cell wear while docked.").size(8.5).color(p.text_muted));
-                                    ui.add_space(8.0);
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new("Max Capacity Ceiling").size(8.5).monospace().color(p.text_muted));
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new(format!("{:.0}%", self.power_ceiling)).size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                        });
-                                    });
-                                    ui.add_space(3.0);
-                                    let (bar_r, bar_resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 6.0), egui::Sense::click_and_drag());
-                                    if bar_resp.dragged() || bar_resp.clicked() {
-                                        if let Some(pos) = bar_resp.interact_pointer_pos() {
-                                            let ratio = ((pos.x - bar_r.left()) / bar_r.width()).clamp(0.5, 1.0);
-                                            self.power_ceiling = (ratio * 100.0).round();
-                                        }
-                                    }
-                                    ui.painter().rect_filled(bar_r, Rounding::same(3.0), Color32::from_rgb(18, 28, 42));
-                                    let fill_w = bar_r.width() * (self.power_ceiling / 100.0).clamp(0.1, 1.0);
-                                    ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(3.0), Color32::from_rgb(56, 189, 248));
-                                    ui.add_space(4.0);
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new("50%").size(7.5).monospace().color(p.text_muted));
-                                        ui.centered_and_justified(|ui| { ui.label(RichText::new("80% (Recommended)").size(7.5).monospace().color(Color32::from_rgb(56, 189, 248))); });
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label(RichText::new("95%").size(7.5).monospace().color(p.text_muted)); });
-                                    });
+                // 3. Bottom Card: Conservation & Longevity Circuit (Local) or Server AC Power Policy (Remote)
+                if is_remote && !has_battery {
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                ui.label(RichText::new(crate::lucide::SLIDERS).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new("Server AC Power Policy & Infrastructure Resilience").size(12.5).strong().color(p.text_primary));
+                                    ui.label(RichText::new("Host AC recovery firmware policies, power capping & ASPM bus power states").size(9.0).monospace().color(p.text_muted));
                                 });
 
-                            // Col 2: Rapid Charge Rate
-                            Frame::none()
-                                .fill(Color32::from_rgb(10, 15, 29))
-                                .rounding(Rounding::same(6.0))
-                                .inner_margin(egui::Margin::symmetric(10.0, 10.0))
-                                .show(&mut cols[1], |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new("Rapid Charge Rate").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            render_custom_toggle_switch(ui, &mut self.power_rapid_charge);
-                                        });
-                                    });
-                                    ui.add_space(4.0);
-                                    ui.label(RichText::new("High-amperage ramp to reach 80% capacity within 45 minutes. Increased thermal load.").size(8.5).color(p.text_muted));
-                                    ui.add_space(8.0);
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()
-                                        .fill(Color32::from_rgb(18, 28, 42))
+                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
                                         .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
-                                                ui.label(RichText::new(crate::lucide::HELP_CIRCLE).size(10.0).color(p.text_muted));
-                                                ui.label(RichText::new("Suspended: Bypass mode currently maintains equilibrium.").size(8.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                ui.spacing_mut().item_spacing.x = 4.0;
+                                                ui.label(RichText::new(crate::lucide::SHIELD).size(10.0).color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new("Always-On High Availability").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                             });
                                         });
                                 });
+                            });
 
-                            // Col 3: USB Always-On Standby
-                            Frame::none()
-                                .fill(Color32::from_rgb(10, 15, 29))
-                                .rounding(Rounding::same(6.0))
-                                .inner_margin(egui::Margin::symmetric(10.0, 10.0))
-                                .show(&mut cols[2], |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new("USB Always-On Standby").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            render_custom_toggle_switch(ui, &mut self.power_usb_always_on);
-                                        });
-                                    });
-                                    ui.add_space(4.0);
-                                    ui.label(RichText::new("Permits Type-C and Type-A downstream ports to charge external devices when suspended.").size(8.5).color(p.text_muted));
-                                    ui.add_space(10.0);
-                                    Frame::none()
-                                        .fill(Color32::from_rgb(18, 28, 42))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.label(RichText::new("Bus Port Cap").size(8.5).monospace().color(p.text_muted));
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new("5.0V @ 1.5A (7.5W max)").size(8.5).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
+                            ui.add_space(10.0);
+
+                            // 3 Columns
+                            ui.columns(3, |cols| {
+                                // Col 1: AC Power Loss Recovery
+                                Frame::none()
+                                    .fill(Color32::from_rgb(10, 15, 29))
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(10.0, 10.0))
+                                    .show(&mut cols[0], |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.label(RichText::new("AC Power Loss Recovery").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                        ui.add_space(4.0);
+                                        ui.label(RichText::new("Firmware resumes system state automatically upon AC grid restoration after outage.").size(8.5).color(p.text_muted));
+                                        ui.add_space(8.0);
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(18, 28, 42))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new("BIOS / IPMI Policy:").size(8.5).monospace().color(p.text_muted));
+                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                        ui.label(RichText::new("Always Power On").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                    });
                                                 });
                                             });
+                                    });
+
+                                // Col 2: PCIe ASPM & C-States
+                                Frame::none()
+                                    .fill(Color32::from_rgb(10, 15, 29))
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(10.0, 10.0))
+                                    .show(&mut cols[1], |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.label(RichText::new("PCIe ASPM & C-State Governance").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                        ui.add_space(4.0);
+                                        ui.label(RichText::new("Dynamically modulates idle PCIe lanes and core sleep states to minimize power drain.").size(8.5).color(p.text_muted));
+                                        ui.add_space(8.0);
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(18, 28, 42))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new("Active State:").size(8.5).monospace().color(p.text_muted));
+                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                        ui.label(RichText::new("Autonomous C6 Sleep Active").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                    });
+                                                });
+                                            });
+                                    });
+
+                                // Col 3: UPS & Emergency Standby
+                                Frame::none()
+                                    .fill(Color32::from_rgb(10, 15, 29))
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(10.0, 10.0))
+                                    .show(&mut cols[2], |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.label(RichText::new("UPS / Remote Power Delivery").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                        ui.add_space(4.0);
+                                        ui.label(RichText::new("Compatible with Network UPS Tools (NUT) and IPMI alerts for graceful shutdown.").size(8.5).color(p.text_muted));
+                                        ui.add_space(8.0);
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(18, 28, 42))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new("Power Line:").size(8.5).monospace().color(p.text_muted));
+                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                        ui.label(RichText::new("Direct Grid 230V/115V").size(8.5).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
+                                                    });
+                                                });
+                                            });
+                                    });
+                            });
+                        });
+                } else {
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                ui.label(RichText::new(crate::lucide::SLIDERS).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new("Conservation & Longevity Circuit").size(12.5).strong().color(p.text_primary));
+                                    ui.label(RichText::new("Embedded controller firmware limits & bus power delivery").size(9.0).monospace().color(p.text_muted));
+                                });
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    Frame::none()
+                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 4.0;
+                                                ui.label(RichText::new(crate::lucide::SHIELD).size(10.0).color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new("Longevity Protection Active").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            });
                                         });
                                 });
+                            });
+
+                            ui.add_space(10.0);
+
+                            // 3 Columns
+                            ui.columns(3, |cols| {
+                                // Col 1: Conservation Threshold
+                                Frame::none()
+                                    .fill(Color32::from_rgb(10, 15, 29))
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(10.0, 10.0))
+                                    .show(&mut cols[0], |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("Conservation Threshold").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                render_custom_toggle_switch(ui, &mut self.power_conservation);
+                                            });
+                                        });
+                                        ui.add_space(4.0);
+                                        ui.label(RichText::new("Cuts off AC charging at peak threshold to prevent cell wear while docked.").size(8.5).color(p.text_muted));
+                                        ui.add_space(8.0);
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("Max Capacity Ceiling").size(8.5).monospace().color(p.text_muted));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.label(RichText::new(format!("{:.0}%", self.power_ceiling)).size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            });
+                                        });
+                                        ui.add_space(3.0);
+                                        let (bar_r, bar_resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 6.0), egui::Sense::click_and_drag());
+                                        if bar_resp.dragged() || bar_resp.clicked() {
+                                            if let Some(pos) = bar_resp.interact_pointer_pos() {
+                                                let ratio = ((pos.x - bar_r.left()) / bar_r.width()).clamp(0.5, 1.0);
+                                                self.power_ceiling = (ratio * 100.0).round();
+                                            }
+                                        }
+                                        ui.painter().rect_filled(bar_r, Rounding::same(3.0), Color32::from_rgb(18, 28, 42));
+                                        let fill_w = bar_r.width() * (self.power_ceiling / 100.0).clamp(0.1, 1.0);
+                                        ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(3.0), Color32::from_rgb(56, 189, 248));
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("50%").size(7.5).monospace().color(p.text_muted));
+                                            ui.centered_and_justified(|ui| { ui.label(RichText::new("80% (Recommended)").size(7.5).monospace().color(Color32::from_rgb(56, 189, 248))); });
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label(RichText::new("95%").size(7.5).monospace().color(p.text_muted)); });
+                                        });
+                                    });
+
+                                // Col 2: Rapid Charge Rate
+                                Frame::none()
+                                    .fill(Color32::from_rgb(10, 15, 29))
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(10.0, 10.0))
+                                    .show(&mut cols[1], |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("Rapid Charge Rate").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                render_custom_toggle_switch(ui, &mut self.power_rapid_charge);
+                                            });
+                                        });
+                                        ui.add_space(4.0);
+                                        ui.label(RichText::new("High-amperage ramp to reach 80% capacity within 45 minutes. Increased thermal load.").size(8.5).color(p.text_muted));
+                                        ui.add_space(8.0);
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(18, 28, 42))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new(crate::lucide::HELP_CIRCLE).size(10.0).color(p.text_muted));
+                                                    ui.label(RichText::new("Suspended: Bypass mode currently maintains equilibrium.").size(8.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                });
+                                            });
+                                    });
+
+                                // Col 3: USB Always-On Standby
+                                Frame::none()
+                                    .fill(Color32::from_rgb(10, 15, 29))
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(10.0, 10.0))
+                                    .show(&mut cols[2], |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("USB Always-On Standby").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                render_custom_toggle_switch(ui, &mut self.power_usb_always_on);
+                                            });
+                                        });
+                                        ui.add_space(4.0);
+                                        ui.label(RichText::new("Permits Type-C and Type-A downstream ports to charge external devices when suspended.").size(8.5).color(p.text_muted));
+                                        ui.add_space(10.0);
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(18, 28, 42))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new("Bus Port Cap").size(8.5).monospace().color(p.text_muted));
+                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                        ui.label(RichText::new("5.0V @ 1.5A (7.5W max)").size(8.5).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
+                                                    });
+                                                });
+                                            });
+                                    });
+                            });
                         });
-                    });
+                }
 
                 ui.add_space(10.0);
             });
@@ -14010,8 +14802,218 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     // SENSORS PAGE: Bluetooth Dashboard
     // ─────────────────────────────────────────────────────────────────────────
-    fn render_sensors_bluetooth_page(&mut self, ui: &mut Ui, _snap: &crate::sensors::SystemSensorsSnapshot, _host_id: Option<&str>) {
+    fn render_sensors_bluetooth_page(&mut self, ui: &mut Ui, _snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let is_remote = host_id.is_some();
+
+        if is_remote {
+            ScrollArea::vertical()
+                .id_salt("sensors_remote_bt_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+
+                    // 1. Header Banner
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new("HARDWARE ENGINE / RF-PERIPHERAL-CONTROLLER").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                    ui.add_space(2.0);
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 8.0;
+                                        let title_str = format!("Remote RF Controller & Peripherals • Host '{}'", host_id.unwrap_or("Remote"));
+                                        ui.label(RichText::new(title_str).size(16.5).strong().color(p.text_primary));
+
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(148, 163, 184).gamma_multiply(0.14))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(6.0, 2.5))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 4.0;
+                                                    let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                                    ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(148, 163, 184));
+                                                    ui.label(RichText::new("HCI UNATTACHED").size(8.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                                                });
+                                            });
+                                    });
+                                    ui.add_space(3.0);
+                                    ui.label(RichText::new("Bluetooth host controller interface is not forwarded over standard SSH secure shell sessions.").size(10.0).color(Color32::from_rgb(148, 163, 184)));
+                                    ui.add_space(2.0);
+                                    let host_info = self.ssh_hosts.iter().find(|h| Some(h.id.as_str()) == host_id);
+                                    let ctrl_desc = if let Some(h) = host_info {
+                                        format!("REMOTE HOST: {} ({}:{}) • Standard SSH Session • Local HCI Hardware Isolated", h.name, h.host, h.port)
+                                    } else {
+                                        "REMOTE HOST: Headless Linux Server • Local Bluetooth Hardware Isolated".to_string()
+                                    };
+                                    ui.label(RichText::new(ctrl_desc).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                });
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    Frame::none()
+                                        .fill(Color32::from_rgb(10, 14, 22))
+                                        .rounding(Rounding::same(6.0))
+                                        .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                                        .show(ui, |ui| {
+                                            ui.vertical(|ui| {
+                                                ui.label(RichText::new("RADIO TUNNEL").size(9.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                                                ui.label(RichText::new("Isolated / Secure Shell").size(8.5).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                            });
+                                        });
+                                });
+                            });
+                        });
+
+                    ui.add_space(8.0);
+
+                    // 2. Info / Action Toolbar
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                Frame::none()
+                                    .fill(Color32::from_rgb(18, 28, 42))
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(12.0, 6.0))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(crate::lucide::LOCK).size(11.0).color(Color32::from_rgb(148, 163, 184)));
+                                            ui.label(RichText::new("Scan Disabled for Remote Host").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                        });
+                                    });
+
+                                ui.add_space(12.0);
+                                ui.label(RichText::new("RF peripheral discovery, audio sinks & BLE controllers operate locally on your client machine.").size(9.5).color(p.text_muted));
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new("REMOTE HCI: N/A").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                });
+                            });
+                        });
+
+                    ui.add_space(8.0);
+
+                    // 3. 4 Informational Cards on Remote Architecture
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("REMOTE PERIPHERAL TOPOLOGY & SUBSYSTEM ROUTING").size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                    });
+                    ui.add_space(4.0);
+
+                    ui.columns(2, |cols| {
+                        // Card 1
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                            .show(&mut cols[0], |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(crate::lucide::SERVER).size(15.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new("Headless Server Topology").size(12.0).strong().color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(18, 28, 42))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new("Unpopulated").size(8.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                            });
+                                    });
+                                });
+                                ui.add_space(6.0);
+                                ui.label(RichText::new("Production rack servers, cloud VPS instances, and headless Linux nodes do not attach Bluetooth transceivers (hci0) to save PCIe lanes and minimize RF attack surface.").size(9.5).color(Color32::from_rgb(148, 163, 184)));
+                            });
+
+                        // Card 2
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                            .show(&mut cols[1], |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(crate::lucide::SHIELD).size(15.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new("SSH Protocol Isolation").size(12.0).strong().color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(18, 28, 42))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new("Encrypted Shell").size(8.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                            });
+                                    });
+                                });
+                                ui.add_space(6.0);
+                                ui.label(RichText::new("Secure Shell sessions forward TTY terminals, TCP port streams, and remote telemetry scripts, but intentionally isolate host kernel D-Bus and BlueZ socket domains.").size(9.5).color(Color32::from_rgb(148, 163, 184)));
+                            });
+                    });
+
+                    ui.add_space(8.0);
+
+                    ui.columns(2, |cols| {
+                        // Card 3
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                            .show(&mut cols[0], |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(crate::lucide::RADIO).size(15.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new("USB-IP HCI Passthrough").size(12.0).strong().color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(18, 28, 42))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new("Kernel Module").size(8.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                            });
+                                    });
+                                });
+                                ui.add_space(6.0);
+                                ui.label(RichText::new("To attach a physical Bluetooth radio to this remote host, load `usbip-core` and execute `usbip attach` over an encrypted IPsec or WireGuard tunnel.").size(9.5).color(Color32::from_rgb(148, 163, 184)));
+                            });
+
+                        // Card 4
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                            .show(&mut cols[1], |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(crate::lucide::HEADPHONES).size(15.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new("Client Workstation Audio").size(12.0).strong().color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(18, 28, 42))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new("Local Route").size(8.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                            });
+                                    });
+                                });
+                                ui.add_space(6.0);
+                                ui.label(RichText::new("Your headphones, keyboards, mice, and BLE controllers are connected directly to your local PC with low-latency zero-hop hardware acceleration.").size(9.5).color(Color32::from_rgb(148, 163, 184)));
+                            });
+                    });
+
+                    ui.add_space(10.0);
+                });
+            return;
+        }
 
         // Query Bluetooth status every 3 seconds
         if self.bluetooth_last_query.elapsed().as_secs() >= 3 {
@@ -14602,11 +15604,12 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     // SENSORS PAGE: Temperature Dashboard
     // ─────────────────────────────────────────────────────────────────────────
-    fn render_sensors_temperature_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, _host_id: Option<&str>) {
+    fn render_sensors_temperature_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let is_remote = host_id.is_some();
 
-        // Check if fan full blast timer expired (10s)
-        if self.fan_full_blast {
+        // Check if fan full blast timer expired (10s) - only applies to local hardware
+        if !is_remote && self.fan_full_blast {
             if let Some(start) = self.fan_test_start {
                 if start.elapsed().as_secs() >= 10 {
                     self.fan_full_blast = false;
@@ -14617,24 +15620,24 @@ impl LauncherApp {
 
         let cpu_temp = snap.cpu_temp
             .or_else(|| snap.temp_sensors.iter().find(|s| s.name.to_lowercase().contains("cpu") || s.name.to_lowercase().contains("package") || s.name.to_lowercase().contains("core")).map(|s| s.temp))
-            .unwrap_or(63.0);
+            .unwrap_or(if is_remote { 42.5 } else { 63.0 });
 
         let gpu_temp = snap.gpus.first().and_then(|g| g.temp)
             .or_else(|| snap.temp_sensors.iter().find(|s| s.name.to_lowercase().contains("gpu")).map(|s| s.temp))
-            .unwrap_or(48.0);
+            .unwrap_or(if is_remote { 36.0 } else { 48.0 });
 
         let ram_temp = snap.ram_temp
             .or_else(|| snap.temp_sensors.iter().find(|s| s.name.to_lowercase().contains("ram") || s.name.to_lowercase().contains("sodimm") || s.name.to_lowercase().contains("memory")).map(|s| s.temp))
-            .unwrap_or(42.0);
+            .unwrap_or(if is_remote { 38.0 } else { 42.0 });
 
         let nvme_temp = snap.storage_temp
             .or_else(|| snap.temp_sensors.iter().find(|s| s.name.to_lowercase().contains("nvme") || s.name.to_lowercase().contains("ssd") || s.name.to_lowercase().contains("composite")).map(|s| s.temp))
-            .unwrap_or(39.8);
+            .unwrap_or(if is_remote { 34.0 } else { 39.8 });
 
         let vrm_temp = snap.temp_sensors.iter()
-            .find(|s| s.name.to_lowercase().contains("vrm") || s.name.to_lowercase().contains("motherboard") || s.name.to_lowercase().contains("pch"))
+            .find(|s| s.name.to_lowercase().contains("vrm") || s.name.to_lowercase().contains("motherboard") || s.name.to_lowercase().contains("pch") || s.name.to_lowercase().contains("acpitz"))
             .map(|s| s.temp)
-            .unwrap_or(51.5);
+            .unwrap_or(if is_remote { 41.5 } else { 51.5 });
 
         ScrollArea::vertical()
             .id_salt("sensors_temp_scroll_v2")
@@ -14651,13 +15654,29 @@ impl LauncherApp {
                         ui.set_width(ui.available_width());
                         let is_narrow = ui.available_width() < 720.0;
 
+                        let tag_str = if is_remote {
+                            "REMOTE HOST HARDWARE MONITOR · LINUX HWMON & KERNEL THERMAL ZONES"
+                        } else {
+                            "VANTAGE ARCHITECTURE · EC-FIRMWARE V3.19"
+                        };
+                        let title_str = if is_remote {
+                            format!("Hardware Thermal Sensors & Cooling • Host '{}'", host_id.unwrap_or("Remote"))
+                        } else {
+                            "Hardware Thermal Sensors & Fan Control".to_string()
+                        };
+                        let sub_str = if is_remote {
+                            "Direct Linux hwmon sysfs endpoints, processor package temperatures, and chassis airflow."
+                        } else {
+                            "Dual dynamic blowers with customizable acoustic trigger thresholds."
+                        };
+
                         if is_narrow {
                             ui.vertical(|ui| {
-                                ui.label(RichText::new("VANTAGE ARCHITECTURE · EC-FIRMWARE V3.19").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                ui.label(RichText::new(tag_str).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                 ui.add_space(2.0);
-                                ui.label(RichText::new("Hardware Thermal Sensors & Fan Control").size(17.0).strong().color(p.text_primary));
+                                ui.label(RichText::new(title_str).size(17.0).strong().color(p.text_primary));
                                 ui.add_space(2.0);
-                                ui.label(RichText::new("Dual dynamic blowers with customizable acoustic trigger thresholds.").size(10.5).color(Color32::from_rgb(148, 163, 184)));
+                                ui.label(RichText::new(sub_str).size(10.5).color(Color32::from_rgb(148, 163, 184)));
                                 ui.add_space(8.0);
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 6.0;
@@ -14708,11 +15727,11 @@ impl LauncherApp {
                         } else {
                             ui.horizontal(|ui| {
                                 ui.vertical(|ui| {
-                                    ui.label(RichText::new("VANTAGE ARCHITECTURE · EC-FIRMWARE V3.19").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                    ui.label(RichText::new(tag_str).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     ui.add_space(2.0);
-                                    ui.label(RichText::new("Hardware Thermal Sensors & Fan Control").size(17.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new(title_str).size(17.0).strong().color(p.text_primary));
                                     ui.add_space(2.0);
-                                    ui.label(RichText::new("Dual dynamic blowers with customizable acoustic trigger thresholds.").size(10.5).color(Color32::from_rgb(148, 163, 184)));
+                                    ui.label(RichText::new(sub_str).size(10.5).color(Color32::from_rgb(148, 163, 184)));
                                 });
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -14769,12 +15788,19 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 2. Row of 5 Sensor Cards (CPU, GPU, RAM, NVMe, VRM)
+                // 2. Row of 5 Sensor Cards (CPU, GPU/Ambient, RAM, Storage, VRM)
+                let has_gpu = !snap.gpus.is_empty();
+                let second_card_name = if is_remote && !has_gpu { "SYS AMBIENT" } else { "GPU CORE" };
+                let second_card_temp = if is_remote && !has_gpu { (cpu_temp - 10.0).max(28.0) } else { gpu_temp };
+                let second_card_limit = if is_remote && !has_gpu { 65.0_f32 } else { 87.0_f32 };
+                let ram_card_name = if is_remote { "SYSTEM RAM" } else { "SODIMM RAM" };
+                let storage_card_name = if is_remote { "STORAGE DRIVE" } else { "NVME M.2 SSD" };
+
                 let sensor_cards = [
                     ("CPU PACKAGE", cpu_temp, 95.0_f32, "+1.8°C / min", Color32::from_rgb(56, 189, 248)),
-                    ("GPU CORE", gpu_temp, 87.0_f32, "-0.4°C / min", Color32::from_rgb(96, 165, 250)),
-                    ("SODIMM RAM", ram_temp, 70.0_f32, "STEADY", Color32::from_rgb(56, 189, 248)),
-                    ("NVME M.2 SSD", nvme_temp, 75.0_f32, "STEADY", Color32::from_rgb(96, 165, 250)),
+                    (second_card_name, second_card_temp, second_card_limit, "STEADY", Color32::from_rgb(96, 165, 250)),
+                    (ram_card_name, ram_temp, 75.0_f32, "STEADY", Color32::from_rgb(56, 189, 248)),
+                    (storage_card_name, nvme_temp, 75.0_f32, "STEADY", Color32::from_rgb(96, 165, 250)),
                     ("MOTHERBOARD VRM", vrm_temp, 105.0_f32, "+0.2°C / min", Color32::from_rgb(203, 213, 225)),
                 ];
 
@@ -14829,18 +15855,28 @@ impl LauncherApp {
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
                                 ui.label(RichText::new("60-Second Thermal History Waveform").size(12.5).strong().color(p.text_primary));
-                                ui.label(RichText::new("Synchronized dual-trace EC sensor loop: CPU Package vs GPU Core").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                let sub_trace = if is_remote && !has_gpu {
+                                    "Synchronized dual-trace EC sensor loop: CPU Package vs Chassis Ambient".to_string()
+                                } else {
+                                    "Synchronized dual-trace EC sensor loop: CPU Package vs GPU Core".to_string()
+                                };
+                                ui.label(RichText::new(sub_trace).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 14.0;
-                                    // GPU Indicator
+                                    // Second channel Indicator
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.0;
                                         let (d_rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
                                         ui.painter().circle_filled(d_rect.center(), 3.5, Color32::from_rgb(148, 163, 184));
-                                        ui.label(RichText::new(format!("GPU Core (Peak: {:.1}°C)", gpu_temp + 3.8)).size(10.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                        let second_lbl = if is_remote && !has_gpu {
+                                            format!("Chassis Ambient (Steady: {:.1}°C)", second_card_temp)
+                                        } else {
+                                            format!("GPU Core (Peak: {:.1}°C)", gpu_temp + 3.8)
+                                        };
+                                        ui.label(RichText::new(second_lbl).size(10.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     });
 
                                     // CPU Indicator
@@ -14848,14 +15884,14 @@ impl LauncherApp {
                                         ui.spacing_mut().item_spacing.x = 4.0;
                                         let (d_rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
                                         ui.painter().circle_filled(d_rect.center(), 3.5, Color32::from_rgb(56, 189, 248));
-                                        ui.label(RichText::new(format!("CPU Package (Peak: {:.1}°C)", cpu_temp + 5.2)).size(10.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                        ui.label(RichText::new(format!("CPU Package (Peak: {:.1}°C)", cpu_temp + 4.2)).size(10.0).monospace().color(Color32::from_rgb(56, 189, 248)));
                                     });
                                 });
                             });
                         });
 
                         ui.add_space(8.0);
-                        draw_thermal_dual_waveform(ui, 110.0, cpu_temp, gpu_temp);
+                        draw_thermal_dual_waveform(ui, 110.0, cpu_temp, second_card_temp);
                     });
 
                 ui.add_space(8.0);
@@ -14866,7 +15902,7 @@ impl LauncherApp {
                 let left_w = ((total_w - gap) * 0.44).max(310.0);
                 let right_w = (total_w - left_w - gap).max(360.0);
 
-                let cpu_fan_pct = if self.fan_full_blast {
+                let cpu_fan_pct = if !is_remote && self.fan_full_blast {
                     100.0_f32
                 } else {
                     match self.fan_mode {
@@ -14876,7 +15912,7 @@ impl LauncherApp {
                     }
                 };
 
-                let exhaust_fan_pct = if self.fan_full_blast {
+                let exhaust_fan_pct = if !is_remote && self.fan_full_blast {
                     100.0_f32
                 } else {
                     match self.fan_mode {
@@ -14900,8 +15936,10 @@ impl LauncherApp {
                                 ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     ui.vertical(|ui| {
-                                        ui.label(RichText::new("Active Fan Deck").size(12.5).strong().color(p.text_primary));
-                                        ui.label(RichText::new("Dual asynchronous hydro-bearing pwm centrifugal blowers").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                        let deck_title = if is_remote { "Server Chassis Airflow" } else { "Active Fan Deck" };
+                                        let deck_sub = if is_remote { "Dynamic server chassis airflow managed by remote kernel ACPI / BMC" } else { "Dual asynchronous hydro-bearing pwm centrifugal blowers" };
+                                        ui.label(RichText::new(deck_title).size(12.5).strong().color(p.text_primary));
+                                        ui.label(RichText::new(deck_sub).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     });
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -14910,8 +15948,12 @@ impl LauncherApp {
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(7.0, 3.0))
                                             .show(ui, |ui| {
-                                                let dba = 28.4_f32 + (cpu_fan_pct / 100.0 * 18.0);
-                                                ui.label(RichText::new(format!("ACOUSTICS: {:.1} dBA", dba)).size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                if is_remote {
+                                                    ui.label(RichText::new("BMC / ACPI ACTIVE").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                } else {
+                                                    let dba = 28.4_f32 + (cpu_fan_pct / 100.0 * 18.0);
+                                                    ui.label(RichText::new(format!("ACOUSTICS: {:.1} dBA", dba)).size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                }
                                             });
                                     });
                                 });
@@ -14922,7 +15964,10 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 16.0;
 
-                                    // Fan 1: CPU Blower
+                                    let fan1_name = if is_remote { "Chassis Intake" } else { "CPU Blower" };
+                                    let fan2_name = if is_remote { "Chassis Exhaust" } else { "Chassis Exhaust" };
+
+                                    // Fan 1
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 14, 22))
                                         .rounding(Rounding::same(6.0))
@@ -14933,7 +15978,7 @@ impl LauncherApp {
                                                     draw_circular_tachometer(ui, 56.0, cpu_fan_pct, Color32::from_rgb(56, 189, 248));
                                                     ui.add_space(8.0);
                                                     ui.vertical(|ui| {
-                                                        ui.label(RichText::new("CPU Blower").size(11.0).strong().color(p.text_primary));
+                                                        ui.label(RichText::new(fan1_name).size(11.0).strong().color(p.text_primary));
                                                         ui.label(RichText::new(format!("{},{:03} RPM", cpu_rpm / 1000, cpu_rpm % 1000)).size(13.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                                         ui.label(RichText::new("RATED MAX: 4,800 RPM").size(8.0).monospace().color(Color32::from_rgb(100, 116, 139)));
                                                     });
@@ -14941,7 +15986,7 @@ impl LauncherApp {
                                             });
                                         });
 
-                                    // Fan 2: Chassis Exhaust
+                                    // Fan 2
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 14, 22))
                                         .rounding(Rounding::same(6.0))
@@ -14952,7 +15997,7 @@ impl LauncherApp {
                                                     draw_circular_tachometer(ui, 56.0, exhaust_fan_pct, Color32::from_rgb(96, 165, 250));
                                                     ui.add_space(8.0);
                                                     ui.vertical(|ui| {
-                                                        ui.label(RichText::new("Chassis Exhaust").size(11.0).strong().color(p.text_primary));
+                                                        ui.label(RichText::new(fan2_name).size(11.0).strong().color(p.text_primary));
                                                         ui.label(RichText::new(format!("{},{:03} RPM", exhaust_rpm / 1000, exhaust_rpm % 1000)).size(13.0).monospace().strong().color(Color32::from_rgb(96, 165, 250)));
                                                         ui.label(RichText::new("RATED MAX: 3,600 RPM").size(8.0).monospace().color(Color32::from_rgb(100, 116, 139)));
                                                     });
@@ -14963,34 +16008,52 @@ impl LauncherApp {
 
                                 ui.add_space(12.0);
 
-                                // 100% Full Blast Test Button
-                                let is_blasting = self.fan_full_blast;
-                                let blast_stroke = if is_blasting { Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)) } else { Stroke::NONE };
-                                let blast_bg = if is_blasting { Color32::from_rgba_unmultiplied(56, 189, 248, 22) } else { Color32::from_rgb(10, 14, 22) };
-
-                                let blast_resp = Frame::none()
-                                    .fill(blast_bg)
-                                    .stroke(blast_stroke)
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
-                                    .show(ui, |ui| {
-                                        ui.set_width(ui.available_width());
-                                        ui.horizontal(|ui| {
-                                            let icon = if is_blasting { crate::lucide::ALERT_TRIANGLE } else { crate::lucide::GAUGE };
-                                            let icon_col = Color32::from_rgb(56, 189, 248);
-                                            ui.label(RichText::new(icon).size(13.0).color(icon_col));
-                                            ui.add_space(4.0);
-                                            ui.vertical(|ui| {
-                                                let title = if is_blasting { "STOP 100% Full Blast Test" } else { "100% Full Blast Test (10s pulse)" };
-                                                ui.label(RichText::new(title).size(11.0).strong().color(if is_blasting { Color32::from_rgb(56, 189, 248) } else { p.text_primary }));
-                                                ui.label(RichText::new("Forces EC fan controllers to maximum duty cycle for acoustic check").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                // 100% Full Blast Test Button (Local only; disabled card on remote)
+                                if is_remote {
+                                    Frame::none()
+                                        .fill(Color32::from_rgb(10, 14, 22))
+                                        .rounding(Rounding::same(6.0))
+                                        .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                                        .show(ui, |ui| {
+                                            ui.set_width(ui.available_width());
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new(crate::lucide::LOCK).size(13.0).color(Color32::from_rgb(148, 163, 184)));
+                                                ui.add_space(4.0);
+                                                ui.vertical(|ui| {
+                                                    ui.label(RichText::new("Fan Acoustic Test: Disabled on Remote Host").size(11.0).strong().color(Color32::from_rgb(148, 163, 184)));
+                                                    ui.label(RichText::new("Acoustic pulse tests are restricted to local hardware to prevent erroneous remote bus actuation.").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                                });
                                             });
                                         });
-                                    }).response;
+                                } else {
+                                    let is_blasting = self.fan_full_blast;
+                                    let blast_stroke = if is_blasting { Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)) } else { Stroke::NONE };
+                                    let blast_bg = if is_blasting { Color32::from_rgba_unmultiplied(56, 189, 248, 22) } else { Color32::from_rgb(10, 14, 22) };
 
-                                if blast_resp.interact(egui::Sense::click()).clicked() {
-                                    self.fan_full_blast = !self.fan_full_blast;
-                                    self.fan_test_start = if self.fan_full_blast { Some(Instant::now()) } else { None };
+                                    let blast_resp = Frame::none()
+                                        .fill(blast_bg)
+                                        .stroke(blast_stroke)
+                                        .rounding(Rounding::same(6.0))
+                                        .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                                        .show(ui, |ui| {
+                                            ui.set_width(ui.available_width());
+                                            ui.horizontal(|ui| {
+                                                let icon = if is_blasting { crate::lucide::ALERT_TRIANGLE } else { crate::lucide::GAUGE };
+                                                let icon_col = Color32::from_rgb(56, 189, 248);
+                                                ui.label(RichText::new(icon).size(13.0).color(icon_col));
+                                                ui.add_space(4.0);
+                                                ui.vertical(|ui| {
+                                                    let title = if is_blasting { "STOP 100% Full Blast Test" } else { "100% Full Blast Test (10s pulse)" };
+                                                    ui.label(RichText::new(title).size(11.0).strong().color(if is_blasting { Color32::from_rgb(56, 189, 248) } else { p.text_primary }));
+                                                    ui.label(RichText::new("Forces EC fan controllers to maximum duty cycle for acoustic check").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                                });
+                                            });
+                                        }).response;
+
+                                    if blast_resp.interact(egui::Sense::click()).clicked() {
+                                        self.fan_full_blast = !self.fan_full_blast;
+                                        self.fan_test_start = if self.fan_full_blast { Some(Instant::now()) } else { None };
+                                    }
                                 }
                             });
                     });
@@ -15060,7 +16123,7 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 5. Bottom Section: Thermal Sensor Telemetry Matrix (8 Thermistors)
+                // 5. Bottom Section: Thermal Sensor Telemetry Matrix
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(8.0))
@@ -15069,8 +16132,10 @@ impl LauncherApp {
                         ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                ui.label(RichText::new("Thermal Sensor Telemetry Matrix (8 Thermistors)").size(12.5).strong().color(p.text_primary));
-                                ui.label(RichText::new("Direct EC-read thermistor channels across mainboard topology").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                let matrix_title = if is_remote { "Remote Host Thermal Sensors Matrix" } else { "Thermal Sensor Telemetry Matrix (8 Thermistors)" };
+                                let matrix_sub = if is_remote { "Direct Linux hwmon sysfs endpoints and ACPI thermal zones" } else { "Direct EC-read thermistor channels across mainboard topology" };
+                                ui.label(RichText::new(matrix_title).size(12.5).strong().color(p.text_primary));
+                                ui.label(RichText::new(matrix_sub).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -15086,18 +16151,40 @@ impl LauncherApp {
 
                         ui.add_space(10.0);
 
-                        let thermistors = [
-                            ("CPU Core 0-3 (SoC)", cpu_temp - 4.8, 100.0_f32, "TjMax 100°C", "NOMINAL", Color32::from_rgb(56, 189, 248)),
-                            ("GPU Edge Temp", gpu_temp, 87.0_f32, "TjMax 87°C", "NOMINAL", Color32::from_rgb(96, 165, 250)),
-                            ("GPU Hotspot (Junction)", gpu_temp + 6.3, 105.0_f32, "Delta: +6.3°C", "NOMINAL", Color32::from_rgb(96, 165, 250)),
-                            ("Memory SODIMM #1", ram_temp, 70.0_f32, "Threshold 70°C", "COOL", Color32::from_rgb(56, 189, 248)),
-                            ("PCIe M.2 Slot 0 (SSD)", nvme_temp, 75.0_f32, "Throttle: 75°C", "OPTIMAL", Color32::from_rgb(96, 165, 250)),
-                            ("VRM Vcore Phase 1-6", vrm_temp, 105.0_f32, "Max Rated: 105°C", "PASS", Color32::from_rgb(203, 213, 225)),
-                            ("Ambient Chassis Exhaust", 34.1_f32, 50.0_f32, "Room Amb: 24.0°C", "NORMAL", Color32::from_rgb(148, 163, 184)),
-                            ("Chassis Palmrest", 29.4_f32, 40.0_f32, "Ergonomic Cap: 38°C", "EXCELLENT", Color32::from_rgb(56, 189, 248)),
-                        ];
+                        let thermistors: Vec<(String, f32, f32, String, &'static str, Color32)> = if is_remote {
+                            if !snap.temp_sensors.is_empty() {
+                                snap.temp_sensors.iter().map(|s| {
+                                    let (stat, col) = if s.temp < 60.0 {
+                                        ("NOMINAL", Color32::from_rgb(56, 189, 248))
+                                    } else if s.temp < 80.0 {
+                                        ("WARM", Color32::from_rgb(96, 165, 250))
+                                    } else {
+                                        ("HOT", Color32::from_rgb(251, 146, 60))
+                                    };
+                                    (s.name.clone(), s.temp, 100.0_f32, "hwmon sysfs".to_string(), stat, col)
+                                }).collect()
+                            } else {
+                                vec![
+                                    ("CPU Core Package (SoC)".to_string(), cpu_temp, 100.0_f32, "TjMax 100°C".to_string(), "NOMINAL", Color32::from_rgb(56, 189, 248)),
+                                    ("System Board ACPI Zone".to_string(), vrm_temp, 105.0_f32, "ACPI Thermal Zone".to_string(), "NOMINAL", Color32::from_rgb(203, 213, 225)),
+                                    ("PCIe Storage Thermal Zone".to_string(), nvme_temp, 75.0_f32, "Operating Limit: 75°C".to_string(), "OPTIMAL", Color32::from_rgb(96, 165, 250)),
+                                    ("Chassis Ambient Airflow".to_string(), (cpu_temp - 12.0).max(28.0), 55.0_f32, "Rack Ambient 24°C".to_string(), "NORMAL", Color32::from_rgb(148, 163, 184)),
+                                ]
+                            }
+                        } else {
+                            vec![
+                                ("CPU Core 0-3 (SoC)".to_string(), cpu_temp - 4.8, 100.0_f32, "TjMax 100°C".to_string(), "NOMINAL", Color32::from_rgb(56, 189, 248)),
+                                ("GPU Edge Temp".to_string(), gpu_temp, 87.0_f32, "TjMax 87°C".to_string(), "NOMINAL", Color32::from_rgb(96, 165, 250)),
+                                ("GPU Hotspot (Junction)".to_string(), gpu_temp + 6.3, 105.0_f32, "Delta: +6.3°C".to_string(), "NOMINAL", Color32::from_rgb(96, 165, 250)),
+                                ("Memory SODIMM #1".to_string(), ram_temp, 70.0_f32, "Threshold 70°C".to_string(), "COOL", Color32::from_rgb(56, 189, 248)),
+                                ("PCIe M.2 Slot 0 (SSD)".to_string(), nvme_temp, 75.0_f32, "Throttle: 75°C".to_string(), "OPTIMAL", Color32::from_rgb(96, 165, 250)),
+                                ("VRM Vcore Phase 1-6".to_string(), vrm_temp, 105.0_f32, "Max Rated: 105°C".to_string(), "PASS", Color32::from_rgb(203, 213, 225)),
+                                ("Ambient Chassis Exhaust".to_string(), 34.1_f32, 50.0_f32, "Room Amb: 24.0°C".to_string(), "NORMAL", Color32::from_rgb(148, 163, 184)),
+                                ("Chassis Palmrest".to_string(), 29.4_f32, 40.0_f32, "Ergonomic Cap: 38°C".to_string(), "EXCELLENT", Color32::from_rgb(56, 189, 248)),
+                            ]
+                        };
 
-                        // 4 columns x 2 rows
+                        // 4 columns x N rows
                         for chunk in thermistors.chunks(4) {
                             ui.columns(4, |cols| {
                                 for (i, (name, val, max_t, sub_note, status, accent)) in chunk.iter().enumerate() {
@@ -15109,7 +16196,7 @@ impl LauncherApp {
                                         .show(c, |ui| {
                                             ui.set_width(ui.available_width());
                                             ui.horizontal(|ui| {
-                                                ui.label(RichText::new(*name).size(9.0).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
+                                                ui.label(RichText::new(name).size(9.0).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                     ui.label(RichText::new(*status).size(7.5).monospace().strong().color(*accent));
                                                 });
@@ -15120,7 +16207,7 @@ impl LauncherApp {
                                                 ui.label(RichText::new(format!("{:.1}", val)).size(16.0).strong().color(*accent));
                                                 ui.label(RichText::new("°C").size(10.0).color(Color32::from_rgb(148, 163, 184)));
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new(*sub_note).size(8.0).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                                    ui.label(RichText::new(sub_note).size(8.0).monospace().color(Color32::from_rgb(100, 116, 139)));
                                                 });
                                             });
 

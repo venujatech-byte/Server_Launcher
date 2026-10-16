@@ -84,6 +84,23 @@ pub struct DiskInfo {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct PhysicalDiskInfo {
+    pub name: String,
+    pub model: String,
+    pub total_bytes: u64,
+    pub is_ssd: bool,
+    pub partition_count: usize,
+    pub partitions: Vec<DiskPartitionInfo>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DiskPartitionInfo {
+    pub name: String,
+    pub size_bytes: u64,
+    pub partition_num: u32,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct NetInterfaceInfo {
     pub name: String,
     pub rx_bytes: u64,
@@ -164,6 +181,7 @@ pub struct SystemSensorsSnapshot {
 
     // Storage
     pub disks: Vec<DiskInfo>,
+    pub physical_disks: Vec<PhysicalDiskInfo>,
     pub storage_temp: Option<f32>,
     pub total_disk_read_rate_bps: f64,
     pub total_disk_write_rate_bps: f64,
@@ -321,6 +339,33 @@ impl SystemSensorsCollector {
 
             let raw_name = d.name().to_string_lossy().to_string();
             let clean_dev = raw_name.trim_start_matches("/dev/").to_string();
+            let fs_type = d.file_system().to_string_lossy().to_string();
+            let mount_point = d.mount_point().to_string_lossy().to_string();
+
+            // Filter out virtual, loop, snap squashfs, and pseudo filesystems
+            if fs_type == "squashfs"
+                || fs_type == "tmpfs"
+                || fs_type == "devtmpfs"
+                || fs_type == "efivarfs"
+                || fs_type == "overlay"
+                || fs_type == "iso9660"
+                || fs_type == "cgroup2"
+                || fs_type == "pstore"
+                || fs_type == "bpf"
+            {
+                continue;
+            }
+            if raw_name.starts_with("/dev/loop") || raw_name == "none" || raw_name.is_empty() {
+                continue;
+            }
+
+            // Deduplicate: if this block device was already registered, keep root "/" or shortest mount point
+            if let Some(existing) = disks.iter_mut().find(|existing_d: &&mut DiskInfo| existing_d.name == raw_name) {
+                if mount_point == "/" || (existing.mount_point != "/" && mount_point.len() < existing.mount_point.len()) {
+                    existing.mount_point = mount_point;
+                }
+                continue;
+            }
 
             // Match diskstats
             let (read_bytes, write_bytes) = current_diskstats
@@ -348,8 +393,8 @@ impl SystemSensorsCollector {
 
             disks.push(DiskInfo {
                 name: raw_name,
-                mount_point: d.mount_point().to_string_lossy().to_string(),
-                fs_type: d.file_system().to_string_lossy().to_string(),
+                mount_point,
+                fs_type,
                 total_bytes: total,
                 available_bytes: avail,
                 used_bytes: used,
@@ -362,6 +407,8 @@ impl SystemSensorsCollector {
         }
         // Deduplicate or sort by mount point
         disks.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
+
+        let physical_disks = collect_physical_disks();
 
         // Calculate total physical disk read/write throughput rates across base devices
         let mut base_matched = false;
@@ -562,6 +609,7 @@ impl SystemSensorsCollector {
             gpus,
             power,
             disks,
+            physical_disks,
             storage_temp,
             total_disk_read_rate_bps,
             total_disk_write_rate_bps,
@@ -609,6 +657,86 @@ fn is_base_physical_disk(dev: &str) -> bool {
         return !dev.contains('p');
     }
     true
+}
+
+pub fn collect_physical_disks() -> Vec<PhysicalDiskInfo> {
+    let mut physical_disks = Vec::new();
+    #[cfg(target_os = "linux")]
+    if let Ok(entries) = fs::read_dir("/sys/block") {
+        let mut dev_names: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|name| is_base_physical_disk(name))
+            .collect();
+        dev_names.sort();
+
+        for dev in dev_names {
+            let p = format!("/sys/block/{}", dev);
+            let size_bytes = fs::read_to_string(format!("{}/size", p))
+                .ok()
+                .and_then(|s| s.trim().parse::<u64>().ok())
+                .unwrap_or(0)
+                .saturating_mul(512);
+
+            if size_bytes == 0 {
+                continue;
+            }
+
+            let mut model = "Unknown Drive".to_string();
+            for model_path in &[format!("{}/device/model", p), format!("{}/device/name", p)] {
+                if let Ok(m) = fs::read_to_string(model_path) {
+                    let trimmed = m.trim();
+                    if !trimmed.is_empty() {
+                        model = trimmed.to_string();
+                        break;
+                    }
+                }
+            }
+
+            let is_ssd = fs::read_to_string(format!("{}/queue/rotational", p))
+                .ok()
+                .map(|s| s.trim() == "0")
+                .unwrap_or_else(|| dev.starts_with("nvme"));
+
+            let mut partitions = Vec::new();
+            if let Ok(sub_entries) = fs::read_dir(&p) {
+                let mut p_names: Vec<String> = sub_entries
+                    .filter_map(|e| e.ok())
+                    .filter_map(|e| e.file_name().into_string().ok())
+                    .collect();
+                p_names.sort();
+
+                for p_name in p_names {
+                    let part_file = format!("{}/{}/partition", p, p_name);
+                    if let Ok(num_str) = fs::read_to_string(&part_file) {
+                        let num = num_str.trim().parse::<u32>().unwrap_or(0);
+                        let part_size = fs::read_to_string(format!("{}/{}/size", p, p_name))
+                            .ok()
+                            .and_then(|s| s.trim().parse::<u64>().ok())
+                            .unwrap_or(0)
+                            .saturating_mul(512);
+                        partitions.push(DiskPartitionInfo {
+                            name: p_name,
+                            size_bytes: part_size,
+                            partition_num: num,
+                        });
+                    }
+                }
+            }
+            partitions.sort_by_key(|p| p.partition_num);
+
+            let partition_count = partitions.len();
+            physical_disks.push(PhysicalDiskInfo {
+                name: dev,
+                model,
+                total_bytes: size_bytes,
+                is_ssd,
+                partition_count,
+                partitions,
+            });
+        }
+    }
+    physical_disks
 }
 
 fn categorize_sensor(label: &str, chip: &str) -> SensorCategory {
@@ -1980,6 +2108,7 @@ print(json.dumps(data))
         gpus,
         power,
         disks,
+        physical_disks: Vec::new(),
         storage_temp,
         total_disk_read_rate_bps,
         total_disk_write_rate_bps,

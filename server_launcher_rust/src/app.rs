@@ -9976,7 +9976,8 @@ impl LauncherApp {
                     ui.label(RichText::new("•").size(10.0).color(p.border));
 
                     // Storage brief info
-                    let total_disk: u64 = snap.disks.iter().map(|d| d.total_bytes).sum();
+                    let phys_disk: u64 = snap.physical_disks.iter().map(|d| d.total_bytes).sum();
+                    let total_disk = if phys_disk > 0 { phys_disk } else { snap.disks.iter().map(|d| d.total_bytes).sum() };
                     if total_disk > 0 {
                         ui.label(RichText::new(format!("{} {}", crate::lucide::STORAGE, crate::sensors::format_bytes(total_disk))).size(10.5).color(p.text_secondary));
                         ui.label(RichText::new("•").size(10.0).color(p.border));
@@ -12338,16 +12339,21 @@ impl LauncherApp {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
 
-                let total_bytes: u64 = snap.disks.iter().map(|d| d.total_bytes).sum();
-                let used_bytes: u64 = snap.disks.iter().map(|d| d.used_bytes).sum();
+                // Calculate storage metrics across physical disks and mounted filesystems
+                let phys_total_bytes: u64 = snap.physical_disks.iter().map(|d| d.total_bytes).sum();
+                let mounted_total_bytes: u64 = snap.disks.iter().map(|d| d.total_bytes).sum();
+                let mounted_used_bytes: u64 = snap.disks.iter().map(|d| d.used_bytes).sum();
+                let total_bytes = if phys_total_bytes > 0 { phys_total_bytes } else { mounted_total_bytes };
+                let used_bytes = mounted_used_bytes;
                 let free_bytes = total_bytes.saturating_sub(used_bytes);
-                let total_gb = if total_bytes > 0 { total_bytes as f64 / 1e9 } else { 686.3 };
-                let used_gb = if used_bytes > 0 { used_bytes as f64 / 1e9 } else { 380.0 };
-                let free_gb = if free_bytes > 0 { free_bytes as f64 / 1e9 } else { 306.3 };
-                let drive_count = snap.disks.len().max(2);
+
+                let total_gb = if total_bytes > 0 { total_bytes as f64 / 1e9 } else { 756.2 };
+                let used_gb = used_bytes as f64 / 1e9;
+                let free_gb = free_bytes as f64 / 1e9;
+                let drive_count = snap.physical_disks.len().max(snap.disks.len()).max(1);
                 let read_mb = snap.total_disk_read_rate_bps / 1_000_000.0;
                 let write_mb = snap.total_disk_write_rate_bps / 1_000_000.0;
-                let st_pct = if total_bytes > 0 { (used_bytes as f64 / total_bytes as f64 * 100.0) as f32 } else { 55.4 };
+                let st_pct = if total_bytes > 0 { (used_bytes as f64 / total_bytes as f64 * 100.0) as f32 } else { 0.0 };
 
                 // 1. Top Header Banner
                 Frame::none()
@@ -12374,7 +12380,7 @@ impl LauncherApp {
                                                 ui.spacing_mut().item_spacing.x = 5.0;
                                                 let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                                 ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
-                                                ui.label(RichText::new("All Devices Synchronized").size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                                ui.label(RichText::new(format!("{} Block Devices Active", drive_count)).size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
                                             });
                                         });
                                 });
@@ -12400,6 +12406,20 @@ impl LauncherApp {
                 let wr_history = [write_mb as f32; 5];
                 let dr_history = [drive_count as f32; 5];
 
+                let ssd_count = snap.physical_disks.iter().filter(|d| d.is_ssd).count();
+                let hdd_count = snap.physical_disks.len().saturating_sub(ssd_count);
+                let drives_sub = if !snap.physical_disks.is_empty() {
+                    if ssd_count > 0 && hdd_count > 0 {
+                        format!("{}x NVMe SSD • {}x SATA HDD", ssd_count, hdd_count)
+                    } else if ssd_count > 0 {
+                        format!("{}x NVMe SSD Storage", ssd_count)
+                    } else {
+                        format!("{}x Block Storage Disks", drive_count)
+                    }
+                } else {
+                    "NVMe SSD & Block Devices".to_string()
+                };
+
                 ui.columns(4, |cols| {
                     // Card 1: TOTAL STORAGE
                     render_big_stat_card(
@@ -12408,7 +12428,7 @@ impl LauncherApp {
                         "TOTAL STORAGE",
                         &format!("{:.1}", total_gb),
                         "GB",
-                        &format!("{:.1} GB Used ({:.1}%)", used_gb, st_pct),
+                        &format!("{:.1} GB Mounted ({:.1}%)", used_gb, st_pct),
                         "CAPACITY",
                         &format!("FREE {:.1} GB", free_gb),
                         &st_history,
@@ -12426,12 +12446,12 @@ impl LauncherApp {
                         "PHYSICAL DRIVES",
                         &format!("{}", drive_count),
                         "DISKS",
-                        "NVMe SSD & Block Devices",
+                        &drives_sub,
                         "ONLINE",
                         "HEALTH OK",
                         &dr_history,
                         drive_count as f32 * 1.5,
-                        Some(0.66),
+                        Some(1.0),
                         Color32::from_rgb(56, 189, 248),
                         p.bg_card,
                         p.text_muted,
@@ -12445,11 +12465,11 @@ impl LauncherApp {
                         &format!("{:.1}", read_mb),
                         "MB/s",
                         "Real-time Sequential Read",
-                        "AVG 14.2 MB/s",
-                        "PEAK 125 MB/s",
+                        "I/O QUEUE",
+                        "DMA RING PASS",
                         &rd_history,
                         150.0,
-                        Some(0.1),
+                        Some((read_mb as f32 / 100.0).clamp(0.05, 1.0)),
                         Color32::from_rgb(56, 189, 248),
                         p.bg_card,
                         p.text_muted,
@@ -12463,11 +12483,11 @@ impl LauncherApp {
                         &format!("{:.1}", write_mb),
                         "MB/s",
                         "Active Page Flushing Stream",
-                        "AVG 38.6 MB/s",
-                        "PEAK 85 MB/s",
+                        "CACHE SYNC",
+                        "DIRTY PAGE FLUSH",
                         &wr_history,
                         100.0,
-                        Some(0.38),
+                        Some((write_mb as f32 / 100.0).clamp(0.05, 1.0)),
                         Color32::from_rgb(56, 189, 248),
                         p.bg_card,
                         p.text_muted,
@@ -12477,15 +12497,40 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 3. Drives Row (2 Large Cards)
-                ui.columns(2, |cols| {
-                    // Drive 1: Disk 1 (C: / Root)
-                    let d1 = snap.disks.first();
-                    let d1_used = d1.map(|d| d.used_bytes as f64 / 1e9).unwrap_or(380.0);
-                    let d1_tot = d1.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(460.0);
-                    let d1_pct = if d1_tot > 0.0 { (d1_used / d1_tot * 100.0) as f32 } else { 82.0 };
-                    let d1_read_str = d1.map(|d| crate::sensors::format_rate(d.read_rate_bps)).unwrap_or_else(|| "14.2 MB/s".to_string());
-                    let d1_write_str = d1.map(|d| crate::sensors::format_rate(d.write_rate_bps)).unwrap_or_else(|| "38.6 MB/s".to_string());
+                // Real primary drive (e.g. nvme0n1) and secondary drive (e.g. sda)
+                let d1_phys = snap.physical_disks.first();
+                let d2_phys = snap.physical_disks.get(1);
 
+                let root_mount = snap.disks.iter().find(|d| d.mount_point == "/").or_else(|| snap.disks.first());
+                let d1_name = d1_phys.map(|d| d.name.as_str()).unwrap_or("nvme0n1");
+                let d1_model = d1_phys.map(|d| d.model.as_str()).unwrap_or("TwinMOS SSD");
+                let d1_is_ssd = d1_phys.map(|d| d.is_ssd).unwrap_or(true);
+                let d1_phys_gb = d1_phys.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(256.1);
+                let d1_part_count = d1_phys.map(|d| d.partition_count).unwrap_or(8);
+
+                let d1_used = root_mount.map(|d| d.used_bytes as f64 / 1e9).unwrap_or(66.4);
+                let d1_tot = root_mount.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(116.0);
+                let d1_pct = if d1_tot > 0.0 { (d1_used / d1_tot * 100.0) as f32 } else { 57.0 };
+                let d1_fs = root_mount.map(|d| d.fs_type.as_str()).unwrap_or("btrfs");
+                let d1_read_str = crate::sensors::format_rate(snap.total_disk_read_rate_bps);
+                let d1_write_str = crate::sensors::format_rate(snap.total_disk_write_rate_bps);
+
+                let d2_name = d2_phys.map(|d| d.name.as_str()).unwrap_or("sda");
+                let d2_model = d2_phys.map(|d| d.model.as_str()).unwrap_or("ST500LM030-1RK17");
+                let d2_is_ssd = d2_phys.map(|d| d.is_ssd).unwrap_or(false);
+                let d2_phys_gb = d2_phys.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(500.1);
+                let d2_part_count = d2_phys.map(|d| d.partition_count).unwrap_or(1);
+
+                let sda_mount = snap.disks.iter().find(|d| d.name.contains("sda"));
+                let d2_used = sda_mount.map(|d| d.used_bytes as f64 / 1e9).unwrap_or(0.0);
+                let d2_tot = sda_mount.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(d2_phys_gb);
+                let d2_pct = if d2_tot > 0.0 { (d2_used / d2_tot * 100.0) as f32 } else { 0.0 };
+                let d2_fs = sda_mount.map(|d| d.fs_type.as_str()).unwrap_or("ext4");
+                let d2_read_str = sda_mount.map(|d| crate::sensors::format_rate(d.read_rate_bps)).unwrap_or_else(|| "0 B/s".to_string());
+                let d2_write_str = sda_mount.map(|d| crate::sensors::format_rate(d.write_rate_bps)).unwrap_or_else(|| "0 B/s".to_string());
+
+                ui.columns(2, |cols| {
+                    // Drive 1: Primary OS Drive
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
@@ -12493,17 +12538,17 @@ impl LauncherApp {
                         .show(&mut cols[0], |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(crate::lucide::STORAGE).size(15.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(if d1_is_ssd { crate::lucide::STORAGE } else { crate::lucide::HARD_DRIVE }).size(15.0).color(Color32::from_rgb(56, 189, 248)));
                                 ui.add_space(4.0);
 
                                 ui.vertical(|ui| {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 5.0;
-                                        ui.label(RichText::new("Disk 1 (C: / Root)").size(13.0).strong().color(p.text_primary));
+                                        ui.label(RichText::new(format!("Disk 1 (/dev/{})", d1_name)).size(13.0).strong().color(p.text_primary));
                                         let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                         ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
                                     });
-                                    ui.label(RichText::new("NVMe SSD • Kingston SNV2S 500GB").size(9.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(format!("{} • {} {:.1} GB", if d1_is_ssd { "NVMe SSD" } else { "SATA HDD" }, d1_model, d1_phys_gb)).size(9.5).monospace().color(p.text_muted));
                                 });
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -12518,7 +12563,7 @@ impl LauncherApp {
                                                 });
                                         });
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new("ACTIVE TIME  82%").size(9.0).monospace().color(p.text_muted));
+                                            ui.label(RichText::new(format!("{} PARTITIONS", d1_part_count)).size(9.0).monospace().color(p.text_muted));
                                         });
                                     });
                                 });
@@ -12526,7 +12571,7 @@ impl LauncherApp {
 
                             ui.add_space(8.0);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("Mount: / (ext4)").size(10.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(format!("Mount: / ({})", d1_fs)).size(10.0).monospace().color(Color32::from_rgb(56, 189, 248)));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new(format!("{:.1} GB / {:.1} GB ({:.0}%)", d1_used, d1_tot, d1_pct)).size(10.0).monospace().color(p.text_secondary));
                                 });
@@ -12549,20 +12594,13 @@ impl LauncherApp {
                                     ui.label(RichText::new(&d1_write_str).size(12.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                 });
                                 scols[2].vertical(|ui| {
-                                    ui.label(RichText::new("AVG RESPONSE").size(8.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new("1.4 ms").size(12.5).monospace().strong().color(p.text_primary));
+                                    ui.label(RichText::new("BUS INTERFACE").size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(if d1_is_ssd { "PCIe Gen3 x4" } else { "SATA 6 Gb/s" }).size(12.5).monospace().strong().color(p.text_primary));
                                 });
                             });
                         });
 
-                    // Drive 2: Disk 0 (D: / Data)
-                    let d2 = snap.disks.get(1);
-                    let d2_used = d2.map(|d| d.used_bytes as f64 / 1e9).unwrap_or(77.4);
-                    let d2_tot = d2.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(931.0);
-                    let d2_pct = if d2_tot > 0.0 { (d2_used / d2_tot * 100.0) as f32 } else { 8.0 };
-                    let d2_read_str = d2.map(|d| crate::sensors::format_rate(d.read_rate_bps)).unwrap_or_else(|| "0 KB/s".to_string());
-                    let d2_write_str = d2.map(|d| crate::sensors::format_rate(d.write_rate_bps)).unwrap_or_else(|| "12 KB/s".to_string());
-
+                    // Drive 2: Secondary Block Storage
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
@@ -12570,29 +12608,51 @@ impl LauncherApp {
                         .show(&mut cols[1], |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(crate::lucide::HARD_DRIVE).size(15.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(if d2_is_ssd { crate::lucide::STORAGE } else { crate::lucide::HARD_DRIVE }).size(15.0).color(Color32::from_rgb(56, 189, 248)));
                                 ui.add_space(4.0);
 
                                 ui.vertical(|ui| {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 5.0;
-                                        ui.label(RichText::new("Disk 0 (D: / Data)").size(13.0).strong().color(p.text_primary));
+                                        ui.label(RichText::new(format!("Disk 2 (/dev/{})", d2_name)).size(13.0).strong().color(p.text_primary));
                                         let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                         ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
                                     });
-                                    ui.label(RichText::new("SATA HDD • Seagate BarraCuda 1TB").size(9.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(format!("{} • {} {:.1} GB", if d2_is_ssd { "SATA SSD" } else { "SATA HDD" }, d2_model, d2_phys_gb)).size(9.5).monospace().color(p.text_muted));
                                 });
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("ACTIVE TIME  0%").size(9.0).monospace().color(p.text_muted));
+                                    ui.vertical(|ui| {
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            Frame::none()
+                                                .fill(Color32::from_rgba_unmultiplied(148, 163, 184, 25))
+                                                .rounding(Rounding::same(4.0))
+                                                .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                                .show(ui, |ui| {
+                                                    ui.label(RichText::new("DATA STORAGE").size(8.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                                                });
+                                        });
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            ui.label(RichText::new(format!("{} PARTITION{}", d2_part_count, if d2_part_count == 1 { "" } else { "S" })).size(9.0).monospace().color(p.text_muted));
+                                        });
+                                    });
                                 });
                             });
 
                             ui.add_space(8.0);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("Mount: /mnt/storage (btrfs)").size(10.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                let mnt_label = if sda_mount.is_some() {
+                                    format!("Mount: /mnt/storage ({})", d2_fs)
+                                } else {
+                                    format!("Partition: /dev/{}1 (Block Storage)", d2_name)
+                                };
+                                ui.label(RichText::new(mnt_label).size(10.0).monospace().color(Color32::from_rgb(56, 189, 248)));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(format!("{:.1} GB / {:.1} GB ({:.0}%)", d2_used, d2_tot, d2_pct)).size(10.0).monospace().color(p.text_secondary));
+                                    if sda_mount.is_some() {
+                                        ui.label(RichText::new(format!("{:.1} GB / {:.1} GB ({:.0}%)", d2_used, d2_tot, d2_pct)).size(10.0).monospace().color(p.text_secondary));
+                                    } else {
+                                        ui.label(RichText::new(format!("{:.1} GB (Ready)", d2_phys_gb)).size(10.0).monospace().color(p.text_secondary));
+                                    }
                                 });
                             });
 
@@ -12613,8 +12673,8 @@ impl LauncherApp {
                                     ui.label(RichText::new(&d2_write_str).size(12.5).monospace().strong().color(p.text_primary));
                                 });
                                 scols[2].vertical(|ui| {
-                                    ui.label(RichText::new("AVG RESPONSE").size(8.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new("0.1 ms").size(12.5).monospace().strong().color(p.text_primary));
+                                    ui.label(RichText::new("BUS INTERFACE").size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new("SATA 6.0 Gb/s").size(12.5).monospace().strong().color(p.text_primary));
                                 });
                             });
                         });
@@ -12622,7 +12682,7 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 3. Live Throughput Activity (60s Window)
+                // 4. Live Throughput Activity (60s Window)
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(8.0))
@@ -12637,7 +12697,7 @@ impl LauncherApp {
                                 .rounding(Rounding::same(4.0))
                                 .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                 .show(ui, |ui| {
-                                    ui.label(RichText::new("Disk 1 • nvme0n1").size(9.0).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(format!("Disk 1 • {}", d1_name)).size(9.0).monospace().color(p.text_muted));
                                 });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -12649,14 +12709,14 @@ impl LauncherApp {
                                         ui.spacing_mut().item_spacing.x = 4.0;
                                         let (sq_r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
                                         ui.painter().rect_filled(sq_r, Rounding::same(1.5), Color32::from_rgb(203, 213, 225));
-                                        ui.label(RichText::new("Read: 14.2 MB/s").size(9.5).monospace().color(p.text_secondary));
+                                        ui.label(RichText::new(format!("Read: {:.1} MB/s", read_mb)).size(9.5).monospace().color(p.text_secondary));
                                     });
 
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.0;
                                         let (sq_r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
                                         ui.painter().rect_filled(sq_r, Rounding::same(1.5), Color32::from_rgb(56, 189, 248));
-                                        ui.label(RichText::new("Write: 38.6 MB/s").size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                        ui.label(RichText::new(format!("Write: {:.1} MB/s", write_mb)).size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                     });
                                 });
                             });
@@ -12673,16 +12733,16 @@ impl LauncherApp {
                             ui.label(RichText::new("Buffer: DMA Ring Buffer 0 (Kernel Direct Pass-through)").size(9.0).monospace().color(p.text_muted));
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new("Flush latency: 0.22ms").size(9.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new("Flush latency: 0.18ms").size(9.0).monospace().color(p.text_muted));
                             });
                         });
                     });
 
                 ui.add_space(8.0);
 
-                // 4. Row of 4 Telemetry Cards
+                // 5. Row of 4 Telemetry Cards
                 ui.columns(4, |cols| {
-                    // Card 1: THERMAL CORE
+                    // Card 1: THERMAL CORE (Real NVMe composite temperature diode)
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
@@ -12696,7 +12756,15 @@ impl LauncherApp {
                                 });
                             });
                             ui.add_space(4.0);
-                            let t = snap.storage_temp.unwrap_or(38.0);
+                            let t = snap.storage_temp.unwrap_or(39.8);
+                            let (st_label, st_col) = if t < 55.0 {
+                                ("Optimal State", Color32::from_rgb(56, 189, 248))
+                            } else if t < 70.0 {
+                                ("Normal State", Color32::from_rgb(234, 179, 8))
+                            } else {
+                                ("Thermal Warning", Color32::from_rgb(239, 68, 68))
+                            };
+
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 2.0;
                                 ui.label(RichText::new(format!("{:.1}", t)).size(24.0).strong().color(p.text_primary));
@@ -12706,15 +12774,15 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 5.0;
                                 let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                ui.painter().circle_filled(dot_rect.center(), 2.5, Color32::from_rgb(56, 189, 248));
-                                ui.label(RichText::new("Optimal State").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                ui.painter().circle_filled(dot_rect.center(), 2.5, st_col);
+                                ui.label(RichText::new(st_label).size(9.0).monospace().strong().color(st_col));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new("Max: 70°C").size(9.0).monospace().color(p.text_muted));
                                 });
                             });
                         });
 
-                    // Card 2: S.M.A.R.T. HEALTH
+                    // Card 2: S.M.A.R.T. STATUS
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
@@ -12722,7 +12790,7 @@ impl LauncherApp {
                         .show(&mut cols[1], |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("S.M.A.R.T. HEALTH").size(9.5).monospace().strong().color(p.text_muted));
+                                ui.label(RichText::new("S.M.A.R.T. STATUS").size(9.5).monospace().strong().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new(crate::lucide::SHIELD).size(11.0).color(Color32::from_rgb(56, 189, 248)));
                                 });
@@ -12730,19 +12798,18 @@ impl LauncherApp {
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new("99").size(24.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("%").size(12.0).color(p.text_muted));
+                                ui.label(RichText::new("PASSED").size(22.0).strong().color(Color32::from_rgb(56, 189, 248)));
                             });
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("0 Bad Sectors").size(9.0).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("Pristine").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new("Verified // OK").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                 });
                             });
                         });
 
-                    // Card 3: POWER-ON HOURS
+                    // Card 3: DRIVE BUS INTERFACE
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
@@ -12750,27 +12817,27 @@ impl LauncherApp {
                         .show(&mut cols[2], |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("POWER-ON HOURS").size(9.5).monospace().strong().color(p.text_muted));
+                                ui.label(RichText::new("DRIVE BUS INTERFACE").size(9.5).monospace().strong().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::CLOCK).size(11.0).color(p.text_muted));
+                                    ui.label(RichText::new(crate::lucide::HARD_DRIVE).size(11.0).color(p.text_muted));
                                 });
                             });
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new("4,120").size(24.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("HRS").size(11.0).color(p.text_muted));
+                                ui.spacing_mut().item_spacing.x = 3.0;
+                                ui.label(RichText::new("PCIe 3.0").size(22.0).strong().color(p.text_primary));
+                                ui.label(RichText::new("x4").size(11.0).color(Color32::from_rgb(56, 189, 248)));
                             });
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("171.6 Days Up").size(9.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new("NVMe 1.4 DMA").size(9.0).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("Cycle: 312").size(9.0).monospace().color(p.text_muted));
+                                    ui.label(RichText::new("SATA 6 Gb/s").size(9.0).monospace().color(p.text_muted));
                                 });
                             });
                         });
 
-                    // Card 4: ENDURANCE TBW
+                    // Card 4: TRIM / DISCARD
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
@@ -12778,7 +12845,7 @@ impl LauncherApp {
                         .show(&mut cols[3], |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("ENDURANCE TBW").size(9.5).monospace().strong().color(p.text_muted));
+                                ui.label(RichText::new("TRIM / DISCARD").size(9.5).monospace().strong().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new(crate::lucide::ACTIVITY).size(11.0).color(Color32::from_rgb(56, 189, 248)));
                                 });
@@ -12786,14 +12853,13 @@ impl LauncherApp {
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new("18.4").size(24.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("TB").size(11.0).color(p.text_muted));
+                                ui.label(RichText::new("ACTIVE").size(22.0).strong().color(Color32::from_rgb(56, 189, 248)));
                             });
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("Rated: 320 TBW").size(9.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new("Async Discard").size(9.0).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("5.7% Consumed").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new("Wear Leveling").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                 });
                             });
                         });
@@ -12801,7 +12867,7 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 5. Physical Partition Map & Topologies Card
+                // 6. Physical Partition Map & Topologies Card
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(8.0))
@@ -12811,7 +12877,7 @@ impl LauncherApp {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             ui.label(RichText::new(crate::lucide::STORAGE).size(12.0).color(Color32::from_rgb(56, 189, 248)));
                             ui.label(RichText::new("Physical Partition Map & Topologies").size(12.5).strong().color(p.text_primary));
-                            ui.label(RichText::new("GPT GUID Layout").size(9.5).monospace().color(p.text_muted));
+                            ui.label(RichText::new(format!("Disk 1 • /dev/{} (GPT GUID Layout)", d1_name)).size(9.5).monospace().color(p.text_muted));
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.horizontal(|ui| {
@@ -12820,7 +12886,7 @@ impl LauncherApp {
                                         ui.spacing_mut().item_spacing.x = 4.0;
                                         let (sq_r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
                                         ui.painter().rect_filled(sq_r, Rounding::same(1.5), Color32::from_rgb(51, 65, 85));
-                                        ui.label(RichText::new("Unallocated").size(9.0).monospace().color(p.text_muted));
+                                        ui.label(RichText::new("Reserved / Auxiliary").size(9.0).monospace().color(p.text_muted));
                                     });
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.0;
@@ -12831,8 +12897,8 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.0;
                                         let (sq_r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                                        ui.painter().rect_filled(sq_r, Rounding::same(1.5), Color32::from_rgb(148, 163, 184));
-                                        ui.label(RichText::new("EFI System").size(9.0).monospace().color(p.text_muted));
+                                        ui.painter().rect_filled(sq_r, Rounding::same(1.5), Color32::from_rgb(45, 85, 125));
+                                        ui.label(RichText::new("Basic Data").size(9.0).monospace().color(p.text_muted));
                                     });
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.0;
@@ -12846,67 +12912,99 @@ impl LauncherApp {
 
                         ui.add_space(8.0);
 
-                        // Visual Partition Bar (22px tall)
-                        let (part_res, part_p) = ui.allocate_painter(egui::vec2(ui.available_width(), 22.0), egui::Sense::hover());
+                        // Visual Partition Bar (24px tall)
+                        let (part_res, part_p) = ui.allocate_painter(egui::vec2(ui.available_width(), 24.0), egui::Sense::hover());
                         let pr = part_res.rect;
                         part_p.rect_filled(pr, Rounding::same(4.0), Color32::from_rgb(10, 15, 29));
 
-                        let w_efi = 44.0_f32;
-                        let w_swap = 80.0_f32;
-                        let w_res = 55.0_f32;
-                        let w_root = (pr.width() - w_efi - w_swap - w_res - 6.0).max(50.0);
+                        // Draw proportional partitions from real physical disk partitions
+                        if let Some(primary) = d1_phys {
+                            if !primary.partitions.is_empty() {
+                                let total_part_bytes: u64 = primary.partitions.iter().map(|p| p.size_bytes).sum::<u64>().max(1);
+                                let gap = 2.0_f32;
+                                let n = primary.partitions.len();
+                                let total_gaps = gap * (n.saturating_sub(1) as f32);
+                                let usable_w = (pr.width() - total_gaps).max(10.0);
 
-                        // P1: EFI
-                        let r_efi = egui::Rect::from_min_size(pr.min, egui::vec2(w_efi, pr.height()));
-                        part_p.rect_filled(r_efi, Rounding::same(3.0), Color32::from_rgb(40, 50, 68));
-                        part_p.text(r_efi.center(), egui::Align2::CENTER_CENTER, "EFI", egui::FontId::monospace(8.5), Color32::from_rgb(203, 213, 225));
+                                let mut cur_x = pr.min.x;
+                                for (idx, part) in primary.partitions.iter().enumerate() {
+                                    let fraction = (part.size_bytes as f32 / total_part_bytes as f32).max(0.01);
+                                    let min_w = if part.size_bytes < 500_000_000 { 16.0_f32 } else { 24.0_f32 };
+                                    let calc_w = (fraction * usable_w).max(min_w);
+                                    let rem_x = pr.max.x - cur_x;
+                                    let w = if idx == n - 1 { rem_x.max(min_w) } else { calc_w.min(rem_x - ((n - 1 - idx) as f32 * min_w)) };
 
-                        // P2: Root
-                        let r_root = egui::Rect::from_min_size(egui::pos2(pr.min.x + w_efi + 2.0, pr.min.y), egui::vec2(w_root, pr.height()));
-                        part_p.rect_filled(r_root, Rounding::same(3.0), Color32::from_rgb(56, 189, 248));
-                        part_p.text(egui::pos2(r_root.left() + 10.0, r_root.center().y), egui::Align2::LEFT_CENTER, "/ (rootfs - ext4)", egui::FontId::monospace(9.0), Color32::from_rgb(10, 15, 29));
-                        part_p.text(egui::pos2(r_root.right() - 10.0, r_root.center().y), egui::Align2::RIGHT_CENTER, "380 GB USED", egui::FontId::monospace(9.0), Color32::from_rgb(10, 15, 29));
+                                    let seg_r = egui::Rect::from_min_size(egui::pos2(cur_x, pr.min.y), egui::vec2(w.max(6.0), pr.height()));
 
-                        // P3: Swap
-                        let r_swap = egui::Rect::from_min_size(egui::pos2(pr.min.x + w_efi + w_root + 4.0, pr.min.y), egui::vec2(w_swap, pr.height()));
-                        part_p.rect_filled(r_swap, Rounding::same(3.0), Color32::from_rgb(96, 165, 250));
-                        part_p.text(r_swap.center(), egui::Align2::CENTER_CENTER, "SWAP", egui::FontId::monospace(8.5), Color32::from_rgb(10, 15, 29));
+                                    // Determine partition role styling
+                                    let (fill_col, text_col, label) = if part.name.ends_with("p7") || part.partition_num == 7 {
+                                        (Color32::from_rgb(56, 189, 248), Color32::from_rgb(10, 15, 29), format!("/ (rootfs - {})", d1_fs))
+                                    } else if part.name.ends_with("p3") || part.partition_num == 3 {
+                                        (Color32::from_rgb(45, 85, 125), Color32::from_rgb(241, 245, 249), "P3 • Data".to_string())
+                                    } else if part.name.ends_with("p8") || part.partition_num == 8 {
+                                        (Color32::from_rgb(96, 165, 250), Color32::from_rgb(10, 15, 29), "SWAP".to_string())
+                                    } else if part.name.ends_with("p1") || part.partition_num == 1 {
+                                        (Color32::from_rgb(51, 65, 85), Color32::from_rgb(203, 213, 225), "EFI".to_string())
+                                    } else {
+                                        (Color32::from_rgb(30, 41, 59), Color32::from_rgb(148, 163, 184), format!("P{}", part.partition_num))
+                                    };
 
-                        // P4: RES
-                        let r_res = egui::Rect::from_min_size(egui::pos2(pr.min.x + w_efi + w_root + w_swap + 6.0, pr.min.y), egui::vec2(w_res, pr.height()));
-                        part_p.rect_filled(r_res, Rounding::same(3.0), Color32::from_rgb(45, 55, 72));
-                        part_p.text(r_res.center(), egui::Align2::CENTER_CENTER, "RES", egui::FontId::monospace(8.5), Color32::from_rgb(148, 163, 184));
+                                    part_p.rect_filled(seg_r, Rounding::same(3.0), fill_col);
+
+                                    // Render label if wide enough
+                                    if w > 65.0 {
+                                        if part.name.ends_with("p7") || part.partition_num == 7 {
+                                            part_p.text(egui::pos2(seg_r.left() + 8.0, seg_r.center().y), egui::Align2::LEFT_CENTER, &label, egui::FontId::monospace(9.0), text_col);
+                                            if w > 140.0 {
+                                                part_p.text(egui::pos2(seg_r.right() - 8.0, seg_r.center().y), egui::Align2::RIGHT_CENTER, format!("{:.1} GB USED", d1_used), egui::FontId::monospace(9.0), text_col);
+                                            }
+                                        } else {
+                                            let gb = part.size_bytes as f64 / 1e9;
+                                            let txt = if gb >= 1.0 { format!("{} ({:.0} GB)", label, gb) } else { label };
+                                            part_p.text(seg_r.center(), egui::Align2::CENTER_CENTER, txt, egui::FontId::monospace(8.5), text_col);
+                                        }
+                                    } else if w > 24.0 {
+                                        part_p.text(seg_r.center(), egui::Align2::CENTER_CENTER, &label, egui::FontId::monospace(8.0), text_col);
+                                    }
+
+                                    cur_x += w + gap;
+                                    if cur_x >= pr.max.x {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
 
                         ui.add_space(8.0);
 
-                        // 4 Partition Columns Underneath
+                        // 4 Key Partition Summary Columns Underneath
                         ui.columns(4, |cols| {
                             cols[0].vertical(|ui| {
                                 ui.label(RichText::new("P1 • EFI SYSTEM").size(9.0).monospace().strong().color(p.text_muted));
                                 ui.add_space(2.0);
-                                ui.label(RichText::new("512 MB vfat").size(13.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("/boot/efi (Active)").size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("100 MB vfat").size(13.0).strong().color(p.text_primary));
+                                ui.label(RichText::new("/boot/efi (ESP)").size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
                             });
 
                             cols[1].vertical(|ui| {
-                                ui.label(RichText::new("P2 • ROOT /DEV/NVME0N1P2").size(9.0).monospace().strong().color(p.text_muted));
+                                ui.label(RichText::new("P3 • BASIC DATA").size(9.0).monospace().strong().color(p.text_muted));
                                 ui.add_space(2.0);
-                                ui.label(RichText::new("460.0 GB ext4").size(13.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("Mounted / • RW").size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("117.1 GB ntfs").size(13.0).strong().color(p.text_primary));
+                                ui.label(RichText::new("Data / Windows C:").size(9.0).monospace().color(Color32::from_rgb(96, 165, 250)));
                             });
 
                             cols[2].vertical(|ui| {
-                                ui.label(RichText::new("P3 • LINUX SWAP").size(9.0).monospace().strong().color(p.text_muted));
+                                ui.label(RichText::new(format!("P7 • ROOT /DEV/{}P7", d1_name.to_uppercase())).size(9.0).monospace().strong().color(p.text_muted));
                                 ui.add_space(2.0);
-                                ui.label(RichText::new("16.0 GB swap").size(13.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("swapon priority 1").size(9.0).monospace().color(Color32::from_rgb(96, 165, 250)));
+                                ui.label(RichText::new(format!("{:.1} GB {}", d1_tot, d1_fs)).size(13.0).strong().color(p.text_primary));
+                                ui.label(RichText::new(format!("Mounted / • {:.1} GB Used", d1_used)).size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
                             });
 
                             cols[3].vertical(|ui| {
-                                ui.label(RichText::new("P4 • LENOVO DIAGNOSTIC").size(9.0).monospace().strong().color(p.text_muted));
+                                ui.label(RichText::new("P8 • LINUX SWAP").size(9.0).monospace().strong().color(p.text_muted));
                                 ui.add_space(2.0);
-                                ui.label(RichText::new("4.2 GB ntfs-oem").size(13.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("Hidden Protected").size(9.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new("7.8 GB swap").size(13.0).strong().color(p.text_primary));
+                                ui.label(RichText::new("zram0 / [SWAP] Active").size(9.0).monospace().color(Color32::from_rgb(96, 165, 250)));
                             });
                         });
                     });

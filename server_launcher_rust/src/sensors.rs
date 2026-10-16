@@ -418,7 +418,33 @@ impl SystemSensorsCollector {
         // Deduplicate or sort by mount point
         disks.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
 
-        let physical_disks = collect_physical_disks();
+        let mut physical_disks = collect_physical_disks();
+        if physical_disks.is_empty() && !disks.is_empty() {
+            let mut seen_names = std::collections::HashSet::new();
+            for d in &disks {
+                let clean_name = d.name.trim_start_matches("/dev/").to_string();
+                if seen_names.insert(clean_name.clone()) {
+                    let is_ssd = !clean_name.starts_with("hd");
+                    let model = if !d.fs_type.is_empty() {
+                        format!("{} Storage ({})", d.fs_type.to_uppercase(), d.mount_point)
+                    } else {
+                        format!("Storage Volume ({})", d.mount_point)
+                    };
+                    physical_disks.push(PhysicalDiskInfo {
+                        name: clean_name.clone(),
+                        model,
+                        total_bytes: d.total_bytes,
+                        is_ssd,
+                        partition_count: 1,
+                        partitions: vec![DiskPartitionInfo {
+                            name: clean_name,
+                            size_bytes: d.total_bytes,
+                            partition_num: 1,
+                        }],
+                    });
+                }
+            }
+        }
 
         // Calculate total physical disk read/write throughput rates across base devices
         let mut base_matched = false;
@@ -721,13 +747,27 @@ fn collect_proc_diskstats() -> HashMap<String, (u64, u64)> {
 }
 
 fn is_base_physical_disk(dev: &str) -> bool {
-    if dev.starts_with("loop") || dev.starts_with("ram") || dev.starts_with("zram") || dev.starts_with("dm-") {
+    if dev.starts_with("loop")
+        || dev.starts_with("ram")
+        || dev.starts_with("zram")
+        || dev.starts_with("dm-")
+        || dev.starts_with("nbd")
+        || dev.starts_with("sr")
+    {
         return false;
     }
     if dev.starts_with("sd") || dev.starts_with("vd") || dev.starts_with("hd") || dev.starts_with("xvd") {
         return !dev.chars().last().map(|c| c.is_ascii_digit()).unwrap_or(false);
     }
-    if dev.starts_with("nvme") || dev.starts_with("mmcblk") {
+    if dev.starts_with("nvme") {
+        let rest = if dev.len() > 4 { &dev[4..] } else { "" };
+        return rest.contains('n') && !rest.contains('p');
+    }
+    if dev.starts_with("mmcblk") {
+        let rest = if dev.len() > 6 { &dev[6..] } else { "" };
+        return !rest.contains('p') && !rest.contains("boot");
+    }
+    if dev.starts_with("md") {
         return !dev.contains('p');
     }
     true
@@ -899,7 +939,7 @@ pub fn collect_hwmon_sensors() -> Vec<TempSensor> {
 
                                 if let Ok(val_str) = fs::read_to_string(&tf) {
                                     if let Ok(raw_val) = val_str.trim().parse::<f32>() {
-                                        let temp = raw_val / 1000.0;
+                                        let temp = if raw_val.abs() > 200.0 { raw_val / 1000.0 } else { raw_val };
                                         // Ignore absurd disconnected sensor readings like -273 or 65261
                                         if temp >= -40.0 && temp <= 150.0 {
                                             let cat = categorize_sensor(&label, &chip);
@@ -935,7 +975,7 @@ pub fn collect_hwmon_sensors() -> Vec<TempSensor> {
                                 .unwrap_or_else(|_| name.to_string());
                             if let Ok(temp_str) = fs::read_to_string(path.join("temp")) {
                                 if let Ok(raw) = temp_str.trim().parse::<f32>() {
-                                    let temp = raw / 1000.0;
+                                    let temp = if raw.abs() > 200.0 { raw / 1000.0 } else { raw };
                                     if temp >= -40.0 && temp <= 150.0 {
                                         let cat = categorize_sensor(&type_str, "thermal_zone");
                                         result.push(TempSensor {
@@ -1299,122 +1339,223 @@ fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
         }
     }
 
-    // 2. Check Linux DRM cards if no NVIDIA or integrated GPU
+    // 2. Check Linux DRM cards (Intel, AMD, NVIDIA Nouveau, VirtIO, etc.)
     #[cfg(target_os = "linux")]
-    if gpus.is_empty() {
+    {
         let drm_dir = Path::new("/sys/class/drm");
         if drm_dir.exists() {
             if let Ok(entries) = fs::read_dir(drm_dir) {
-                for e in entries.flatten() {
-                    let fname = e.file_name().to_string_lossy().to_string();
-                    if fname.starts_with("card") && !fname.contains('-') {
-                        let dev = e.path().join("device");
-                        let vendor = fs::read_to_string(dev.join("vendor")).unwrap_or_default().trim().to_string();
-                        let vendor_name = match vendor.as_str() {
-                            "0x8086" => "Intel Integrated Graphics",
-                            "0x1002" => "AMD Radeon Graphics",
-                            "0x10de" => "NVIDIA Corporation",
-                            _ => "Integrated GPU",
-                        };
+                let mut card_entries: Vec<_> = entries
+                    .flatten()
+                    .filter(|e| {
+                        let fname = e.file_name().to_string_lossy().to_string();
+                        fname.starts_with("card") && !fname.contains('-')
+                    })
+                    .collect();
+                card_entries.sort_by_key(|e| e.file_name());
 
-                        // Check frequency across all DRM / i915 / gt0 interfaces
-                        let freq_mhz = fs::read_to_string(e.path().join("gt_act_freq_mhz"))
-                            .or_else(|_| fs::read_to_string(e.path().join("gt/gt0/rps_act_freq_mhz")))
-                            .or_else(|_| fs::read_to_string(e.path().join("gt_cur_freq_mhz")))
-                            .or_else(|_| fs::read_to_string(e.path().join("gt/gt0/rps_cur_freq_mhz")))
-                            .or_else(|_| fs::read_to_string(dev.join("gt_act_freq_mhz")))
-                            .or_else(|_| fs::read_to_string(dev.join("gt_cur_freq_mhz")))
-                            .ok()
-                            .and_then(|s| s.trim().parse::<f32>().ok());
+                for e in card_entries {
+                    let dev = e.path().join("device");
+                    let vendor = fs::read_to_string(dev.join("vendor")).unwrap_or_default().trim().to_lowercase();
+                    
+                    // If nvidia-smi already populated NVIDIA cards, avoid duplicating an NVIDIA card from DRM
+                    if vendor == "0x10de" && !gpus.is_empty() && gpus.iter().any(|g| g.driver.contains("NVIDIA")) {
+                        continue;
+                    }
 
-                        let max_freq_mhz = fs::read_to_string(e.path().join("gt_max_freq_mhz"))
-                            .or_else(|_| fs::read_to_string(e.path().join("gt/gt0/rps_max_freq_mhz")))
-                            .or_else(|_| fs::read_to_string(dev.join("gt_max_freq_mhz")))
-                            .ok()
-                            .and_then(|s| s.trim().parse::<f32>().ok())
-                            .unwrap_or(1200.0);
+                    let driver_name = fs::read_link(dev.join("driver"))
+                        .ok()
+                        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                        .unwrap_or_default();
 
-                        let load_pct = freq_mhz.map(|f| ((f / max_freq_mhz) * 100.0).clamp(0.0, 100.0));
+                    let vendor_name = match vendor.as_str() {
+                        "0x8086" => if driver_name == "xe" { "Intel Arc / Xe Graphics" } else { "Intel HD/UHD Graphics" },
+                        "0x1002" => "AMD Radeon Graphics",
+                        "0x10de" => "NVIDIA Corporation",
+                        "0x1af4" => "VirtIO GPU Accelerator",
+                        "0x15ad" => "VMware SVGA II Adapter",
+                        "0x1ab8" => "Parallels Video Adapter",
+                        "0x1234" => "QEMU Standard VGA",
+                        "0x1a03" => "ASPEED Graphics (BMC)",
+                        "0x13d3" | "0x14e4" => "Broadcom VideoCore GPU",
+                        "0x13b5" => "ARM Mali Graphics",
+                        "0x5143" => "Qualcomm Adreno GPU",
+                        _ => {
+                            if !driver_name.is_empty() {
+                                match driver_name.as_str() {
+                                    "i915" | "xe" => "Intel Integrated Graphics",
+                                    "amdgpu" | "radeon" => "AMD Radeon Graphics",
+                                    "nouveau" => "NVIDIA (Nouveau Open Driver)",
+                                    "virtio-pci" | "virtio_gpu" => "VirtIO GPU",
+                                    "v3d" | "vc4" => "Raspberry Pi VideoCore",
+                                    "panfrost" | "lima" => "ARM Mali GPU",
+                                    _ => "Integrated / Linux GPU",
+                                }
+                            } else {
+                                "Integrated / Linux GPU"
+                            }
+                        }
+                    };
 
-                        let mut core_clock = freq_mhz.map(|f| f as u32);
-                        let mut mem_clock = None;
-                        let mut power_watts = None;
+                    // Check frequency across all DRM / i915 / gt0 interfaces
+                    let freq_mhz = fs::read_to_string(e.path().join("gt_act_freq_mhz"))
+                        .or_else(|_| fs::read_to_string(e.path().join("gt/gt0/rps_act_freq_mhz")))
+                        .or_else(|_| fs::read_to_string(e.path().join("gt_cur_freq_mhz")))
+                        .or_else(|_| fs::read_to_string(e.path().join("gt/gt0/rps_cur_freq_mhz")))
+                        .or_else(|_| fs::read_to_string(dev.join("gt_act_freq_mhz")))
+                        .or_else(|_| fs::read_to_string(dev.join("gt_cur_freq_mhz")))
+                        .ok()
+                        .and_then(|s| s.trim().parse::<f32>().ok());
 
-                        let hwmon_p = dev.join("hwmon");
-                        if hwmon_p.exists() {
-                            if let Ok(entries) = fs::read_dir(&hwmon_p) {
-                                for hwe in entries.flatten() {
-                                    let hp = hwe.path();
-                                    if power_watts.is_none() {
-                                        if let Ok(s) = fs::read_to_string(hp.join("power1_average"))
-                                            .or_else(|_| fs::read_to_string(hp.join("power1_input")))
-                                        {
-                                            if let Ok(uw) = s.trim().parse::<f32>() {
-                                                power_watts = Some(uw / 1_000_000.0);
+                    let max_freq_mhz = fs::read_to_string(e.path().join("gt_max_freq_mhz"))
+                        .or_else(|_| fs::read_to_string(e.path().join("gt/gt0/rps_max_freq_mhz")))
+                        .or_else(|_| fs::read_to_string(dev.join("gt_max_freq_mhz")))
+                        .ok()
+                        .and_then(|s| s.trim().parse::<f32>().ok())
+                        .unwrap_or(1200.0);
+
+                    let load_pct = freq_mhz.map(|f| ((f / max_freq_mhz) * 100.0).clamp(0.0, 100.0));
+
+                    let mut core_clock = freq_mhz.map(|f| f as u32);
+                    let mut mem_clock = None;
+                    let mut power_watts = None;
+                    let mut card_temp = None;
+
+                    let hwmon_p = dev.join("hwmon");
+                    if hwmon_p.exists() {
+                        if let Ok(entries) = fs::read_dir(&hwmon_p) {
+                            for hwe in entries.flatten() {
+                                let hp = hwe.path();
+                                if card_temp.is_none() {
+                                    if let Ok(s) = fs::read_to_string(hp.join("temp1_input")).or_else(|_| fs::read_to_string(hp.join("temp2_input"))) {
+                                        if let Ok(raw) = s.trim().parse::<f32>() {
+                                            let t = if raw.abs() > 200.0 { raw / 1000.0 } else { raw };
+                                            if t >= -40.0 && t <= 150.0 {
+                                                card_temp = Some(t);
                                             }
                                         }
                                     }
-                                    if core_clock.is_none() {
-                                        if let Ok(s) = fs::read_to_string(hp.join("freq1_input")) {
-                                            if let Ok(hz) = s.trim().parse::<u64>() {
-                                                core_clock = Some((hz / 1_000_000) as u32);
-                                            }
+                                }
+                                if power_watts.is_none() {
+                                    if let Ok(s) = fs::read_to_string(hp.join("power1_average"))
+                                        .or_else(|_| fs::read_to_string(hp.join("power1_input")))
+                                    {
+                                        if let Ok(uw) = s.trim().parse::<f32>() {
+                                            power_watts = Some(uw / 1_000_000.0);
                                         }
                                     }
-                                    if mem_clock.is_none() {
-                                        if let Ok(s) = fs::read_to_string(hp.join("freq2_input")) {
-                                            if let Ok(hz) = s.trim().parse::<u64>() {
-                                                mem_clock = Some((hz / 1_000_000) as u32);
+                                }
+                                if core_clock.is_none() {
+                                    if let Ok(s) = fs::read_to_string(hp.join("freq1_input")) {
+                                        if let Ok(hz) = s.trim().parse::<u64>() {
+                                            core_clock = Some((hz / 1_000_000) as u32);
+                                        }
+                                    }
+                                }
+                                if mem_clock.is_none() {
+                                    if let Ok(s) = fs::read_to_string(hp.join("freq2_input")) {
+                                        if let Ok(hz) = s.trim().parse::<u64>() {
+                                            mem_clock = Some((hz / 1_000_000) as u32);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Check AMD pp_dpm_sclk if still no core clock
+                    if core_clock.is_none() {
+                        if let Ok(s) = fs::read_to_string(dev.join("pp_dpm_sclk")) {
+                            for line in s.lines() {
+                                if line.contains('*') {
+                                    let parts: Vec<&str> = line.split_whitespace().collect();
+                                    for p in parts {
+                                        if p.ends_with("mhz") || p.ends_with("MHz") {
+                                            let num_str = p.trim_end_matches(|c: char| !c.is_ascii_digit());
+                                            if let Ok(val) = num_str.parse::<u32>() {
+                                                core_clock = Some(val);
+                                                break;
                                             }
                                         }
                                     }
                                 }
                             }
                         }
+                    }
 
-                        // Check AMD pp_dpm_sclk if still no core clock
-                        if core_clock.is_none() {
-                            if let Ok(s) = fs::read_to_string(dev.join("pp_dpm_sclk")) {
-                                for line in s.lines() {
-                                    if line.contains('*') {
-                                        let parts: Vec<&str> = line.split_whitespace().collect();
-                                        for p in parts {
-                                            if p.ends_with("mhz") || p.ends_with("MHz") {
-                                                let num_str = p.trim_end_matches(|c: char| !c.is_ascii_digit());
-                                                if let Ok(val) = num_str.parse::<u32>() {
-                                                    core_clock = Some(val);
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                    if power_watts.is_none() {
+                        if let Some(clk) = core_clock {
+                            let max_f = max_freq_mhz.max(400.0);
+                            let clk_ratio = (clk as f32 / max_f).clamp(0.0, 1.0);
+                            let load_ratio = (load_pct.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0);
+                            let p_est = 1.0 + 14.0 * (0.35 * clk_ratio + 0.65 * load_ratio);
+                            power_watts = Some((p_est * 10.0).round() / 10.0);
+                        }
+                    }
+
+                    let driver_label = if !driver_name.is_empty() {
+                        format!("Linux DRM ({})", driver_name)
+                    } else {
+                        "Direct Rendering Manager (DRM)".to_string()
+                    };
+
+                    gpus.push(GpuSensorInfo {
+                        name: vendor_name.to_string(),
+                        load_pct,
+                        temp: card_temp.or(known_temp),
+                        mem_used_mb: None,
+                        mem_total_mb: None,
+                        clock_mhz: core_clock,
+                        mem_clock_mhz: mem_clock,
+                        power_watts,
+                        power_limit_watts: None,
+                        driver: driver_label,
+                    });
+                }
+            }
+        }
+
+        // 3. PCI fallback if no GPUs detected yet (headless servers, minimal kernels without DRM sysfs)
+        if gpus.is_empty() {
+            let pci_dir = Path::new("/sys/bus/pci/devices");
+            if pci_dir.exists() {
+                if let Ok(entries) = fs::read_dir(pci_dir) {
+                    for e in entries.flatten() {
+                        let p = e.path();
+                        if let Ok(class_str) = fs::read_to_string(p.join("class")) {
+                            let class_hex = class_str.trim();
+                            // PCI class 0x03xxxx = Display controller
+                            if class_hex.starts_with("0x03") {
+                                let vendor = fs::read_to_string(p.join("vendor")).unwrap_or_default().trim().to_lowercase();
+                                let vendor_name = match vendor.as_str() {
+                                    "0x8086" => "Intel Graphics Controller",
+                                    "0x1002" => "AMD Radeon Display Controller",
+                                    "0x10de" => "NVIDIA Display Controller",
+                                    "0x1af4" => "VirtIO GPU Accelerator",
+                                    "0x15ad" => "VMware SVGA II Adapter",
+                                    "0x1234" => "QEMU Standard VGA",
+                                    "0x1a03" => "ASPEED Graphics (BMC)",
+                                    _ => "Standard PCI VGA/Display Controller",
+                                };
+                                let driver_name = fs::read_link(p.join("driver"))
+                                    .ok()
+                                    .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                                    .unwrap_or_else(|| "PCI Display Driver".to_string());
+
+                                gpus.push(GpuSensorInfo {
+                                    name: vendor_name.to_string(),
+                                    load_pct: None,
+                                    temp: known_temp,
+                                    mem_used_mb: None,
+                                    mem_total_mb: None,
+                                    clock_mhz: None,
+                                    mem_clock_mhz: None,
+                                    power_watts: None,
+                                    power_limit_watts: None,
+                                    driver: format!("PCI Subsystem ({})", driver_name),
+                                });
                             }
                         }
-
-                        if power_watts.is_none() {
-                            if let Some(clk) = core_clock {
-                                let max_f = max_freq_mhz.max(400.0);
-                                let clk_ratio = (clk as f32 / max_f).clamp(0.0, 1.0);
-                                let load_ratio = (load_pct.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0);
-                                let p_est = 1.0 + 14.0 * (0.35 * clk_ratio + 0.65 * load_ratio);
-                                power_watts = Some((p_est * 10.0).round() / 10.0);
-                            }
-                        }
-
-                        gpus.push(GpuSensorInfo {
-                            name: vendor_name.to_string(),
-                            load_pct,
-                            temp: known_temp,
-                            mem_used_mb: None,
-                            mem_total_mb: None,
-                            clock_mhz: core_clock,
-                            mem_clock_mhz: mem_clock,
-                            power_watts,
-                            power_limit_watts: None,
-                            driver: "Direct Rendering Manager (DRM)".to_string(),
-                        });
-                        break;
                     }
                 }
             }
@@ -1596,9 +1737,20 @@ for hw in glob.glob("/sys/class/hwmon/hwmon*"):
         lbl_p = inp.replace("_input", "_label")
         lbl = open(lbl_p).read().strip() if os.path.exists(lbl_p) else os.path.basename(inp)
         try:
-            t = int(open(inp).read().strip()) / 1000.0
+            raw_t = float(open(inp).read().strip())
+            t = raw_t / 1000.0 if abs(raw_t) > 200.0 else raw_t
             if -40 <= t <= 150:
-                temps.append({"chip": name, "label": lbl, "temp": t})
+                temps.append({"chip": name, "label": lbl, "temp": round(t, 1)})
+        except:
+            pass
+if len(temps) < 3:
+    for tz in glob.glob("/sys/class/thermal/thermal_zone*"):
+        try:
+            type_lbl = open(tz + "/type").read().strip() if os.path.exists(tz + "/type") else os.path.basename(tz)
+            raw_t = float(open(tz + "/temp").read().strip())
+            t = raw_t / 1000.0 if abs(raw_t) > 200.0 else raw_t
+            if -40 <= t <= 150:
+                temps.append({"chip": "thermal_zone", "label": type_lbl, "temp": round(t, 1)})
         except:
             pass
 
@@ -1623,53 +1775,79 @@ try:
 except:
     pass
 
-if not gpus:
-    for card in sorted(glob.glob("/sys/class/drm/card[0-9]*")):
-        if "-" not in os.path.basename(card):
-            vendor_p = card + "/device/vendor"
-            v = open(vendor_p).read().strip() if os.path.exists(vendor_p) else ""
-            v_name = "Intel Integrated Graphics" if v == "0x8086" else ("AMD Radeon Graphics" if v == "0x1002" else "Integrated GPU")
-            act_freq = None
-            for f in ["gt_act_freq_mhz", "gt_cur_freq_mhz"]:
-                if os.path.exists(card + "/" + f):
-                    try: act_freq = int(open(card + "/" + f).read().strip()); break
-                    except: pass
-            max_freq = None
-            if os.path.exists(card + "/gt_max_freq_mhz"):
-                try: max_freq = int(open(card + "/gt_max_freq_mhz").read().strip())
+for card in sorted(glob.glob("/sys/class/drm/card[0-9]*")):
+    if "-" not in os.path.basename(card):
+        vendor_p = card + "/device/vendor"
+        v = open(vendor_p).read().strip().lower() if os.path.exists(vendor_p) else ""
+        if v == "0x10de" and any("NVIDIA" in g.get("driver", "") for g in gpus):
+            continue
+        drv_p = card + "/device/driver"
+        drv_name = os.path.basename(os.readlink(drv_p)) if os.path.islink(drv_p) else ""
+        v_name = "Intel HD/UHD Graphics" if v == "0x8086" else ("AMD Radeon Graphics" if v == "0x1002" else ("VirtIO GPU" if v == "0x1af4" else ("VMware SVGA II" if v == "0x15ad" else ("QEMU Standard VGA" if v == "0x1234" else ("ASPEED Graphics (BMC)" if v == "0x1a03" else ("Integrated / Linux GPU" if not drv_name else drv_name.upper() + " GPU"))))))
+        act_freq = None
+        for f in ["gt_act_freq_mhz", "gt_cur_freq_mhz", "gt/gt0/rps_act_freq_mhz", "gt/gt0/rps_cur_freq_mhz"]:
+            if os.path.exists(card + "/" + f):
+                try: act_freq = int(open(card + "/" + f).read().strip()); break
                 except: pass
-            load = None
-            if act_freq and max_freq and max_freq > 0:
-                load = round((act_freq / max_freq) * 100.0, 1)
+        max_freq = None
+        for f in ["gt_max_freq_mhz", "gt/gt0/rps_max_freq_mhz"]:
+            if os.path.exists(card + "/" + f):
+                try: max_freq = int(open(card + "/gt_max_freq_mhz").read().strip()); break
+                except: pass
+        load = None
+        if act_freq and max_freq and max_freq > 0:
+            load = round((act_freq / max_freq) * 100.0, 1)
 
-            p_watts = None
-            mem_clk = None
-            for hw in glob.glob(card + "/device/hwmon/hwmon*"):
-                for pin in glob.glob(hw + "/power1_average") + glob.glob(hw + "/power1_input"):
-                    try:
-                        p_watts = round(int(open(pin).read().strip()) / 1e6, 2)
-                        break
-                    except: pass
-                if not act_freq and os.path.exists(hw + "/freq1_input"):
-                    try: act_freq = int(open(hw + "/freq1_input").read().strip()) // 1000000
-                    except: pass
-                if os.path.exists(hw + "/freq2_input"):
-                    try: mem_clk = int(open(hw + "/freq2_input").read().strip()) // 1000000
-                    except: pass
+        p_watts = None
+        mem_clk = None
+        c_temp = None
+        for hw in glob.glob(card + "/device/hwmon/hwmon*"):
+            for tin in glob.glob(hw + "/temp1_input") + glob.glob(hw + "/temp2_input"):
+                try:
+                    raw_t = float(open(tin).read().strip())
+                    c_temp = round(raw_t / 1000.0 if abs(raw_t) > 200.0 else raw_t, 1)
+                    break
+                except: pass
+            for pin in glob.glob(hw + "/power1_average") + glob.glob(hw + "/power1_input"):
+                try:
+                    p_watts = round(int(open(pin).read().strip()) / 1e6, 2)
+                    break
+                except: pass
+            if not act_freq and os.path.exists(hw + "/freq1_input"):
+                try: act_freq = int(open(hw + "/freq1_input").read().strip()) // 1000000
+                except: pass
+            if os.path.exists(hw + "/freq2_input"):
+                try: mem_clk = int(open(hw + "/freq2_input").read().strip()) // 1000000
+                except: pass
 
-            gpus.append({
-                "name": v_name,
-                "temp": None,
-                "load": load,
-                "mem_used": None,
-                "mem_total": None,
-                "clock_mhz": act_freq,
-                "mem_clock_mhz": mem_clk,
-                "power_watts": p_watts,
-                "power_limit_watts": None,
-                "driver": "DRM / Linux Kernel"
-            })
-            break
+        gpus.append({
+            "name": v_name,
+            "temp": c_temp,
+            "load": load,
+            "mem_used": None,
+            "mem_total": None,
+            "clock_mhz": act_freq,
+            "mem_clock_mhz": mem_clk,
+            "power_watts": p_watts,
+            "power_limit_watts": None,
+            "driver": "Linux DRM (" + (drv_name if drv_name else "Kernel") + ")"
+        })
+
+if not gpus:
+    for pci in sorted(glob.glob("/sys/bus/pci/devices/*")):
+        if os.path.exists(pci + "/class"):
+            try:
+                cls = open(pci + "/class").read().strip()
+                if cls.startswith("0x03"):
+                    v = open(pci + "/vendor").read().strip().lower() if os.path.exists(pci + "/vendor") else ""
+                    v_name = "Intel Graphics" if v == "0x8086" else ("AMD Radeon" if v == "0x1002" else ("NVIDIA Controller" if v == "0x10de" else ("VirtIO GPU" if v == "0x1af4" else "PCI Display Controller")))
+                    drv_name = os.path.basename(os.readlink(pci + "/driver")) if os.path.islink(pci + "/driver") else "PCI"
+                    gpus.append({
+                        "name": v_name, "temp": None, "load": None, "mem_used": None, "mem_total": None,
+                        "clock_mhz": None, "mem_clock_mhz": None, "power_watts": None, "power_limit_watts": None,
+                        "driver": "PCI Display (" + drv_name + ")"
+                    })
+            except: pass
 
 ac_online = None
 batteries = []
@@ -1977,6 +2155,21 @@ try:
         })
 except:
     pass
+
+if not phys_disks and disks:
+    seen = set()
+    for d in disks:
+        nm = os.path.basename(d["name"])
+        if nm not in seen:
+            seen.add(nm)
+            phys_disks.append({
+                "name": nm,
+                "model": "Storage Volume (" + d.get("mount", "/") + ")",
+                "total_bytes": d.get("total", 0),
+                "is_ssd": True,
+                "partition_count": 1,
+                "partitions": [{"name": nm, "partition_num": 1, "size_bytes": d.get("total", 0)}]
+            })
 
 data = {
     "cpu_model": cpu_model,
@@ -2287,6 +2480,32 @@ print(json.dumps(data))
                 partition_count,
                 partitions,
             });
+        }
+    }
+
+    if physical_disks.is_empty() && !disks.is_empty() {
+        let mut seen = std::collections::HashSet::new();
+        for d in &disks {
+            let nm = d.name.trim_start_matches("/dev/").to_string();
+            if seen.insert(nm.clone()) {
+                let model = if !d.mount_point.is_empty() {
+                    format!("Storage Volume ({})", d.mount_point)
+                } else {
+                    "Block Storage".to_string()
+                };
+                physical_disks.push(PhysicalDiskInfo {
+                    name: nm.clone(),
+                    model,
+                    total_bytes: d.total_bytes,
+                    is_ssd: true,
+                    partition_count: 1,
+                    partitions: vec![DiskPartitionInfo {
+                        name: nm,
+                        size_bytes: d.total_bytes,
+                        partition_num: 1,
+                    }],
+                });
+            }
         }
     }
 

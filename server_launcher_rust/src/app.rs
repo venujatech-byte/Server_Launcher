@@ -335,6 +335,7 @@ pub struct LauncherApp {
     pub gpu_3d_history: VecDeque<f32>,
     pub gpu_copy_history: VecDeque<f32>,
     pub gpu_mode: usize,
+    pub selected_gpu_idx: usize,
     pub last_telemetry_sample: Instant,
 
     // Power & Battery State (matching Image 1)
@@ -845,6 +846,7 @@ impl LauncherApp {
                 d
             },
             gpu_mode: 1, // Balanced
+            selected_gpu_idx: 0,
             last_telemetry_sample: Instant::now(),
             power_preset: crate::power::governor_to_preset_index(&crate::power::query_current_governor()),
             power_conservation: true,
@@ -11734,7 +11736,8 @@ impl LauncherApp {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
 
-                let gpu = snap.gpus.first();
+                let active_gpu_idx = if snap.gpus.is_empty() { 0 } else { self.selected_gpu_idx.min(snap.gpus.len() - 1) };
+                let gpu = snap.gpus.get(active_gpu_idx).or_else(|| snap.gpus.first());
                 let gpu_name = gpu
                     .map(|g| g.name.as_str())
                     .filter(|n| !n.trim().is_empty() && *n != "Unknown GPU")
@@ -11752,6 +11755,37 @@ impl LauncherApp {
                     "Gen9.5 LP • 18 EUs"
                 };
 
+                // Multi-GPU Dispatch Switcher Pills (when host has 2+ GPUs)
+                if snap.gpus.len() > 1 {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        ui.label(RichText::new("DISPATCH SELECTOR:").size(9.0).monospace().color(p.text_muted));
+                        for (i, g) in snap.gpus.iter().enumerate() {
+                            let is_active = i == active_gpu_idx;
+                            let pill_bg = if is_active {
+                                Color32::from_rgba_unmultiplied(56, 189, 248, 35)
+                            } else {
+                                Color32::from_rgb(18, 28, 42)
+                            };
+                            let pill_stroke = if is_active {
+                                Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248))
+                            } else {
+                                Stroke::NONE
+                            };
+                            let pill_txt = format!("GPU {} • {}", i + 1, g.name);
+                            let text_col = if is_active { Color32::from_rgb(56, 189, 248) } else { p.text_secondary };
+
+                            if ui.add(egui::Button::new(RichText::new(pill_txt).size(9.5).monospace().strong().color(text_col))
+                                .fill(pill_bg)
+                                .stroke(pill_stroke)
+                                .rounding(Rounding::same(4.0))).clicked() {
+                                self.selected_gpu_idx = i;
+                            }
+                        }
+                    });
+                    ui.add_space(4.0);
+                }
+
                 // 1. Top Header Card
                 Frame::none()
                     .fill(p.bg_card)
@@ -11765,9 +11799,9 @@ impl LauncherApp {
                                 ui.spacing_mut().item_spacing.x = 4.0;
                                 ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
                                 let overline = if is_remote {
-                                    format!("REMOTE GPU SUBSYSTEM • HOST '{}'", host_id.unwrap_or("Remote"))
+                                    format!("REMOTE GPU SUBSYSTEM • HOST '{}' • GPU {}", host_id.unwrap_or("Remote"), active_gpu_idx + 1)
                                 } else {
-                                    "GPU ENGINE #0 • ACTIVE DISPATCH".to_string()
+                                    format!("GPU ENGINE #{} • ACTIVE DISPATCH", active_gpu_idx + 1)
                                 };
                                 ui.label(RichText::new(overline).size(9.0).monospace().color(p.text_muted));
                             });
@@ -11782,7 +11816,7 @@ impl LauncherApp {
 
                                 ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
-                                    ui.label(RichText::new(format!("GPU 0: {}", gpu_name)).size(16.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new(format!("GPU {}: {}", active_gpu_idx + 1, gpu_name)).size(16.0).strong().color(p.text_primary));
                                     Frame::none()
                                         .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
                                         .rounding(Rounding::same(4.0))
@@ -11838,9 +11872,9 @@ impl LauncherApp {
                             // Row 3: Subtitle spanning the full card width underneath Row 2
                             let driver_str = gpu.map(|g| g.driver.as_str()).filter(|s| !s.trim().is_empty()).unwrap_or(if is_remote { "Kernel Direct Rendering Manager (DRM / KMS)" } else { "Mesa 24.1.2 (Direct Rendering DRM)" });
                             let topo_str = if is_remote {
-                                if gpu.is_some() { "Topology: Remote PCIe Bus" } else { "Topology: Headless Server / Hypervisor" }
+                                if gpu.is_some() { format!("Topology: PCIe Bus GPU {}", active_gpu_idx + 1) } else { "Topology: Headless Server / Hypervisor".to_string() }
                             } else {
-                                "Topology: PCI bus 0, device 2, func 0"
+                                format!("Topology: PCI bus 0, device {}, func 0", 2 + active_gpu_idx)
                             };
                             let date_or_link = if is_remote { "Telemetry: Streaming via SSH" } else { "Driver Date: 8/28/2025" };
 
@@ -11929,20 +11963,41 @@ impl LauncherApp {
                         p.text_muted,
                     );
 
-                    // Card 4: SHARED VRAM
-                    let (vram_val, vram_sub, vram_peak, vram_pwr) = if is_remote && gpu.is_none() {
-                        ("0.0", "/ N/A", "HEADLESS SYSTEM", "POWER 0.0W".to_string())
+                    // Card 4: SHARED / DEDICATED VRAM
+                    let (vram_val, vram_sub, vram_peak, vram_pwr, has_dedicated) = if let Some(g) = gpu {
+                        if let (Some(used), Some(total)) = (g.mem_used_mb, g.mem_total_mb) {
+                            let u_gb = used as f64 / 1024.0;
+                            let t_gb = total as f64 / 1024.0;
+                            let pct = if total > 0 { (used as f64 / total as f64 * 100.0) as f32 } else { 0.0 };
+                            (
+                                format!("{:.1}", u_gb),
+                                format!("/ {:.1} GB", t_gb),
+                                format!("VRAM {:.0}%", pct),
+                                format!("POWER {:.1}W", power_val),
+                                true
+                            )
+                        } else if is_remote {
+                            ("0.0".to_string(), "/ N/A".to_string(), "HEADLESS SYSTEM".to_string(), format!("POWER {:.1}W", power_val), false)
+                        } else {
+                            ("0.3".to_string(), "/ 3.9 GB".to_string(), "UTILIZATION 8%".to_string(), format!("POWER {:.1}W", power_val), false)
+                        }
+                    } else if is_remote {
+                        ("0.0".to_string(), "/ N/A".to_string(), "HEADLESS SYSTEM".to_string(), "POWER 0.0W".to_string(), false)
                     } else {
-                        ("0.3", "/ 3.9 GB", "UTILIZATION 8%", format!("POWER {:.1}W", power_val))
+                        ("0.3".to_string(), "/ 3.9 GB".to_string(), "UTILIZATION 8%".to_string(), format!("POWER {:.1}W", power_val), false)
                     };
+
+                    let card_title = if has_dedicated { "DEDICATED VRAM" } else { "SHARED VRAM" };
+                    let card_subtitle = if has_dedicated { "High-Bandwidth GDDR VRAM Pool" } else { "Dynamic Unified Memory Pool" };
+
                     render_big_stat_card(
                         &mut cols[3],
                         crate::lucide::DATABASE,
-                        "SHARED VRAM",
-                        vram_val,
-                        vram_sub,
-                        "Dynamic Unified Memory Pool",
-                        vram_peak,
+                        card_title,
+                        &vram_val,
+                        &vram_sub,
+                        card_subtitle,
+                        &vram_peak,
                         &vram_pwr,
                         &gpu_vram_slice,
                         4.0,
@@ -11952,6 +12007,72 @@ impl LauncherApp {
                         p.text_muted,
                     );
                 });
+
+                // Multi-GPU Cluster Subsystem Matrix (when host has 2+ GPUs)
+                if snap.gpus.len() > 1 {
+                    ui.add_space(8.0);
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                ui.label(RichText::new(crate::lucide::LAYERS).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(format!("Multi-GPU Cluster Subsystem ({} Accelerators Online)", snap.gpus.len())).size(12.5).strong().color(p.text_primary));
+                            });
+                            ui.add_space(8.0);
+
+                            for (i, g) in snap.gpus.iter().enumerate() {
+                                let is_sel = i == active_gpu_idx;
+                                let card_bg = if is_sel {
+                                    Color32::from_rgba_unmultiplied(56, 189, 248, 16)
+                                } else {
+                                    Color32::from_rgb(10, 15, 29)
+                                };
+                                let border = if is_sel {
+                                    Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248))
+                                } else {
+                                    Stroke::NONE
+                                };
+
+                                Frame::none()
+                                    .fill(card_bg)
+                                    .stroke(border)
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 8.0;
+                                            ui.label(RichText::new(format!("GPU {}", i + 1)).size(12.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new(&g.name).size(12.0).strong().color(p.text_primary));
+                                            ui.label(RichText::new(format!("• {}", g.driver)).size(9.5).monospace().color(p.text_muted));
+
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 10.0;
+                                                    if let Some(w) = g.power_watts {
+                                                        ui.label(RichText::new(format!("{:.1} W", w)).size(10.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                                    }
+                                                    if let Some(clk) = g.clock_mhz {
+                                                        ui.label(RichText::new(format!("{} MHz", clk)).size(10.0).monospace().color(p.text_primary));
+                                                    }
+                                                    if let Some(t) = g.temp {
+                                                        ui.label(RichText::new(format!("{:.1}°C", t)).size(10.0).monospace().color(crate::sensors::temp_color(t)));
+                                                    }
+                                                    if let Some(ld) = g.load_pct {
+                                                        ui.label(RichText::new(format!("LOAD {:.1}%", ld)).size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                    }
+                                                });
+                                            });
+                                        });
+                                    });
+                                ui.add_space(4.0);
+                            }
+                        });
+                }
 
                 ui.add_space(8.0);
 
@@ -12685,61 +12806,101 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 3. Drives Row (2 Large Cards)
+                // 3. Drives Grid (Storage 1, Storage 2, Storage 3... in 2-column paired layout)
                 let d1_phys = snap.physical_disks.first();
-                let d2_phys = snap.physical_disks.get(1);
-
                 let root_mount = snap.disks.iter().find(|d| d.mount_point == "/").or_else(|| snap.disks.first());
-                let d1_name = d1_phys.map(|d| d.name.as_str()).unwrap_or_else(|| root_mount.map(|d| d.name.as_str()).unwrap_or(if is_remote { "sda" } else { "nvme0n1" }));
-                let d1_model = d1_phys.map(|d| d.model.as_str()).unwrap_or(if is_remote { "Remote Host Block Device" } else { "TwinMOS SSD" });
-                let d1_is_ssd = d1_phys.map(|d| d.is_ssd).unwrap_or(true);
-                let d1_phys_gb = d1_phys.map(|d| d.total_bytes as f64 / 1e9).unwrap_or_else(|| root_mount.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(if is_remote { total_gb } else { 256.1 }));
-                let d1_part_count = d1_phys.map(|d| d.partition_count).unwrap_or_else(|| if !snap.disks.is_empty() { snap.disks.len() } else { 1 });
-
                 let d1_used = root_mount.map(|d| d.used_bytes as f64 / 1e9).unwrap_or(used_gb);
                 let d1_tot = root_mount.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(total_gb);
-                let d1_pct = if d1_tot > 0.0 { (d1_used / d1_tot * 100.0) as f32 } else { st_pct };
                 let d1_fs = root_mount.map(|d| d.fs_type.as_str()).unwrap_or(if is_remote { "ext4" } else { "btrfs" });
-                let d1_read_str = crate::sensors::format_rate(snap.total_disk_read_rate_bps);
-                let d1_write_str = crate::sensors::format_rate(snap.total_disk_write_rate_bps);
 
-                let has_d2 = d2_phys.is_some() || (!is_remote && snap.disks.len() > 1);
+                let drives_list: Vec<(String, String, u64, bool, usize)> = if !snap.physical_disks.is_empty() {
+                    snap.physical_disks
+                        .iter()
+                        .map(|d| (d.name.clone(), d.model.clone(), d.total_bytes, d.is_ssd, d.partition_count))
+                        .collect()
+                } else if !snap.disks.is_empty() {
+                    let mut seen = std::collections::HashSet::new();
+                    let mut synthesized = Vec::new();
+                    for d in &snap.disks {
+                        let clean = d.name.trim_start_matches("/dev/").to_string();
+                        if seen.insert(clean.clone()) {
+                            let is_ssd = !clean.starts_with("hd");
+                            let model = if !d.fs_type.is_empty() {
+                                format!("{} Storage ({})", d.fs_type.to_uppercase(), d.mount_point)
+                            } else {
+                                format!("Volume ({})", d.mount_point)
+                            };
+                            synthesized.push((clean, model, d.total_bytes, is_ssd, 1));
+                        }
+                    }
+                    synthesized
+                } else {
+                    vec![(
+                        if is_remote { "sda".to_string() } else { "nvme0n1".to_string() },
+                        if is_remote { "Remote Host Block Device".to_string() } else { "TwinMOS SSD".to_string() },
+                        if is_remote { total_bytes } else { 256_000_000_000 },
+                        true,
+                        1,
+                    )]
+                };
 
-                ui.columns(2, |cols| {
-                    // Drive 1: Primary OS Drive
+                let primary_drive_name = drives_list.first().map(|d| d.0.clone()).unwrap_or_else(|| "nvme0n1".to_string());
+                let d1_name = primary_drive_name.clone();
+
+                let render_drive_card = |ui: &mut Ui, idx: usize, d_name: &str, d_model: &str, d_bytes: u64, d_is_ssd: bool, d_part_count: usize| {
+                    let d_phys_gb = d_bytes as f64 / 1e9;
+                    let d_mount = snap.disks.iter().find(|d| d.name.contains(d_name) || d_name.contains(d.name.trim_start_matches("/dev/")));
+
+                    let (d_used, d_tot, d_pct, d_fs, d_read_str, d_write_str, is_mounted, mount_pt) = if let Some(m) = d_mount {
+                        let u = m.used_bytes as f64 / 1e9;
+                        let t = m.total_bytes as f64 / 1e9;
+                        let pct = if t > 0.0 { (u / t * 100.0) as f32 } else { 0.0 };
+                        let fs = if m.fs_type.is_empty() { if is_remote { "ext4" } else { "btrfs" } } else { m.fs_type.as_str() };
+                        let r_str = if idx == 0 { crate::sensors::format_rate(snap.total_disk_read_rate_bps) } else { crate::sensors::format_rate(m.read_rate_bps) };
+                        let w_str = if idx == 0 { crate::sensors::format_rate(snap.total_disk_write_rate_bps) } else { crate::sensors::format_rate(m.write_rate_bps) };
+                        (u, t, pct, fs, r_str, w_str, true, m.mount_point.as_str())
+                    } else {
+                        let r_str = if idx == 0 { crate::sensors::format_rate(snap.total_disk_read_rate_bps) } else { "0 B/s".to_string() };
+                        let w_str = if idx == 0 { crate::sensors::format_rate(snap.total_disk_write_rate_bps) } else { "0 B/s".to_string() };
+                        (0.0, d_phys_gb, 0.0, "ext4", r_str, w_str, false, "")
+                    };
+
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                        .show(&mut cols[0], |ui| {
+                        .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(if d1_is_ssd { crate::lucide::STORAGE } else { crate::lucide::HARD_DRIVE }).size(15.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(if d_is_ssd { crate::lucide::STORAGE } else { crate::lucide::HARD_DRIVE }).size(15.0).color(Color32::from_rgb(56, 189, 248)));
                                 ui.add_space(4.0);
 
                                 ui.vertical(|ui| {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 5.0;
-                                        ui.label(RichText::new(format!("Disk 1 (/dev/{})", d1_name)).size(13.0).strong().color(p.text_primary));
+                                        ui.label(RichText::new(format!("Storage {} (/dev/{})", idx + 1, d_name)).size(13.0).strong().color(p.text_primary));
                                         let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                         ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
                                     });
-                                    ui.label(RichText::new(format!("{} • {} {:.1} GB", if d1_is_ssd { "NVMe SSD" } else { "Block Device" }, d1_model, d1_phys_gb)).size(9.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(format!("{} • {} {:.1} GB", if d_is_ssd { "NVMe SSD" } else { "Block Device" }, d_model, d_phys_gb)).size(9.5).monospace().color(p.text_muted));
                                 });
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.vertical(|ui| {
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            let tag_lbl = if idx == 0 { "PRIMARY OS" } else { "DATA STORAGE" };
+                                            let tag_bg = if idx == 0 { Color32::from_rgba_unmultiplied(56, 189, 248, 30) } else { Color32::from_rgba_unmultiplied(148, 163, 184, 25) };
+                                            let tag_col = if idx == 0 { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(148, 163, 184) };
                                             Frame::none()
-                                                .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 30))
+                                                .fill(tag_bg)
                                                 .rounding(Rounding::same(4.0))
                                                 .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                                 .show(ui, |ui| {
-                                                    ui.label(RichText::new("PRIMARY OS").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new(tag_lbl).size(8.5).monospace().strong().color(tag_col));
                                                 });
                                         });
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new(format!("{} PARTITIONS", d1_part_count)).size(9.0).monospace().color(p.text_muted));
+                                            ui.label(RichText::new(format!("{} PARTITION{}", d_part_count, if d_part_count == 1 { "" } else { "S" })).size(9.0).monospace().color(p.text_muted));
                                         });
                                     });
                                 });
@@ -12747,193 +12908,124 @@ impl LauncherApp {
 
                             ui.add_space(8.0);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(format!("Mount: / ({})", d1_fs)).size(10.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                let mnt_label = if is_mounted {
+                                    format!("Mount: {} ({})", mount_pt, d_fs)
+                                } else {
+                                    format!("Partition: /dev/{}1 (Block Storage)", d_name)
+                                };
+                                ui.label(RichText::new(mnt_label).size(10.0).monospace().color(Color32::from_rgb(56, 189, 248)));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(format!("{:.1} GB / {:.1} GB ({:.0}%)", d1_used, d1_tot, d1_pct)).size(10.0).monospace().color(p.text_secondary));
+                                    if is_mounted {
+                                        ui.label(RichText::new(format!("{:.1} GB / {:.1} GB ({:.0}%)", d_used, d_tot, d_pct)).size(10.0).monospace().color(p.text_secondary));
+                                    } else {
+                                        ui.label(RichText::new(format!("{:.1} GB (Ready)", d_phys_gb)).size(10.0).monospace().color(p.text_secondary));
+                                    }
                                 });
                             });
 
                             ui.add_space(4.0);
                             let (br, bp) = ui.allocate_painter(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
                             bp.rect_filled(br.rect, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
-                            let fill_w = br.rect.width() * (d1_pct / 100.0).clamp(0.02, 1.0);
+                            let fill_w = br.rect.width() * (d_pct / 100.0).clamp(0.02, 1.0);
                             bp.rect_filled(egui::Rect::from_min_size(br.rect.min, egui::vec2(fill_w, 4.0)), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
 
                             ui.add_space(8.0);
                             ui.columns(3, |scols| {
                                 scols[0].vertical(|ui| {
                                     ui.label(RichText::new("READ RATE").size(8.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new(&d1_read_str).size(12.5).monospace().strong().color(p.text_primary));
+                                    ui.label(RichText::new(&d_read_str).size(12.5).monospace().strong().color(p.text_primary));
                                 });
                                 scols[1].vertical(|ui| {
                                     ui.label(RichText::new("WRITE RATE").size(8.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new(&d1_write_str).size(12.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new(&d_write_str).size(12.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                 });
                                 scols[2].vertical(|ui| {
                                     ui.label(RichText::new("BUS INTERFACE").size(8.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new(if d1_is_ssd { "PCIe Gen3 x4" } else { "SATA / SCSI" }).size(12.5).monospace().strong().color(p.text_primary));
+                                    let bus_str = if d_is_ssd { "PCIe Gen3 x4" } else { "SATA / SCSI" };
+                                    ui.label(RichText::new(bus_str).size(12.5).monospace().strong().color(p.text_primary));
                                 });
                             });
                         });
+                };
 
-                    // Drive 2 or Single Volume Info Card
-                    if has_d2 {
-                        let d2_name = d2_phys.map(|d| d.name.as_str()).unwrap_or(if is_remote { "sdb" } else { "sda" });
-                        let d2_model = d2_phys.map(|d| d.model.as_str()).unwrap_or(if is_remote { "Secondary Remote Block Storage" } else { "ST500LM030-1RK17" });
-                        let d2_is_ssd = d2_phys.map(|d| d.is_ssd).unwrap_or(false);
-                        let d2_phys_gb = d2_phys.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(500.1);
-                        let d2_part_count = d2_phys.map(|d| d.partition_count).unwrap_or(1);
-
-                        let sda_mount = snap.disks.iter().find(|d| d.name.contains(d2_name));
-                        let d2_used = sda_mount.map(|d| d.used_bytes as f64 / 1e9).unwrap_or(0.0);
-                        let d2_tot = sda_mount.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(d2_phys_gb);
-                        let d2_pct = if d2_tot > 0.0 { (d2_used / d2_tot * 100.0) as f32 } else { 0.0 };
-                        let d2_fs = sda_mount.map(|d| d.fs_type.as_str()).unwrap_or("ext4");
-                        let d2_read_str = sda_mount.map(|d| crate::sensors::format_rate(d.read_rate_bps)).unwrap_or_else(|| "0 B/s".to_string());
-                        let d2_write_str = sda_mount.map(|d| crate::sensors::format_rate(d.write_rate_bps)).unwrap_or_else(|| "0 B/s".to_string());
-
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                            .show(&mut cols[1], |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(if d2_is_ssd { crate::lucide::STORAGE } else { crate::lucide::HARD_DRIVE }).size(15.0).color(Color32::from_rgb(56, 189, 248)));
-                                    ui.add_space(4.0);
-
-                                    ui.vertical(|ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 5.0;
-                                            ui.label(RichText::new(format!("Disk 2 (/dev/{})", d2_name)).size(13.0).strong().color(p.text_primary));
-                                            let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                            ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
-                                        });
-                                        ui.label(RichText::new(format!("{} • {} {:.1} GB", if d2_is_ssd { "SATA SSD" } else { "SATA HDD" }, d2_model, d2_phys_gb)).size(9.5).monospace().color(p.text_muted));
-                                    });
-
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.vertical(|ui| {
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                Frame::none()
-                                                    .fill(Color32::from_rgba_unmultiplied(148, 163, 184, 25))
-                                                    .rounding(Rounding::same(4.0))
-                                                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                                    .show(ui, |ui| {
-                                                        ui.label(RichText::new("DATA STORAGE").size(8.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
-                                                    });
-                                            });
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.label(RichText::new(format!("{} PARTITION{}", d2_part_count, if d2_part_count == 1 { "" } else { "S" })).size(9.0).monospace().color(p.text_muted));
-                                            });
-                                        });
-                                    });
-                                });
-
-                                ui.add_space(8.0);
-                                ui.horizontal(|ui| {
-                                    let mnt_label = if sda_mount.is_some() {
-                                        format!("Mount: /mnt/storage ({})", d2_fs)
-                                    } else {
-                                        format!("Partition: /dev/{}1 (Block Storage)", d2_name)
-                                    };
-                                    ui.label(RichText::new(mnt_label).size(10.0).monospace().color(Color32::from_rgb(56, 189, 248)));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if sda_mount.is_some() {
-                                            ui.label(RichText::new(format!("{:.1} GB / {:.1} GB ({:.0}%)", d2_used, d2_tot, d2_pct)).size(10.0).monospace().color(p.text_secondary));
-                                        } else {
-                                            ui.label(RichText::new(format!("{:.1} GB (Ready)", d2_phys_gb)).size(10.0).monospace().color(p.text_secondary));
-                                        }
-                                    });
-                                });
-
+                let render_unpopulated_card = |ui: &mut Ui, slot_num: usize| {
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(crate::lucide::HARD_DRIVE).size(15.0).color(Color32::from_rgb(100, 116, 139)));
                                 ui.add_space(4.0);
-                                let (br, bp) = ui.allocate_painter(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                                bp.rect_filled(br.rect, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
-                                let fill_w = br.rect.width() * (d2_pct / 100.0).clamp(0.02, 1.0);
-                                bp.rect_filled(egui::Rect::from_min_size(br.rect.min, egui::vec2(fill_w, 4.0)), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
 
-                                ui.add_space(8.0);
-                                ui.columns(3, |scols| {
-                                    scols[0].vertical(|ui| {
-                                        ui.label(RichText::new("READ RATE").size(8.5).monospace().color(p.text_muted));
-                                        ui.label(RichText::new(&d2_read_str).size(12.5).monospace().strong().color(p.text_primary));
+                                ui.vertical(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 5.0;
+                                        ui.label(RichText::new(format!("Storage Slot {} (Unpopulated)", slot_num)).size(13.0).strong().color(p.text_primary));
+                                        let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                        ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(100, 116, 139));
                                     });
-                                    scols[1].vertical(|ui| {
-                                        ui.label(RichText::new("WRITE RATE").size(8.5).monospace().color(p.text_muted));
-                                        ui.label(RichText::new(&d2_write_str).size(12.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                    });
-                                    scols[2].vertical(|ui| {
-                                        ui.label(RichText::new("BUS INTERFACE").size(8.5).monospace().color(p.text_muted));
-                                        ui.label(RichText::new("SATA 6.0 Gb/s").size(12.5).monospace().strong().color(p.text_primary));
-                                    });
+                                    ui.label(RichText::new("Expansion Bay • Available for Storage Mount").size(9.5).monospace().color(p.text_muted));
+                                });
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    Frame::none()
+                                        .fill(Color32::from_rgb(18, 28, 42))
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new("STANDBY").size(8.5).monospace().color(p.text_muted));
+                                        });
                                 });
                             });
-                    } else {
-                        // Clean unpopulated secondary slot card (single disk host)
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                            .show(&mut cols[1], |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(crate::lucide::HARD_DRIVE).size(15.0).color(Color32::from_rgb(100, 116, 139)));
-                                    ui.add_space(4.0);
 
-                                    ui.vertical(|ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 5.0;
-                                            ui.label(RichText::new("Secondary Storage Slot").size(13.0).strong().color(p.text_primary));
-                                            let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                            ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(100, 116, 139));
-                                        });
-                                        ui.label(RichText::new("Unpopulated • Single Drive Configuration").size(9.5).monospace().color(p.text_muted));
-                                    });
-
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(18, 28, 42))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new("NOT ATTACHED").size(8.5).monospace().color(p.text_muted));
-                                            });
-                                    });
-                                });
-
-                                ui.add_space(8.0);
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(format!("Channel: Secondary Bus (/dev/{})", if is_remote { "sdb" } else { "sda" })).size(10.0).monospace().color(p.text_muted));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new("0.0 GB (Ready for expansion)").size(10.0).monospace().color(p.text_muted));
-                                    });
-                                });
-
-                                ui.add_space(4.0);
-                                let (br, bp) = ui.allocate_painter(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                                bp.rect_filled(br.rect, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
-
-                                ui.add_space(8.0);
-                                ui.columns(3, |scols| {
-                                    scols[0].vertical(|ui| {
-                                        ui.label(RichText::new("READ RATE").size(8.5).monospace().color(p.text_muted));
-                                        ui.label(RichText::new("0 B/s").size(12.5).monospace().color(p.text_muted));
-                                    });
-                                    scols[1].vertical(|ui| {
-                                        ui.label(RichText::new("WRITE RATE").size(8.5).monospace().color(p.text_muted));
-                                        ui.label(RichText::new("0 B/s").size(12.5).monospace().color(p.text_muted));
-                                    });
-                                    scols[2].vertical(|ui| {
-                                        ui.label(RichText::new("BUS INTERFACE").size(8.5).monospace().color(p.text_muted));
-                                        ui.label(RichText::new("PCIe / SATA Slot Idle").size(12.5).monospace().color(p.text_muted));
-                                    });
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Channel: Auxiliary Expansion Bus").size(10.0).monospace().color(p.text_muted));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new("0.0 GB (Ready)").size(10.0).monospace().color(p.text_muted));
                                 });
                             });
-                    }
-                });
 
-                ui.add_space(8.0);
+                            ui.add_space(4.0);
+                            let (br, bp) = ui.allocate_painter(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
+                            bp.rect_filled(br.rect, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
+
+                            ui.add_space(8.0);
+                            ui.columns(3, |scols| {
+                                scols[0].vertical(|ui| {
+                                    ui.label(RichText::new("READ RATE").size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new("0 B/s").size(12.5).monospace().color(p.text_muted));
+                                });
+                                scols[1].vertical(|ui| {
+                                    ui.label(RichText::new("WRITE RATE").size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new("0 B/s").size(12.5).monospace().color(p.text_muted));
+                                });
+                                scols[2].vertical(|ui| {
+                                    ui.label(RichText::new("BUS INTERFACE").size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new("PCIe / SATA Slot Idle").size(12.5).monospace().color(p.text_muted));
+                                });
+                            });
+                        });
+                };
+
+                for (chunk_idx, chunk) in drives_list.chunks(2).enumerate() {
+                    ui.columns(2, |cols| {
+                        let d1 = &chunk[0];
+                        let idx1 = chunk_idx * 2;
+                        render_drive_card(&mut cols[0], idx1, &d1.0, &d1.1, d1.2, d1.3, d1.4);
+
+                        if chunk.len() > 1 {
+                            let d2 = &chunk[1];
+                            let idx2 = chunk_idx * 2 + 1;
+                            render_drive_card(&mut cols[1], idx2, &d2.0, &d2.1, d2.2, d2.3, d2.4);
+                        } else {
+                            render_unpopulated_card(&mut cols[1], idx1 + 2);
+                        }
+                    });
+                    ui.add_space(8.0);
+                }
 
                 // 4. Live Throughput Activity (60s Window)
                 Frame::none()
@@ -12950,7 +13042,7 @@ impl LauncherApp {
                                 .rounding(Rounding::same(4.0))
                                 .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                 .show(ui, |ui| {
-                                    ui.label(RichText::new(format!("Disk 1 • {}", d1_name)).size(9.0).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(format!("Storage 1 • {}", primary_drive_name)).size(9.0).monospace().color(p.text_muted));
                                 });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -13130,7 +13222,7 @@ impl LauncherApp {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             ui.label(RichText::new(crate::lucide::STORAGE).size(12.0).color(Color32::from_rgb(56, 189, 248)));
                             ui.label(RichText::new("Physical Partition Map & Topologies").size(12.5).strong().color(p.text_primary));
-                            ui.label(RichText::new(format!("Disk 1 • /dev/{} (GPT GUID Layout)", d1_name)).size(9.5).monospace().color(p.text_muted));
+                            ui.label(RichText::new(format!("Storage 1 • /dev/{} (GPT GUID Layout)", primary_drive_name)).size(9.5).monospace().color(p.text_muted));
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.horizontal(|ui| {

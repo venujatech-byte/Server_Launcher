@@ -355,9 +355,20 @@ pub struct LauncherApp {
     pub bt_audio_profile: usize, // 0: A2DP Sink, 1: HFP/HSP
     pub bt_codec: usize, // 0: LDAC, 1: aptX HD, 2: AAC-LC
     pub bt_auto_switch: bool,
+    pub bluetooth_snapshot: Arc<Mutex<crate::bluetooth::BluetoothSnapshot>>,
+    pub bluetooth_in_flight: Arc<std::sync::atomic::AtomicBool>,
+    pub bluetooth_scanning: Arc<std::sync::atomic::AtomicBool>,
+    pub bluetooth_last_query: Instant,
 
     // Wi-Fi Control State (matching Image 4)
     pub wifi_rescan_anim: bool,
+    pub wifi_snapshot: Arc<Mutex<crate::wifi::WifiSnapshot>>,
+    pub wifi_in_flight: Arc<std::sync::atomic::AtomicBool>,
+    pub wifi_last_query: Instant,
+    pub wifi_status_msg: Option<(String, bool, Instant)>,
+
+    // Power Subsystem Status Toast
+    pub power_status_msg: Option<(String, bool, Instant)>,
 
     // Cached grouped processes for Top Apps tab (prevents re-filtering and sorting every frame)
     pub sensors_cached_apps_groups: Vec<ProcessGroupSummary>,
@@ -833,7 +844,7 @@ impl LauncherApp {
             },
             gpu_mode: 1, // Balanced
             last_telemetry_sample: Instant::now(),
-            power_preset: 1, // Balanced
+            power_preset: crate::power::governor_to_preset_index(&crate::power::query_current_governor()),
             power_conservation: true,
             power_rapid_charge: false,
             power_usb_always_on: true,
@@ -847,7 +858,16 @@ impl LauncherApp {
             bt_audio_profile: 0, // A2DP Sink
             bt_codec: 0, // LDAC
             bt_auto_switch: true,
+            bluetooth_snapshot: Arc::new(Mutex::new(crate::bluetooth::BluetoothSnapshot::default())),
+            bluetooth_in_flight: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            bluetooth_scanning: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            bluetooth_last_query: Instant::now() - std::time::Duration::from_secs(10), // trigger immediately
             wifi_rescan_anim: false,
+            wifi_snapshot: Arc::new(Mutex::new(crate::wifi::WifiSnapshot::default())),
+            wifi_in_flight: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            wifi_last_query: Instant::now() - std::time::Duration::from_secs(10), // trigger immediately
+            wifi_status_msg: None,
+            power_status_msg: None,
             sensors_cached_apps_groups: Vec::new(),
             sensors_cached_bg_groups: Vec::new(),
             sensors_cached_snap_timestamp: None,
@@ -944,6 +964,54 @@ impl LauncherApp {
             };
             if let Ok(mut shared) = shared_snap_arc.lock() {
                 *shared = snap;
+            }
+            in_flight_arc.store(false, std::sync::atomic::Ordering::SeqCst);
+            if let Some(c) = ctx {
+                c.request_repaint();
+            }
+        });
+    }
+
+    pub fn trigger_bluetooth_query(&mut self, ctx: Option<egui::Context>) {
+        if self.bluetooth_in_flight.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+
+        self.bluetooth_last_query = Instant::now();
+        let snap_arc = Arc::clone(&self.bluetooth_snapshot);
+        let in_flight_arc = Arc::clone(&self.bluetooth_in_flight);
+
+        std::thread::spawn(move || {
+            let snap = crate::bluetooth::query_bluetooth_status();
+            if let Ok(mut lock) = snap_arc.lock() {
+                let old_msg = lock.status_msg.clone();
+                *lock = snap;
+                if let Some((msg, is_err, time)) = old_msg {
+                    if time.elapsed().as_secs() < 6 {
+                        lock.status_msg = Some((msg, is_err, time));
+                    }
+                }
+            }
+            in_flight_arc.store(false, std::sync::atomic::Ordering::SeqCst);
+            if let Some(c) = ctx {
+                c.request_repaint();
+            }
+        });
+    }
+
+    pub fn trigger_wifi_query(&mut self, ctx: Option<egui::Context>) {
+        if self.wifi_in_flight.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+
+        self.wifi_last_query = Instant::now();
+        let snap_arc = Arc::clone(&self.wifi_snapshot);
+        let in_flight_arc = Arc::clone(&self.wifi_in_flight);
+
+        std::thread::spawn(move || {
+            let snap = crate::wifi::query_wifi_status();
+            if let Ok(mut lock) = snap_arc.lock() {
+                *lock = snap;
             }
             in_flight_arc.store(false, std::sync::atomic::Ordering::SeqCst);
             if let Some(c) = ctx {
@@ -12700,6 +12768,18 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_wifi_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, _host_id: Option<&str>) {
         let p = self.theme.palette();
+
+        // Query Wi-Fi telemetry asynchronously every 3 seconds
+        if self.wifi_last_query.elapsed().as_secs() >= 3 {
+            self.trigger_wifi_query(Some(ui.ctx().clone()));
+        }
+
+        let wifi_snap = if let Ok(lock) = self.wifi_snapshot.try_lock() {
+            lock.clone()
+        } else {
+            crate::wifi::WifiSnapshot::default()
+        };
+
         ScrollArea::vertical()
             .id_salt("sensors_wifi_scroll_v2")
             .auto_shrink([false, false])
@@ -12715,41 +12795,49 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                ui.label(RichText::new("INTERFACE WLAN0 • OPERATIONAL").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                ui.label(RichText::new(format!("INTERFACE {} • OPERATIONAL", wifi_snap.interface.to_uppercase())).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                 ui.add_space(2.0);
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new("Wireless Network & Wi-Fi").size(17.0).strong().color(p.text_primary));
                                     ui.add_space(6.0);
+                                    let (status_text, status_col) = if wifi_snap.is_connected {
+                                        ("CONNECTED", Color32::from_rgb(52, 211, 153))
+                                    } else {
+                                        ("DISCONNECTED", Color32::from_rgb(248, 113, 113))
+                                    };
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(52, 211, 153, 16))
+                                        .fill(status_col.gamma_multiply(0.12))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(6.0, 2.5))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                                ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(52, 211, 153));
-                                                ui.label(RichText::new("CONNECTED").size(8.5).monospace().strong().color(Color32::from_rgb(52, 211, 153)));
+                                                ui.painter().circle_filled(d_rect.center(), 2.8, status_col);
+                                                ui.label(RichText::new(status_text).size(8.5).monospace().strong().color(status_col));
                                             });
                                         });
                                 });
                                 ui.add_space(2.0);
                                 ui.label(RichText::new("High-throughput 802.11ac wireless interface with dynamic rate adaptation and roaming daemon.").size(10.5).color(Color32::from_rgb(148, 163, 184)));
                                 ui.add_space(3.0);
-                                ui.label(RichText::new("Qualcomm QCA9377 802.11ac Wireless Network Adapter • MAC: 34:c9:3d:e8:1b:4f").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                ui.label(RichText::new(format!("{} • MAC: {}", wifi_snap.product, wifi_snap.mac_address)).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
 
                                 // Re-Scan Button
-                                let (rescan_rect, rescan_resp) = ui.allocate_exact_size(egui::vec2(86.0, 28.0), egui::Sense::click());
+                                let (rescan_rect, rescan_resp) = ui.allocate_exact_size(egui::vec2(90.0, 28.0), egui::Sense::click());
                                 let bg = if rescan_resp.hovered() { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(18, 28, 42) };
                                 ui.painter().rect_filled(rescan_rect, Rounding::same(6.0), bg);
                                 ui.painter().rect_stroke(rescan_rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)));
                                 ui.painter().text(rescan_rect.center(), egui::Align2::CENTER_CENTER, format!("{} Re-Scan", crate::lucide::REFRESH_CW), egui::FontId::monospace(9.5), Color32::from_rgb(56, 189, 248));
                                 if rescan_resp.clicked() {
-                                    self.wifi_rescan_anim = !self.wifi_rescan_anim;
+                                    self.wifi_rescan_anim = true;
+                                    crate::wifi::trigger_wifi_rescan_async();
+                                    self.wifi_status_msg = Some(("NetworkManager Wi-Fi scan initiated...".to_string(), false, Instant::now()));
+                                    self.trigger_wifi_query(Some(ui.ctx().clone()));
                                 }
 
                                 // Badges
@@ -12759,7 +12847,7 @@ impl LauncherApp {
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(8.0, 5.0))
                                     .show(ui, |ui| {
-                                        ui.label(RichText::new("WPA2/WPA3 Personal").size(9.0).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                        ui.label(RichText::new(&wifi_snap.security).size(9.0).monospace().color(Color32::from_rgb(203, 213, 225)));
                                     });
 
                                 Frame::none()
@@ -12768,11 +12856,31 @@ impl LauncherApp {
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(8.0, 5.0))
                                     .show(ui, |ui| {
-                                        ui.label(RichText::new("Channel 36 (5180 MHz)").size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                        ui.label(RichText::new(format!("Channel {} ({} MHz)", wifi_snap.channel, wifi_snap.frequency_mhz)).size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
                                     });
                             });
                         });
                     });
+
+                // Status message toast banner
+                if let Some((ref msg, is_err, time)) = self.wifi_status_msg {
+                    if time.elapsed().as_secs() < 6 {
+                        ui.add_space(6.0);
+                        let toast_col = if is_err { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(52, 211, 153) };
+                        Frame::none()
+                            .fill(toast_col.gamma_multiply(0.12))
+                            .stroke(Stroke::new(1.0_f32, toast_col.gamma_multiply(0.35)))
+                            .rounding(Rounding::same(6.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 5.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    let icon = if is_err { crate::lucide::ALERT_TRIANGLE } else { crate::lucide::CHECK };
+                                    ui.label(RichText::new(icon).size(11.0).color(toast_col));
+                                    ui.label(RichText::new(msg).size(9.0).monospace().strong().color(toast_col));
+                                });
+                            });
+                    }
+                }
 
                 ui.add_space(8.0);
 
@@ -12829,9 +12937,9 @@ impl LauncherApp {
                                     let rx_rate = crate::sensors::format_rate(snap.total_rx_rate_bps);
                                     let tx_rate = crate::sensors::format_rate(snap.total_tx_rate_bps);
                                     let badges = [
-                                        (format!("RECEIVE (R): {}", if rx_rate == "0 B/s" { "4.18 MB/s".to_string() } else { rx_rate }), Color32::from_rgb(56, 189, 248)),
-                                        (format!("SEND (S): {}", if tx_rate == "0 B/s" { "482 KB/s".to_string() } else { tx_rate }), Color32::from_rgb(52, 211, 153)),
-                                        (format!("PEAK: {:.2} MB/s", self.net_peak_mb.max(18.42)), Color32::from_rgb(96, 165, 250)),
+                                        (format!("RECEIVE (R): {}", rx_rate), Color32::from_rgb(56, 189, 248)),
+                                        (format!("SEND (S): {}", tx_rate), Color32::from_rgb(52, 211, 153)),
+                                        (format!("PEAK: {:.2} MB/s", self.net_peak_mb.max(snap.total_rx_rate_bps as f32 / 1_000_000.0)), Color32::from_rgb(96, 165, 250)),
                                     ];
                                     for (txt, col) in badges {
                                         Frame::none()
@@ -12865,12 +12973,19 @@ impl LauncherApp {
                                     });
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let qual_str = if wifi_snap.signal_pct >= 80 {
+                                            format!("EXCELLENT ({}%)", wifi_snap.signal_pct)
+                                        } else if wifi_snap.signal_pct >= 50 {
+                                            format!("GOOD ({}%)", wifi_snap.signal_pct)
+                                        } else {
+                                            format!("FAIR ({}%)", wifi_snap.signal_pct)
+                                        };
                                         Frame::none()
                                             .fill(Color32::from_rgba_unmultiplied(52, 211, 153, 16))
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(6.0, 2.5))
                                             .show(ui, |ui| {
-                                                ui.label(RichText::new("EXCELLENT (94%)").size(8.5).monospace().strong().color(Color32::from_rgb(52, 211, 153)));
+                                                ui.label(RichText::new(qual_str).size(8.5).monospace().strong().color(Color32::from_rgb(52, 211, 153)));
                                             });
                                     });
                                 });
@@ -12887,8 +13002,9 @@ impl LauncherApp {
                                             ui.label(RichText::new(crate::lucide::WIFI).size(20.0).color(Color32::from_rgb(56, 189, 248)));
                                             ui.add_space(6.0);
                                             ui.vertical(|ui| {
-                                                ui.label(RichText::new("Redmi Note 14 Pro+ 5G").size(13.0).strong().color(p.text_primary));
-                                                ui.label(RichText::new("5.0 GHz • 802.11ac (VHT80)").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                ui.label(RichText::new(&wifi_snap.ssid).size(13.0).strong().color(p.text_primary));
+                                                let band_str = format!("{:.1} GHz • {} ({})", wifi_snap.frequency_mhz as f32 / 1000.0, wifi_snap.security, wifi_snap.driver);
+                                                ui.label(RichText::new(band_str).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                             });
 
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -12898,15 +13014,16 @@ impl LauncherApp {
                                                     let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 18.0), egui::Sense::hover());
                                                     let bar_w = 3.5_f32;
                                                     let gap = 2.5_f32;
+                                                    let active_bars = ((wifi_snap.signal_pct as f32 / 20.0).round() as usize).clamp(1, 5);
                                                     for i in 0..5 {
                                                         let h = 4.0_f32 + (i as f32 + 1.0) * 2.8_f32;
                                                         let x = rect.left() + i as f32 * (bar_w + gap);
                                                         let y = rect.bottom() - h;
                                                         let b_rect = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(bar_w, h));
-                                                        let col = if i < 4 { Color32::from_rgb(52, 211, 153) } else { Color32::from_rgb(30, 41, 59) };
+                                                        let col = if i < active_bars { Color32::from_rgb(52, 211, 153) } else { Color32::from_rgb(30, 41, 59) };
                                                         ui.painter().rect_filled(b_rect, Rounding::same(1.0), col);
                                                     }
-                                                    ui.label(RichText::new("-52 dBm").size(12.0).monospace().strong().color(Color32::from_rgb(52, 211, 153)));
+                                                    ui.label(RichText::new(format!("{} dBm", wifi_snap.signal_dbm)).size(12.0).monospace().strong().color(Color32::from_rgb(52, 211, 153)));
                                                 });
                                             });
                                         });
@@ -12915,9 +13032,9 @@ impl LauncherApp {
                                 ui.add_space(8.0);
                                 ui.columns(3, |cols| {
                                     let ap_chips = [
-                                        ("TX LINK SPEED", "433.3 Mbps"),
-                                        ("RX LINK SPEED", "433.3 Mbps"),
-                                        ("BSSID", "9C:12:F6:41:8B"),
+                                        ("TX LINK SPEED", wifi_snap.rate.as_str()),
+                                        ("RX LINK SPEED", wifi_snap.rate.as_str()),
+                                        ("BSSID", wifi_snap.bssid.as_str()),
                                     ];
                                     for (j, (k, v)) in ap_chips.iter().enumerate() {
                                         let c = &mut cols[j];
@@ -12930,7 +13047,7 @@ impl LauncherApp {
                                                 ui.set_width(ui.available_width());
                                                 ui.label(RichText::new(*k).size(7.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                                                 ui.add_space(1.0);
-                                                ui.label(RichText::new(*v).size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new(*v).size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                             });
                                     }
                                 });
@@ -12941,8 +13058,8 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 3. Middle 4 Big Stat Cards (Bytes Sent, Bytes Received, Gateway Latency, Packet Loss)
-                let tx_gb = (snap.total_tx_bytes as f32 / 1e9).max(1.84);
-                let rx_gb = (snap.total_rx_bytes as f32 / 1e9).max(8.92);
+                let tx_gb = (snap.total_tx_bytes as f32 / 1e9).max(0.01);
+                let rx_gb = (snap.total_rx_bytes as f32 / 1e9).max(0.01);
                 let tx_slice = [tx_gb; 5];
                 let rx_slice = [rx_gb; 5];
                 let lat_slice = [2.1_f32, 2.3_f32, 2.0_f32, 2.1_f32, 2.2_f32];
@@ -12956,8 +13073,8 @@ impl LauncherApp {
                         "BYTES SENT (SESSION)",
                         &format!("{:.2}", tx_gb),
                         "GB",
-                        "Cumulative egress on wlan0",
-                        "PKTS 1.4M",
+                        &format!("Cumulative egress on {}", wifi_snap.interface),
+                        "STATUS OK",
                         "DROP 0",
                         &tx_slice,
                         (tx_gb * 1.5).max(5.0),
@@ -12974,8 +13091,8 @@ impl LauncherApp {
                         "BYTES RECEIVED",
                         &format!("{:.2}", rx_gb),
                         "GB",
-                        "Cumulative ingress on wlan0",
-                        "PKTS 6.8M",
+                        &format!("Cumulative ingress on {}", wifi_snap.interface),
+                        "STATUS OK",
                         "ERR 0",
                         &rx_slice,
                         (rx_gb * 1.5).max(15.0),
@@ -12986,13 +13103,14 @@ impl LauncherApp {
                     );
 
                     // Card 3: GATEWAY LATENCY
+                    let gw_sub = format!("Local hop to {}", wifi_snap.gateway);
                     render_big_stat_card(
                         &mut cols[2],
                         crate::lucide::ACTIVITY,
                         "GATEWAY LATENCY",
                         "2.1",
                         "MS",
-                        "Local hop to 10.111.93.1",
+                        &gw_sub,
                         "JITTER 0.3ms",
                         "STABLE",
                         &lat_slice,
@@ -13040,7 +13158,7 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.vertical(|ui| {
                                         ui.label(RichText::new("IP CONFIGURATION DETAILS").size(12.5).strong().color(p.text_primary));
-                                        ui.label(RichText::new("DHCP dynamic lease on wlan0 interface").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                        ui.label(RichText::new(format!("DHCP dynamic lease on {} interface", wifi_snap.interface)).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     });
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -13049,20 +13167,21 @@ impl LauncherApp {
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(7.0, 3.0))
                                             .show(ui, |ui| {
-                                                ui.label(RichText::new("DHCP ACTIVE (23H)").size(8.5).monospace().strong().color(Color32::from_rgb(52, 211, 153)));
+                                                ui.label(RichText::new("DHCP ACTIVE").size(8.5).monospace().strong().color(Color32::from_rgb(52, 211, 153)));
                                             });
                                     });
                                 });
 
                                 ui.add_space(10.0);
+                                let driver_bus = format!("{} ({})", wifi_snap.driver, wifi_snap.pci_slot);
                                 let ip_rows = [
-                                    ("IPv4 ADDRESS", "10.111.93.186"),
-                                    ("SUBNET MASK", "255.255.255.0 (/24)"),
-                                    ("DEFAULT GATEWAY", "10.111.93.1"),
-                                    ("DNS RESOLVERS", "1.1.1.1, 8.8.8.8 (Cloudflare/Google)"),
-                                    ("IPv6 ADDRESS", "fe80::9e12:f6ff:fe41:8b2a/64 (Link-Local)"),
-                                    ("MAC (HARDWARE)", "34:c9:3d:e8:1b:4f"),
-                                    ("DRIVER / BUS", "ath10k_pci (PCIe x1 Gen 2)"),
+                                    ("IPv4 ADDRESS", wifi_snap.ip_v4.as_str()),
+                                    ("SUBNET MASK", wifi_snap.subnet_mask.as_str()),
+                                    ("DEFAULT GATEWAY", wifi_snap.gateway.as_str()),
+                                    ("DNS RESOLVERS", wifi_snap.dns_resolvers.as_str()),
+                                    ("IPv6 ADDRESS", wifi_snap.ip_v6.as_str()),
+                                    ("MAC (HARDWARE)", wifi_snap.mac_address.as_str()),
+                                    ("DRIVER / BUS", driver_bus.as_str()),
                                 ];
 
                                 for (k, v) in ip_rows {
@@ -13102,12 +13221,22 @@ impl LauncherApp {
                                         ui.painter().rect_filled(mon_rect, Rounding::same(4.0), bg);
                                         ui.painter().rect_stroke(mon_rect, Rounding::same(4.0), Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)));
                                         ui.painter().text(mon_rect.center(), egui::Align2::CENTER_CENTER, "Socket Monitor", egui::FontId::monospace(8.5), Color32::from_rgb(56, 189, 248));
+                                        if mon_resp.clicked() {
+                                            self.trigger_wifi_query(Some(ui.ctx().clone()));
+                                            self.wifi_status_msg = Some(("Active sockets refreshed from system kernel".to_string(), false, Instant::now()));
+                                        }
 
                                         let (flush_rect, flush_resp) = ui.allocate_exact_size(egui::vec2(76.0, 24.0), egui::Sense::click());
                                         let bg = if flush_resp.hovered() { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(18, 28, 42) };
                                         ui.painter().rect_filled(flush_rect, Rounding::same(4.0), bg);
                                         ui.painter().rect_stroke(flush_rect, Rounding::same(4.0), Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)));
                                         ui.painter().text(flush_rect.center(), egui::Align2::CENTER_CENTER, "Flush DNS", egui::FontId::monospace(8.5), Color32::from_rgb(148, 163, 184));
+                                        if flush_resp.clicked() {
+                                            match crate::wifi::trigger_flush_dns() {
+                                                Ok(msg) => self.wifi_status_msg = Some((msg, false, Instant::now())),
+                                                Err(err) => self.wifi_status_msg = Some((err, true, Instant::now())),
+                                            }
+                                        }
                                     });
                                 });
 
@@ -13124,19 +13253,18 @@ impl LauncherApp {
                                         ui.label(RichText::new("STATUS").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
                                         ui.end_row();
 
-                                        let sockets = [
-                                            ("nginx-edge", "TCP", ":443 / :80", "ESTABLISHED (48)", Color32::from_rgb(52, 211, 153)),
-                                            ("sshd.service", "TCP", ":22", "LISTEN", Color32::from_rgb(56, 189, 248)),
-                                            ("tauri-ipc", "TCP", ":1420", "LOCAL ESTABLISHED", Color32::from_rgb(96, 165, 250)),
-                                            ("wg-quick@wg0", "UDP", ":51820", "PEER CONNECTED", Color32::from_rgb(52, 211, 153)),
-                                            ("systemd-resolved", "UDP", ":53", "BOUND", Color32::from_rgb(148, 163, 184)),
-                                        ];
-
-                                        for (proc_name, proto, port, status, col) in sockets {
-                                            ui.label(RichText::new(proc_name).size(9.0).monospace().color(p.text_primary));
-                                            ui.label(RichText::new(proto).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                            ui.label(RichText::new(port).size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                            ui.label(RichText::new(status).size(8.5).monospace().strong().color(col));
+                                        for sock in &wifi_snap.active_sockets {
+                                            ui.label(RichText::new(&sock.process).size(9.0).monospace().color(p.text_primary));
+                                            ui.label(RichText::new(&sock.proto).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                            ui.label(RichText::new(&sock.port).size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            let st_col = if sock.status == "LISTEN" {
+                                                Color32::from_rgb(52, 211, 153)
+                                            } else if sock.status == "BOUND" {
+                                                Color32::from_rgb(56, 189, 248)
+                                            } else {
+                                                Color32::from_rgb(148, 163, 184)
+                                            };
+                                            ui.label(RichText::new(&sock.status).size(8.5).monospace().strong().color(st_col));
                                             ui.end_row();
                                         }
                                     });
@@ -13201,6 +13329,26 @@ impl LauncherApp {
                         });
                     });
 
+                // Status message toast banner
+                if let Some((ref msg, is_err, time)) = self.power_status_msg {
+                    if time.elapsed().as_secs() < 6 {
+                        ui.add_space(6.0);
+                        let toast_col = if is_err { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(52, 211, 153) };
+                        Frame::none()
+                            .fill(toast_col.gamma_multiply(0.12))
+                            .stroke(Stroke::new(1.0_f32, toast_col.gamma_multiply(0.35)))
+                            .rounding(Rounding::same(6.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 5.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    let icon = if is_err { crate::lucide::ALERT_TRIANGLE } else { crate::lucide::CHECK };
+                                    ui.label(RichText::new(icon).size(11.0).color(toast_col));
+                                    ui.label(RichText::new(msg).size(9.0).monospace().strong().color(toast_col));
+                                });
+                            });
+                    }
+                }
+
                 ui.add_space(8.0);
 
                 // 2. Middle Row: Left Column (Battery & Presets) + Right Column (Live Telemetry)
@@ -13223,7 +13371,11 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 6.0;
                                     ui.label(RichText::new(crate::lucide::BATTERY).size(12.0).color(Color32::from_rgb(56, 189, 248)));
-                                    ui.label(RichText::new("PRIMARY CELL TELEMETRY // BAT1").size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                                    let bat_name = bat.map(|b| b.name.as_str()).unwrap_or("BAT1");
+                                    let bat_mfg = bat.map(|b| b.manufacturer.trim()).filter(|s| !s.is_empty()).unwrap_or("COMPAL");
+                                    let bat_model = bat.map(|b| b.model_name.trim()).filter(|s| !s.is_empty()).unwrap_or("PABAS0241231");
+                                    let bat_hdr = format!("PRIMARY CELL TELEMETRY // {} ({} {})", bat_name, bat_mfg, bat_model);
+                                    ui.label(RichText::new(bat_hdr).size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         Frame::none()
@@ -13278,9 +13430,11 @@ impl LauncherApp {
                                     cols[2].vertical(|ui| {
                                         ui.label(RichText::new("Lifecycle Cycles").size(9.5).monospace().color(p.text_muted));
                                         ui.add_space(3.0);
+                                        let cycles_val = bat.and_then(|b| b.cycle_count).unwrap_or(0);
+                                        let cycles_str = if cycles_val > 0 { format!("{}", cycles_val) } else { "Fresh".to_string() };
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 2.0;
-                                            ui.label(RichText::new("142").size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                            ui.label(RichText::new(cycles_str).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                             ui.label(RichText::new("cycles").size(11.0).color(p.text_muted));
                                         });
                                         ui.add_space(6.0);
@@ -13297,13 +13451,16 @@ impl LauncherApp {
 
                                 // Row of 4 Sub-chips
                                 ui.columns(4, |cols| {
+                                    let volts_val = bat.and_then(|b| b.voltage_volts).unwrap_or(12.90);
+                                    let chem_str = bat.map(|b| b.technology.trim()).filter(|s| !s.is_empty()).unwrap_or("Li-ion");
+                                    let temp_val = snap.cpu_temp.unwrap_or(27.4);
                                     let chips = [
-                                        ("Terminal Potential", "12.90 V", Color32::from_rgb(241, 245, 249)),
-                                        ("Chemistry Stack", "Lithium-Polymer", Color32::from_rgb(241, 245, 249)),
-                                        ("Operating Temp", "27.4 °C", Color32::from_rgb(52, 211, 153)),
-                                        ("AC Adapter State", if ac_online { "65W (Active Bypass)" } else { "Disconnected" }, Color32::from_rgb(56, 189, 248)),
+                                        ("Terminal Potential", format!("{:.2} V", volts_val), Color32::from_rgb(241, 245, 249)),
+                                        ("Chemistry Stack", chem_str.to_string(), Color32::from_rgb(241, 245, 249)),
+                                        ("Operating Temp", format!("{:.1} °C", temp_val), Color32::from_rgb(52, 211, 153)),
+                                        ("AC Adapter State", (if ac_online { "65W (Active Bypass)" } else { "Disconnected" }).to_string(), Color32::from_rgb(56, 189, 248)),
                                     ];
-                                    for (i, &(title, val, val_col)) in chips.iter().enumerate() {
+                                    for (i, (title, val, val_col)) in chips.into_iter().enumerate() {
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 15, 29))
                                             .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
@@ -13335,7 +13492,8 @@ impl LauncherApp {
                                     ui.label(RichText::new("THERMAL & POWER GOVERNOR PRESET").size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new("AC-PL1 Profile").size(9.0).monospace().color(p.text_muted));
+                                        let active_gov = crate::power::query_current_governor();
+                                        ui.label(RichText::new(format!("Current: {}", active_gov)).size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
                                     });
                                 });
 
@@ -13344,11 +13502,11 @@ impl LauncherApp {
                                 // 3 Presets in row
                                 ui.columns(3, |cols| {
                                     let presets = [
-                                        ("Quiet / Eco", "Continuous\nPL1 Cap", "6 Watts", 0),
-                                        ("Balanced", "Continuous\nPL1 Cap\n[Active]", "12 Watts", 1),
-                                        ("Turbo Boost", "Short Peak\nBurst", "18 Watts", 2),
+                                        ("Quiet / Eco", "Continuous\nPL1 Cap", "powersave", 0),
+                                        ("Balanced", "Continuous\nPL1 Cap\n[Active]", "schedutil", 1),
+                                        ("Turbo Boost", "Short Peak\nBurst", "performance", 2),
                                     ];
-                                    for &(name, desc, cap, idx) in &presets {
+                                    for &(name, desc, gov_name, idx) in &presets {
                                         let is_sel = self.power_preset == idx;
                                         let border = if is_sel { Stroke::new(1.2_f32, Color32::from_rgb(56, 189, 248)) } else { Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)) };
                                         let bg = if is_sel { Color32::from_rgba_unmultiplied(56, 189, 248, 15) } else { Color32::from_rgb(10, 15, 29) };
@@ -13367,11 +13525,16 @@ impl LauncherApp {
                                                 ui.add_space(6.0);
                                                 ui.label(RichText::new(desc).size(8.5).monospace().color(if is_sel { Color32::from_rgb(56, 189, 248) } else { p.text_muted }));
                                                 ui.add_space(6.0);
-                                                ui.label(RichText::new(cap).size(13.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                                ui.label(RichText::new(gov_name).size(12.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
                                             });
 
                                         if frame_resp.response.interact(egui::Sense::click()).clicked() {
                                             self.power_preset = idx;
+                                            let target_gov = crate::power::preset_to_governor(idx);
+                                            match crate::power::apply_governor(target_gov) {
+                                                Ok(msg) => self.power_status_msg = Some((msg, false, Instant::now())),
+                                                Err(err) => self.power_status_msg = Some((err, true, Instant::now())),
+                                            }
                                         }
                                     }
                                 });
@@ -13533,10 +13696,16 @@ impl LauncherApp {
                                         });
                                     });
                                     ui.add_space(3.0);
-                                    let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                                    ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
+                                    let (bar_r, bar_resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 6.0), egui::Sense::click_and_drag());
+                                    if bar_resp.dragged() || bar_resp.clicked() {
+                                        if let Some(pos) = bar_resp.interact_pointer_pos() {
+                                            let ratio = ((pos.x - bar_r.left()) / bar_r.width()).clamp(0.5, 1.0);
+                                            self.power_ceiling = (ratio * 100.0).round();
+                                        }
+                                    }
+                                    ui.painter().rect_filled(bar_r, Rounding::same(3.0), Color32::from_rgb(18, 28, 42));
                                     let fill_w = bar_r.width() * (self.power_ceiling / 100.0).clamp(0.1, 1.0);
-                                    ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                                    ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(3.0), Color32::from_rgb(56, 189, 248));
                                     ui.add_space(4.0);
                                     ui.horizontal(|ui| {
                                         ui.label(RichText::new("50%").size(7.5).monospace().color(p.text_muted));
@@ -13616,6 +13785,23 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_bluetooth_page(&mut self, ui: &mut Ui, _snap: &crate::sensors::SystemSensorsSnapshot, _host_id: Option<&str>) {
         let p = self.theme.palette();
+
+        // Query Bluetooth status every 3 seconds
+        if self.bluetooth_last_query.elapsed().as_secs() >= 3 {
+            self.trigger_bluetooth_query(Some(ui.ctx().clone()));
+        }
+
+        let bt_snap = if let Ok(lock) = self.bluetooth_snapshot.try_lock() {
+            lock.clone()
+        } else {
+            crate::bluetooth::BluetoothSnapshot::default()
+        };
+
+        if let Some(ref ctrl) = bt_snap.controller {
+            self.bt_radio_on = ctrl.powered;
+            self.bt_discoverable = ctrl.discoverable;
+        }
+
         ScrollArea::vertical()
             .id_salt("sensors_bt_scroll_v2")
             .auto_shrink([false, false])
@@ -13657,7 +13843,12 @@ impl LauncherApp {
                                 ui.add_space(2.0);
                                 ui.label(RichText::new("Dual-band 2.4 GHz transceiver with LE Audio & aptX Adaptive pipelines").size(10.5).color(Color32::from_rgb(148, 163, 184)));
                                 ui.add_space(3.0);
-                                ui.label(RichText::new("CONTROLLER: INTEL AX201 BLUETOOTH 5.2 (HCI0) • FIRMWARE: V22.110.0 • MAC: 84:D8:1B:3E:9A:02").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                let ctrl_desc = if let Some(ref ctrl) = bt_snap.controller {
+                                    format!("CONTROLLER: {} ({}) • BlueZ • MAC: {}", ctrl.name, ctrl.alias, ctrl.mac)
+                                } else {
+                                    "CONTROLLER: Intel Wireless Bluetooth Adapter (hci0) • BlueZ".to_string()
+                                };
+                                ui.label(RichText::new(ctrl_desc).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -13673,7 +13864,20 @@ impl LauncherApp {
                                                 ui.label(RichText::new("Hardware RF Transceiver").size(8.5).color(Color32::from_rgb(100, 116, 139)));
                                             });
                                             ui.add_space(10.0);
-                                            render_custom_toggle_switch(ui, &mut self.bt_radio_on);
+                                            let mut power_toggle = self.bt_radio_on;
+                                            if render_custom_toggle_switch(ui, &mut power_toggle) {
+                                                self.bt_radio_on = power_toggle;
+                                                let snap_arc = Arc::clone(&self.bluetooth_snapshot);
+                                                let ctx_clone = ui.ctx().clone();
+                                                std::thread::spawn(move || {
+                                                    let _ = crate::bluetooth::set_radio_power(power_toggle);
+                                                    let updated = crate::bluetooth::query_bluetooth_status();
+                                                    if let Ok(mut lock) = snap_arc.lock() {
+                                                        *lock = updated;
+                                                    }
+                                                    ctx_clone.request_repaint();
+                                                });
+                                            }
                                         });
                                     });
                             });
@@ -13691,11 +13895,28 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
-                            // Pair button
-                            let (pair_rect, pair_resp) = ui.allocate_exact_size(egui::vec2(130.0, 28.0), egui::Sense::click());
-                            let pair_bg = if pair_resp.hovered() { Color32::from_rgb(14, 165, 233) } else { Color32::from_rgb(56, 189, 248) };
+                            // Scan / Pair button
+                            let is_scanning = self.bluetooth_scanning.load(std::sync::atomic::Ordering::SeqCst);
+                            let btn_label = if is_scanning { "Scanning Nearby..." } else { "+ Scan for Devices" };
+                            let (pair_rect, pair_resp) = ui.allocate_exact_size(egui::vec2(140.0, 28.0), egui::Sense::click());
+                            let pair_bg = if is_scanning {
+                                Color32::from_rgb(18, 28, 42)
+                            } else if pair_resp.hovered() {
+                                Color32::from_rgb(14, 165, 233)
+                            } else {
+                                Color32::from_rgb(56, 189, 248)
+                            };
+                            let pair_text_col = if is_scanning { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(10, 14, 22) };
+
                             ui.painter().rect_filled(pair_rect, Rounding::same(6.0), pair_bg);
-                            ui.painter().text(pair_rect.center(), egui::Align2::CENTER_CENTER, "+ Pair New Device", egui::FontId::monospace(10.5), Color32::from_rgb(10, 14, 22));
+                            if is_scanning {
+                                ui.painter().rect_stroke(pair_rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)));
+                            }
+                            ui.painter().text(pair_rect.center(), egui::Align2::CENTER_CENTER, btn_label, egui::FontId::monospace(10.0), pair_text_col);
+
+                            if pair_resp.clicked() && !is_scanning {
+                                crate::bluetooth::trigger_discovery_async(Arc::clone(&self.bluetooth_snapshot), Arc::clone(&self.bluetooth_scanning));
+                            }
 
                             ui.add_space(16.0);
 
@@ -13703,8 +13924,37 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 ui.label(RichText::new("Discoverable to nearby devices").size(10.5).color(p.text_primary));
-                                render_custom_toggle_switch(ui, &mut self.bt_discoverable);
+                                let mut disc_toggle = self.bt_discoverable;
+                                if render_custom_toggle_switch(ui, &mut disc_toggle) {
+                                    self.bt_discoverable = disc_toggle;
+                                    let snap_arc = Arc::clone(&self.bluetooth_snapshot);
+                                    let ctx_clone = ui.ctx().clone();
+                                    std::thread::spawn(move || {
+                                        let _ = crate::bluetooth::set_discoverable(disc_toggle);
+                                        let updated = crate::bluetooth::query_bluetooth_status();
+                                        if let Ok(mut lock) = snap_arc.lock() {
+                                            *lock = updated;
+                                        }
+                                        ctx_clone.request_repaint();
+                                    });
+                                }
                             });
+
+                            // Status message toast banner
+                            if let Some((ref msg, is_err, time)) = bt_snap.status_msg {
+                                if time.elapsed().as_secs() < 6 {
+                                    ui.add_space(12.0);
+                                    let toast_col = if is_err { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(52, 211, 153) };
+                                    Frame::none()
+                                        .fill(toast_col.gamma_multiply(0.12))
+                                        .stroke(Stroke::new(1.0_f32, toast_col.gamma_multiply(0.35)))
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new(msg).size(9.0).monospace().color(toast_col));
+                                        });
+                                }
+                            }
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.horizontal(|ui| {
@@ -13723,126 +13973,247 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 3. Peripheral Cards (ACTIVE MATRIX • 3 CONNECTED, 1 STANDBY)
+                // 3. Paired Devices Matrix (Live BlueZ devices)
+                let connected_count = bt_snap.get_connected_count();
+                let paired_count = bt_snap.get_paired_count();
+
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("ACTIVE MATRIX • 3 CONNECTED, 1 STANDBY").size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                    ui.label(RichText::new(format!("ACTIVE MATRIX • {} CONNECTED, {} PAIRED", connected_count, paired_count)).size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                 });
                 ui.add_space(4.0);
 
-                let peripherals = [
-                    (
-                        crate::lucide::HEADPHONES,
-                        "Sony WH-1000XM4",
-                        "A2DP SINK • ACTIVE AUDIO",
-                        "85% BATTERY",
-                        Color32::from_rgb(52, 211, 153),
-                        [("SIGNAL", "-45 dBm (EXCELLENT)"), ("CODEC", "LDAC (990 kbps)"), ("LATENCY", "32 ms")],
-                        "ACTIVE STREAM",
-                        Color32::from_rgb(56, 189, 248),
-                        false,
-                    ),
-                    (
-                        crate::lucide::COMPASS,
-                        "Logitech MX Master 3S",
-                        "BLE PRECISION POINTER",
-                        "70% BATTERY",
-                        Color32::from_rgb(52, 211, 153),
-                        [("SIGNAL", "-58 dBm (GOOD)"), ("POLL RATE", "1000 Hz"), ("LATENCY", "4 ms")],
-                        "CONNECTED",
-                        Color32::from_rgb(52, 211, 153),
-                        false,
-                    ),
-                    (
-                        crate::lucide::KEYBOARD,
-                        "Keychron K3 Pro",
-                        "MECHANICAL QMK/VIA KEYBOARD",
-                        "92% BATTERY",
-                        Color32::from_rgb(52, 211, 153),
-                        [("SIGNAL", "-52 dBm (GOOD)"), ("PROFILE", "BT 5.1 #1"), ("LATENCY", "8 ms")],
-                        "CONNECTED",
-                        Color32::from_rgb(52, 211, 153),
-                        false,
-                    ),
-                    (
-                        crate::lucide::GPU,
-                        "DualSense Controller",
-                        "WIRELESS GAMEPAD (PS5)",
-                        "44% BATTERY",
-                        Color32::from_rgb(245, 158, 11),
-                        [("STATE", "STANDBY / SLEEP"), ("LAST SYNC", "14m AGO"), ("HAPTIC BUS", "IDLE")],
-                        "STANDBY",
-                        Color32::from_rgb(148, 163, 184),
-                        true,
-                    ),
-                ];
+                if bt_snap.devices.is_empty() {
+                    // Empty state card
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(24.0, 18.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.vertical_centered(|ui| {
+                                ui.label(RichText::new(crate::lucide::BLUETOOTH).size(28.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.add_space(4.0);
+                                ui.label(RichText::new("No Paired Bluetooth Devices Found").size(13.0).strong().color(p.text_primary));
+                                ui.add_space(2.0);
+                                ui.label(RichText::new("Turn on Bluetooth and click '+ Scan for Devices' to pair headphones, pointer devices, or gamepads.").size(10.0).color(Color32::from_rgb(148, 163, 184)));
+                            });
+                        });
+                } else {
+                    let num_cols = bt_snap.devices.len().clamp(1, 4);
+                    ui.columns(num_cols, |cols| {
+                        for (i, dev) in bt_snap.devices.iter().enumerate() {
+                            let c = &mut cols[i % num_cols];
+                            Frame::none()
+                                .fill(p.bg_card)
+                                .stroke(Stroke::new(1.0_f32, if dev.connected { Color32::from_rgb(30, 58, 90) } else { Color32::from_rgb(26, 34, 48) }))
+                                .rounding(Rounding::same(8.0))
+                                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                                .show(c, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    
+                                    // Device Icon
+                                    let icon = if dev.icon.contains("audio") || dev.icon.contains("head") {
+                                        crate::lucide::HEADPHONES
+                                    } else if dev.icon.contains("mouse") {
+                                        crate::lucide::COMPASS
+                                    } else if dev.icon.contains("keyboard") {
+                                        crate::lucide::KEYBOARD
+                                    } else if dev.icon.contains("gamepad") || dev.icon.contains("gaming") {
+                                        crate::lucide::GPU
+                                    } else {
+                                        crate::lucide::BLUETOOTH
+                                    };
 
-                ui.columns(4, |cols| {
-                    for (i, (icon, name, role, batt, batt_col, stats, status, status_col, is_standby)) in peripherals.iter().enumerate() {
-                        let c = &mut cols[i];
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                            .show(c, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(*icon).size(16.0).color(Color32::from_rgb(56, 189, 248)));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        Frame::none()
-                                            .fill(batt_col.gamma_multiply(0.14))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new(*batt).size(8.5).monospace().strong().color(*batt_col));
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(icon).size(16.0).color(Color32::from_rgb(56, 189, 248)));
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            if let Some(batt) = dev.battery_pct {
+                                                Frame::none()
+                                                    .fill(Color32::from_rgba_unmultiplied(52, 211, 153, 20))
+                                                    .rounding(Rounding::same(4.0))
+                                                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                                    .show(ui, |ui| {
+                                                        ui.label(RichText::new(format!("{}% BATTERY", batt)).size(8.5).monospace().strong().color(Color32::from_rgb(52, 211, 153)));
+                                                    });
+                                            } else {
+                                                let (tag_txt, tag_col) = if dev.connected {
+                                                    ("CONNECTED", Color32::from_rgb(52, 211, 153))
+                                                } else {
+                                                    ("PAIRED", Color32::from_rgb(148, 163, 184))
+                                                };
+                                                Frame::none()
+                                                    .fill(tag_col.gamma_multiply(0.12))
+                                                    .rounding(Rounding::same(4.0))
+                                                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                                    .show(ui, |ui| {
+                                                        ui.label(RichText::new(tag_txt).size(8.0).monospace().strong().color(tag_col));
+                                                    });
+                                            }
+                                        });
+                                    });
+
+                                    ui.add_space(4.0);
+                                    ui.label(RichText::new(&dev.name).size(12.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new(&dev.mac).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+
+                                    ui.add_space(8.0);
+                                    
+                                    // Device metadata rows
+                                    let dev_type = if !dev.icon.is_empty() { &dev.icon } else { "peripheral" };
+                                    let status_str = if dev.connected { "ACTIVE LINK" } else { "STANDBY" };
+                                    let stats = [
+                                        ("TYPE", dev_type),
+                                        ("BONDED", if dev.trusted { "TRUSTED" } else { "NO" }),
+                                        ("STATE", status_str),
+                                    ];
+
+                                    for (k, v) in stats {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(k).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.label(RichText::new(v).size(8.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
                                             });
+                                        });
+                                        ui.add_space(2.0);
+                                    }
+
+                                    ui.add_space(8.0);
+
+                                    // Action buttons (Connect / Disconnect + Unpair)
+                                    ui.horizontal(|ui| {
+                                        let btn_w = ui.available_width() - 32.0;
+                                        if dev.connected {
+                                            let (dis_rect, dis_resp) = ui.allocate_exact_size(egui::vec2(btn_w, 24.0), egui::Sense::click());
+                                            let dis_bg = if dis_resp.hovered() { Color32::from_rgb(45, 20, 20) } else { Color32::from_rgb(26, 20, 24) };
+                                            ui.painter().rect_filled(dis_rect, Rounding::same(4.0), dis_bg);
+                                            ui.painter().rect_stroke(dis_rect, Rounding::same(4.0), Stroke::new(1.0_f32, Color32::from_rgb(248, 113, 113)));
+                                            ui.painter().text(dis_rect.center(), egui::Align2::CENTER_CENTER, "Disconnect", egui::FontId::monospace(9.0), Color32::from_rgb(248, 113, 113));
+
+                                            if dis_resp.clicked() {
+                                                let mac_c = dev.mac.clone();
+                                                let name_c = dev.name.clone();
+                                                let snap_arc = Arc::clone(&self.bluetooth_snapshot);
+                                                let ctx_c = ui.ctx().clone();
+                                                std::thread::spawn(move || {
+                                                    let res = crate::bluetooth::disconnect_device(&mac_c);
+                                                    let updated = crate::bluetooth::query_bluetooth_status();
+                                                    if let Ok(mut lock) = snap_arc.lock() {
+                                                        *lock = updated;
+                                                        match res {
+                                                            Ok(_) => lock.status_msg = Some((format!("Disconnected {}", name_c), false, Instant::now())),
+                                                            Err(e) => lock.status_msg = Some((format!("Failed to disconnect: {}", e), true, Instant::now())),
+                                                        }
+                                                    }
+                                                    ctx_c.request_repaint();
+                                                });
+                                            }
+                                        } else {
+                                            let (conn_rect, conn_resp) = ui.allocate_exact_size(egui::vec2(btn_w, 24.0), egui::Sense::click());
+                                            let conn_bg = if conn_resp.hovered() { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(18, 28, 42) };
+                                            ui.painter().rect_filled(conn_rect, Rounding::same(4.0), conn_bg);
+                                            ui.painter().rect_stroke(conn_rect, Rounding::same(4.0), Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)));
+                                            ui.painter().text(conn_rect.center(), egui::Align2::CENTER_CENTER, "Connect", egui::FontId::monospace(9.0), Color32::from_rgb(56, 189, 248));
+
+                                            if conn_resp.clicked() {
+                                                let mac_c = dev.mac.clone();
+                                                let name_c = dev.name.clone();
+                                                let snap_arc = Arc::clone(&self.bluetooth_snapshot);
+                                                let ctx_c = ui.ctx().clone();
+                                                if let Ok(mut lock) = snap_arc.lock() {
+                                                    lock.status_msg = Some((format!("Connecting to {}...", name_c), false, Instant::now()));
+                                                }
+                                                std::thread::spawn(move || {
+                                                    let res = crate::bluetooth::connect_device(&mac_c);
+                                                    let updated = crate::bluetooth::query_bluetooth_status();
+                                                    if let Ok(mut lock) = snap_arc.lock() {
+                                                        *lock = updated;
+                                                        match res {
+                                                            Ok(_) => lock.status_msg = Some((format!("Connected to {}", name_c), false, Instant::now())),
+                                                            Err(e) => lock.status_msg = Some((format!("Connect failed: {}", e), true, Instant::now())),
+                                                        }
+                                                    }
+                                                    ctx_c.request_repaint();
+                                                });
+                                            }
+                                        }
+
+                                        // Unpair button
+                                        let (unpair_rect, unpair_resp) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::click());
+                                        let u_bg = if unpair_resp.hovered() { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(18, 28, 42) };
+                                        ui.painter().rect_filled(unpair_rect, Rounding::same(4.0), u_bg);
+                                        ui.painter().text(unpair_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::TRASH, egui::FontId::monospace(10.0), Color32::from_rgb(148, 163, 184));
+                                        if unpair_resp.clicked() {
+                                            let mac_c = dev.mac.clone();
+                                            let snap_arc = Arc::clone(&self.bluetooth_snapshot);
+                                            let ctx_c = ui.ctx().clone();
+                                            std::thread::spawn(move || {
+                                                let _ = crate::bluetooth::remove_device(&mac_c);
+                                                let updated = crate::bluetooth::query_bluetooth_status();
+                                                if let Ok(mut lock) = snap_arc.lock() {
+                                                    *lock = updated;
+                                                    lock.status_msg = Some(("Device removed from paired list".to_string(), false, Instant::now()));
+                                                }
+                                                ctx_c.request_repaint();
+                                            });
+                                        }
                                     });
                                 });
+                        }
+                    });
+                }
 
-                                ui.add_space(4.0);
-                                ui.label(RichText::new(*name).size(12.0).strong().color(p.text_primary));
-                                ui.label(RichText::new(*role).size(8.0).monospace().color(Color32::from_rgb(100, 116, 139)));
+                // 4. Discovered Nearby Devices (if any found during scan)
+                if !bt_snap.discovered_devices.is_empty() {
+                    ui.add_space(10.0);
+                    ui.label(RichText::new(format!("DISCOVERED NEARBY DEVICES ({})", bt_snap.discovered_devices.len())).size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                    ui.add_space(4.0);
 
-                                ui.add_space(8.0);
-                                for (k, v) in stats {
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new(*k).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new(*v).size(8.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
-                                        });
-                                    });
-                                    ui.add_space(2.0);
-                                }
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            for disc_dev in &bt_snap.discovered_devices {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(crate::lucide::BLUETOOTH).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.add_space(4.0);
+                                    ui.label(RichText::new(&disc_dev.name).size(11.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new(&disc_dev.mac).size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
 
-                                ui.add_space(8.0);
-                                if *is_standby {
-                                    let (wake_rect, wake_resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), egui::Sense::click());
-                                    let bg = if wake_resp.hovered() { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(18, 28, 42) };
-                                    ui.painter().rect_filled(wake_rect, Rounding::same(4.0), bg);
-                                    ui.painter().rect_stroke(wake_rect, Rounding::same(4.0), Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)));
-                                    ui.painter().text(wake_rect.center(), egui::Align2::CENTER_CENTER, "Wake & Connect", egui::FontId::monospace(9.5), Color32::from_rgb(56, 189, 248));
-                                } else {
-                                    Frame::none()
-                                        .fill(Color32::from_rgb(10, 14, 22))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(6.0, 4.0))
-                                        .show(ui, |ui| {
-                                            ui.set_width(ui.available_width());
-                                            ui.horizontal(|ui| {
-                                                let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                                ui.painter().circle_filled(d_rect.center(), 2.5, *status_col);
-                                                ui.label(RichText::new(*status).size(8.5).monospace().strong().color(*status_col));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let (p_rect, p_resp) = ui.allocate_exact_size(egui::vec2(90.0, 22.0), egui::Sense::click());
+                                        let bg = if p_resp.hovered() { Color32::from_rgb(14, 165, 233) } else { Color32::from_rgb(56, 189, 248) };
+                                        ui.painter().rect_filled(p_rect, Rounding::same(4.0), bg);
+                                        ui.painter().text(p_rect.center(), egui::Align2::CENTER_CENTER, "+ Pair & Trust", egui::FontId::monospace(8.5), Color32::from_rgb(10, 14, 22));
+
+                                        if p_resp.clicked() {
+                                            let mac_c = disc_dev.mac.clone();
+                                            let snap_arc = Arc::clone(&self.bluetooth_snapshot);
+                                            let ctx_c = ui.ctx().clone();
+                                            std::thread::spawn(move || {
+                                                let _ = crate::bluetooth::pair_and_trust(&mac_c);
+                                                let _ = crate::bluetooth::connect_device(&mac_c);
+                                                let updated = crate::bluetooth::query_bluetooth_status();
+                                                if let Ok(mut lock) = snap_arc.lock() {
+                                                    *lock = updated;
+                                                    lock.status_msg = Some(("Pairing initiated".to_string(), false, Instant::now()));
+                                                }
+                                                ctx_c.request_repaint();
                                             });
-                                        });
-                                }
-                            });
-                    }
-                });
+                                        }
+                                    });
+                                });
+                                ui.add_space(4.0);
+                            }
+                        });
+                }
 
                 ui.add_space(8.0);
 
-                // 4. Bottom Two Columns: Radio Diagnostics & Channel Stability vs Audio Profiles & Routing
+                // 5. Bottom Two Columns: Radio Diagnostics & Channel Stability vs Audio Profiles & Routing
                 let total_w = ui.available_width();
                 let gap = 10.0_f32;
                 let half_w = (total_w - gap) * 0.50;

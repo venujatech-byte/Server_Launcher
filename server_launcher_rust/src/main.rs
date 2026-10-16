@@ -5,13 +5,16 @@ mod remote;
 mod scanner;
 mod service;
 pub mod autostart;
+pub mod bluetooth;
 pub mod commands;
 pub mod lucide;
+pub mod power;
 pub mod procmgr;
 pub mod scripts;
 pub mod sensors;
 pub mod systemd;
 pub mod theme;
+pub mod wifi;
 
 use app::LauncherApp;
 use config::ConfigFile;

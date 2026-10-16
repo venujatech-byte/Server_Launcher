@@ -338,6 +338,9 @@ pub struct LauncherApp {
     pub gpu_copy_history: VecDeque<f32>,
     pub gpu_mode: usize,
     pub selected_gpu_idx: usize,
+    pub selected_disk_idx: usize,
+    pub per_disk_write_history: std::collections::HashMap<String, VecDeque<f32>>,
+    pub per_disk_read_history: std::collections::HashMap<String, VecDeque<f32>>,
     pub last_telemetry_sample: Instant,
 
     // Power & Battery State (matching Image 1)
@@ -849,6 +852,9 @@ impl LauncherApp {
             },
             gpu_mode: 1, // Balanced
             selected_gpu_idx: 0,
+            selected_disk_idx: 0,
+            per_disk_write_history: std::collections::HashMap::new(),
+            per_disk_read_history: std::collections::HashMap::new(),
             last_telemetry_sample: Instant::now(),
             power_preset: crate::power::governor_to_preset_index(&crate::power::query_current_governor()),
             power_conservation: true,
@@ -10324,6 +10330,12 @@ impl LauncherApp {
             let init_r = (snap.total_disk_read_rate_bps / 1_000_000.0) as f32;
             self.disk_write_history = VecDeque::from(vec![init_w; 60]);
             self.disk_read_history = VecDeque::from(vec![init_r; 60]);
+            for p in &snap.physical_disks {
+                let pw = (p.write_rate_bps / 1_000_000.0) as f32;
+                let pr = (p.read_rate_bps / 1_000_000.0) as f32;
+                self.per_disk_write_history.insert(p.name.clone(), VecDeque::from(vec![pw; 60]));
+                self.per_disk_read_history.insert(p.name.clone(), VecDeque::from(vec![pr; 60]));
+            }
             let init_tx = (snap.total_tx_rate_bps / 1_000_000.0) as f32;
             let init_rx = (snap.total_rx_rate_bps / 1_000_000.0) as f32;
             self.net_tx_history = VecDeque::from(vec![init_tx; 60]);
@@ -10368,6 +10380,17 @@ impl LauncherApp {
             self.disk_read_history.pop_front();
             let cur_read_mb = (snap.total_disk_read_rate_bps / 1_000_000.0) as f32;
             self.disk_read_history.push_back(cur_read_mb);
+
+            for p in &snap.physical_disks {
+                let pw = (p.write_rate_bps / 1_000_000.0) as f32;
+                let pr = (p.read_rate_bps / 1_000_000.0) as f32;
+                let w_q = self.per_disk_write_history.entry(p.name.clone()).or_insert_with(|| VecDeque::from(vec![pw; 60]));
+                w_q.pop_front();
+                w_q.push_back(pw);
+                let r_q = self.per_disk_read_history.entry(p.name.clone()).or_insert_with(|| VecDeque::from(vec![pr; 60]));
+                r_q.pop_front();
+                r_q.push_back(pr);
+            }
 
             self.net_tx_history.pop_front();
             let cur_tx_mb = (snap.total_tx_rate_bps / 1_000_000.0) as f32;
@@ -12875,10 +12898,10 @@ impl LauncherApp {
                 let d1_tot = root_mount.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(total_gb);
                 let d1_fs = root_mount.map(|d| d.fs_type.as_str()).unwrap_or(if is_remote { "ext4" } else { "btrfs" });
 
-                let drives_list: Vec<(String, String, u64, bool, usize)> = if !snap.physical_disks.is_empty() {
+                let drives_list: Vec<(String, String, u64, bool, usize, f64, f64)> = if !snap.physical_disks.is_empty() {
                     snap.physical_disks
                         .iter()
-                        .map(|d| (d.name.clone(), d.model.clone(), d.total_bytes, d.is_ssd, d.partition_count))
+                        .map(|d| (d.name.clone(), d.model.clone(), d.total_bytes, d.is_ssd, d.partition_count, d.read_rate_bps, d.write_rate_bps))
                         .collect()
                 } else if !snap.disks.is_empty() {
                     let mut seen = std::collections::HashSet::new();
@@ -12892,7 +12915,7 @@ impl LauncherApp {
                             } else {
                                 format!("Volume ({})", d.mount_point)
                             };
-                            synthesized.push((clean, model, d.total_bytes, is_ssd, 1));
+                            synthesized.push((clean, model, d.total_bytes, is_ssd, 1, d.read_rate_bps, d.write_rate_bps));
                         }
                     }
                     synthesized
@@ -12903,32 +12926,71 @@ impl LauncherApp {
                         if is_remote { total_bytes } else { 256_000_000_000 },
                         true,
                         1,
+                        snap.total_disk_read_rate_bps,
+                        snap.total_disk_write_rate_bps,
                     )]
                 };
 
+                if !drives_list.is_empty() && self.selected_disk_idx >= drives_list.len() {
+                    self.selected_disk_idx = 0;
+                }
                 let primary_drive_name = drives_list.first().map(|d| d.0.clone()).unwrap_or_else(|| "nvme0n1".to_string());
                 let d1_name = primary_drive_name.clone();
 
-                let render_drive_card = |ui: &mut Ui, idx: usize, d_name: &str, d_model: &str, d_bytes: u64, d_is_ssd: bool, d_part_count: usize| {
+                let current_selected_idx = self.selected_disk_idx;
+                let mut clicked_drive_idx: Option<usize> = None;
+
+                let render_drive_card = |ui: &mut Ui, idx: usize, d_name: &str, d_model: &str, d_bytes: u64, d_is_ssd: bool, d_part_count: usize, d_read_bps: f64, d_write_bps: f64, is_selected: bool, clicked_slot: &mut Option<usize>| {
                     let d_phys_gb = d_bytes as f64 / 1e9;
                     let d_mount = snap.disks.iter().find(|d| d.name.contains(d_name) || d_name.contains(d.name.trim_start_matches("/dev/")));
 
-                    let (d_used, d_tot, d_pct, d_fs, d_read_str, d_write_str, is_mounted, mount_pt) = if let Some(m) = d_mount {
+                    let r_rate = if d_read_bps > 0.0 {
+                        d_read_bps
+                    } else if let Some(m) = d_mount {
+                        m.read_rate_bps
+                    } else if idx == 0 {
+                        snap.total_disk_read_rate_bps
+                    } else {
+                        0.0
+                    };
+
+                    let w_rate = if d_write_bps > 0.0 {
+                        d_write_bps
+                    } else if let Some(m) = d_mount {
+                        m.write_rate_bps
+                    } else if idx == 0 {
+                        snap.total_disk_write_rate_bps
+                    } else {
+                        0.0
+                    };
+
+                    let d_read_str = crate::sensors::format_rate(r_rate);
+                    let d_write_str = crate::sensors::format_rate(w_rate);
+
+                    let (d_used, d_tot, d_pct, d_fs, is_mounted, mount_pt) = if let Some(m) = d_mount {
                         let u = m.used_bytes as f64 / 1e9;
                         let t = m.total_bytes as f64 / 1e9;
                         let pct = if t > 0.0 { (u / t * 100.0) as f32 } else { 0.0 };
                         let fs = if m.fs_type.is_empty() { if is_remote { "ext4" } else { "btrfs" } } else { m.fs_type.as_str() };
-                        let r_str = if idx == 0 { crate::sensors::format_rate(snap.total_disk_read_rate_bps) } else { crate::sensors::format_rate(m.read_rate_bps) };
-                        let w_str = if idx == 0 { crate::sensors::format_rate(snap.total_disk_write_rate_bps) } else { crate::sensors::format_rate(m.write_rate_bps) };
-                        (u, t, pct, fs, r_str, w_str, true, m.mount_point.as_str())
+                        (u, t, pct, fs, true, m.mount_point.as_str())
                     } else {
-                        let r_str = if idx == 0 { crate::sensors::format_rate(snap.total_disk_read_rate_bps) } else { "0 B/s".to_string() };
-                        let w_str = if idx == 0 { crate::sensors::format_rate(snap.total_disk_write_rate_bps) } else { "0 B/s".to_string() };
-                        (0.0, d_phys_gb, 0.0, "ext4", r_str, w_str, false, "")
+                        (0.0, d_phys_gb, 0.0, "ext4", false, "")
                     };
 
-                    Frame::none()
-                        .fill(p.bg_card)
+                    let card_bg = if is_selected {
+                        Color32::from_rgb(14, 22, 38)
+                    } else {
+                        p.bg_card
+                    };
+                    let card_stroke = if is_selected {
+                        Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248))
+                    } else {
+                        Stroke::NONE
+                    };
+
+                    let resp = Frame::none()
+                        .fill(card_bg)
+                        .stroke(card_stroke)
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                         .show(ui, |ui| {
@@ -12942,7 +13004,8 @@ impl LauncherApp {
                                         ui.spacing_mut().item_spacing.x = 5.0;
                                         ui.label(RichText::new(format!("Storage {} (/dev/{})", idx + 1, d_name)).size(13.0).strong().color(p.text_primary));
                                         let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                        ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
+                                        let dot_col = if is_selected { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(100, 116, 139) };
+                                        ui.painter().circle_filled(dot_rect.center(), 2.8, dot_col);
                                     });
                                     ui.label(RichText::new(format!("{} • {} {:.1} GB", if d_is_ssd { "NVMe SSD" } else { "Block Device" }, d_model, d_phys_gb)).size(9.5).monospace().color(p.text_muted));
                                 });
@@ -12950,9 +13013,13 @@ impl LauncherApp {
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.vertical(|ui| {
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            let tag_lbl = if idx == 0 { "PRIMARY OS" } else { "DATA STORAGE" };
-                                            let tag_bg = if idx == 0 { Color32::from_rgba_unmultiplied(56, 189, 248, 30) } else { Color32::from_rgba_unmultiplied(148, 163, 184, 25) };
-                                            let tag_col = if idx == 0 { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(148, 163, 184) };
+                                            let (tag_lbl, tag_bg, tag_col) = if is_selected {
+                                                ("ACTIVE MONITOR", Color32::from_rgba_unmultiplied(56, 189, 248, 40), Color32::from_rgb(56, 189, 248))
+                                            } else if idx == 0 {
+                                                ("PRIMARY OS", Color32::from_rgba_unmultiplied(56, 189, 248, 25), Color32::from_rgb(56, 189, 248))
+                                            } else {
+                                                ("DATA STORAGE", Color32::from_rgba_unmultiplied(148, 163, 184, 20), Color32::from_rgb(148, 163, 184))
+                                            };
                                             Frame::none()
                                                 .fill(tag_bg)
                                                 .rounding(Rounding::same(4.0))
@@ -13008,6 +13075,11 @@ impl LauncherApp {
                                 });
                             });
                         });
+
+                    let interact = ui.interact(resp.response.rect, ui.make_persistent_id(format!("drive_card_sel_{}", idx)), egui::Sense::click());
+                    if interact.clicked() {
+                        *clicked_slot = Some(idx);
+                    }
                 };
 
                 let render_unpopulated_card = |ui: &mut Ui, slot_num: usize| {
@@ -13076,12 +13148,12 @@ impl LauncherApp {
                     ui.columns(2, |cols| {
                         let d1 = &chunk[0];
                         let idx1 = chunk_idx * 2;
-                        render_drive_card(&mut cols[0], idx1, &d1.0, &d1.1, d1.2, d1.3, d1.4);
+                        render_drive_card(&mut cols[0], idx1, &d1.0, &d1.1, d1.2, d1.3, d1.4, d1.5, d1.6, idx1 == current_selected_idx, &mut clicked_drive_idx);
 
                         if chunk.len() > 1 {
                             let d2 = &chunk[1];
                             let idx2 = chunk_idx * 2 + 1;
-                            render_drive_card(&mut cols[1], idx2, &d2.0, &d2.1, d2.2, d2.3, d2.4);
+                            render_drive_card(&mut cols[1], idx2, &d2.0, &d2.1, d2.2, d2.3, d2.4, d2.5, d2.6, idx2 == current_selected_idx, &mut clicked_drive_idx);
                         } else {
                             render_unpopulated_card(&mut cols[1], idx1 + 2);
                         }
@@ -13089,7 +13161,18 @@ impl LauncherApp {
                     ui.add_space(8.0);
                 }
 
+                if let Some(clicked) = clicked_drive_idx {
+                    self.selected_disk_idx = clicked;
+                }
+
                 // 4. Live Throughput Activity (60s Window)
+                let active_disk_idx = if drives_list.is_empty() { 0 } else { self.selected_disk_idx.min(drives_list.len() - 1) };
+                let (active_disk_name, active_read_mb, active_write_mb) = if let Some(d) = drives_list.get(active_disk_idx) {
+                    (d.0.clone(), d.5 / 1_000_000.0, d.6 / 1_000_000.0)
+                } else {
+                    (primary_drive_name.clone(), read_mb, write_mb)
+                };
+
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(8.0))
@@ -13099,13 +13182,38 @@ impl LauncherApp {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             ui.label(RichText::new("Live Throughput Activity (60s Window)").size(12.5).strong().color(p.text_primary));
 
-                            Frame::none()
-                                .fill(Color32::from_rgb(18, 28, 42))
-                                .rounding(Rounding::same(4.0))
-                                .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                .show(ui, |ui| {
-                                    ui.label(RichText::new(format!("Storage 1 • {}", primary_drive_name)).size(9.0).monospace().color(p.text_muted));
-                                });
+                            // Interactive Disk Selector Pills
+                            if drives_list.len() > 1 {
+                                for (i, d) in drives_list.iter().enumerate() {
+                                    let is_active = i == active_disk_idx;
+                                    let pill_txt = format!("Disk {} • {}", i + 1, d.0);
+                                    let pill_bg = if is_active {
+                                        Color32::from_rgba_unmultiplied(56, 189, 248, 35)
+                                    } else {
+                                        Color32::from_rgb(18, 28, 42)
+                                    };
+                                    let pill_stroke = if is_active {
+                                        Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248))
+                                    } else {
+                                        Stroke::NONE
+                                    };
+                                    let text_col = if is_active { Color32::from_rgb(56, 189, 248) } else { p.text_muted };
+                                    if ui.add(egui::Button::new(RichText::new(pill_txt).size(9.0).monospace().strong().color(text_col))
+                                        .fill(pill_bg)
+                                        .stroke(pill_stroke)
+                                        .rounding(Rounding::same(4.0))).clicked() {
+                                        self.selected_disk_idx = i;
+                                    }
+                                }
+                            } else {
+                                Frame::none()
+                                    .fill(Color32::from_rgb(18, 28, 42))
+                                    .rounding(Rounding::same(4.0))
+                                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(format!("Disk 1 • {}", primary_drive_name)).size(9.0).monospace().color(p.text_muted));
+                                    });
+                            }
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.horizontal(|ui| {
@@ -13116,28 +13224,41 @@ impl LauncherApp {
                                         ui.spacing_mut().item_spacing.x = 4.0;
                                         let (sq_r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
                                         ui.painter().rect_filled(sq_r, Rounding::same(1.5), Color32::from_rgb(203, 213, 225));
-                                        ui.label(RichText::new(format!("Read: {:.1} MB/s", read_mb)).size(9.5).monospace().color(p.text_secondary));
+                                        ui.label(RichText::new(format!("Read: {:.1} MB/s", active_read_mb)).size(9.5).monospace().color(p.text_secondary));
                                     });
 
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.0;
                                         let (sq_r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
                                         ui.painter().rect_filled(sq_r, Rounding::same(1.5), Color32::from_rgb(56, 189, 248));
-                                        ui.label(RichText::new(format!("Write: {:.1} MB/s", write_mb)).size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                        ui.label(RichText::new(format!("Write: {:.1} MB/s", active_write_mb)).size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                     });
                                 });
                             });
                         });
 
                         ui.add_space(8.0);
-                        draw_disk_waveform(ui, 130.0, &self.disk_write_history, &self.disk_read_history);
+                        let fallback_w = self.disk_write_history.clone();
+                        let fallback_r = self.disk_read_history.clone();
+                        let (w_hist, r_hist) = if let Some(w) = self.per_disk_write_history.get(&active_disk_name) {
+                            let r = self.per_disk_read_history.get(&active_disk_name).unwrap_or(&fallback_r);
+                            (w, r)
+                        } else {
+                            (&fallback_w, &fallback_r)
+                        };
+                        draw_disk_waveform(ui, 130.0, w_hist, r_hist);
 
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 5.0;
                             let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                             ui.painter().circle_filled(dot_rect.center(), 2.5, Color32::from_rgb(56, 189, 248));
-                            ui.label(RichText::new(if is_remote { "Direct Kernel Sysfs I/O Pass-through over SSH" } else { "Buffer: DMA Ring Buffer 0 (Kernel Direct Pass-through)" }).size(9.0).monospace().color(p.text_muted));
+                            let buf_label = if is_remote {
+                                format!("Direct Kernel Sysfs I/O Pass-through • /dev/{}", active_disk_name)
+                            } else {
+                                format!("Buffer: /dev/{} (Direct Kernel Block Sysfs Pass-through)", active_disk_name)
+                            };
+                            ui.label(RichText::new(buf_label).size(9.0).monospace().color(p.text_muted));
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.label(RichText::new(if is_remote { "I/O Latency: Realtime" } else { "Flush latency: 0.18ms" }).size(9.0).monospace().color(p.text_muted));

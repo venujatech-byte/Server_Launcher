@@ -91,6 +91,8 @@ pub struct PhysicalDiskInfo {
     pub is_ssd: bool,
     pub partition_count: usize,
     pub partitions: Vec<DiskPartitionInfo>,
+    pub read_rate_bps: f64,
+    pub write_rate_bps: f64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -441,6 +443,8 @@ impl SystemSensorsCollector {
                             size_bytes: d.total_bytes,
                             partition_num: 1,
                         }],
+                        read_rate_bps: d.read_rate_bps,
+                        write_rate_bps: d.write_rate_bps,
                     });
                 }
             }
@@ -453,12 +457,46 @@ impl SystemSensorsCollector {
                 base_matched = true;
                 let prev_r = *self.prev_disk_read.get(dev).unwrap_or(&r_bytes);
                 let prev_w = *self.prev_disk_write.get(dev).unwrap_or(&w_bytes);
-                total_disk_read_rate_bps += (r_bytes.saturating_sub(prev_r) as f64) / disk_elapsed_secs;
-                total_disk_write_rate_bps += (w_bytes.saturating_sub(prev_w) as f64) / disk_elapsed_secs;
+                let dev_read_rate = (r_bytes.saturating_sub(prev_r) as f64) / disk_elapsed_secs;
+                let dev_write_rate = (w_bytes.saturating_sub(prev_w) as f64) / disk_elapsed_secs;
+                total_disk_read_rate_bps += dev_read_rate;
+                total_disk_write_rate_bps += dev_write_rate;
                 self.prev_disk_read.insert(dev.clone(), r_bytes);
                 self.prev_disk_write.insert(dev.clone(), w_bytes);
+
+                // Assign to matching physical disk
+                if let Some(p_disk) = physical_disks.iter_mut().find(|p| p.name == *dev) {
+                    p_disk.read_rate_bps = dev_read_rate;
+                    p_disk.write_rate_bps = dev_write_rate;
+                }
             }
         }
+
+        // Secondary check: for any physical disk with 0 rates, check partition stats and mounted filesystem mappings
+        for p_disk in &mut physical_disks {
+            if p_disk.read_rate_bps == 0.0 && p_disk.write_rate_bps == 0.0 {
+                let mut sum_r = 0.0;
+                let mut sum_w = 0.0;
+                for (part_dev, &(pr, pw)) in &current_diskstats {
+                    if part_dev != &p_disk.name && part_dev.starts_with(&p_disk.name) {
+                        let prev_r = *self.prev_disk_read.get(part_dev).unwrap_or(&pr);
+                        let prev_w = *self.prev_disk_write.get(part_dev).unwrap_or(&pw);
+                        sum_r += (pr.saturating_sub(prev_r) as f64) / disk_elapsed_secs;
+                        sum_w += (pw.saturating_sub(prev_w) as f64) / disk_elapsed_secs;
+                        self.prev_disk_read.insert(part_dev.clone(), pr);
+                        self.prev_disk_write.insert(part_dev.clone(), pw);
+                    }
+                }
+                if sum_r > 0.0 || sum_w > 0.0 {
+                    p_disk.read_rate_bps = sum_r;
+                    p_disk.write_rate_bps = sum_w;
+                } else if let Some(m) = disks.iter().find(|d| d.name.contains(&p_disk.name) || p_disk.name.contains(d.name.trim_start_matches("/dev/"))) {
+                    p_disk.read_rate_bps = m.read_rate_bps;
+                    p_disk.write_rate_bps = m.write_rate_bps;
+                }
+            }
+        }
+
         if !base_matched {
             for d in &disks {
                 total_disk_read_rate_bps += d.read_rate_bps;
@@ -847,6 +885,8 @@ pub fn collect_physical_disks() -> Vec<PhysicalDiskInfo> {
                 is_ssd,
                 partition_count,
                 partitions,
+                read_rate_bps: 0.0,
+                write_rate_bps: 0.0,
             });
         }
     }
@@ -2145,13 +2185,18 @@ try:
                 parts.append({"name": p_name, "partition_num": p_num, "size_bytes": p_sz})
             except:
                 pass
+        st = disk_rates.get(dev_name)
+        r_rate = st[0] if st else 0.0
+        w_rate = st[1] if st else 0.0
         phys_disks.append({
             "name": dev_name,
             "model": model,
             "total_bytes": sz,
             "is_ssd": is_ssd,
             "partition_count": len(parts),
-            "partitions": parts
+            "partitions": parts,
+            "read_rate": r_rate,
+            "write_rate": w_rate
         })
 except:
     pass
@@ -2168,7 +2213,9 @@ if not phys_disks and disks:
                 "total_bytes": d.get("total", 0),
                 "is_ssd": True,
                 "partition_count": 1,
-                "partitions": [{"name": nm, "partition_num": 1, "size_bytes": d.get("total", 0)}]
+                "partitions": [{"name": nm, "partition_num": 1, "size_bytes": d.get("total", 0)}],
+                "read_rate": d.get("read_rate", 0.0),
+                "write_rate": d.get("write_rate", 0.0)
             })
 
 data = {
@@ -2472,6 +2519,8 @@ print(json.dumps(data))
                     });
                 }
             }
+            let read_rate_bps = p["read_rate"].as_f64().unwrap_or(0.0);
+            let write_rate_bps = p["write_rate"].as_f64().unwrap_or(0.0);
             physical_disks.push(PhysicalDiskInfo {
                 name,
                 model,
@@ -2479,6 +2528,8 @@ print(json.dumps(data))
                 is_ssd,
                 partition_count,
                 partitions,
+                read_rate_bps,
+                write_rate_bps,
             });
         }
     }
@@ -2493,6 +2544,8 @@ print(json.dumps(data))
                 } else {
                     "Block Storage".to_string()
                 };
+                let r_rate = d.read_rate_bps;
+                let w_rate = d.write_rate_bps;
                 physical_disks.push(PhysicalDiskInfo {
                     name: nm.clone(),
                     model,
@@ -2504,6 +2557,8 @@ print(json.dumps(data))
                         size_bytes: d.total_bytes,
                         partition_num: 1,
                     }],
+                    read_rate_bps: r_rate,
+                    write_rate_bps: w_rate,
                 });
             }
         }
@@ -2622,6 +2677,10 @@ mod tests {
         for d in &snap.disks {
             assert!(d.read_rate_bps >= 0.0);
             assert!(d.write_rate_bps >= 0.0);
+        }
+        for pd in &snap.physical_disks {
+            assert!(pd.read_rate_bps >= 0.0);
+            assert!(pd.write_rate_bps >= 0.0);
         }
     }
 

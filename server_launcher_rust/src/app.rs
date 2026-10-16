@@ -10376,7 +10376,7 @@ impl LauncherApp {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::CPU).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(Color32::from_rgb(56, 189, 248)));
                                 ui.label(RichText::new("CPU").size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                             });
                             ui.add_space(6.0);
@@ -10663,83 +10663,68 @@ impl LauncherApp {
                     .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            // Chip Icon in dark rounded box
-                            Frame::none()
-                                .fill(Color32::from_rgb(18, 28, 42))
-                                .rounding(Rounding::same(6.0))
-                                .inner_margin(egui::Margin::same(7.0))
-                                .show(ui, |ui| {
-                                    ui.label(RichText::new(crate::lucide::CPU).size(15.0).color(Color32::from_rgb(56, 189, 248)));
+                        ui.vertical(|ui| {
+                            // Row 1: Title & Governor on left, PL1 Limit & Tjunction Max on right
+                            ui.horizontal(|ui| {
+                                let row_w = ui.available_width();
+                                let right_w = 265.0_f32;
+                                let left_w = (row_w - right_w - 8.0).max(80.0);
+
+                                ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                    ui.spacing_mut().item_spacing.x = 8.0;
+                                    ui.label(RichText::new("Central Processing Unit (CPU)").size(15.0).strong().color(p.text_primary));
+
+                                    Frame::none()
+                                        .fill(Color32::from_rgb(18, 38, 58))
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new("ACTIVE GOVERNOR").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                        });
                                 });
 
-                            ui.add_space(8.0);
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    // Tjunction Max badge
+                                    Frame::none()
+                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 8))
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 3.5))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new("Tjunction Max: 105°C").size(9.5).monospace().color(p.text_muted));
+                                        });
 
-                            ui.vertical(|ui| {
-                                ui.set_width(ui.available_width());
+                                    ui.add_space(6.0);
 
-                                // Row 1: Title & Governor on left, PL1 Limit & Tjunction Max on right
-                                ui.horizontal(|ui| {
-                                    let row_w = ui.available_width();
-                                    let right_w = 265.0_f32;
-                                    let left_w = (row_w - right_w - 8.0).max(80.0);
-
-                                    ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                        ui.spacing_mut().item_spacing.x = 8.0;
-                                        ui.label(RichText::new("Central Processing Unit (CPU)").size(15.0).strong().color(p.text_primary));
-
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(18, 38, 58))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new("ACTIVE GOVERNOR").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                    // PL1 Limit badge
+                                    Frame::none()
+                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 3.5))
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 5.0;
+                                                let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                                ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
+                                                let pl1 = snap.cpu_tdp_watts.unwrap_or(12.0);
+                                                ui.label(RichText::new(format!("PL1 Limit: {:.1}W", pl1)).size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                             });
-                                    });
-
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        // Tjunction Max badge
-                                        Frame::none()
-                                            .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 8))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(8.0, 3.5))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new("Tjunction Max: 105°C").size(9.5).monospace().color(p.text_muted));
-                                            });
-
-                                        ui.add_space(6.0);
-
-                                        // PL1 Limit badge
-                                        Frame::none()
-                                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(8.0, 3.5))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 5.0;
-                                                    let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                                    ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
-                                                    let pl1 = snap.cpu_tdp_watts.unwrap_or(12.0);
-                                                    ui.label(RichText::new(format!("PL1 Limit: {:.1}W", pl1)).size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                                });
-                                            });
-                                    });
+                                        });
                                 });
+                            });
 
-                                ui.add_space(3.0);
+                            ui.add_space(3.0);
 
-                                // Row 2: Subtitle spanning the full card width underneath Row 1 without overlap
-                                let uptime_str = format_uptime_hms(get_system_uptime());
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 6.0;
-                                    ui.label(RichText::new(brand).size(10.0).monospace().color(p.text_muted));
-                                    ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
-                                    ui.label(RichText::new(format!("{} Cores / {} Threads", phys, log)).size(10.0).monospace().color(p.text_muted));
-                                    ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
-                                    ui.label(RichText::new("Socket 1").size(10.0).monospace().color(p.text_muted));
-                                    ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
-                                    ui.label(RichText::new(format!("Uptime {}", uptime_str)).size(10.0).monospace().color(p.text_muted));
-                                });
+                            // Row 2: Subtitle spanning the full card width underneath Row 1 without overlap
+                            let uptime_str = format_uptime_hms(get_system_uptime());
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                ui.label(RichText::new(brand).size(10.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
+                                ui.label(RichText::new(format!("{} Cores / {} Threads", phys, log)).size(10.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
+                                ui.label(RichText::new("Socket 1").size(10.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
+                                ui.label(RichText::new(format!("Uptime {}", uptime_str)).size(10.0).monospace().color(p.text_muted));
                             });
                         });
                     });
@@ -10758,7 +10743,7 @@ impl LauncherApp {
                     // Card 1: CPU LOAD
                     render_big_stat_card(
                         &mut cols[0],
-                        crate::lucide::CPU,
+                        crate::lucide::ACTIVITY,
                         "CPU LOAD",
                         &format!("{:.1}", snap.cpu_global_usage),
                         "%",
@@ -12014,13 +11999,8 @@ impl LauncherApp {
                             ui.add_space(8.0);
 
                             ui.horizontal(|ui| {
-                                Frame::none()
-                                    .fill(Color32::from_rgb(18, 28, 42))
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::same(8.0))
-                                    .show(ui, |ui| {
-                                        ui.label(RichText::new(crate::lucide::MONITOR).size(18.0).color(Color32::from_rgb(56, 189, 248)));
-                                    });
+                                ui.label(RichText::new(crate::lucide::MONITOR).size(18.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.add_space(6.0);
 
                                 ui.vertical(|ui| {
                                     ui.label(RichText::new("Embedded Internal Panel").size(12.0).strong().color(p.text_primary));
@@ -12360,13 +12340,8 @@ impl LauncherApp {
                         .show(&mut cols[0], |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
-                                Frame::none()
-                                    .fill(Color32::from_rgb(18, 28, 42))
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::same(6.0))
-                                    .show(ui, |ui| {
-                                        ui.label(RichText::new(crate::lucide::STORAGE).size(13.0).color(Color32::from_rgb(56, 189, 248)));
-                                    });
+                                ui.label(RichText::new(crate::lucide::STORAGE).size(15.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.add_space(4.0);
 
                                 ui.vertical(|ui| {
                                     ui.horizontal(|ui| {
@@ -12442,13 +12417,8 @@ impl LauncherApp {
                         .show(&mut cols[1], |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
-                                Frame::none()
-                                    .fill(Color32::from_rgb(18, 28, 42))
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::same(6.0))
-                                    .show(ui, |ui| {
-                                        ui.label(RichText::new(crate::lucide::HARD_DRIVE).size(13.0).color(Color32::from_rgb(56, 189, 248)));
-                                    });
+                                ui.label(RichText::new(crate::lucide::HARD_DRIVE).size(15.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.add_space(4.0);
 
                                 ui.vertical(|ui| {
                                     ui.horizontal(|ui| {

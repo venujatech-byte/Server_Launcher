@@ -15409,7 +15409,12 @@ impl LauncherApp {
 
                             ui.add_space(10.0);
 
-                            // 3 Columns
+                            // 3 Equal-Sized Conservation Circuit Cards
+                            let card_height_id = ui.make_persistent_id("conservation_circuit_card_h");
+                            let target_card_h: f32 = ui.data(|d| d.get_temp::<f32>(card_height_id)).unwrap_or(124.0);
+                            let mut observed_max_inner_h: f32 = 104.0;
+                            let needed_inner_h = (target_card_h - 20.0).max(104.0);
+
                             ui.columns(3, |cols| {
                                 // Col 1: Conservation Threshold
                                 Frame::none()
@@ -15419,7 +15424,7 @@ impl LauncherApp {
                                     .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                     .show(&mut cols[0], |ui| {
                                         ui.set_width(ui.available_width());
-                                        ui.set_min_height(108.0);
+                                        let content_start_y = ui.cursor().min.y;
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new("Conservation Threshold").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -15455,6 +15460,12 @@ impl LauncherApp {
                                                 ui.label(RichText::new("● 80% OPTIMAL").size(7.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                             });
                                         });
+
+                                        let inner_h = ui.cursor().min.y - content_start_y;
+                                        observed_max_inner_h = observed_max_inner_h.max(inner_h);
+                                        if inner_h < needed_inner_h {
+                                            ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
+                                        }
                                     });
 
                                 // Col 2: Rapid Charge Rate
@@ -15465,7 +15476,7 @@ impl LauncherApp {
                                     .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                     .show(&mut cols[1], |ui| {
                                         ui.set_width(ui.available_width());
-                                        ui.set_min_height(108.0);
+                                        let content_start_y = ui.cursor().min.y;
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new("Rapid Charge Rate").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -15475,18 +15486,47 @@ impl LauncherApp {
                                         ui.add_space(4.0);
                                         ui.label(RichText::new("High-amperage ramp to reach 80% capacity within 45 minutes. Increased thermal load.").size(8.5).color(p.text_muted));
                                         ui.add_space(8.0);
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(14, 20, 36))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 4.0;
-                                                    ui.label(RichText::new(crate::lucide::HELP_CIRCLE).size(10.0).color(Color32::from_rgb(56, 189, 248)));
-                                                    ui.label(RichText::new("Suspended: Bypass maintains equilibrium.").size(8.0).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                });
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("Charge Delivery Rate").size(8.5).monospace().color(p.text_muted));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                let (rate_text, rate_color) = if self.power_rapid_charge {
+                                                    ("65W EXPRESS", Color32::from_rgb(251, 146, 60))
+                                                } else {
+                                                    ("45W STANDARD", Color32::from_rgb(56, 189, 248))
+                                                };
+                                                ui.label(RichText::new(rate_text).size(9.5).monospace().strong().color(rate_color));
                                             });
+                                        });
+                                        ui.add_space(3.0);
+                                        let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 6.0), egui::Sense::hover());
+                                        ui.painter().rect_filled(bar_r, Rounding::same(3.0), Color32::from_rgb(14, 20, 36));
+                                        let (fill_pct, bar_color) = if self.power_rapid_charge {
+                                            (0.95_f32, Color32::from_rgb(251, 146, 60))
+                                        } else {
+                                            (0.60_f32, Color32::from_rgb(56, 189, 248))
+                                        };
+                                        let fill_w = bar_r.width() * fill_pct;
+                                        ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(3.0), bar_color);
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("STANDARD").size(7.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.label(RichText::new("THERMAL SAFEGUARD").size(7.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                                ui.add_space(6.0);
+                                                let status_tag = if self.power_rapid_charge {
+                                                    RichText::new("● RAPID ACTIVE").size(7.5).monospace().strong().color(Color32::from_rgb(251, 146, 60))
+                                                } else {
+                                                    RichText::new("● BYPASS BALANCED").size(7.5).monospace().strong().color(Color32::from_rgb(56, 189, 248))
+                                                };
+                                                ui.label(status_tag);
+                                            });
+                                        });
+
+                                        let inner_h = ui.cursor().min.y - content_start_y;
+                                        observed_max_inner_h = observed_max_inner_h.max(inner_h);
+                                        if inner_h < needed_inner_h {
+                                            ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
+                                        }
                                     });
 
                                 // Col 3: USB Always-On Standby
@@ -15497,7 +15537,7 @@ impl LauncherApp {
                                     .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                     .show(&mut cols[2], |ui| {
                                         ui.set_width(ui.available_width());
-                                        ui.set_min_height(108.0);
+                                        let content_start_y = ui.cursor().min.y;
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new("USB Always-On Standby").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -15506,22 +15546,54 @@ impl LauncherApp {
                                         });
                                         ui.add_space(4.0);
                                         ui.label(RichText::new("Permits Type-C and Type-A downstream ports to charge external devices when suspended.").size(8.5).color(p.text_muted));
-                                        ui.add_space(10.0);
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(14, 20, 36))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Bus Port Cap").size(8.5).monospace().color(p.text_muted));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new("5.0V @ 1.5A (7.5W max)").size(8.5).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
-                                                    });
-                                                });
+                                        ui.add_space(8.0);
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("Bus Port Cap").size(8.5).monospace().color(p.text_muted));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                let (cap_text, cap_color) = if self.power_usb_always_on {
+                                                    ("5.0V @ 1.5A (7.5W)", Color32::from_rgb(56, 189, 248))
+                                                } else {
+                                                    ("PORT SUSPENDED", Color32::from_rgb(100, 116, 139))
+                                                };
+                                                ui.label(RichText::new(cap_text).size(9.5).monospace().strong().color(cap_color));
                                             });
+                                        });
+                                        ui.add_space(3.0);
+                                        let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 6.0), egui::Sense::hover());
+                                        ui.painter().rect_filled(bar_r, Rounding::same(3.0), Color32::from_rgb(14, 20, 36));
+                                        let (fill_pct, bar_color) = if self.power_usb_always_on {
+                                            (0.75_f32, Color32::from_rgb(56, 189, 248))
+                                        } else {
+                                            (0.0_f32, Color32::from_rgb(100, 116, 139))
+                                        };
+                                        let fill_w = bar_r.width() * fill_pct;
+                                        if fill_w > 0.0 {
+                                            ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(3.0), bar_color);
+                                        }
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("LOW POWER").size(7.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.label(RichText::new("PORT PROTECT").size(7.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                                ui.add_space(6.0);
+                                                let status_tag = if self.power_usb_always_on {
+                                                    RichText::new("● 7.5W FAST CAP").size(7.5).monospace().strong().color(Color32::from_rgb(56, 189, 248))
+                                                } else {
+                                                    RichText::new("● STANDBY OFF").size(7.5).monospace().strong().color(Color32::from_rgb(100, 116, 139))
+                                                };
+                                                ui.label(status_tag);
+                                            });
+                                        });
+
+                                        let inner_h = ui.cursor().min.y - content_start_y;
+                                        observed_max_inner_h = observed_max_inner_h.max(inner_h);
+                                        if inner_h < needed_inner_h {
+                                            ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
+                                        }
                                     });
                             });
+
+                            ui.data_mut(|d| d.insert_temp(card_height_id, observed_max_inner_h + 20.0));
                         });
                 }
 

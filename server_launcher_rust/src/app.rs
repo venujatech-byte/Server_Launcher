@@ -13145,7 +13145,7 @@ impl LauncherApp {
                                         let dot_col = if is_selected { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(100, 116, 139) };
                                         ui.painter().circle_filled(dot_rect.center(), 2.8, dot_col);
                                     });
-                                    ui.label(RichText::new(format!("{} • {} {:.1} GB", if d_is_ssd { "NVMe SSD" } else { "Block Device" }, d_model, d_phys_gb)).size(9.5).monospace().color(p.text_muted));
+                                    ui.add(egui::Label::new(RichText::new(format!("{} • {} {:.1} GB", if d_is_ssd { "NVMe SSD" } else { "Block Device" }, d_model, d_phys_gb)).size(9.5).monospace().color(p.text_muted)).truncate());
                                 });
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -13174,13 +13174,41 @@ impl LauncherApp {
                             });
 
                             ui.add_space(8.0);
+                            let total_w = ui.available_width();
+                            let right_w = if is_mounted { 160.0 } else { 110.0 };
+                            let left_w = (total_w - right_w - 8.0).max(80.0);
+
                             ui.horizontal(|ui| {
-                                let mnt_label = if is_mounted {
-                                    format!("Mount: {} ({})", mount_pt, d_fs)
+                                let display_mnt_text = if is_mounted {
+                                    if mount_pt.len() > 22 {
+                                        let short_path = if let Some(last_slash) = mount_pt.rfind('/') {
+                                            format!("…{}", &mount_pt[last_slash..])
+                                        } else {
+                                            format!("…{}", &mount_pt[mount_pt.len().saturating_sub(16)..])
+                                        };
+                                        format!("Mount: {} ({})", short_path, d_fs)
+                                    } else {
+                                        format!("Mount: {} ({})", mount_pt, d_fs)
+                                    }
                                 } else {
                                     format!("Partition: /dev/{}1 (Block Storage)", d_name)
                                 };
-                                ui.label(RichText::new(mnt_label).size(10.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+
+                                ui.allocate_ui_with_layout(egui::vec2(left_w, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                    let mnt_lbl = ui.add(
+                                        egui::Label::new(
+                                            RichText::new(&display_mnt_text)
+                                                .size(10.0)
+                                                .monospace()
+                                                .color(Color32::from_rgb(56, 189, 248)),
+                                        )
+                                        .truncate(),
+                                    );
+                                    if is_mounted {
+                                        mnt_lbl.on_hover_text(format!("Mount: {} ({})", mount_pt, d_fs));
+                                    }
+                                });
+
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     if is_mounted {
                                         ui.label(RichText::new(format!("{:.1} GB / {:.1} GB ({:.0}%)", d_used, d_tot, d_pct)).size(10.0).monospace().color(p.text_secondary));
@@ -13253,8 +13281,13 @@ impl LauncherApp {
                             });
 
                             ui.add_space(8.0);
+                            let total_w = ui.available_width();
+                            let right_w = 110.0;
+                            let left_w = (total_w - right_w - 8.0).max(80.0);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("Channel: Auxiliary Expansion Bus").size(10.0).monospace().color(p.text_muted));
+                                ui.allocate_ui_with_layout(egui::vec2(left_w, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                    ui.add(egui::Label::new(RichText::new("Channel: Auxiliary Expansion Bus").size(10.0).monospace().color(p.text_muted)).truncate());
+                                });
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new("0.0 GB (Ready)").size(10.0).monospace().color(p.text_muted));
                                 });

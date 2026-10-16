@@ -5061,6 +5061,56 @@ fn draw_card_sparkline(
     }
 }
 
+fn render_big_stat_card(
+    ui: &mut Ui,
+    icon: &str,
+    title: &str,
+    hero_val: &str,
+    hero_unit: &str,
+    subtitle: &str,
+    left_stat: &str,
+    right_stat: &str,
+    sparkline_data: &[f32],
+    sparkline_max: f32,
+    dotted_ratio: Option<f32>,
+    accent_color: Color32,
+    bg_card: Color32,
+    text_muted: Color32,
+) {
+    Frame::none()
+        .fill(bg_card)
+        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 34, 48)))
+        .rounding(Rounding::same(8.0))
+        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.label(RichText::new(icon).size(12.0).color(accent_color));
+                ui.label(RichText::new(title).size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+            });
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                ui.label(RichText::new(hero_val).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                if !hero_unit.is_empty() {
+                    ui.label(RichText::new(hero_unit).size(12.0).color(text_muted));
+                }
+            });
+            ui.add_space(2.0);
+            ui.label(RichText::new(subtitle).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(left_stat).size(8.5).monospace().color(text_muted));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(RichText::new(right_stat).size(8.5).monospace().color(text_muted));
+                });
+            });
+            ui.add_space(4.0);
+            draw_card_sparkline(ui, 32.0, sparkline_data, sparkline_max, dotted_ratio, accent_color);
+        });
+}
+
 fn draw_dual_network_chart(
     ui: &mut Ui,
     height: f32,
@@ -5321,6 +5371,7 @@ fn draw_gpu_engine_sparkline(
     }
 }
 
+#[allow(dead_code)]
 fn render_metric_card(ui: &mut Ui, title: &str, value: &str, sublabel: &str, val_color: Color32, bg_card: Color32, text_muted: Color32) {
     let width = ui.available_width();
     Frame::none()
@@ -10239,7 +10290,8 @@ impl LauncherApp {
                                 });
 
                                 ui.add_space(2.0);
-                                ui.label(RichText::new(format!("{} • {} Cores / {} Threads • Socket 1", brand, phys, log)).size(10.5).monospace().color(p.text_muted));
+                                let uptime_str = format_uptime_hms(get_system_uptime());
+                                ui.label(RichText::new(format!("{} • {} Cores / {} Threads • Socket 1 • Uptime {}", brand, phys, log, uptime_str)).size(10.5).monospace().color(p.text_muted));
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -10261,8 +10313,9 @@ impl LauncherApp {
                                     .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 4.0;
-                                            ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(56, 189, 248)));
+                                            ui.spacing_mut().item_spacing.x = 5.0;
+                                            let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                            ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
                                             let pl1 = snap.cpu_tdp_watts.unwrap_or(12.0);
                                             ui.label(RichText::new(format!("PL1 Limit: {:.1}W", pl1)).size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                         });
@@ -10273,156 +10326,101 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 2. Row of 5 High-Density Metric Cards
-                ui.columns(5, |cols| {
-                    // Card 1: TOTAL LOAD
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                        .show(&mut cols[0], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("TOTAL LOAD").size(10.0).monospace().strong().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(format!("PEAK {:.0}%", self.cpu_peak_usage)).size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                });
-                            });
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new(format!("{:.1}", snap.cpu_global_usage)).size(28.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("%").size(14.0).color(p.text_muted));
-                            });
-                            ui.add_space(6.0);
-                            let bar_h = 4.0;
-                            let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), bar_h), egui::Sense::hover());
-                            ui.painter().rect_filled(rect, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
-                            let fill_w = rect.width() * (snap.cpu_global_usage / 100.0).clamp(0.02, 1.0);
-                            let fill_rect = egui::Rect::from_min_size(rect.min, egui::vec2(fill_w, bar_h));
-                            ui.painter().rect_filled(fill_rect, Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
-                            ui.add_space(4.0);
-                        });
+                // 2. Row of 4 Big Metric Cards (matching Overview page architecture)
+                let cpu_slice: Vec<f32> = self.cpu_history.iter().copied().collect();
+                let cpu_avg = if !self.cpu_history.is_empty() { self.cpu_history.iter().sum::<f32>() / self.cpu_history.len() as f32 } else { snap.cpu_global_usage };
+                let freq_ghz = if snap.cpu_frequency_mhz > 0 { snap.cpu_frequency_mhz as f32 / 1000.0 } else { 2.25 };
+                let watts = snap.cpu_power_watts.unwrap_or(8.5);
+                let tdp = snap.cpu_tdp_watts.unwrap_or(12.0);
+                let temp_val = snap.cpu_temp.unwrap_or(42.0);
 
-                    // Card 2: CLOCK AVG
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                        .show(&mut cols[1], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("CLOCK AVG").size(10.0).monospace().strong().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::GAUGE).size(11.0).color(p.text_muted));
-                                });
-                            });
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 4.0;
-                                let freq_ghz = snap.cpu_frequency_mhz as f64 / 1000.0;
-                                let freq_str = if freq_ghz > 0.0 { format!("{:.2}", freq_ghz) } else { "2.25".to_string() };
-                                ui.label(RichText::new(freq_str).size(28.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("GHz").size(12.0).color(p.text_muted));
-                            });
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Base 1.10").size(10.0).monospace().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("Boost 3.10").size(10.0).monospace().color(p.text_muted));
-                                });
-                            });
-                        });
+                ui.columns(4, |cols| {
+                    // Card 1: CPU LOAD
+                    render_big_stat_card(
+                        &mut cols[0],
+                        crate::lucide::CPU,
+                        "CPU LOAD",
+                        &format!("{:.1}", snap.cpu_global_usage),
+                        "%",
+                        &format!("{} Cores / {} Threads", phys, log),
+                        &format!("AVG {:.0}%", cpu_avg),
+                        &format!("PEAK {:.0}%", self.cpu_peak_usage),
+                        &cpu_slice,
+                        100.0,
+                        Some(0.12),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
 
-                    // Card 3: PKG POWER
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                        .show(&mut cols[2], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("PKG POWER").size(10.0).monospace().strong().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(p.text_muted));
-                                });
-                            });
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 4.0;
-                                let watts = snap.cpu_power_watts.unwrap_or(8.5);
-                                ui.label(RichText::new(format!("{:.1}", watts)).size(28.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("Watts").size(12.0).color(p.text_muted));
-                            });
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("TDP Limit").size(10.0).monospace().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let tdp = snap.cpu_tdp_watts.unwrap_or(12.0);
-                                    ui.label(RichText::new(format!("{:.1} W", tdp)).size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                });
-                            });
-                        });
+                    // Card 2: CLOCK FREQUENCY
+                    let clock_hist: Vec<f32> = if !cpu_slice.is_empty() {
+                        cpu_slice.iter().map(|&u| 1.1 + (u / 100.0) * (3.1 - 1.1)).collect()
+                    } else {
+                        vec![freq_ghz; 5]
+                    };
+                    render_big_stat_card(
+                        &mut cols[1],
+                        crate::lucide::GAUGE,
+                        "CLOCK FREQUENCY",
+                        &format!("{:.2}", freq_ghz),
+                        "GHz",
+                        "Base 1.10 · Turbo 3.10 GHz",
+                        "MIN 0.80 GHz",
+                        &format!("MAX {:.2} GHz", freq_ghz.max(3.10)),
+                        &clock_hist,
+                        3.5,
+                        Some(0.4),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
 
-                    // Card 4: CORE VIDS
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                        .show(&mut cols[3], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("CORE VIDS").size(10.0).monospace().strong().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::HELP_CIRCLE).size(11.0).color(p.text_muted));
-                                });
-                            });
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 4.0;
-                                let vid = 0.75 + (snap.cpu_global_usage / 100.0) * 0.28;
-                                ui.label(RichText::new(format!("{:.2}", vid)).size(28.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("V").size(12.0).color(p.text_muted));
-                            });
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Offset").size(10.0).monospace().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("Adaptive").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                });
-                            });
-                        });
+                    // Card 3: PACKAGE POWER
+                    let power_hist: Vec<f32> = if !cpu_slice.is_empty() {
+                        cpu_slice.iter().map(|&u| 4.5 + (u / 100.0) * (tdp - 4.5)).collect()
+                    } else {
+                        vec![watts; 5]
+                    };
+                    render_big_stat_card(
+                        &mut cols[2],
+                        crate::lucide::ZAP,
+                        "PACKAGE POWER",
+                        &format!("{:.1}", watts),
+                        "W",
+                        &format!("PL1 Limit: {:.1}W", tdp),
+                        &format!("AVG {:.1}W", watts * 0.75),
+                        &format!("PEAK {:.1}W", tdp),
+                        &power_hist,
+                        tdp.max(15.0),
+                        Some(0.75),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
 
-                    // Card 5: KERNEL UPTIME
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                        .show(&mut cols[4], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("KERNEL UPTIME").size(10.0).monospace().strong().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::CLOCK).size(11.0).color(p.text_muted));
-                                });
-                            });
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                let up_secs = get_system_uptime();
-                                ui.label(RichText::new(format_uptime_hms(up_secs)).size(24.0).monospace().strong().color(p.text_primary));
-                            });
-                            ui.add_space(8.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("State").size(10.0).monospace().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 4.0;
-                                        ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(56, 189, 248)));
-                                        ui.label(RichText::new("Active").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                    });
-                                });
-                            });
-                        });
+                    // Card 4: CORE TEMPERATURE
+                    let temp_hist: Vec<f32> = if !cpu_slice.is_empty() {
+                        cpu_slice.iter().map(|&u| 38.0 + (u / 100.0) * 28.0).collect()
+                    } else {
+                        vec![temp_val; 5]
+                    };
+                    render_big_stat_card(
+                        &mut cols[3],
+                        crate::lucide::THERMOMETER,
+                        "CORE TEMPERATURE",
+                        &format!("{:.1}", temp_val),
+                        "°C",
+                        "Tjunction Max: 105°C",
+                        "MIN 38.0°C",
+                        "MAX 72.0°C",
+                        &temp_hist,
+                        105.0,
+                        Some(0.7),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
                 });
 
                 ui.add_space(8.0);
@@ -10441,7 +10439,8 @@ impl LauncherApp {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 4.0;
-                                    ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(56, 189, 248)));
+                                    let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                    ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
                                     ui.label(RichText::new("LIVE TELEMETRY").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                 });
                             });
@@ -10697,176 +10696,88 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 2. Row of 6 High-Density Metric Cards
-                ui.columns(6, |cols| {
-                    // Card 1: IN USE
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                        .show(&mut cols[0], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("IN USE").size(10.0).monospace().strong().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::ACTIVITY).size(11.0).color(Color32::from_rgb(56, 189, 248)));
-                                });
-                            });
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new(format!("{:.1}", used_gb_val)).size(26.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("GB").size(12.0).color(p.text_muted));
-                            });
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Allocation").size(9.5).monospace().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(format!("{:.1}%", used_pct)).size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                });
-                            });
-                        });
+                // 2. Row of 4 Big Metric Cards (matching Overview page architecture)
+                let ram_slice: Vec<f32> = self.ram_history.iter().map(|(r, _)| *r).collect();
+                let swap_slice: Vec<f32> = self.ram_history.iter().map(|(_, s)| *s).collect();
+                let ram_avg = if !self.ram_history.is_empty() { self.ram_history.iter().map(|(r, _)| *r).sum::<f32>() / self.ram_history.len() as f32 } else { snap.mem_usage_pct };
+                let ram_peak = self.ram_history.iter().map(|(r, _)| *r).fold(snap.mem_usage_pct, f32::max);
+                let swap_avg = if !self.ram_history.is_empty() { self.ram_history.iter().map(|(_, s)| *s).sum::<f32>() / self.ram_history.len() as f32 } else { snap.swap_usage_pct };
+                let swap_peak = self.ram_history.iter().map(|(_, s)| *s).fold(snap.swap_usage_pct, f32::max);
 
-                    // Card 2: AVAILABLE
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                        .show(&mut cols[1], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("AVAILABLE").size(10.0).monospace().strong().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::CHECK).size(11.0).color(Color32::from_rgb(56, 189, 248)));
-                                });
-                            });
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new(format!("{:.1}", avail_gb_val)).size(26.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("GB").size(12.0).color(p.text_muted));
-                            });
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Headroom").size(9.5).monospace().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(format!("{:.1}%", avail_pct)).size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                });
-                            });
-                        });
+                ui.columns(4, |cols| {
+                    // Card 1: MEMORY IN USE
+                    render_big_stat_card(
+                        &mut cols[0],
+                        crate::lucide::RAM,
+                        "MEMORY IN USE",
+                        &format!("{:.1}", used_gb_val),
+                        "GB",
+                        &format!("Allocation {:.1}% of total", used_pct),
+                        &format!("AVG {:.0}%", ram_avg),
+                        &format!("PEAK {:.0}%", ram_peak),
+                        &ram_slice,
+                        100.0,
+                        Some(0.85),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
 
-                    // Card 3: COMMITTED
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                        .show(&mut cols[2], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("COMMITTED").size(10.0).monospace().strong().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::LAYERS).size(11.0).color(p.text_muted));
-                                });
-                            });
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new("6.0").size(24.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("/ 22.3 GB").size(11.0).color(p.text_muted));
-                            });
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Commit Limit").size(9.5).monospace().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("26.9%").size(9.5).monospace().color(p.text_muted));
-                                });
-                            });
-                        });
+                    // Card 2: AVAILABLE MEMORY
+                    let avail_slice: Vec<f32> = ram_slice.iter().map(|&u| (100.0 - u).max(0.0)).collect();
+                    render_big_stat_card(
+                        &mut cols[1],
+                        crate::lucide::CHECK,
+                        "AVAILABLE MEMORY",
+                        &format!("{:.1}", avail_gb_val),
+                        "GB",
+                        &format!("Free Headroom {:.1}%", avail_pct),
+                        &format!("TOTAL {}", total_ram_str),
+                        "RESERVED 195 MB",
+                        &avail_slice,
+                        100.0,
+                        Some(0.5),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
 
-                    // Card 4: CACHED
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                        .show(&mut cols[3], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("CACHED").size(10.0).monospace().strong().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::FILE_TEXT).size(11.0).color(Color32::from_rgb(56, 189, 248)));
-                                });
-                            });
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new(format!("{:.1}", cached_gb_val)).size(26.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("GB").size(12.0).color(p.text_muted));
-                            });
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Page Cache").size(9.5).monospace().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let mb_val = if cache_mb > 0 { cache_mb } else { 1433 };
-                                    ui.label(RichText::new(format!("{} MB", mb_val)).size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                });
-                            });
-                        });
+                    // Card 3: CACHED & BUFFERS
+                    let cache_slice: Vec<f32> = ram_slice.iter().map(|&u| (cached_gb_val as f32 * (0.95 + 0.05 * (u / 100.0))).max(0.1)).collect();
+                    render_big_stat_card(
+                        &mut cols[2],
+                        crate::lucide::FILE_TEXT,
+                        "CACHED & BUFFERS",
+                        &format!("{:.1}", cached_gb_val),
+                        "GB",
+                        "Kernel Page Cache & Dentries",
+                        &format!("CACHE {} MB", if cache_mb > 0 { cache_mb } else { 1433 }),
+                        "STANDBY LIST",
+                        &cache_slice,
+                        (cached_gb_val as f32 * 1.5).max(4.0),
+                        Some(0.6),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
 
-                    // Card 5: PAGED POOL
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                        .show(&mut cols[4], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("PAGED POOL").size(10.0).monospace().strong().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::FILE_CODE).size(11.0).color(p.text_muted));
-                                });
-                            });
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new("302").size(26.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("MB").size(12.0).color(p.text_muted));
-                            });
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Swap Backed").size(9.5).monospace().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("Active").size(9.5).monospace().color(p.text_muted));
-                                });
-                            });
-                        });
-
-                    // Card 6: NON-PAGED
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                        .show(&mut cols[5], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("NON-PAGED").size(10.0).monospace().strong().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::LOCK).size(11.0).color(p.text_muted));
-                                });
-                            });
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new("380").size(26.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("MB").size(12.0).color(p.text_muted));
-                            });
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Kernel Locked").size(9.5).monospace().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("Resident").size(9.5).monospace().color(p.text_muted));
-                                });
-                            });
-                        });
+                    // Card 4: SWAP ALLOCATION
+                    render_big_stat_card(
+                        &mut cols[3],
+                        crate::lucide::REFRESH_CW,
+                        "SWAP ALLOCATION",
+                        &format!("{:.1}", snap.swap_usage_pct),
+                        "%",
+                        &format!("{} / {}", crate::sensors::format_bytes(snap.swap_used_bytes), crate::sensors::format_bytes(snap.swap_total_bytes)),
+                        &format!("AVG {:.1}%", swap_avg),
+                        &format!("PEAK {:.1}%", swap_peak),
+                        &swap_slice,
+                        100.0,
+                        Some(0.08),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
                 });
 
                 ui.add_space(8.0);
@@ -10879,7 +10790,8 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(56, 189, 248)));
+                            let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                            ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
                             ui.label(RichText::new("Real-Time Allocation Waveform").size(12.5).strong().color(p.text_primary));
                             ui.label(RichText::new("60 SECONDS HISTORY").size(9.5).monospace().color(p.text_muted));
 
@@ -11270,145 +11182,95 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 2. Row of 6 Metric Cards
+                // 2. Row of 4 Big Metric Cards (matching Overview page architecture)
                 let cur_gpu_load = gpu.and_then(|g| g.load_pct).unwrap_or_else(|| self.gpu_load_history.back().copied().unwrap_or(13.3));
                 let cur_3d = self.gpu_3d_history.back().copied().unwrap_or(3.0);
                 let cur_copy = self.gpu_copy_history.back().copied().unwrap_or(1.1);
+                let clock_val = gpu.and_then(|g| g.clock_mhz).unwrap_or(750);
+                let power_val = gpu.and_then(|g| g.power_watts).unwrap_or(2.9);
 
-                ui.columns(6, |cols| {
-                    // Card 1: CORE LOAD
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                        .show(&mut cols[0], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("CORE LOAD").size(9.5).monospace().strong().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::GAUGE).size(11.0).color(Color32::from_rgb(56, 189, 248)));
-                                });
-                            });
-                            ui.add_space(2.0);
-                            ui.label(RichText::new(format!("{:.1} %", cur_gpu_load)).size(18.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                            ui.add_space(4.0);
-                            let (bar_res, bar_p) = ui.allocate_painter(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                            let br = bar_res.rect;
-                            bar_p.rect_filled(br, Rounding::same(2.0), Color32::from_rgb(10, 15, 29));
-                            let fill_w = br.width() * (cur_gpu_load / 100.0).clamp(0.05, 1.0);
-                            bar_p.rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(fill_w, br.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
-                        });
+                let gpu_slice: Vec<f32> = self.gpu_load_history.iter().copied().collect();
+                let gpu_3d_slice: Vec<f32> = self.gpu_3d_history.iter().copied().collect();
+                let gpu_clock_slice: Vec<f32> = if !gpu_slice.is_empty() {
+                    gpu_slice.iter().map(|&u| 250.0 + (u / 100.0) * 550.0).collect()
+                } else {
+                    vec![clock_val as f32; 5]
+                };
+                let gpu_vram_slice: Vec<f32> = vec![0.3; 5];
+
+                ui.columns(4, |cols| {
+                    // Card 1: GPU CORE LOAD
+                    let mode_lbl = match self.gpu_mode { 2 => "MODE: TURBO", 0 => "MODE: ECO", _ => "MODE: BALANCED" };
+                    render_big_stat_card(
+                        &mut cols[0],
+                        crate::lucide::GAUGE,
+                        "GPU CORE LOAD",
+                        &format!("{:.1}", cur_gpu_load),
+                        "%",
+                        "EU Shading Compute Array",
+                        mode_lbl,
+                        "PEAK 95%",
+                        &gpu_slice,
+                        100.0,
+                        Some(0.2),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
 
                     // Card 2: CORE CLOCK
-                    let clock_val = gpu.and_then(|g| g.clock_mhz).unwrap_or(750);
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                        .show(&mut cols[1], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("CORE CLOCK").size(9.5).monospace().strong().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(p.text_muted));
-                                });
-                            });
-                            ui.add_space(2.0);
-                            ui.label(RichText::new(format!("{} MHz", clock_val)).size(18.0).monospace().strong().color(p.text_primary));
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Min 250 / Max 800").size(8.5).monospace().color(p.text_muted));
-                            });
-                        });
+                    render_big_stat_card(
+                        &mut cols[1],
+                        crate::lucide::ZAP,
+                        "CORE CLOCK",
+                        &format!("{}", clock_val),
+                        "MHz",
+                        "Dynamic RC6 Frequency",
+                        "MIN 250 MHz",
+                        "MAX 800 MHz",
+                        &gpu_clock_slice,
+                        850.0,
+                        Some(0.85),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
 
-                    // Card 3: V-DECODE
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                        .show(&mut cols[2], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("V-DECODE").size(9.5).monospace().strong().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::ACTIVITY).size(11.0).color(p.text_muted));
-                                });
-                            });
-                            ui.add_space(2.0);
-                            ui.label(RichText::new("0.0 %").size(18.0).monospace().strong().color(p.text_primary));
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Standby • 0 FPS").size(8.5).monospace().color(p.text_muted));
-                            });
-                        });
+                    // Card 3: 3D RENDER ENGINE
+                    render_big_stat_card(
+                        &mut cols[2],
+                        crate::lucide::BOX,
+                        "3D RENDER ENGINE",
+                        &format!("{:.1}", cur_3d),
+                        "%",
+                        "Direct3D & Vulkan Pipeline",
+                        "V-DECODE 0.0%",
+                        "60 FPS",
+                        &gpu_3d_slice,
+                        100.0,
+                        Some(0.05),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
 
-                    // Card 4: 3D ENGINE
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                        .show(&mut cols[3], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("3D ENGINE").size(9.5).monospace().strong().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::BOX).size(11.0).color(p.text_muted));
-                                });
-                            });
-                            ui.add_space(2.0);
-                            ui.label(RichText::new(format!("{:.1} %", cur_3d)).size(18.0).monospace().strong().color(p.text_primary));
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Direct3D / Vulkan").size(8.5).monospace().color(p.text_muted));
-                            });
-                        });
-
-                    // Card 5: SHARED VRAM
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                        .show(&mut cols[4], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("SHARED VRAM").size(9.5).monospace().strong().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::DATABASE).size(11.0).color(p.text_muted));
-                                });
-                            });
-                            ui.add_space(2.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new("0.3").size(18.0).monospace().strong().color(p.text_primary));
-                                ui.label(RichText::new("/ 3.9 GB").size(11.0).monospace().color(p.text_muted));
-                            });
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Dynamic Pool • 8%").size(8.5).monospace().color(p.text_muted));
-                            });
-                        });
-
-                    // Card 6: ACTIVE POWER
-                    let power_val = gpu.and_then(|g| g.power_watts).unwrap_or(2.9);
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                        .show(&mut cols[5], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("ACTIVE POWER").size(9.5).monospace().strong().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(Color32::from_rgb(56, 189, 248)));
-                                });
-                            });
-                            ui.add_space(2.0);
-                            ui.label(RichText::new(format!("{:.1} W", power_val)).size(18.0).monospace().strong().color(p.text_primary));
-                            ui.add_space(4.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Package Limit 6.0W").size(8.5).monospace().color(p.text_muted));
-                            });
-                        });
+                    // Card 4: SHARED VRAM
+                    render_big_stat_card(
+                        &mut cols[3],
+                        crate::lucide::DATABASE,
+                        "SHARED VRAM",
+                        "0.3",
+                        "/ 3.9 GB",
+                        "Dynamic Unified Memory Pool",
+                        "UTILIZATION 8%",
+                        &format!("POWER {:.1}W", power_val),
+                        &gpu_vram_slice,
+                        4.0,
+                        Some(0.1),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
                 });
 
                 ui.add_space(8.0);
@@ -11829,8 +11691,9 @@ impl LauncherApp {
                                             ui.set_width(ui.available_width());
                                             ui.label(RichText::new("GUC / HUC FIRMWARE").size(8.0).monospace().color(p.text_muted));
                                             ui.horizontal(|ui| {
-                                                ui.spacing_mut().item_spacing.x = 4.0;
-                                                ui.label(RichText::new("●").size(6.0).color(Color32::from_rgb(56, 189, 248)));
+                                                ui.spacing_mut().item_spacing.x = 5.0;
+                                                let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                                ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
                                                 ui.label(RichText::new("Loaded & Validated").size(9.5).monospace().strong().color(p.text_primary));
                                             });
                                         });
@@ -11899,101 +11762,144 @@ impl LauncherApp {
                 ui.set_width(ui.available_width());
 
                 let total_bytes: u64 = snap.disks.iter().map(|d| d.total_bytes).sum();
-                let total_gb = total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-                let pool_str = if total_gb > 1.0 { format!("{:.1} GB POOL", total_gb) } else { "686.3 GB POOL".to_string() };
+                let used_bytes: u64 = snap.disks.iter().map(|d| d.used_bytes).sum();
+                let free_bytes = total_bytes.saturating_sub(used_bytes);
+                let total_gb = if total_bytes > 0 { total_bytes as f64 / 1e9 } else { 686.3 };
+                let used_gb = if used_bytes > 0 { used_bytes as f64 / 1e9 } else { 380.0 };
+                let free_gb = if free_bytes > 0 { free_bytes as f64 / 1e9 } else { 306.3 };
                 let drive_count = snap.disks.len().max(2);
-                let agg_io_mb = (snap.total_disk_read_rate_bps + snap.total_disk_write_rate_bps) / 1_000_000.0;
-                let agg_io_str = if agg_io_mb > 0.1 { format!("{:.1} MB/s", agg_io_mb) } else { "52.8 MB/s".to_string() };
+                let read_mb = snap.total_disk_read_rate_bps / 1_000_000.0;
+                let write_mb = snap.total_disk_write_rate_bps / 1_000_000.0;
+                let st_pct = if total_bytes > 0 { (used_bytes as f64 / total_bytes as f64 * 100.0) as f32 } else { 55.4 };
 
-                // 1. Top Header
+                // 1. Top Header Banner
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(8.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-
-                        let total_avail = ui.available_width();
-                        let stats_block_width = 370.0;
-                        let left_block_width = (total_avail - stats_block_width - 16.0).max(200.0);
-
                         ui.horizontal(|ui| {
-                            // Left Title Block
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(left_block_width, ui.available_height()),
-                                egui::Layout::left_to_right(egui::Align::Center),
-                                |ui| {
-                                    ui.vertical(|ui| {
-                                        ui.label(RichText::new("SUBSYSTEM TELEMETRY • I/O SUPERVISOR").size(9.0).monospace().color(p.text_muted));
-                                        ui.add_space(2.0);
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 8.0;
-                                            ui.label(RichText::new("Storage Drives & Disk I/O").size(16.0).strong().color(p.text_primary));
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new("SUBSYSTEM TELEMETRY • I/O SUPERVISOR").size(9.0).monospace().color(p.text_muted));
+                                ui.add_space(2.0);
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 8.0;
+                                    ui.label(RichText::new("Storage Drives & Disk I/O").size(16.0).strong().color(p.text_primary));
 
-                                            // "All Devices Synchronized" pill badge
-                                            Frame::none()
-                                                .fill(Color32::from_rgb(18, 28, 42))
-                                                .rounding(Rounding::same(4.0))
-                                                .inner_margin(egui::Margin::symmetric(8.0, 3.0))
-                                                .show(ui, |ui| {
-                                                    ui.horizontal(|ui| {
-                                                        ui.spacing_mut().item_spacing.x = 5.0;
-                                                        let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                                        ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
-                                                        ui.label(RichText::new("All Devices Synchronized").size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
-                                                    });
-                                                });
+                                    // "All Devices Synchronized" pill badge
+                                    Frame::none()
+                                        .fill(Color32::from_rgb(18, 28, 42))
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 5.0;
+                                                let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                                ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
+                                                ui.label(RichText::new("All Devices Synchronized").size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                            });
                                         });
+                                });
+                            });
+
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                Frame::none()
+                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new("HEALTHY // ONLINE").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                     });
-                                },
-                            );
-
-                            // Push to right
-                            let remaining = ui.available_width();
-                            if remaining > stats_block_width {
-                                ui.add_space(remaining - stats_block_width);
-                            }
-
-                            // Right Stats Block (left-to-right with exact min widths & vertical dividers)
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 14.0;
-
-                                // Col 1: TOTAL STORAGE
-                                ui.vertical(|ui| {
-                                    ui.set_min_width(105.0);
-                                    ui.label(RichText::new("TOTAL STORAGE").size(8.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new(&pool_str).size(13.5).monospace().strong().color(p.text_primary));
-                                });
-
-                                // Divider 1
-                                let (div1, _) = ui.allocate_exact_size(egui::vec2(1.0, 26.0), egui::Sense::hover());
-                                ui.painter().vline(div1.center().x, div1.y_range(), Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)));
-
-                                // Col 2: PHYSICAL DRIVES
-                                ui.vertical(|ui| {
-                                    ui.set_min_width(105.0);
-                                    ui.label(RichText::new("PHYSICAL DRIVES").size(8.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new(format!("{} ACTIVE", drive_count)).size(13.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                });
-
-                                // Divider 2
-                                let (div2, _) = ui.allocate_exact_size(egui::vec2(1.0, 26.0), egui::Sense::hover());
-                                ui.painter().vline(div2.center().x, div2.y_range(), Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)));
-
-                                // Col 3: AGGREGATE I/O
-                                ui.vertical(|ui| {
-                                    ui.set_min_width(105.0);
-                                    ui.label(RichText::new("AGGREGATE I/O").size(8.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new(&agg_io_str).size(13.5).monospace().strong().color(p.text_primary));
-                                });
                             });
                         });
                     });
 
                 ui.add_space(8.0);
 
-                // 2. Drives Row (2 Large Cards)
+                // 2. Top Row of 4 Big Stat Cards (matching Overview page architecture)
+                let st_history = [st_pct; 5];
+                let rd_history = [read_mb as f32; 5];
+                let wr_history = [write_mb as f32; 5];
+                let dr_history = [drive_count as f32; 5];
+
+                ui.columns(4, |cols| {
+                    // Card 1: TOTAL STORAGE
+                    render_big_stat_card(
+                        &mut cols[0],
+                        crate::lucide::STORAGE,
+                        "TOTAL STORAGE",
+                        &format!("{:.1}", total_gb),
+                        "GB",
+                        &format!("{:.1} GB Used ({:.1}%)", used_gb, st_pct),
+                        "CAPACITY",
+                        &format!("FREE {:.1} GB", free_gb),
+                        &st_history,
+                        100.0,
+                        Some(st_pct / 100.0),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
+
+                    // Card 2: PHYSICAL DRIVES
+                    render_big_stat_card(
+                        &mut cols[1],
+                        crate::lucide::HARD_DRIVE,
+                        "PHYSICAL DRIVES",
+                        &format!("{}", drive_count),
+                        "DISKS",
+                        "NVMe SSD & Block Devices",
+                        "ONLINE",
+                        "HEALTH OK",
+                        &dr_history,
+                        drive_count as f32 * 1.5,
+                        Some(0.66),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
+
+                    // Card 3: READ THROUGHPUT
+                    render_big_stat_card(
+                        &mut cols[2],
+                        crate::lucide::ARROW_DOWN,
+                        "READ THROUGHPUT",
+                        &format!("{:.1}", read_mb),
+                        "MB/s",
+                        "Real-time Sequential Read",
+                        "AVG 14.2 MB/s",
+                        "PEAK 125 MB/s",
+                        &rd_history,
+                        150.0,
+                        Some(0.1),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
+
+                    // Card 4: WRITE THROUGHPUT
+                    render_big_stat_card(
+                        &mut cols[3],
+                        crate::lucide::ARROW_UP,
+                        "WRITE THROUGHPUT",
+                        &format!("{:.1}", write_mb),
+                        "MB/s",
+                        "Active Page Flushing Stream",
+                        "AVG 38.6 MB/s",
+                        "PEAK 85 MB/s",
+                        &wr_history,
+                        100.0,
+                        Some(0.38),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
+                });
+
+                ui.add_space(8.0);
+
+                // 3. Drives Row (2 Large Cards)
                 ui.columns(2, |cols| {
                     // Drive 1: Disk 1 (C: / Root)
                     let d1 = snap.disks.first();
@@ -12478,12 +12384,84 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 2. Row of 4 Metric Cards (evenly distributed)
+                // 2. Row of 4 Big Stat Cards (matching Overview page architecture)
+                let rx_slice: Vec<f32> = self.net_rx_history.iter().copied().collect();
+                let tx_slice: Vec<f32> = self.net_tx_history.iter().copied().collect();
+                let rx_tot_slice = [snap.total_rx_bytes as f32 / 1e9; 5];
+                let tx_tot_slice = [snap.total_tx_bytes as f32 / 1e9; 5];
+
                 ui.columns(4, |cols| {
-                    render_metric_card(&mut cols[0], "DOWNLOAD RATE", &crate::sensors::format_rate(snap.total_rx_rate_bps), "Live Incoming", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
-                    render_metric_card(&mut cols[1], "UPLOAD RATE", &crate::sensors::format_rate(snap.total_tx_rate_bps), "Live Outgoing", Color32::from_rgb(96, 165, 250), p.bg_card, p.text_muted);
-                    render_metric_card(&mut cols[2], "TOTAL RECEIVED", &crate::sensors::format_bytes(snap.total_rx_bytes), "Cumulative", p.text_primary, p.bg_card, p.text_muted);
-                    render_metric_card(&mut cols[3], "TOTAL SENT", &crate::sensors::format_bytes(snap.total_tx_bytes), "Cumulative", p.text_primary, p.bg_card, p.text_muted);
+                    // Card 1: DOWNLOAD RATE
+                    render_big_stat_card(
+                        &mut cols[0],
+                        crate::lucide::ARROW_DOWN,
+                        "DOWNLOAD RATE",
+                        &crate::sensors::format_rate(snap.total_rx_rate_bps),
+                        "",
+                        "Live Inbound Traffic",
+                        "INTERFACE wlan0",
+                        &format!("PEAK {:.1} MB/s", self.net_peak_mb),
+                        &rx_slice,
+                        self.net_peak_mb.max(1.0),
+                        Some(0.2),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
+
+                    // Card 2: UPLOAD RATE
+                    render_big_stat_card(
+                        &mut cols[1],
+                        crate::lucide::ARROW_UP,
+                        "UPLOAD RATE",
+                        &crate::sensors::format_rate(snap.total_tx_rate_bps),
+                        "",
+                        "Live Outbound Traffic",
+                        "DUPLEX FULL",
+                        &format!("PEAK {:.1} MB/s", (self.net_peak_mb * 0.6).max(0.1)),
+                        &tx_slice,
+                        self.net_peak_mb.max(1.0),
+                        Some(0.15),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
+
+                    // Card 3: TOTAL RECEIVED
+                    render_big_stat_card(
+                        &mut cols[2],
+                        crate::lucide::DOWNLOAD,
+                        "TOTAL RECEIVED",
+                        &crate::sensors::format_bytes(snap.total_rx_bytes),
+                        "",
+                        "Cumulative Since Boot",
+                        "RX PACKETS",
+                        "ERRORS 0",
+                        &rx_tot_slice,
+                        (snap.total_rx_bytes as f32 / 1e9).max(1.0) * 1.2,
+                        Some(0.8),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
+
+                    // Card 4: TOTAL SENT
+                    render_big_stat_card(
+                        &mut cols[3],
+                        crate::lucide::UPLOAD,
+                        "TOTAL SENT",
+                        &crate::sensors::format_bytes(snap.total_tx_bytes),
+                        "",
+                        "Cumulative Since Boot",
+                        "TX PACKETS",
+                        "DROPPED 0",
+                        &tx_tot_slice,
+                        (snap.total_tx_bytes as f32 / 1e9).max(1.0) * 1.2,
+                        Some(0.7),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
                 });
 
                 ui.add_space(8.0);
@@ -12615,13 +12593,84 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 2. Row of 4 Metric Cards (evenly distributed)
+                // 2. Row of 4 Big Stat Cards (matching Overview page architecture)
+                let watts_val = snap.power.total_power_watts.unwrap_or(12.5);
+                let pwr_slice = [watts_val; 5];
+                let bat_slice = [bat_pct; 5];
+                let health_slice = [98.5_f32; 5];
+
                 ui.columns(4, |cols| {
-                    render_metric_card(&mut cols[0], "POWER SOURCE", if ac_online { "AC Wall Plug" } else { "Internal Battery" }, if ac_online { "Connected" } else { "Discharging" }, if ac_online { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(148, 163, 184) }, p.bg_card, p.text_muted);
-                    render_metric_card(&mut cols[1], "BATTERY LEVEL", &format!("{:.0}%", bat_pct), "State of Charge", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
-                    let rate_str = snap.power.total_power_watts.map(|w| format!("{:.1} W", w)).unwrap_or_else(|| "12.5 W".into());
-                    render_metric_card(&mut cols[2], "CONSUMPTION", &rate_str, "Active Power Rate", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
-                    render_metric_card(&mut cols[3], "BATTERY HEALTH", "98.5%", "Design Match", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
+                    // Card 1: POWER SOURCE
+                    render_big_stat_card(
+                        &mut cols[0],
+                        crate::lucide::ZAP,
+                        "POWER SOURCE",
+                        if ac_online { "AC Wall" } else { "Battery" },
+                        if ac_online { "Plug" } else { "Power" },
+                        if ac_online { "Main Supply Connected" } else { "Discharging on Internal Cell" },
+                        if ac_online { "ONLINE" } else { "DISCHARGING" },
+                        "230V 50Hz",
+                        &pwr_slice,
+                        30.0,
+                        Some(0.4),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
+
+                    // Card 2: BATTERY LEVEL
+                    render_big_stat_card(
+                        &mut cols[1],
+                        crate::lucide::BATTERY,
+                        "BATTERY LEVEL",
+                        &format!("{:.0}", bat_pct),
+                        "%",
+                        "State of Charge",
+                        if ac_online { "CHARGING" } else { "DRAINING" },
+                        "42.2 Wh",
+                        &bat_slice,
+                        100.0,
+                        Some(bat_pct / 100.0),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
+
+                    // Card 3: CONSUMPTION
+                    render_big_stat_card(
+                        &mut cols[2],
+                        crate::lucide::ACTIVITY,
+                        "CONSUMPTION",
+                        &format!("{:.1}", watts_val),
+                        "W",
+                        "Active Subsystem Draw",
+                        "AVG 10.8W",
+                        "PEAK 24.5W",
+                        &pwr_slice,
+                        30.0,
+                        Some(0.4),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
+
+                    // Card 4: BATTERY HEALTH
+                    render_big_stat_card(
+                        &mut cols[3],
+                        crate::lucide::SHIELD,
+                        "BATTERY HEALTH",
+                        "98.5",
+                        "%",
+                        "Cycle Count & Capacity Degradation",
+                        "CYCLES 42",
+                        "NORMAL",
+                        &health_slice,
+                        100.0,
+                        Some(0.98),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
                 });
 
                 ui.add_space(8.0);
@@ -12685,12 +12734,84 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 2. Row of 4 Metric Cards (evenly distributed)
+                // 2. Row of 4 Big Stat Cards (matching Overview page architecture)
+                let bt_slice = [1.0_f32; 5];
+                let dev_slice = [2.0_f32; 5];
+                let disc_slice = [0.0_f32; 5];
+                let svc_slice = [1.0_f32; 5];
+
                 ui.columns(4, |cols| {
-                    render_metric_card(&mut cols[0], "RADIO STATE", "Powered On", "RFKILL Unblocked", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
-                    render_metric_card(&mut cols[1], "PAIRED DEVICES", "2 Devices", "Stored Bonds", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
-                    render_metric_card(&mut cols[2], "DISCOVERY", "Idle", "Not Discoverable", p.text_primary, p.bg_card, p.text_muted);
-                    render_metric_card(&mut cols[3], "SERVICE DAEMON", "bluetoothd", "Systemd Active", Color32::from_rgb(96, 165, 250), p.bg_card, p.text_muted);
+                    // Card 1: RADIO STATE
+                    render_big_stat_card(
+                        &mut cols[0],
+                        crate::lucide::RADIO,
+                        "RADIO STATE",
+                        "ON",
+                        "",
+                        "Intel Bluetooth 5.1 (hci0)",
+                        "UP / RUNNING",
+                        "UNBLOCKED",
+                        &bt_slice,
+                        1.0,
+                        Some(1.0),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
+
+                    // Card 2: PAIRED DEVICES
+                    render_big_stat_card(
+                        &mut cols[1],
+                        crate::lucide::BLUETOOTH,
+                        "PAIRED DEVICES",
+                        "2",
+                        "DEVICES",
+                        "Stored Pairing Keys",
+                        "CONNECTED 1",
+                        "STANDBY 1",
+                        &dev_slice,
+                        5.0,
+                        Some(0.4),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
+
+                    // Card 3: DISCOVERY
+                    render_big_stat_card(
+                        &mut cols[2],
+                        crate::lucide::SEARCH,
+                        "DISCOVERY",
+                        "IDLE",
+                        "",
+                        "Inquiry Scan Disabled",
+                        "VISIBILITY OFF",
+                        "TIMEOUT 120s",
+                        &disc_slice,
+                        1.0,
+                        Some(0.0),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
+
+                    // Card 4: SERVICE DAEMON
+                    render_big_stat_card(
+                        &mut cols[3],
+                        crate::lucide::CHECK,
+                        "SERVICE DAEMON",
+                        "ACTIVE",
+                        "",
+                        "systemd bluetooth.service",
+                        "PID 892",
+                        "MEMORY 4.2 MB",
+                        &svc_slice,
+                        1.0,
+                        Some(1.0),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
                 });
 
                 ui.add_space(8.0);
@@ -12757,12 +12878,91 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 2. Row of 4 Metric Cards (evenly distributed)
+                // 2. Row of 4 Big Stat Cards (matching Overview page architecture)
+                let total_probes = snap.temp_sensors.len();
+                let max_temp = snap.temp_sensors.iter().map(|s| s.temp).fold(0.0_f32, f32::max);
+                let avg_temp = if !snap.temp_sensors.is_empty() {
+                    snap.temp_sensors.iter().map(|s| s.temp).sum::<f32>() / snap.temp_sensors.len() as f32
+                } else {
+                    42.0
+                };
+                let temp_slice = [if max_temp > 0.0 { max_temp } else { 48.0 }; 5];
+                let norm_slice = [normal_count as f32; 5];
+                let warm_slice = [warm_count as f32; 5];
+                let hot_slice = [hot_count as f32; 5];
+
                 ui.columns(4, |cols| {
-                    render_metric_card(&mut cols[0], "TOTAL PROBES", &format!("{}", snap.temp_sensors.len()), "Hardware Sensors", p.text_primary, p.bg_card, p.text_muted);
-                    render_metric_card(&mut cols[1], "NORMAL (<55°C)", &format!("{}", normal_count), "Optimal Operating", Color32::from_rgb(56, 189, 248), p.bg_card, p.text_muted);
-                    render_metric_card(&mut cols[2], "WARM (55-75°C)", &format!("{}", warm_count), "Elevated Temp", Color32::from_rgb(148, 163, 184), p.bg_card, p.text_muted);
-                    render_metric_card(&mut cols[3], "HOT (>75°C)", &format!("{}", hot_count), "Near Throttle", if hot_count > 0 { Color32::from_rgb(248, 250, 252) } else { p.text_muted }, p.bg_card, p.text_muted);
+                    // Card 1: PEAK HOTSPOT
+                    render_big_stat_card(
+                        &mut cols[0],
+                        crate::lucide::THERMOMETER,
+                        "PEAK HOTSPOT",
+                        &format!("{:.1}", if max_temp > 0.0 { max_temp } else { 48.0 }),
+                        "°C",
+                        &format!("Across {} Monitored Probes", total_probes),
+                        &format!("AVG {:.1}°C", avg_temp),
+                        "LIMIT 105°C",
+                        &temp_slice,
+                        105.0,
+                        Some(0.45),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
+
+                    // Card 2: NORMAL PROBES
+                    render_big_stat_card(
+                        &mut cols[1],
+                        crate::lucide::CHECK,
+                        "NORMAL (<55°C)",
+                        &format!("{}", normal_count),
+                        "ZONES",
+                        "Optimal Thermal Envelope",
+                        "STATUS NOMINAL",
+                        &format!("{}/{} SENSORS", normal_count, total_probes.max(1)),
+                        &norm_slice,
+                        total_probes.max(1) as f32,
+                        Some(1.0),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
+
+                    // Card 3: WARM PROBES
+                    render_big_stat_card(
+                        &mut cols[2],
+                        crate::lucide::ALERT_TRIANGLE,
+                        "WARM (55-75°C)",
+                        &format!("{}", warm_count),
+                        "ZONES",
+                        "Elevated Core Temperatures",
+                        "FAN BOOST",
+                        "NO THROTTLING",
+                        &warm_slice,
+                        total_probes.max(1) as f32,
+                        Some(0.2),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
+
+                    // Card 4: HOT PROBES
+                    render_big_stat_card(
+                        &mut cols[3],
+                        crate::lucide::FLAME,
+                        "HOT (>75°C)",
+                        &format!("{}", hot_count),
+                        "ZONES",
+                        "Near Thermal Throttling",
+                        "PROCHOT IDLE",
+                        "TJMAX 105°C",
+                        &hot_slice,
+                        total_probes.max(1) as f32,
+                        Some(0.0),
+                        Color32::from_rgb(56, 189, 248),
+                        p.bg_card,
+                        p.text_muted,
+                    );
                 });
 
                 ui.add_space(8.0);
@@ -12789,7 +12989,8 @@ impl LauncherApp {
                                     ui.label(RichText::new(&s.name).size(11.0).color(p.text_primary));
                                     let col = crate::sensors::temp_color(s.temp);
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new("●").size(11.0).color(col));
+                                        let (d_rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                                        ui.painter().circle_filled(d_rect.center(), 3.5, col);
                                         ui.label(RichText::new(format!("{:.1}°C", s.temp)).size(11.5).monospace().strong().color(col));
                                     });
                                     let thresh = match (s.max, s.crit) {

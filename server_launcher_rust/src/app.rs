@@ -14427,26 +14427,34 @@ impl LauncherApp {
                                 ui.set_width(ui.available_width());
 
                                 // Card Header
-                                ui.horizontal(|ui| {
-                                    let (icon_rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
-                                    ui.painter().rect_filled(icon_rect, Rounding::same(6.0), Color32::from_rgb(20, 28, 44));
-                                    let icon_char = if is_remote && !is_wireless { crate::lucide::SERVER } else { crate::lucide::LAYERS };
-                                    ui.painter().text(icon_rect.center(), egui::Align2::CENTER_CENTER, icon_char, egui::FontId::monospace(14.0), Color32::from_rgb(56, 189, 248));
+                                let ip_right_w = 70.0;
+                                let ip_avail_w = ui.available_width();
+                                let ip_left_w = (ip_avail_w - ip_right_w - 8.0).max(100.0);
 
-                                    ui.vertical(|ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("IP Config").size(13.5).strong().color(p.text_primary));
-                                            let badge_txt = if is_remote { "DHCP" } else { "DHCP" };
-                                            Frame::none()
-                                                .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 20))
-                                                .rounding(Rounding::same(4.0))
-                                                .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                                .show(ui, |ui| {
-                                                    ui.label(RichText::new(badge_txt).size(8.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                                });
+                                ui.horizontal(|ui| {
+                                    ui.set_width(ip_avail_w);
+
+                                    ui.allocate_ui_with_layout(egui::vec2(ip_left_w, 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                        let (icon_rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
+                                        ui.painter().rect_filled(icon_rect, Rounding::same(6.0), Color32::from_rgb(20, 28, 44));
+                                        let icon_char = if is_remote && !is_wireless { crate::lucide::SERVER } else { crate::lucide::LAYERS };
+                                        ui.painter().text(icon_rect.center(), egui::Align2::CENTER_CENTER, icon_char, egui::FontId::monospace(14.0), Color32::from_rgb(56, 189, 248));
+
+                                        ui.vertical(|ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new("IP Config").size(13.5).strong().color(p.text_primary));
+                                                let badge_txt = if is_remote { "DHCP" } else { "DHCP" };
+                                                Frame::none()
+                                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 20))
+                                                    .rounding(Rounding::same(4.0))
+                                                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                                    .show(ui, |ui| {
+                                                        ui.label(RichText::new(badge_txt).size(8.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                    });
+                                            });
+                                            let sub = format!("DHCP on {}", iface_display);
+                                            ui.label(RichText::new(sub).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                         });
-                                        let sub = format!("DHCP on {}", iface_display);
-                                        ui.label(RichText::new(sub).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     });
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -14512,6 +14520,31 @@ impl LauncherApp {
                                     ui.label(RichText::new("DNS").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
+
+                                        // Flush DNS button
+                                        let (flush_rect, flush_resp) = ui.allocate_exact_size(egui::vec2(48.0, 18.0), egui::Sense::click());
+                                        let f_bg = if flush_resp.hovered() { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(20, 28, 44) };
+                                        ui.painter().rect_filled(flush_rect, Rounding::same(3.0), f_bg);
+                                        ui.painter().text(flush_rect.center(), egui::Align2::CENTER_CENTER, "Flush", egui::FontId::monospace(8.0), Color32::from_rgb(203, 213, 225));
+                                        if flush_resp.clicked() {
+                                            if let Some(hid) = host_id {
+                                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                                    let host_name = host.name.clone();
+                                                    std::thread::spawn(move || {
+                                                        let mut cmd = crate::remote::build_ssh_command(&host, "sudo systemd-resolve --flush-caches 2>/dev/null || sudo resolvectl flush-caches 2>/dev/null || true");
+                                                        let _ = cmd.output();
+                                                    });
+                                                    self.wifi_status_msg = Some((format!("Flushed DNS resolver caches on remote host {}", host_name), false, Instant::now()));
+                                                }
+                                            } else {
+                                                match crate::wifi::trigger_flush_dns() {
+                                                    Ok(msg) => self.wifi_status_msg = Some((msg, false, Instant::now())),
+                                                    Err(err) => self.wifi_status_msg = Some((err, true, Instant::now())),
+                                                }
+                                            }
+                                        }
+                                        flush_resp.on_hover_text("Flush system DNS cache");
+
                                         Frame::none()
                                             .fill(Color32::from_rgb(20, 28, 44))
                                             .rounding(Rounding::same(3.0))
@@ -14642,30 +14675,36 @@ impl LauncherApp {
                                 let ep_badge_str = format!("{} Endpoints", endpoint_count);
 
                                 // Card Header
-                                ui.horizontal(|ui| {
-                                    let (icon_rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
-                                    ui.painter().rect_filled(icon_rect, Rounding::same(6.0), Color32::from_rgb(20, 28, 44));
-                                    ui.painter().text(icon_rect.center(), egui::Align2::CENTER_CENTER, "☊", egui::FontId::monospace(14.0), Color32::from_rgb(56, 189, 248));
+                                let right_btn_w = 72.0;
+                                let header_avail_w = ui.available_width();
+                                let left_w = (header_avail_w - right_btn_w - 8.0).max(100.0);
 
-                                    ui.vertical(|ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Sockets").size(13.5).strong().color(p.text_primary));
-                                            Frame::none()
-                                                .fill(Color32::from_rgb(24, 32, 47))
-                                                .rounding(Rounding::same(4.0))
-                                                .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                                .show(ui, |ui| {
-                                                    ui.label(RichText::new(ep_badge_str).size(8.0).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                });
+                                ui.horizontal(|ui| {
+                                    ui.set_width(header_avail_w);
+
+                                    ui.allocate_ui_with_layout(egui::vec2(left_w, 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                        let (icon_rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
+                                        ui.painter().rect_filled(icon_rect, Rounding::same(6.0), Color32::from_rgb(20, 28, 44));
+                                        ui.painter().text(icon_rect.center(), egui::Align2::CENTER_CENTER, "☊", egui::FontId::monospace(14.0), Color32::from_rgb(56, 189, 248));
+
+                                        ui.vertical(|ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new("Sockets").size(13.5).strong().color(p.text_primary));
+                                                Frame::none()
+                                                    .fill(Color32::from_rgb(24, 32, 47))
+                                                    .rounding(Rounding::same(4.0))
+                                                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                                    .show(ui, |ui| {
+                                                        ui.label(RichText::new(ep_badge_str).size(8.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                    });
+                                            });
+                                            ui.label(RichText::new("Active listening ports").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                         });
-                                        ui.label(RichText::new("Active listening ports").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     });
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.spacing_mut().item_spacing.x = 6.0;
-
                                         // Socket Monitor button (solid electric cyan fill with dark text)
-                                        let (mon_rect, mon_resp) = ui.allocate_exact_size(egui::vec2(80.0, 24.0), egui::Sense::click());
+                                        let (mon_rect, mon_resp) = ui.allocate_exact_size(egui::vec2(right_btn_w, 22.0), egui::Sense::click());
                                         let m_bg = if mon_resp.hovered() { Color32::from_rgb(125, 211, 252) } else { Color32::from_rgb(56, 189, 248) };
                                         ui.painter().rect_filled(mon_rect, Rounding::same(5.0), m_bg);
                                         ui.painter().text(mon_rect.center(), egui::Align2::CENTER_CENTER, "∿ Monitor", egui::FontId::monospace(8.5), Color32::from_rgb(10, 15, 29));
@@ -14677,29 +14716,7 @@ impl LauncherApp {
                                                 self.wifi_status_msg = Some(("Remote socket telemetry streaming in realtime via SSH".to_string(), false, Instant::now()));
                                             }
                                         }
-
-                                        // Flush DNS button (dark rounded pill)
-                                        let (flush_rect, flush_resp) = ui.allocate_exact_size(egui::vec2(74.0, 24.0), egui::Sense::click());
-                                        let f_bg = if flush_resp.hovered() { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(20, 28, 44) };
-                                        ui.painter().rect_filled(flush_rect, Rounding::same(5.0), f_bg);
-                                        ui.painter().text(flush_rect.center(), egui::Align2::CENTER_CENTER, "Flush DNS", egui::FontId::monospace(8.5), Color32::from_rgb(203, 213, 225));
-                                        if flush_resp.clicked() {
-                                            if let Some(hid) = host_id {
-                                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                                    let host_name = host.name.clone();
-                                                    std::thread::spawn(move || {
-                                                        let mut cmd = crate::remote::build_ssh_command(&host, "sudo systemd-resolve --flush-caches 2>/dev/null || sudo resolvectl flush-caches 2>/dev/null || true");
-                                                        let _ = cmd.output();
-                                                    });
-                                                    self.wifi_status_msg = Some((format!("Flushed DNS resolver caches on remote host {}", host_name), false, Instant::now()));
-                                                }
-                                            } else {
-                                                match crate::wifi::trigger_flush_dns() {
-                                                    Ok(msg) => self.wifi_status_msg = Some((msg, false, Instant::now())),
-                                                    Err(err) => self.wifi_status_msg = Some((err, true, Instant::now())),
-                                                }
-                                            }
-                                        }
+                                        mon_resp.on_hover_text("Refresh active listening sockets");
                                     });
                                 });
 
@@ -14797,10 +14814,10 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 5.0;
                                         ui.label(RichText::new("Y").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                        ui.label(RichText::new("Socket Filter: AF_INET / TCP Listen").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                        ui.label(RichText::new("Filter: TCP Listen").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     });
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new("Buffer Queue: 0 / 128").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                        ui.label(RichText::new("Queue: 0 / 128").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     });
                                 });
                             });

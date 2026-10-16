@@ -1,0 +1,2 @@
+description = "Execute deep planning and bug fixing via gemini-4-argon goal planner subagent"
+prompt = "Activate the goal-planner skill and invoke the gemini-4-argon subagent (provider: gemini, model: gemini-4-argon) to autonomously plan, execute, and verify: {{args}}"

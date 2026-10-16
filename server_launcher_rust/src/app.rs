@@ -18168,16 +18168,39 @@ impl LauncherApp {
                                                     }
                                                 }
 
+                                                let mut exp_rect = egui::Rect::NOTHING;
                                                 if is_multi {
+                                                    let (chev_rect, chev_resp) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+                                                    exp_rect = chev_rect;
+                                                    if chev_resp.hovered() {
+                                                        ui.painter().rect_filled(
+                                                            chev_rect,
+                                                            Rounding::same(4.0),
+                                                            Color32::from_rgba_unmultiplied(255, 255, 255, 20),
+                                                        );
+                                                    }
                                                     let chev = if is_expanded { crate::lucide::CHEVRON_DOWN } else { crate::lucide::CHEVRON_RIGHT };
-                                                    let btn = egui::Button::new(RichText::new(chev).size(10.5).color(p.text_muted))
-                                                        .fill(Color32::TRANSPARENT)
-                                                        .stroke(Stroke::NONE);
-                                                    if ui.add(btn).clicked() {
+                                                    ui.painter().text(
+                                                        chev_rect.center(),
+                                                        egui::Align2::CENTER_CENTER,
+                                                        chev,
+                                                        egui::FontId::proportional(11.0),
+                                                        if chev_resp.hovered() { p.text_primary } else { p.text_muted },
+                                                    );
+                                                    let tooltip = if is_expanded {
+                                                        format!("Collapse {} subprocesses", grp.children.len())
+                                                    } else {
+                                                        format!("View {} subprocesses (Click to expand)", grp.children.len())
+                                                    };
+                                                    let chev_resp = chev_resp.on_hover_text(tooltip);
+                                                    if chev_resp.clicked() {
                                                         toggle_group_expand = Some(grp.key.clone());
                                                     }
+                                                    if chev_resp.secondary_clicked() {
+                                                        right_clicked_pid = Some(grp.pids[0]);
+                                                    }
                                                 } else {
-                                                    ui.add_space(18.0);
+                                                    ui.add_space(20.0);
                                                 }
 
                                                 let icon = if is_app_sec { crate::lucide::MONITOR } else { crate::lucide::CPU };
@@ -18205,13 +18228,11 @@ impl LauncherApp {
                                                 if disp_str.len() > 34 {
                                                     label.on_hover_text(&disp_str);
                                                 }
+
+                                                exp_rect
                                             });
 
-                                            let name_full_rect = egui::Rect::from_min_size(name_cell_resp.response.rect.min, egui::vec2(col_name_w, 22.0));
-                                            let name_click = ui.interact(name_full_rect, egui::Id::new("grp_name_clk").with(&grp.key), egui::Sense::click()).clicked();
-                                            if name_click && toggle_group_expand.is_none() {
-                                                row_clicked = true;
-                                            }
+                                            let expander_rect = name_cell_resp.inner;
 
                                             // 2. CPU (Heatmap tinted cell, strictly bounded, right aligned)
                                             let (cpu_rect, cpu_resp) = ui.allocate_exact_size(egui::vec2(COL_CPU_W, 22.0), egui::Sense::hover());
@@ -18356,9 +18377,21 @@ impl LauncherApp {
                                             );
                                             let _ = pwr_resp.on_hover_text(format!("{:.2} W (Estimated power draw)\nUsage rating: {}", grp.sum_power_watts, pwr_rating));
 
-                                            let row_resp = ui.interact(row_rect, egui::Id::new("grp_row_full_clk").with(&grp.key), egui::Sense::click());
+                                            let row_interactive_rect = if is_multi && expander_rect.width() > 0.0 {
+                                                egui::Rect::from_min_max(
+                                                    egui::pos2(expander_rect.max.x, row_rect.min.y),
+                                                    row_rect.max,
+                                                )
+                                            } else {
+                                                row_rect
+                                            };
+
+                                            let row_resp = ui.interact(row_interactive_rect, egui::Id::new("grp_row_full_clk").with(&grp.key), egui::Sense::click());
                                             if row_resp.clicked() && toggle_group_expand.is_none() {
                                                 row_clicked = true;
+                                            }
+                                            if is_multi && row_resp.double_clicked() {
+                                                toggle_group_expand = Some(grp.key.clone());
                                             }
                                             if row_resp.secondary_clicked() {
                                                 right_clicked_pid = Some(grp.pids[0]);
@@ -18396,7 +18429,7 @@ impl LauncherApp {
                                                     };
 
                                                     // Child Name
-                                                    let c_name_resp = ui.allocate_ui_with_layout(egui::vec2(col_name_w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                    let _c_name_resp = ui.allocate_ui_with_layout(egui::vec2(col_name_w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                                         let cell_rect = ui.max_rect();
                                                         if c_row_bg != Color32::TRANSPARENT {
                                                             let bg_rect = egui::Rect::from_min_max(cell_rect.min, egui::pos2(cell_rect.max.x + COL_SPACING, cell_rect.max.y));
@@ -18413,12 +18446,6 @@ impl LauncherApp {
                                                         let child_txt = format!("↳ PID {}", child.pid);
                                                         ui.label(RichText::new(child_txt).size(10.5).monospace().color(if is_child_sel { p.accent_light } else { p.text_secondary }));
                                                     });
-
-                                                    let c_name_full_rect = egui::Rect::from_min_size(c_name_resp.response.rect.min, egui::vec2(col_name_w, 20.0));
-                                                    let c_name_click = ui.interact(c_name_full_rect, egui::Id::new("child_row_clk").with(child.pid), egui::Sense::click()).clicked();
-                                                    if c_name_click {
-                                                        child_clicked = true;
-                                                    }
 
                                                     // Child CPU
                                                     let (c_cpu_rect, _c_cpu_resp) = ui.allocate_exact_size(egui::vec2(COL_CPU_W, 20.0), egui::Sense::hover());

@@ -15375,18 +15375,32 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
 
-                        ui.horizontal(|ui| {
-                            ui.vertical(|ui| {
+                        ui.vertical(|ui| {
+                            // Row 1: Overline / Subsystem Tag
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
                                 ui.label(RichText::new("HARDWARE ENGINE / RF-PERIPHERAL-CONTROLLER").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                ui.add_space(2.0);
+                            });
+
+                            ui.add_space(2.0);
+
+                            // Row 2: Title & Status Badge on Left, Radio State Card on Right
+                            let avail_w = ui.available_width();
+                            let right_card_w = 210.0_f32;
+                            let is_narrow = avail_w < 680.0;
+
+                            let (status_text, status_col) = if self.bt_radio_on {
+                                ("ACTIVE LINK", Color32::from_rgb(56, 189, 248))
+                            } else {
+                                ("RADIO DISABLED", Color32::from_rgb(148, 163, 184))
+                            };
+
+                            if is_narrow {
+                                // Narrow viewport: Title row with badge, then dedicated row for radio card
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
                                     ui.label(RichText::new("Bluetooth Radio & Connected Devices").size(16.5).strong().color(p.text_primary));
-                                    let (status_text, status_col) = if self.bt_radio_on {
-                                        ("ACTIVE LINK", Color32::from_rgb(56, 189, 248))
-                                    } else {
-                                        ("RADIO DISABLED", Color32::from_rgb(148, 163, 184))
-                                    };
                                     Frame::none()
                                         .fill(status_col.gamma_multiply(0.14))
                                         .rounding(Rounding::same(4.0))
@@ -15400,18 +15414,9 @@ impl LauncherApp {
                                             });
                                         });
                                 });
-                                ui.add_space(3.0);
-                                ui.label(RichText::new("Dual-band 2.4 GHz transceiver with LE Audio & aptX Adaptive pipelines").size(10.0).color(Color32::from_rgb(148, 163, 184)));
-                                ui.add_space(2.0);
-                                let ctrl_desc = if let Some(ref ctrl) = bt_snap.controller {
-                                    format!("CONTROLLER: {} ({}) • BlueZ • MAC: {}", ctrl.name, ctrl.alias, ctrl.mac)
-                                } else {
-                                    "CONTROLLER: Intel Wireless Bluetooth Adapter (hci0) • BlueZ".to_string()
-                                };
-                                ui.label(RichText::new(ctrl_desc).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
-                            });
 
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.add_space(6.0);
+
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 14, 22))
                                     .rounding(Rounding::same(6.0))
@@ -15419,6 +15424,7 @@ impl LauncherApp {
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             ui.vertical(|ui| {
+                                                ui.spacing_mut().item_spacing.y = 1.0;
                                                 ui.label(RichText::new("RADIO STATE").size(9.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                                                 ui.label(RichText::new("Hardware RF Transceiver").size(8.5).color(Color32::from_rgb(100, 116, 139)));
                                             });
@@ -15439,6 +15445,77 @@ impl LauncherApp {
                                             }
                                         });
                                     });
+                            } else {
+                                // Wide viewport: Title on Left, Radio State Card on Right
+                                ui.horizontal(|ui| {
+                                    let left_w = (avail_w - right_card_w - 16.0).max(100.0);
+                                    ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                        ui.spacing_mut().item_spacing.x = 8.0;
+                                        ui.label(RichText::new("Bluetooth Radio & Connected Devices").size(16.5).strong().color(p.text_primary));
+                                        Frame::none()
+                                            .fill(status_col.gamma_multiply(0.14))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(6.0, 2.5))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 4.0;
+                                                    let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                                    ui.painter().circle_filled(d_rect.center(), 2.8, status_col);
+                                                    ui.label(RichText::new(status_text).size(8.5).monospace().strong().color(status_col));
+                                                });
+                                            });
+                                    });
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(10, 14, 22))
+                                            .rounding(Rounding::same(6.0))
+                                            .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                                            .show(ui, |ui| {
+                                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                    ui.vertical(|ui| {
+                                                        ui.spacing_mut().item_spacing.y = 1.0;
+                                                        ui.label(RichText::new("RADIO STATE").size(9.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                                                        ui.label(RichText::new("Hardware RF Transceiver").size(8.5).color(Color32::from_rgb(100, 116, 139)));
+                                                    });
+                                                    ui.add_space(10.0);
+                                                    let mut power_toggle = self.bt_radio_on;
+                                                    if render_custom_toggle_switch(ui, &mut power_toggle) {
+                                                        self.bt_radio_on = power_toggle;
+                                                        let snap_arc = Arc::clone(&self.bluetooth_snapshot);
+                                                        let ctx_clone = ui.ctx().clone();
+                                                        std::thread::spawn(move || {
+                                                            let _ = crate::bluetooth::set_radio_power(power_toggle);
+                                                            let updated = crate::bluetooth::query_bluetooth_status();
+                                                            if let Ok(mut lock) = snap_arc.lock() {
+                                                                *lock = updated;
+                                                            }
+                                                            ctx_clone.request_repaint();
+                                                        });
+                                                    }
+                                                });
+                                            });
+                                    });
+                                });
+                            }
+
+                            ui.add_space(4.0);
+
+                            // Row 3: Subtitle spanning the full card width underneath (Never collides or overlaps)
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new("Dual-band 2.4 GHz transceiver with LE Audio & aptX Adaptive pipelines").size(10.0).color(Color32::from_rgb(148, 163, 184)));
+                            });
+
+                            ui.add_space(2.0);
+
+                            // Row 4: Controller desc spanning the full card width underneath (Never collides or overlaps)
+                            ui.horizontal_wrapped(|ui| {
+                                let ctrl_desc = if let Some(ref ctrl) = bt_snap.controller {
+                                    format!("CONTROLLER: {} ({}) • BlueZ • MAC: {}", ctrl.name, ctrl.alias, ctrl.mac)
+                                } else {
+                                    "CONTROLLER: Intel Wireless Bluetooth Adapter (hci0) • BlueZ".to_string()
+                                };
+                                ui.label(RichText::new(ctrl_desc).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                             });
                         });
                     });

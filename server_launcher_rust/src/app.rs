@@ -5810,6 +5810,28 @@ fn draw_thermal_dual_waveform(ui: &mut Ui, height: f32, cpu_temp: f32, gpu_temp:
     }
 }
 
+fn read_backlight_brightness_ratio() -> Option<f32> {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(entries) = std::fs::read_dir("/sys/class/backlight") {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let actual = std::fs::read_to_string(path.join("actual_brightness"))
+                    .or_else(|_| std::fs::read_to_string(path.join("brightness")));
+                let max = std::fs::read_to_string(path.join("max_brightness"));
+                if let (Ok(a_str), Ok(m_str)) = (actual, max) {
+                    if let (Ok(a_val), Ok(m_val)) = (a_str.trim().parse::<f32>(), m_str.trim().parse::<f32>()) {
+                        if m_val > 0.0 {
+                            return Some((a_val / m_val).clamp(0.0, 1.0));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 fn draw_power_realtime_waveform(ui: &mut Ui, height: f32, watts: f32, _is_ac: bool) {
     ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
@@ -14547,10 +14569,19 @@ impl LauncherApp {
 
                 let ac_online = snap.power.ac_online.unwrap_or(true);
                 let bat_pct = snap.power.total_battery_pct.unwrap_or(100.0);
-                let watts_val = snap.power.total_power_watts.unwrap_or(if is_remote { 32.5 } else { 16.7 });
                 let remaining_wh = bat.and_then(|b| b.energy_wh).unwrap_or(if is_remote { 0.0 } else { 45.2 });
                 let full_wh = bat.and_then(|b| b.energy_full_wh).unwrap_or(if is_remote { 0.0 } else { 48.0 });
-                let bat_health = if full_wh > 0.0 { (remaining_wh / full_wh * 100.0).clamp(50.0, 100.0) } else { 94.2 };
+                let bat_health = bat.and_then(|b| b.health_pct).unwrap_or_else(|| {
+                    if let (Some(f), Some(d)) = (bat.and_then(|b| b.energy_full_wh), bat.and_then(|b| b.energy_design_wh)) {
+                        if d > 0.0 {
+                            (f / d * 100.0).clamp(10.0, 100.0)
+                        } else {
+                            95.0
+                        }
+                    } else {
+                        95.0
+                    }
+                });
 
                 // 1. Top Header Banner
                 Frame::none()
@@ -14838,7 +14869,11 @@ impl LauncherApp {
                                             ui.horizontal(|ui| {
                                                 ui.label(RichText::new("Delivery Mode").size(8.5).monospace().color(p.text_muted));
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    let delivery_str = if ac_online { "Mains Bypass" } else { "Discharge" };
+                                                    let delivery_str = if ac_online {
+                                                        if bat_pct >= 99.0 { "Mains Bypass" } else { "AC Charging" }
+                                                    } else {
+                                                        "Discharging"
+                                                    };
                                                     ui.label(RichText::new(delivery_str).size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                                 });
                                             });
@@ -14905,7 +14940,11 @@ impl LauncherApp {
                                         let volts_val = bat.and_then(|b| b.voltage_volts).unwrap_or(12.90);
                                         let chem_str = bat.map(|b| b.technology.trim()).filter(|s| !s.is_empty()).unwrap_or("Li-ion");
                                         let temp_val = snap.cpu_temp.unwrap_or(27.4);
-                                        let ac_status = if ac_online { "65W Bypass" } else { "Disconnected" };
+                                        let ac_status = if ac_online {
+                                            if bat_pct >= 99.0 { "Mains Bypass" } else { "AC Charging" }
+                                        } else {
+                                            "Disconnected"
+                                        };
                                         let chips = [
                                             ("Terminal Potential", format!("{:.2} V", volts_val), Color32::from_rgb(241, 245, 249)),
                                             ("Chemistry Stack", chem_str.to_string(), Color32::from_rgb(241, 245, 249)),
@@ -15064,6 +15103,103 @@ impl LauncherApp {
 
                                 ui.add_space(10.0);
 
+                                // Realtime live telemetry calculation for components and total draw
+                                let disk_mb_s = ((snap.total_disk_read_rate_bps + snap.total_disk_write_rate_bps) / (1024.0 * 1024.0)) as f32;
+                                let net_mb_s = ((snap.total_rx_rate_bps + snap.total_tx_rate_bps) / (1024.0 * 1024.0)) as f32;
+                                let cpu_load = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
+                                let mem_ratio = (snap.mem_usage_pct / 100.0).clamp(0.0, 1.0);
+                                let gpu_load = snap.gpus.iter().filter_map(|g| g.load_pct).next().unwrap_or(0.0);
+
+                                let is_discharging = !ac_online || bat.map(|b| b.status.eq_ignore_ascii_case("discharging")).unwrap_or(false);
+                                let is_charging = ac_online && bat.map(|b| b.status.eq_ignore_ascii_case("charging")).unwrap_or(false);
+
+                                let (badge_str, badge_col) = if is_remote && !has_battery {
+                                    ("Direct PSU Line".to_string(), Color32::from_rgb(148, 163, 184))
+                                } else if is_discharging {
+                                    ("Battery active".to_string(), Color32::from_rgb(245, 158, 11))
+                                } else if is_charging {
+                                    (format!("Charging ({:.0}%)", bat_pct), Color32::from_rgb(34, 197, 94))
+                                } else {
+                                    ("Bypass active".to_string(), Color32::from_rgb(56, 189, 248))
+                                };
+
+                                let (watts_val, components): (f32, [(&'static str, f32, f32); 4]) = if is_remote {
+                                    let raw_cpu = snap.cpu_power_watts.unwrap_or_else(|| {
+                                        let tdp = snap.cpu_tdp_watts.unwrap_or(65.0);
+                                        let idle = (tdp * 0.15).clamp(8.0, 25.0);
+                                        idle + (tdp - idle) * (0.35 * cpu_load + 0.65 * cpu_load.powf(1.35))
+                                    });
+                                    let raw_storage = (4.0 + (disk_mb_s * 0.12)).clamp(4.0, 35.0);
+                                    let raw_net = (3.0 + (net_mb_s * 0.15)).clamp(3.0, 25.0);
+                                    let raw_mb = (10.0 + mem_ratio * 12.0).clamp(10.0, 40.0);
+                                    let total = raw_cpu + raw_storage + raw_net + raw_mb;
+
+                                    (
+                                        total,
+                                        [
+                                            ("CPU Package & Cores", raw_cpu, snap.cpu_tdp_watts.unwrap_or(150.0).max(raw_cpu * 1.25)),
+                                            ("Storage Subsystem (NVMe/SAS)", raw_storage, 40.0),
+                                            ("Network PHY & Transceivers", raw_net, 30.0),
+                                            ("Motherboard Chipset & RAM", raw_mb, 45.0),
+                                        ],
+                                    )
+                                } else {
+                                    let tdp = snap.cpu_tdp_watts.unwrap_or(15.0);
+                                    let raw_cpu = snap.cpu_power_watts.unwrap_or_else(|| {
+                                        let idle = (tdp * 0.15).clamp(1.5, 6.0);
+                                        idle + (tdp - idle) * (0.35 * cpu_load + 0.65 * cpu_load.powf(1.35))
+                                    });
+
+                                    let gpu_tdp = if snap.gpus.is_empty() {
+                                        tdp * 0.35
+                                    } else {
+                                        snap.gpus[0].power_limit_watts.unwrap_or(35.0)
+                                    };
+                                    let raw_gpu = snap.gpus.iter().filter_map(|g| g.power_watts).next().unwrap_or_else(|| {
+                                        (gpu_tdp * 0.08).max(0.3) + (gpu_tdp * 0.92) * (gpu_load / 100.0)
+                                    });
+
+                                    let br = read_backlight_brightness_ratio().unwrap_or(0.40);
+                                    let raw_display = if has_battery {
+                                        1.0 + br * 2.8 // Panel logic 1.0W + LED backlight 0 - 2.8W
+                                    } else {
+                                        0.8 // External monitor HDMI/DP buffer
+                                    };
+
+                                    let raw_mb = (1.2 + mem_ratio * 0.6 + (disk_mb_s * 0.05).clamp(0.0, 1.8)).clamp(1.0, 6.0);
+
+                                    let bat_power = snap.power.total_power_watts.filter(|&w| w > 0.1);
+
+                                    let (final_watts, c_cpu, c_gpu, c_disp, c_mb) = if is_discharging && bat_power.is_some() {
+                                        let total = bat_power.unwrap();
+                                        let sum_raw = (raw_cpu + raw_gpu + raw_display + raw_mb).max(0.1);
+                                        let scale = total / sum_raw;
+                                        (total, raw_cpu * scale, raw_gpu * scale, raw_display * scale, raw_mb * scale)
+                                    } else if is_charging && bat_power.is_some() {
+                                        let sys_draw = raw_cpu + raw_gpu + raw_display + raw_mb;
+                                        let total = sys_draw + bat_power.unwrap();
+                                        (total, raw_cpu, raw_gpu, raw_display, raw_mb)
+                                    } else {
+                                        let total = (raw_cpu + raw_gpu + raw_display + raw_mb).max(2.5);
+                                        (total, raw_cpu, raw_gpu, raw_display, raw_mb)
+                                    };
+
+                                    let cpu_cap = tdp.max(c_cpu * 1.25);
+                                    let gpu_cap = (tdp * 0.6).max(c_gpu * 1.5).max(4.0);
+                                    let disp_cap = 6.0_f32;
+                                    let mb_cap = 8.0_f32;
+
+                                    (
+                                        final_watts,
+                                        [
+                                            ("CPU Package (PL0/1)", c_cpu, cpu_cap),
+                                            ("Integrated GPU", c_gpu, gpu_cap),
+                                            ("eDP Panel & Backlight", c_disp, disp_cap),
+                                            ("Motherboard Logic / NVMe", c_mb, mb_cap),
+                                        ],
+                                    )
+                                };
+
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new("Combined System Draw").size(9.5).monospace().color(p.text_muted));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -15072,8 +15208,7 @@ impl LauncherApp {
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                             .show(ui, |ui| {
-                                                let badge_str = if is_remote && !has_battery { "Direct PSU Line" } else { "Bypass active" };
-                                                ui.label(RichText::new(badge_str).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                ui.label(RichText::new(&badge_str).size(8.5).monospace().color(badge_col));
                                             });
                                     });
                                 });
@@ -15099,23 +15234,6 @@ impl LauncherApp {
                                     });
                                 });
                                 ui.add_space(4.0);
-
-                                // Subsystem breakdown bars
-                                let components: [(&str, f32, f32); 4] = if is_remote {
-                                    [
-                                        ("CPU Package & Cores", (watts_val * 0.55).clamp(8.0, 150.0), 150.0_f32),
-                                        ("Storage Subsystem (NVMe/SAS)", (watts_val * 0.18).clamp(3.0, 40.0), 40.0_f32),
-                                        ("Network PHY & Transceivers", (watts_val * 0.14).clamp(2.0, 25.0), 25.0_f32),
-                                        ("Motherboard Chipset & RAM", (watts_val * 0.13).clamp(2.0, 35.0), 35.0_f32),
-                                    ]
-                                } else {
-                                    [
-                                        ("CPU Package (PL0/1)", 8.5_f32, 18.0_f32),
-                                        ("Integrated GPU", 2.9_f32, 10.0_f32),
-                                        ("eDP Panel & Backlight", 3.2_f32, 8.0_f32),
-                                        ("Motherboard Logic / NVMe", 2.1_f32, 6.0_f32),
-                                    ]
-                                };
 
                                 for &(c_name, c_watts, c_max) in &components {
                                     ui.horizontal(|ui| {

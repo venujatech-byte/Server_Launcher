@@ -14949,7 +14949,6 @@ impl LauncherApp {
 
         Frame::none()
             .fill(p.bg_card)
-            .stroke(Stroke::new(1.0_f32, p.border.gamma_multiply(0.35)))
             .rounding(Rounding::same(10.0))
             .inner_margin(egui::Margin::symmetric(14.0, 10.0))
             .show(ui, |ui| {
@@ -14963,7 +14962,6 @@ impl LauncherApp {
                     let count_text = format!("{} processes", snap.top_apps.len());
                     Frame::none()
                         .fill(p.bg_button)
-                        .stroke(Stroke::new(1.0_f32, p.border.gamma_multiply(0.35)))
                         .rounding(Rounding::same(999.0))
                         .inner_margin(egui::Margin::symmetric(9.0, 3.5))
                         .show(ui, |ui| {
@@ -14994,7 +14992,7 @@ impl LauncherApp {
                                     .color(p.text_muted),
                             )
                             .fill(p.bg_button.gamma_multiply(0.6))
-                            .stroke(Stroke::new(1.0_f32, p.border.gamma_multiply(0.3)))
+                            .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
                             .min_size(egui::vec2(0.0, 28.0))
                         };
@@ -15010,7 +15008,6 @@ impl LauncherApp {
                         // 2. Integrated Search Pill (Spacious, full placeholder, clear button)
                         Frame::none()
                             .fill(p.bg_card_active)
-                            .stroke(Stroke::new(1.0_f32, p.border.gamma_multiply(0.5)))
                             .rounding(Rounding::same(999.0))
                             .inner_margin(egui::Margin::symmetric(10.0, 4.0))
                             .show(ui, |ui| {
@@ -15043,7 +15040,7 @@ impl LauncherApp {
                         ui.scope(|ui| {
                             ui.visuals_mut().widgets.inactive.rounding = Rounding::same(999.0);
                             ui.visuals_mut().widgets.inactive.bg_fill = p.bg_button;
-                            ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1.0_f32, p.border.gamma_multiply(0.4));
+                            ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
                             ui.visuals_mut().widgets.hovered.rounding = Rounding::same(999.0);
                             ui.visuals_mut().widgets.active.rounding = Rounding::same(999.0);
                             ui.visuals_mut().widgets.open.rounding = Rounding::same(999.0);
@@ -15077,7 +15074,6 @@ impl LauncherApp {
                         ui.add_space(6.0);
                         Frame::none()
                             .fill(Color32::from_rgba_premultiplied(56, 189, 248, 25))
-                            .stroke(Stroke::new(1.0_f32, if is_err { Color32::from_rgb(148, 163, 184) } else { Color32::from_rgb(56, 189, 248) }))
                             .rounding(Rounding::same(999.0))
                             .inner_margin(egui::Margin::symmetric(12.0, 5.0))
                             .show(ui, |ui| {

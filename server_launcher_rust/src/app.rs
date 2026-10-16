@@ -12825,15 +12825,15 @@ impl LauncherApp {
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
                                 let overline = if is_remote {
-                                    format!("REMOTE STORAGE TELEMETRY • HOST '{}'", host_id.unwrap_or("Remote"))
+                                    format!("STORAGE • HOST '{}'", host_id.unwrap_or("Remote"))
                                 } else {
-                                    "SUBSYSTEM TELEMETRY • I/O SUPERVISOR".to_string()
+                                    "STORAGE / I/O".to_string()
                                 };
                                 ui.label(RichText::new(overline).size(9.0).monospace().color(p.text_muted));
                                 ui.add_space(2.0);
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
-                                    ui.label(RichText::new("Storage Drives & Disk I/O").size(16.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new("Storage & Disks").size(16.0).strong().color(p.text_primary));
 
                                     // "All Devices Synchronized" pill badge
                                     Frame::none()
@@ -12845,7 +12845,7 @@ impl LauncherApp {
                                                 ui.spacing_mut().item_spacing.x = 5.0;
                                                 let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                                 ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
-                                                ui.label(RichText::new(format!("{} Block Devices Active", drive_count)).size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                                ui.label(RichText::new(format!("{} Disks Active", drive_count)).size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
                                             });
                                         });
                                 });
@@ -12857,7 +12857,7 @@ impl LauncherApp {
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                     .show(ui, |ui| {
-                                        ui.label(RichText::new("HEALTHY // ONLINE").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                        ui.label(RichText::new("HEALTHY").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                     });
                             });
                         });
@@ -13909,9 +13909,9 @@ impl LauncherApp {
                             // Row 3: Subtitle spanning the full card width underneath (wrapped, never overlaps)
                             ui.horizontal_wrapped(|ui| {
                                 if is_remote {
-                                    ui.label(RichText::new(format!("Duplex network telemetry streaming in realtime from remote host '{}' over SSH tunnel.", host_id.unwrap_or("remote"))).size(10.0).color(Color32::from_rgb(148, 163, 184)));
+                                    ui.label(RichText::new(format!("SSH link to host '{}'", host_id.unwrap_or("remote"))).size(10.0).color(Color32::from_rgb(148, 163, 184)));
                                 } else {
-                                    ui.label(RichText::new("High-throughput 802.11ac wireless interface with dynamic rate adaptation and roaming daemon.").size(10.0).color(Color32::from_rgb(148, 163, 184)));
+                                    ui.label(RichText::new("802.11ac Wi-Fi • Auto-rate").size(10.0).color(Color32::from_rgb(148, 163, 184)));
                                 }
                             });
 
@@ -13920,7 +13920,7 @@ impl LauncherApp {
                             // Row 4: Device and hardware metadata spanning the full card width underneath (wrapped, never overlaps)
                             ui.horizontal_wrapped(|ui| {
                                 if is_remote {
-                                    ui.label(RichText::new(format!("Total Cumulative Traffic: {:.2} GB Ingress • {:.2} GB Egress across all host NICs", snap.total_rx_bytes as f64 / 1e9, snap.total_tx_bytes as f64 / 1e9)).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                    ui.label(RichText::new(format!("Total: {:.2} GB In • {:.2} GB Out", snap.total_rx_bytes as f64 / 1e9, snap.total_tx_bytes as f64 / 1e9)).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                                 } else {
                                     ui.label(RichText::new(format!("{} • MAC: {}", wifi_snap.product, wifi_snap.mac_address)).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                                 }
@@ -13976,8 +13976,8 @@ impl LauncherApp {
 
                                 ui.horizontal(|ui| {
                                     ui.vertical(|ui| {
-                                        ui.label(RichText::new("60-Second Realtime Waveform").size(12.5).strong().color(p.text_primary));
-                                        ui.label(RichText::new("RX (Cyan) vs TX (Slate) throughput telemetry").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                        ui.label(RichText::new("Live Waveform").size(12.5).strong().color(p.text_primary));
+                                        ui.label(RichText::new("RX (Cyan) • TX (Slate)").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     });
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -14011,9 +14011,9 @@ impl LauncherApp {
                                     let rx_rate = crate::sensors::format_rate(disp_rx_bps);
                                     let tx_rate = crate::sensors::format_rate(disp_tx_bps);
                                     let badges = [
-                                        (format!("RECEIVE (R): {}", rx_rate), Color32::from_rgb(56, 189, 248)),
-                                        (format!("SEND (S): {}", tx_rate), Color32::from_rgb(203, 213, 225)),
-                                        (format!("PEAK: {:.2} MB/s", self.net_peak_mb.max((disp_rx_bps / 1_000_000.0) as f32)), Color32::from_rgb(96, 165, 250)),
+                                        (format!("RX: {}", rx_rate), Color32::from_rgb(56, 189, 248)),
+                                        (format!("TX: {}", tx_rate), Color32::from_rgb(203, 213, 225)),
+                                        (format!("Peak: {:.2} MB/s", self.net_peak_mb.max((disp_rx_bps / 1_000_000.0) as f32)), Color32::from_rgb(96, 165, 250)),
                                     ];
                                     for (txt, col) in badges {
                                         Frame::none()
@@ -14040,17 +14040,17 @@ impl LauncherApp {
                                 ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     ui.vertical(|ui| {
-                                        let r_title = if is_remote { "NETWORK TOPOLOGY" } else { "ACCESS POINT" };
-                                        let r_sub = if is_remote { "Active physical/virtual host NIC" } else { "Currently connected BSSID infrastructure" };
+                                        let r_title = if is_remote { "TOPOLOGY" } else { "ACCESS POINT" };
+                                        let r_sub = if is_remote { "Host NIC" } else { "Connected AP" };
                                         ui.label(RichText::new(r_title).size(12.5).strong().color(p.text_primary));
                                         ui.label(RichText::new(r_sub).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     });
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         let qual_str = if is_remote {
-                                            if is_connected { "FULL DUPLEX" } else { "LINK DOWN" }.to_string()
+                                            if is_connected { "DUPLEX" } else { "DOWN" }.to_string()
                                         } else if wifi_snap.signal_pct >= 80 {
-                                            format!("EXCELLENT ({}%)", wifi_snap.signal_pct)
+                                            format!("EXC ({}%)", wifi_snap.signal_pct)
                                         } else if wifi_snap.signal_pct >= 50 {
                                             format!("GOOD ({}%)", wifi_snap.signal_pct)
                                         } else {
@@ -14081,7 +14081,7 @@ impl LauncherApp {
                                                 let main_lbl = if is_remote { format!("Interface /dev/{}", iface_name) } else { wifi_snap.ssid.clone() };
                                                 ui.label(RichText::new(main_lbl).size(13.0).strong().color(p.text_primary));
                                                 let band_str = if is_remote {
-                                                    format!("State: {} • MTU 1500 (Direct Kernel Link)", if is_connected { "UP / RUNNING" } else { "DOWN" })
+                                                    format!("State: {} • MTU 1500", if is_connected { "UP" } else { "DOWN" })
                                                 } else {
                                                     format!("{:.1} GHz • {} ({})", wifi_snap.frequency_mhz as f32 / 1000.0, wifi_snap.security, wifi_snap.driver)
                                                 };
@@ -14120,14 +14120,14 @@ impl LauncherApp {
                                 ui.columns(3, |cols| {
                                     let ap_chips: [(&str, &str); 3] = if is_remote {
                                         [
-                                            ("INTERFACE TYPE", if is_wireless { "802.11 Wi-Fi" } else { "Full Duplex Ethernet" }),
-                                            ("CARRIER LINK", if is_connected { "Carrier Detected" } else { "No Carrier" }),
-                                            ("ACTIVE SOCKETS", "Listening / Established"),
+                                            ("TYPE", if is_wireless { "Wi-Fi" } else { "Ethernet" }),
+                                            ("CARRIER", if is_connected { "Up" } else { "Down" }),
+                                            ("SOCKETS", "Active"),
                                         ]
                                     } else {
                                         [
-                                            ("TX LINK SPEED", wifi_snap.rate.as_str()),
-                                            ("RX LINK SPEED", wifi_snap.rate.as_str()),
+                                            ("TX LINK", wifi_snap.rate.as_str()),
+                                            ("RX LINK", wifi_snap.rate.as_str()),
                                             ("BSSID", wifi_snap.bssid.as_str()),
                                         ]
                                     };
@@ -14161,16 +14161,16 @@ impl LauncherApp {
                 let loss_slice = [0.0_f32; 5];
 
                 ui.columns(4, |cols| {
-                    // Card 1: BYTES SENT (SESSION)
-                    let egress_sub = if is_remote { format!("Cumulative egress on {}", iface_name) } else { format!("Cumulative egress on {}", wifi_snap.interface) };
+                    // Card 1: BYTES SENT
+                    let egress_sub = if is_remote { format!("Egress: {}", iface_name) } else { format!("Egress: {}", wifi_snap.interface) };
                     render_big_stat_card(
                         &mut cols[0],
                         crate::lucide::UPLOAD,
-                        "BYTES SENT (SESSION)",
+                        "BYTES SENT",
                         &format!("{:.2}", tx_gb),
                         "GB",
                         &egress_sub,
-                        "STATUS OK",
+                        "OK",
                         "DROP 0",
                         &tx_slice,
                         (tx_gb * 1.5).max(5.0),
@@ -14180,16 +14180,16 @@ impl LauncherApp {
                         p.text_muted,
                     );
 
-                    // Card 2: BYTES RECEIVED
-                    let ingress_sub = if is_remote { format!("Cumulative ingress on {}", iface_name) } else { format!("Cumulative ingress on {}", wifi_snap.interface) };
+                    // Card 2: BYTES RECV
+                    let ingress_sub = if is_remote { format!("Ingress: {}", iface_name) } else { format!("Ingress: {}", wifi_snap.interface) };
                     render_big_stat_card(
                         &mut cols[1],
                         crate::lucide::DOWNLOAD,
-                        "BYTES RECEIVED",
+                        "BYTES RECV",
                         &format!("{:.2}", rx_gb),
                         "GB",
                         &ingress_sub,
-                        "STATUS OK",
+                        "OK",
                         "ERR 0",
                         &rx_slice,
                         (rx_gb * 1.5).max(15.0),
@@ -14204,12 +14204,12 @@ impl LauncherApp {
                         render_big_stat_card(
                             &mut cols[2],
                             crate::lucide::ACTIVITY,
-                            "ACTIVE SOCKETS",
+                            "SOCKETS",
                             &format!("{}", snap.socket_total),
-                            "SOCKS",
+                            "TOTAL",
                             &format!("{} TCP • {} UDP", snap.socket_tcp, snap.socket_udp),
-                            "SOCKSTAT",
-                            "ESTABLISHED",
+                            "ESTAB",
+                            "ACTIVE",
                             &sock_slice,
                             (snap.socket_total as f32 * 1.5).max(20.0),
                             Some(0.5),
@@ -14218,11 +14218,11 @@ impl LauncherApp {
                             p.text_muted,
                         );
                     } else {
-                        let gw_sub = format!("Local hop to {}", wifi_snap.gateway);
+                        let gw_sub = format!("To {}", wifi_snap.gateway);
                         render_big_stat_card(
                             &mut cols[2],
                             crate::lucide::ACTIVITY,
-                            "GATEWAY LATENCY",
+                            "LATENCY",
                             "2.1",
                             "MS",
                             &gw_sub,
@@ -14237,15 +14237,15 @@ impl LauncherApp {
                         );
                     }
 
-                    // Card 4: PACKET LOSS
+                    // Card 4: LOSS
                     render_big_stat_card(
                         &mut cols[3],
                         crate::lucide::CHECK,
-                        "PACKET LOSS",
+                        "LOSS",
                         "0.0",
                         "%",
-                        if is_remote { "Direct kernel telemetry stream" } else { "ICMP echo sequence health" },
-                        "TESTED 120",
+                        if is_remote { "Direct stream" } else { "ICMP ping" },
+                        "PING 120",
                         "LOSS 0",
                         &loss_slice,
                         10.0,
@@ -14264,16 +14264,16 @@ impl LauncherApp {
                 let jitter_val = if is_remote { 0.4 } else { wifi_snap.jitter_ms };
                 let tunnel_id_str = if is_remote {
                     let h_prefix = host_id.unwrap_or("REMOTE");
-                    format!("TUNNEL ID: SSH-0x{:X}", h_prefix.as_bytes().iter().fold(0u16, |acc, &b| acc.wrapping_add(b as u16)))
+                    format!("ID: SSH-0x{:X}", h_prefix.as_bytes().iter().fold(0u16, |acc, &b| acc.wrapping_add(b as u16)))
                 } else {
-                    format!("TUNNEL ID: {}", wifi_snap.tunnel_id)
+                    format!("ID: {}", wifi_snap.tunnel_id)
                 };
 
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                     ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
-                    ui.label(RichText::new("LINK STATE: ESTABLISHED").size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                    ui.label(RichText::new("LINK: UP").size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                     ui.label(RichText::new("/").size(9.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                     ui.label(RichText::new(iface_display).size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
 
@@ -14291,7 +14291,7 @@ impl LauncherApp {
                             });
 
                         // Jitter
-                        ui.label(RichText::new(format!("⇄ {:.1} ms Jitter", jitter_val)).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                        ui.label(RichText::new(format!("⇄ {:.1} ms", jitter_val)).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
 
                         // Throughput Rate
                         ui.horizontal(|ui| {
@@ -14371,8 +14371,8 @@ impl LauncherApp {
 
                                     ui.vertical(|ui| {
                                         ui.horizontal(|ui| {
-                                            ui.label(RichText::new("IP Configuration").size(13.5).strong().color(p.text_primary));
-                                            let badge_txt = if is_remote { "DHCP ACTIVE" } else { "DHCP ACTIVE" };
+                                            ui.label(RichText::new("IP Config").size(13.5).strong().color(p.text_primary));
+                                            let badge_txt = if is_remote { "DHCP" } else { "DHCP" };
                                             Frame::none()
                                                 .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 20))
                                                 .rounding(Rounding::same(4.0))
@@ -14381,7 +14381,7 @@ impl LauncherApp {
                                                     ui.label(RichText::new(badge_txt).size(8.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                                 });
                                         });
-                                        let sub = format!("DHCP dynamic lease on {} interface", iface_display);
+                                        let sub = format!("DHCP on {}", iface_display);
                                         ui.label(RichText::new(sub).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     });
 
@@ -14396,8 +14396,8 @@ impl LauncherApp {
 
                                 ui.add_space(10.0);
 
-                                // IPV4 ADDRESS (Prominent Big Display with Copy Button)
-                                ui.label(RichText::new("IPV4 ADDRESS").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                // IPV4 (Prominent Big Display with Copy Button)
+                                ui.label(RichText::new("IPV4").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                                 ui.add_space(2.0);
 
                                 ui.horizontal(|ui| {
@@ -14425,27 +14425,27 @@ impl LauncherApp {
                                 ui.add_space(8.0);
 
                                 // Key-Value Rows
-                                // 1. SUBNET MASK
+                                // 1. SUBNET
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("SUBNET MASK").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                    ui.label(RichText::new("SUBNET").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.label(RichText::new(subnet_mask_str).size(9.5).monospace().color(Color32::from_rgb(226, 232, 240)));
                                     });
                                 });
                                 ui.add_space(4.0);
 
-                                // 2. DEFAULT GATEWAY
+                                // 2. GATEWAY
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("DEFAULT GATEWAY").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                    ui.label(RichText::new("GATEWAY").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.label(RichText::new(&gateway_str).size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                     });
                                 });
                                 ui.add_space(4.0);
 
-                                // 3. DNS RESOLVERS
+                                // 3. DNS
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("DNS RESOLVERS").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                    ui.label(RichText::new("DNS").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         Frame::none()
@@ -14461,9 +14461,9 @@ impl LauncherApp {
                                 });
                                 ui.add_space(4.0);
 
-                                // 4. IPV6 LINK-LOCAL (with Copy Button)
+                                // 4. IPV6 (with Copy Button)
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("IPV6 LINK-LOCAL").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                    ui.label(RichText::new("IPV6").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         let (copy_v6_rect, copy_v6_resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
@@ -14494,18 +14494,18 @@ impl LauncherApp {
                                 });
                                 ui.add_space(4.0);
 
-                                // 5. MAC (HARDWARE)
+                                // 5. MAC
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("MAC (HARDWARE)").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                    ui.label(RichText::new("MAC").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.label(RichText::new(&mac_str).size(9.5).monospace().color(Color32::from_rgb(226, 232, 240)));
                                     });
                                 });
                                 ui.add_space(4.0);
 
-                                // 6. DRIVER / BUS
+                                // 6. DRIVER
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("DRIVER / BUS").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                    ui.label(RichText::new("DRIVER").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         Frame::none()
@@ -14521,7 +14521,7 @@ impl LauncherApp {
 
                                 ui.add_space(8.0);
 
-                                // Sub-pill: DHCP Lease Time Remaining
+                                // Sub-pill: DHCP Lease
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 14, 22))
                                     .rounding(Rounding::same(6.0))
@@ -14532,7 +14532,7 @@ impl LauncherApp {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 6.0;
                                                 ui.label(RichText::new("🛡️").size(10.0));
-                                                ui.label(RichText::new("DHCP Lease Time Remaining").size(9.0).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                                ui.label(RichText::new("DHCP Lease").size(9.0).monospace().color(Color32::from_rgb(203, 213, 225)));
                                             });
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                 ui.label(RichText::new(lease_time_str).size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
@@ -14547,7 +14547,7 @@ impl LauncherApp {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
                             ui.painter().circle_filled(d_rect.center(), 2.2, Color32::from_rgb(56, 189, 248));
-                            let footer_str = format!("NETFILTER: ACTIVE   NAMESERVER_SYNC: OK   KERNEL: {}", kernel_str);
+                            let footer_str = format!("FILTER: OK • DNS: OK • KERNEL: {}", kernel_str);
                             ui.label(RichText::new(footer_str).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                         });
                     });
@@ -14575,7 +14575,7 @@ impl LauncherApp {
                                 ];
 
                                 let endpoint_count = if is_remote { default_remote_socks.len() } else { wifi_snap.active_sockets.len() };
-                                let ep_badge_str = format!("{} Local Endpoints", endpoint_count);
+                                let ep_badge_str = format!("{} Endpoints", endpoint_count);
 
                                 // Card Header
                                 ui.horizontal(|ui| {
@@ -14585,7 +14585,7 @@ impl LauncherApp {
 
                                     ui.vertical(|ui| {
                                         ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Active Sockets & Daemons").size(13.5).strong().color(p.text_primary));
+                                            ui.label(RichText::new("Sockets").size(13.5).strong().color(p.text_primary));
                                             Frame::none()
                                                 .fill(Color32::from_rgb(24, 32, 47))
                                                 .rounding(Rounding::same(4.0))
@@ -14594,17 +14594,17 @@ impl LauncherApp {
                                                     ui.label(RichText::new(ep_badge_str).size(8.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                                 });
                                         });
-                                        ui.label(RichText::new("Listening network endpoints & local sockets").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                        ui.label(RichText::new("Active listening ports").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     });
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
 
                                         // Socket Monitor button (solid electric cyan fill with dark text)
-                                        let (mon_rect, mon_resp) = ui.allocate_exact_size(egui::vec2(104.0, 24.0), egui::Sense::click());
+                                        let (mon_rect, mon_resp) = ui.allocate_exact_size(egui::vec2(80.0, 24.0), egui::Sense::click());
                                         let m_bg = if mon_resp.hovered() { Color32::from_rgb(125, 211, 252) } else { Color32::from_rgb(56, 189, 248) };
                                         ui.painter().rect_filled(mon_rect, Rounding::same(5.0), m_bg);
-                                        ui.painter().text(mon_rect.center(), egui::Align2::CENTER_CENTER, "∿ Socket Monitor", egui::FontId::monospace(8.5), Color32::from_rgb(10, 15, 29));
+                                        ui.painter().text(mon_rect.center(), egui::Align2::CENTER_CENTER, "∿ Monitor", egui::FontId::monospace(8.5), Color32::from_rgb(10, 15, 29));
                                         if mon_resp.clicked() {
                                             if !is_remote {
                                                 self.trigger_wifi_query(Some(ui.ctx().clone()));
@@ -14647,10 +14647,10 @@ impl LauncherApp {
                                     .striped(false)
                                     .spacing(egui::vec2(12.0, 6.0))
                                     .show(ui, |ui| {
-                                        ui.label(RichText::new("PROCESS / SERVICE").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                        ui.label(RichText::new("PROCESS").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
                                         ui.label(RichText::new("PROTO").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new("LOCAL PORT").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                            ui.label(RichText::new("PORT").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
                                         });
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             ui.label(RichText::new("STATUS").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
@@ -14798,7 +14798,7 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
                                 ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
-                                ui.label(RichText::new("HARDWARE ENGINE / POWER & THERMAL MATRIX").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                ui.label(RichText::new("HARDWARE / POWER").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                             });
 
                             ui.add_space(2.0);
@@ -14808,21 +14808,21 @@ impl LauncherApp {
                             let is_narrow = avail_w < 680.0;
 
                             let (status_str, status_col, status_bg) = if is_remote && !has_battery {
-                                ("CONTINUOUS AC MAINS • 80 PLUS PLATINUM".to_string(), Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                                ("AC MAINS • PLATINUM".to_string(), Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
                             } else if ac_online {
                                 if bat_pct >= 99.0 {
-                                    ("AC MAINS ONLINE • FULLY CHARGED (100%)".to_string(), Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                                    ("AC ONLINE • 100%".to_string(), Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
                                 } else {
-                                    (format!("AC MAINS CHARGING • {:.0}%", bat_pct), Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                                    (format!("CHARGING • {:.0}%", bat_pct), Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
                                 }
                             } else {
-                                (format!("BATTERY DISCHARGING • {:.0}% REMAINING", bat_pct), Color32::from_rgb(245, 158, 11), Color32::from_rgba_unmultiplied(245, 158, 11, 24))
+                                (format!("BATTERY • {:.0}%", bat_pct), Color32::from_rgb(245, 158, 11), Color32::from_rgba_unmultiplied(245, 158, 11, 24))
                             };
 
                             let title_str = if is_remote {
-                                format!("Power Supply, TDP & Thermal Matrix • Host '{}'", host_id.unwrap_or("Remote"))
+                                format!("Power & Thermal • Host '{}'", host_id.unwrap_or("Remote"))
                             } else {
-                                "Power Supply, TDP & Battery Health".to_string()
+                                "Power & Battery".to_string()
                             };
 
                             if is_narrow {
@@ -14872,9 +14872,9 @@ impl LauncherApp {
                             // Row 3: Subtitle spanning the full card width underneath
                             ui.horizontal_wrapped(|ui| {
                                 let sub_str = if is_remote && !has_battery {
-                                    "Continuous grid-tied AC server telemetry, hardware power capping & PCIe ASPM bus energy states"
+                                    "AC server power telemetry & energy states"
                                 } else {
-                                    "Realtime ACPI battery health, continuous PSU telemetry, dynamic governor scaling & battery longevity circuits"
+                                    "ACPI battery health & power telemetry"
                                 };
                                 ui.label(RichText::new(sub_str).size(10.0).color(Color32::from_rgb(148, 163, 184)));
                             });

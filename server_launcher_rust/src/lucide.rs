@@ -122,6 +122,13 @@ pub fn setup_lucide_font(ctx: &eframe::egui::Context) {
         .or_default()
         .push(FONT_NAME.to_owned());
 
+    // Also add Hack as fallback for Proportional font family so symbols (bullets, arrows) render reliably
+    fonts
+        .families
+        .entry(eframe::egui::FontFamily::Proportional)
+        .or_default()
+        .push("Hack".to_owned());
+
     // Add to Monospace font family as well
     fonts
         .families

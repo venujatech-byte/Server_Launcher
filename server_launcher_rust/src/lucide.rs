@@ -15,6 +15,7 @@ pub const TERMINAL: &str = "\u{e181}"; // terminal
 pub const COMMAND: &str = "\u{e181}"; // terminal
 pub const SYSTEMD: &str = "\u{e245}"; // settings-2
 pub const SETTINGS: &str = "\u{e154}"; // settings
+pub const SLIDERS: &str = "\u{e245}"; // sliders
 pub const SENSORS: &str = "\u{e186}"; // thermometer
 pub const THERMOMETER: &str = "\u{e186}"; // thermometer
 
@@ -36,6 +37,7 @@ pub const FLAME: &str = "\u{e0d2}"; // flame
 pub const GAUGE: &str = "\u{e1bf}"; // gauge
 pub const WIFI: &str = "\u{e1b0}"; // wifi
 pub const BLUETOOTH: &str = "\u{e05c}"; // bluetooth
+pub const HEADPHONES: &str = "\u{e0f0}"; // headphones
 pub const LAYOUT_GRID: &str = "\u{e101}"; // layout-grid
 
 // Actions and UI Controls

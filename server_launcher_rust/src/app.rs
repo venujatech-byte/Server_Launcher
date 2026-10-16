@@ -16271,11 +16271,6 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 4. Two Columns: Left (Active Fan Deck) vs Right (Interactive Fan Curve Calibrator)
-                let total_w = ui.available_width();
-                let gap = 10.0_f32;
-                let left_w = ((total_w - gap) * 0.44).max(310.0);
-                let right_w = (total_w - left_w - gap).max(360.0);
-
                 let cpu_fan_pct = if !is_remote && self.fan_full_blast {
                     100.0_f32
                 } else {
@@ -16299,205 +16294,207 @@ impl LauncherApp {
                 let cpu_rpm = (cpu_fan_pct / 100.0 * 4800.0) as u32;
                 let exhaust_rpm = (exhaust_fan_pct / 100.0 * 3600.0) as u32;
 
-                ui.horizontal(|ui| {
+                ui.columns(2, |cols| {
                     // Left Column: Active Fan Deck
-                    ui.allocate_ui_with_layout(egui::vec2(left_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.vertical(|ui| {
-                                        let deck_title = if is_remote { "Server Chassis Airflow" } else { "Active Fan Deck" };
-                                        let deck_sub = if is_remote { "Dynamic server chassis airflow managed by remote kernel ACPI / BMC" } else { "Dual asynchronous hydro-bearing pwm centrifugal blowers" };
-                                        ui.label(RichText::new(deck_title).size(12.5).strong().color(p.text_primary));
-                                        ui.label(RichText::new(deck_sub).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                        .show(&mut cols[0], |ui| {
+                            ui.set_width(ui.available_width());
+
+                            let deck_title = if is_remote { "Server Chassis Airflow" } else { "Active Fan Deck" };
+                            let deck_sub = if is_remote { "Dynamic server chassis airflow managed by remote kernel ACPI / BMC" } else { "Dual asynchronous hydro-bearing pwm centrifugal blowers" };
+
+                            // Header Row 1: Title on left, Acoustics/BMC badge on right
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(deck_title).size(13.0).strong().color(p.text_primary));
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    Frame::none()
+                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 16))
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(7.0, 3.0))
+                                        .show(ui, |ui| {
+                                            if is_remote {
+                                                ui.label(RichText::new("BMC / ACPI ACTIVE").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            } else {
+                                                let dba = 28.4_f32 + (cpu_fan_pct / 100.0 * 18.0);
+                                                ui.label(RichText::new(format!("ACOUSTICS: {:.1} dBA", dba)).size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            }
+                                        });
+                                });
+                            });
+
+                            ui.add_space(2.0);
+
+                            // Header Row 2: Subtitle spanning the full card width underneath
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new(deck_sub).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                            });
+
+                            ui.add_space(10.0);
+
+                            // Two Tachometers: using ui.columns(2) to GUARANTEE 50/50 equal width!
+                            let fan1_name = if is_remote { "Chassis Intake" } else { "CPU Blower" };
+                            let fan2_name = if is_remote { "Chassis Exhaust" } else { "Chassis Exhaust" };
+
+                            ui.columns(2, |fcols| {
+                                // Fan 1 (CPU Blower)
+                                Frame::none()
+                                    .fill(Color32::from_rgb(10, 14, 22))
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(8.0, 8.0))
+                                    .show(&mut fcols[0], |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 8.0;
+                                            draw_circular_tachometer(ui, 48.0, cpu_fan_pct, Color32::from_rgb(56, 189, 248));
+                                            ui.vertical(|ui| {
+                                                ui.spacing_mut().item_spacing.y = 1.0;
+                                                ui.label(RichText::new(fan1_name).size(11.0).strong().color(p.text_primary));
+                                                ui.label(RichText::new(format!("{},{:03} RPM", cpu_rpm / 1000, cpu_rpm % 1000)).size(13.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new("MAX: 4,800 RPM").size(8.0).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                            });
+                                        });
                                     });
 
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                // Fan 2 (Chassis Exhaust)
+                                Frame::none()
+                                    .fill(Color32::from_rgb(10, 14, 22))
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(8.0, 8.0))
+                                    .show(&mut fcols[1], |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 8.0;
+                                            draw_circular_tachometer(ui, 48.0, exhaust_fan_pct, Color32::from_rgb(96, 165, 250));
+                                            ui.vertical(|ui| {
+                                                ui.spacing_mut().item_spacing.y = 1.0;
+                                                ui.label(RichText::new(fan2_name).size(11.0).strong().color(p.text_primary));
+                                                ui.label(RichText::new(format!("{},{:03} RPM", exhaust_rpm / 1000, exhaust_rpm % 1000)).size(13.0).monospace().strong().color(Color32::from_rgb(96, 165, 250)));
+                                                ui.label(RichText::new("MAX: 3,600 RPM").size(8.0).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                            });
+                                        });
+                                    });
+                            });
+
+                            ui.add_space(10.0);
+
+                            // 100% Full Blast Test Button (Local only; disabled card on remote)
+                            if is_remote {
+                                Frame::none()
+                                    .fill(Color32::from_rgb(10, 14, 22))
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(crate::lucide::LOCK).size(13.0).color(Color32::from_rgb(148, 163, 184)));
+                                            ui.add_space(4.0);
+                                            ui.vertical(|ui| {
+                                                ui.label(RichText::new("Fan Acoustic Test: Disabled on Remote Host").size(11.0).strong().color(Color32::from_rgb(148, 163, 184)));
+                                                ui.label(RichText::new("Acoustic pulse tests are restricted to local hardware to prevent erroneous remote bus actuation.").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                            });
+                                        });
+                                    });
+                            } else {
+                                let is_blasting = self.fan_full_blast;
+                                let blast_stroke = if is_blasting { Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)) } else { Stroke::NONE };
+                                let blast_bg = if is_blasting { Color32::from_rgba_unmultiplied(56, 189, 248, 22) } else { Color32::from_rgb(10, 14, 22) };
+
+                                let blast_resp = Frame::none()
+                                    .fill(blast_bg)
+                                    .stroke(blast_stroke)
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.horizontal(|ui| {
+                                            let icon = if is_blasting { crate::lucide::ALERT_TRIANGLE } else { crate::lucide::GAUGE };
+                                            let icon_col = Color32::from_rgb(56, 189, 248);
+                                            ui.label(RichText::new(icon).size(13.0).color(icon_col));
+                                            ui.add_space(4.0);
+                                            ui.vertical(|ui| {
+                                                let title = if is_blasting { "STOP 100% Full Blast Test" } else { "100% Full Blast Test (10s pulse)" };
+                                                ui.label(RichText::new(title).size(11.0).strong().color(if is_blasting { Color32::from_rgb(56, 189, 248) } else { p.text_primary }));
+                                                ui.label(RichText::new("Forces EC fan controllers to maximum duty cycle for acoustic check").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                            });
+                                        });
+                                    }).response;
+
+                                if blast_resp.interact(egui::Sense::click()).clicked() {
+                                    self.fan_full_blast = !self.fan_full_blast;
+                                    self.fan_test_start = if self.fan_full_blast { Some(Instant::now()) } else { None };
+                                }
+                            }
+                        });
+
+                    // Right Column: Interactive Fan Curve Calibrator
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                        .show(&mut cols[1], |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Interactive Fan Curve Calibrator").size(12.5).strong().color(p.text_primary));
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 6.0;
                                         Frame::none()
                                             .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 16))
                                             .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(7.0, 3.0))
+                                            .inner_margin(egui::Margin::symmetric(6.0, 3.0))
                                             .show(ui, |ui| {
-                                                if is_remote {
-                                                    ui.label(RichText::new("BMC / ACPI ACTIVE").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                                } else {
-                                                    let dba = 28.4_f32 + (cpu_fan_pct / 100.0 * 18.0);
-                                                    ui.label(RichText::new(format!("ACOUSTICS: {:.1} dBA", dba)).size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                                }
+                                                ui.label(RichText::new("HYSTERESIS: 3°C").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            });
+                                        Frame::none()
+                                            .fill(Color32::from_rgba_unmultiplied(148, 163, 184, 16))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(6.0, 3.0))
+                                            .show(ui, |ui| {
+                                                let prof_str = match self.fan_mode {
+                                                    0 => "PROFILE: SILENT/DYNAMIC",
+                                                    1 => "PROFILE: BALANCED",
+                                                    _ => "PROFILE: TURBO MAX",
+                                                };
+                                                ui.label(RichText::new(prof_str).size(8.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                                             });
                                     });
                                 });
+                            });
 
-                                ui.add_space(12.0);
+                            ui.add_space(2.0);
 
-                                // Two Tachometers Side-by-Side
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 16.0;
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new("Embedded Controller Duty Cycle: 4 Control Nodes").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                            });
 
-                                    let fan1_name = if is_remote { "Chassis Intake" } else { "CPU Blower" };
-                                    let fan2_name = if is_remote { "Chassis Exhaust" } else { "Chassis Exhaust" };
+                            ui.add_space(8.0);
+                            draw_interactive_fan_curve(ui, 135.0, cpu_temp, cpu_fan_pct);
 
-                                    // Fan 1
+                            ui.add_space(8.0);
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                let node_chips = [
+                                    ("P1: 30°C → 20%", Color32::from_rgb(56, 189, 248)),
+                                    ("P2: 50°C → 45%", Color32::from_rgb(56, 189, 248)),
+                                    ("P3: 75°C → 75%", Color32::from_rgb(56, 189, 248)),
+                                    ("P4: 90°C → 100% (CRIT)", Color32::from_rgb(56, 189, 248)),
+                                ];
+                                for (lbl, col) in node_chips {
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 14, 22))
-                                        .rounding(Rounding::same(6.0))
-                                        .inner_margin(egui::Margin::symmetric(10.0, 10.0))
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(7.0, 3.0))
                                         .show(ui, |ui| {
-                                            ui.vertical(|ui| {
-                                                ui.horizontal(|ui| {
-                                                    draw_circular_tachometer(ui, 56.0, cpu_fan_pct, Color32::from_rgb(56, 189, 248));
-                                                    ui.add_space(8.0);
-                                                    ui.vertical(|ui| {
-                                                        ui.label(RichText::new(fan1_name).size(11.0).strong().color(p.text_primary));
-                                                        ui.label(RichText::new(format!("{},{:03} RPM", cpu_rpm / 1000, cpu_rpm % 1000)).size(13.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                                        ui.label(RichText::new("RATED MAX: 4,800 RPM").size(8.0).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                                    });
-                                                });
-                                            });
+                                            ui.label(RichText::new(lbl).size(8.5).monospace().strong().color(col));
                                         });
-
-                                    // Fan 2
-                                    Frame::none()
-                                        .fill(Color32::from_rgb(10, 14, 22))
-                                        .rounding(Rounding::same(6.0))
-                                        .inner_margin(egui::Margin::symmetric(10.0, 10.0))
-                                        .show(ui, |ui| {
-                                            ui.vertical(|ui| {
-                                                ui.horizontal(|ui| {
-                                                    draw_circular_tachometer(ui, 56.0, exhaust_fan_pct, Color32::from_rgb(96, 165, 250));
-                                                    ui.add_space(8.0);
-                                                    ui.vertical(|ui| {
-                                                        ui.label(RichText::new(fan2_name).size(11.0).strong().color(p.text_primary));
-                                                        ui.label(RichText::new(format!("{},{:03} RPM", exhaust_rpm / 1000, exhaust_rpm % 1000)).size(13.0).monospace().strong().color(Color32::from_rgb(96, 165, 250)));
-                                                        ui.label(RichText::new("RATED MAX: 3,600 RPM").size(8.0).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                                    });
-                                                });
-                                            });
-                                        });
-                                });
-
-                                ui.add_space(12.0);
-
-                                // 100% Full Blast Test Button (Local only; disabled card on remote)
-                                if is_remote {
-                                    Frame::none()
-                                        .fill(Color32::from_rgb(10, 14, 22))
-                                        .rounding(Rounding::same(6.0))
-                                        .inner_margin(egui::Margin::symmetric(12.0, 8.0))
-                                        .show(ui, |ui| {
-                                            ui.set_width(ui.available_width());
-                                            ui.horizontal(|ui| {
-                                                ui.label(RichText::new(crate::lucide::LOCK).size(13.0).color(Color32::from_rgb(148, 163, 184)));
-                                                ui.add_space(4.0);
-                                                ui.vertical(|ui| {
-                                                    ui.label(RichText::new("Fan Acoustic Test: Disabled on Remote Host").size(11.0).strong().color(Color32::from_rgb(148, 163, 184)));
-                                                    ui.label(RichText::new("Acoustic pulse tests are restricted to local hardware to prevent erroneous remote bus actuation.").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                                });
-                                            });
-                                        });
-                                } else {
-                                    let is_blasting = self.fan_full_blast;
-                                    let blast_stroke = if is_blasting { Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)) } else { Stroke::NONE };
-                                    let blast_bg = if is_blasting { Color32::from_rgba_unmultiplied(56, 189, 248, 22) } else { Color32::from_rgb(10, 14, 22) };
-
-                                    let blast_resp = Frame::none()
-                                        .fill(blast_bg)
-                                        .stroke(blast_stroke)
-                                        .rounding(Rounding::same(6.0))
-                                        .inner_margin(egui::Margin::symmetric(12.0, 8.0))
-                                        .show(ui, |ui| {
-                                            ui.set_width(ui.available_width());
-                                            ui.horizontal(|ui| {
-                                                let icon = if is_blasting { crate::lucide::ALERT_TRIANGLE } else { crate::lucide::GAUGE };
-                                                let icon_col = Color32::from_rgb(56, 189, 248);
-                                                ui.label(RichText::new(icon).size(13.0).color(icon_col));
-                                                ui.add_space(4.0);
-                                                ui.vertical(|ui| {
-                                                    let title = if is_blasting { "STOP 100% Full Blast Test" } else { "100% Full Blast Test (10s pulse)" };
-                                                    ui.label(RichText::new(title).size(11.0).strong().color(if is_blasting { Color32::from_rgb(56, 189, 248) } else { p.text_primary }));
-                                                    ui.label(RichText::new("Forces EC fan controllers to maximum duty cycle for acoustic check").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                                });
-                                            });
-                                        }).response;
-
-                                    if blast_resp.interact(egui::Sense::click()).clicked() {
-                                        self.fan_full_blast = !self.fan_full_blast;
-                                        self.fan_test_start = if self.fan_full_blast { Some(Instant::now()) } else { None };
-                                    }
                                 }
                             });
-                    });
-
-                    ui.add_space(gap);
-
-                    // Right Column: Interactive Fan Curve Calibrator
-                    ui.allocate_ui_with_layout(egui::vec2(right_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.vertical(|ui| {
-                                        ui.label(RichText::new("Interactive Fan Curve Calibrator").size(12.5).strong().color(p.text_primary));
-                                        ui.label(RichText::new("Embedded Controller Duty Cycle: 4 Control Nodes").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                    });
-
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 6.0;
-                                            Frame::none()
-                                                .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 16))
-                                                .rounding(Rounding::same(4.0))
-                                                .inner_margin(egui::Margin::symmetric(6.0, 3.0))
-                                                .show(ui, |ui| {
-                                                    ui.label(RichText::new("HYSTERESIS: 3°C").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                                });
-                                            Frame::none()
-                                                .fill(Color32::from_rgba_unmultiplied(148, 163, 184, 16))
-                                                .rounding(Rounding::same(4.0))
-                                                .inner_margin(egui::Margin::symmetric(6.0, 3.0))
-                                                .show(ui, |ui| {
-                                                    let prof_str = match self.fan_mode {
-                                                        0 => "PROFILE: SILENT/DYNAMIC",
-                                                        1 => "PROFILE: BALANCED",
-                                                        _ => "PROFILE: TURBO MAX",
-                                                    };
-                                                    ui.label(RichText::new(prof_str).size(8.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
-                                                });
-                                        });
-                                    });
-                                });
-
-                                ui.add_space(8.0);
-                                draw_interactive_fan_curve(ui, 135.0, cpu_temp, cpu_fan_pct);
-
-                                ui.add_space(8.0);
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 8.0;
-                                    let node_chips = [
-                                        ("P1: 30°C → 20%", Color32::from_rgb(56, 189, 248)),
-                                        ("P2: 50°C → 45%", Color32::from_rgb(56, 189, 248)),
-                                        ("P3: 75°C → 75%", Color32::from_rgb(56, 189, 248)),
-                                        ("P4: 90°C → 100% (CRIT)", Color32::from_rgb(56, 189, 248)),
-                                    ];
-                                    for (lbl, col) in node_chips {
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(10, 14, 22))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(7.0, 3.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new(lbl).size(8.5).monospace().strong().color(col));
-                                            });
-                                    }
-                                });
-                            });
-                    });
+                        });
                 });
 
                 ui.add_space(8.0);

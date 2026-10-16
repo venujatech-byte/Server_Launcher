@@ -10662,6 +10662,7 @@ impl LauncherApp {
                     .rounding(Rounding::same(8.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                     .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
                             // Chip Icon in dark rounded box
                             Frame::none()
@@ -10675,50 +10676,70 @@ impl LauncherApp {
                             ui.add_space(8.0);
 
                             ui.vertical(|ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 8.0;
-                                    ui.label(RichText::new("Central Processing Unit (CPU)").size(15.0).strong().color(p.text_primary));
+                                ui.set_width(ui.available_width());
 
-                                    Frame::none()
-                                        .fill(Color32::from_rgb(18, 38, 58))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                        .show(ui, |ui| {
-                                            ui.label(RichText::new("ACTIVE GOVERNOR").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                        });
+                                // Row 1: Title & Governor on left, PL1 Limit & Tjunction Max on right
+                                ui.horizontal(|ui| {
+                                    let row_w = ui.available_width();
+                                    let right_w = 265.0_f32;
+                                    let left_w = (row_w - right_w - 8.0).max(80.0);
+
+                                    ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                        ui.spacing_mut().item_spacing.x = 8.0;
+                                        ui.label(RichText::new("Central Processing Unit (CPU)").size(15.0).strong().color(p.text_primary));
+
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(18, 38, 58))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new("ACTIVE GOVERNOR").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            });
+                                    });
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        // Tjunction Max badge
+                                        Frame::none()
+                                            .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 8))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(8.0, 3.5))
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new("Tjunction Max: 105°C").size(9.5).monospace().color(p.text_muted));
+                                            });
+
+                                        ui.add_space(6.0);
+
+                                        // PL1 Limit badge
+                                        Frame::none()
+                                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(8.0, 3.5))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 5.0;
+                                                    let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                                    ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
+                                                    let pl1 = snap.cpu_tdp_watts.unwrap_or(12.0);
+                                                    ui.label(RichText::new(format!("PL1 Limit: {:.1}W", pl1)).size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                });
+                                            });
+                                    });
                                 });
 
-                                ui.add_space(2.0);
+                                ui.add_space(3.0);
+
+                                // Row 2: Subtitle spanning the full card width underneath Row 1 without overlap
                                 let uptime_str = format_uptime_hms(get_system_uptime());
-                                ui.label(RichText::new(format!("{} • {} Cores / {} Threads • Socket 1 • Uptime {}", brand, phys, log, uptime_str)).size(10.5).monospace().color(p.text_muted));
-                            });
-
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                // Tjunction Max badge
-                                Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 8))
-                                    .rounding(Rounding::same(4.0))
-                                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                                    .show(ui, |ui| {
-                                        ui.label(RichText::new("Tjunction Max: 105°C").size(10.0).monospace().color(p.text_muted));
-                                    });
-
-                                ui.add_space(6.0);
-
-                                // PL1 Limit badge
-                                Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
-                                    .rounding(Rounding::same(4.0))
-                                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                                    .show(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 5.0;
-                                            let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                            ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
-                                            let pl1 = snap.cpu_tdp_watts.unwrap_or(12.0);
-                                            ui.label(RichText::new(format!("PL1 Limit: {:.1}W", pl1)).size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                        });
-                                    });
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    ui.label(RichText::new(brand).size(10.0).monospace().color(p.text_muted));
+                                    ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
+                                    ui.label(RichText::new(format!("{} Cores / {} Threads", phys, log)).size(10.0).monospace().color(p.text_muted));
+                                    ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
+                                    ui.label(RichText::new("Socket 1").size(10.0).monospace().color(p.text_muted));
+                                    ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
+                                    ui.label(RichText::new(format!("Uptime {}", uptime_str)).size(10.0).monospace().color(p.text_muted));
+                                });
                             });
                         });
                     });
@@ -11046,49 +11067,66 @@ impl LauncherApp {
                     .rounding(Rounding::same(8.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.vertical(|ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 8.0;
-                                    Frame::none()
-                                        .fill(Color32::from_rgb(18, 28, 42))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                        .show(ui, |ui| {
-                                            ui.label(RichText::new("SLOT 1 // ACTIVE").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                        });
-                                    ui.label(RichText::new("PHYSICAL TOPOLOGY: SINGLE-CHANNEL").size(9.0).monospace().color(p.text_muted));
+                        ui.set_width(ui.available_width());
+                        ui.vertical(|ui| {
+                            // Row 1: Overline
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                Frame::none()
+                                    .fill(Color32::from_rgb(18, 28, 42))
+                                    .rounding(Rounding::same(4.0))
+                                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new("SLOT 1 // ACTIVE").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                    });
+                                ui.label(RichText::new("PHYSICAL TOPOLOGY: SINGLE-CHANNEL").size(9.0).monospace().color(p.text_muted));
+                            });
+
+                            ui.add_space(3.0);
+
+                            // Row 2: Title on Left, Action Buttons on Right
+                            ui.horizontal(|ui| {
+                                let row_w = ui.available_width();
+                                let right_w = 260.0_f32;
+                                let left_w = (row_w - right_w - 8.0).max(80.0);
+
+                                ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new("System Memory (RAM) & Swap").size(16.0).strong().color(p.text_primary));
                                 });
 
-                                ui.add_space(3.0);
-                                ui.label(RichText::new("System Memory (RAM) & Swap").size(16.0).strong().color(p.text_primary));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    // Drop Caches Pill Button (Cyan accent with dark text)
+                                    let btn_drop = egui::Button::new(RichText::new(format!("{} Drop Caches", crate::lucide::TRASH)).size(10.5).strong().color(Color32::from_rgb(10, 15, 29)))
+                                        .fill(Color32::from_rgb(112, 213, 228))
+                                        .rounding(Rounding::same(999.0));
+                                    if ui.add(btn_drop).on_hover_text("Flush kernel page cache and dentries/inodes").clicked() {
+                                        let _ = std::process::Command::new("sh").arg("-c").arg("sync; echo 3 > /proc/sys/vm/drop_caches").spawn();
+                                    }
 
-                                ui.add_space(2.0);
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 4.0;
-                                    ui.label(RichText::new(format!("{} DDR4-2400 • 1x 8GB SODIMM Micron MT40A • 195 MB Hardware Reserved •", total_ram_str)).size(10.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new("1.20V Normal").size(10.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                    ui.add_space(6.0);
+
+                                    // Flush Standby List Button (Dark pill)
+                                    let btn_flush = egui::Button::new(RichText::new(format!("{} Flush Standby List", crate::lucide::REFRESH_CW)).size(10.5).color(p.text_secondary))
+                                        .fill(Color32::from_rgb(26, 34, 48))
+                                        .rounding(Rounding::same(999.0));
+                                    if ui.add(btn_flush).on_hover_text("Flush reclaimable standby memory lists").clicked() {
+                                        let _ = std::process::Command::new("sh").arg("-c").arg("sync").spawn();
+                                    }
                                 });
                             });
 
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                // Drop Caches Pill Button (Cyan accent with dark text)
-                                let btn_drop = egui::Button::new(RichText::new(format!("{} Drop Caches", crate::lucide::TRASH)).size(10.5).strong().color(Color32::from_rgb(10, 15, 29)))
-                                    .fill(Color32::from_rgb(112, 213, 228))
-                                    .rounding(Rounding::same(999.0));
-                                if ui.add(btn_drop).on_hover_text("Flush kernel page cache and dentries/inodes").clicked() {
-                                    let _ = std::process::Command::new("sh").arg("-c").arg("sync; echo 3 > /proc/sys/vm/drop_caches").spawn();
-                                }
+                            ui.add_space(3.0);
 
-                                ui.add_space(6.0);
-
-                                // Flush Standby List Button (Dark pill)
-                                let btn_flush = egui::Button::new(RichText::new(format!("{} Flush Standby List", crate::lucide::REFRESH_CW)).size(10.5).color(p.text_secondary))
-                                    .fill(Color32::from_rgb(26, 34, 48))
-                                    .rounding(Rounding::same(999.0));
-                                if ui.add(btn_flush).on_hover_text("Flush reclaimable standby memory lists").clicked() {
-                                    let _ = std::process::Command::new("sh").arg("-c").arg("sync").spawn();
-                                }
+                            // Row 3: Subtitle spanning the full card width underneath Row 2
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                ui.label(RichText::new(format!("{} DDR4-2400", total_ram_str)).size(10.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
+                                ui.label(RichText::new("1x 8GB SODIMM Micron MT40A").size(10.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
+                                ui.label(RichText::new("195 MB Hardware Reserved").size(10.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
+                                ui.label(RichText::new("1.20V Normal").size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                             });
                         });
                     });
@@ -11514,15 +11552,24 @@ impl LauncherApp {
                     .rounding(Rounding::same(8.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.vertical(|ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 4.0;
-                                    ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
-                                    ui.label(RichText::new("GPU ENGINE #0 • ACTIVE DISPATCH").size(9.0).monospace().color(p.text_muted));
-                                });
-                                ui.add_space(2.0);
-                                ui.horizontal(|ui| {
+                        ui.set_width(ui.available_width());
+                        ui.vertical(|ui| {
+                            // Row 1: Overline
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("GPU ENGINE #0 • ACTIVE DISPATCH").size(9.0).monospace().color(p.text_muted));
+                            });
+
+                            ui.add_space(2.0);
+
+                            // Row 2: Title & Spec on Left, Mode Buttons on Right
+                            ui.horizontal(|ui| {
+                                let row_w = ui.available_width();
+                                let right_w = 220.0_f32;
+                                let left_w = (row_w - right_w - 8.0).max(80.0);
+
+                                ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
                                     ui.label(RichText::new(format!("GPU 0: {}", gpu_name)).size(16.0).strong().color(p.text_primary));
                                     Frame::none()
@@ -11533,48 +11580,58 @@ impl LauncherApp {
                                             ui.label(RichText::new("Gen9.5 LP • 18 EUs").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                         });
                                 });
-                                ui.add_space(2.0);
-                                ui.label(RichText::new("Driver: Mesa 24.1.2 (Direct Rendering DRM) / Driver Date: 8/28/2025 / Topology: PCI bus 0, device 2, func 0").size(9.5).monospace().color(p.text_muted));
+
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 6.0;
+
+                                        if ui.add(egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(p.text_muted))
+                                            .fill(Color32::from_rgb(18, 28, 42))
+                                            .stroke(Stroke::NONE)
+                                            .rounding(Rounding::same(4.0))).clicked() {
+                                            // Reset or re-query
+                                        }
+
+                                        let modes = ["TURBO", "BALANCED", "ECO"];
+                                        let mode_indices = [2, 1, 0];
+                                        for (&m_idx, &m_name) in mode_indices.iter().zip(modes.iter()) {
+                                            let is_selected = self.gpu_mode == m_idx;
+                                            let btn_fill = if is_selected {
+                                                Color32::from_rgba_unmultiplied(56, 189, 248, 35)
+                                            } else {
+                                                Color32::from_rgb(18, 28, 42)
+                                            };
+                                            let btn_stroke = if is_selected {
+                                                Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248))
+                                            } else {
+                                                Stroke::NONE
+                                            };
+                                            let text_color = if is_selected {
+                                                Color32::from_rgb(56, 189, 248)
+                                            } else {
+                                                p.text_muted
+                                            };
+                                            if ui.add(egui::Button::new(RichText::new(m_name).size(9.5).monospace().strong().color(text_color))
+                                                .fill(btn_fill)
+                                                .stroke(btn_stroke)
+                                                .rounding(Rounding::same(4.0))).clicked() {
+                                                self.gpu_mode = m_idx;
+                                            }
+                                        }
+                                    });
+                                });
                             });
 
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 6.0;
+                            ui.add_space(3.0);
 
-                                    if ui.add(egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(p.text_muted))
-                                        .fill(Color32::from_rgb(18, 28, 42))
-                                        .stroke(Stroke::NONE)
-                                        .rounding(Rounding::same(4.0))).clicked() {
-                                        // Reset or re-query
-                                    }
-
-                                    let modes = ["TURBO", "BALANCED", "ECO"];
-                                    let mode_indices = [2, 1, 0];
-                                    for (&m_idx, &m_name) in mode_indices.iter().zip(modes.iter()) {
-                                        let is_selected = self.gpu_mode == m_idx;
-                                        let btn_fill = if is_selected {
-                                            Color32::from_rgba_unmultiplied(56, 189, 248, 35)
-                                        } else {
-                                            Color32::from_rgb(18, 28, 42)
-                                        };
-                                        let btn_stroke = if is_selected {
-                                            Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248))
-                                        } else {
-                                            Stroke::NONE
-                                        };
-                                        let text_color = if is_selected {
-                                            Color32::from_rgb(56, 189, 248)
-                                        } else {
-                                            p.text_muted
-                                        };
-                                        if ui.add(egui::Button::new(RichText::new(m_name).size(9.5).monospace().strong().color(text_color))
-                                            .fill(btn_fill)
-                                            .stroke(btn_stroke)
-                                            .rounding(Rounding::same(4.0))).clicked() {
-                                            self.gpu_mode = m_idx;
-                                        }
-                                    }
-                                });
+                            // Row 3: Subtitle spanning the full card width underneath Row 2
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                ui.label(RichText::new("Driver: Mesa 24.1.2 (Direct Rendering DRM)").size(9.5).monospace().color(p.text_muted));
+                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
+                                ui.label(RichText::new("Driver Date: 8/28/2025").size(9.5).monospace().color(p.text_muted));
+                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
+                                ui.label(RichText::new("Topology: PCI bus 0, device 2, func 0").size(9.5).monospace().color(p.text_muted));
                             });
                         });
                     });

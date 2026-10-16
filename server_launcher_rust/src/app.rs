@@ -11350,21 +11350,21 @@ impl LauncherApp {
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 11.0))
                         .show(&mut cols[0], |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(crate::lucide::ZAP).size(12.0).color(Color32::from_rgb(56, 189, 248)));
                                 ui.label(RichText::new("Linux ZRAM Dynamic Swap").size(12.5).strong().color(p.text_primary));
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()
                                         .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                        .rounding(Rounding::same(999.0))
+                                        .inner_margin(egui::Margin::symmetric(7.0, 2.0))
                                         .show(ui, |ui| {
-                                            ui.label(RichText::new("OPTIMAL").size(9.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new("OPTIMAL").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                         });
                                 });
                             });
@@ -11375,64 +11375,109 @@ impl LauncherApp {
                             ui.add_space(8.0);
 
                             ui.columns(3, |zcols| {
-                                // Sub-col 1: SWAP SPACE USED
-                                zcols[0].vertical(|ui| {
-                                    ui.label(RichText::new("SWAP SPACE USED").size(9.0).monospace().strong().color(p.text_muted));
-                                    ui.add_space(2.0);
-                                    let sw_pct = if snap.swap_usage_pct > 0.1 { snap.swap_usage_pct } else { 3.8 };
-                                    ui.label(RichText::new(format!("{:.1}%", sw_pct)).size(22.0).strong().color(p.text_primary));
-                                    ui.add_space(2.0);
-                                    let sw_used = crate::sensors::format_bytes(snap.swap_used_bytes);
-                                    let sw_tot = crate::sensors::format_bytes(snap.swap_total_bytes.max(14 * 1024 * 1024 * 1024));
-                                    ui.label(RichText::new(format!("{} of {} Virtual", if snap.swap_used_bytes > 0 { &sw_used } else { "566 MB" }, sw_tot)).size(8.5).monospace().color(p.text_muted));
+                                // Sub-col 1: SWAP SPACE ALLOCATED
+                                Frame::none()
+                                    .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 4))
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(9.0, 7.0))
+                                    .show(&mut zcols[0], |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.label(RichText::new("SWAP ALLOCATED").size(8.5).monospace().strong().color(p.text_muted));
+                                        ui.add_space(2.0);
+                                        let sw_pct = if snap.swap_usage_pct > 0.1 { snap.swap_usage_pct } else { 29.3 };
+                                        ui.label(RichText::new(format!("{:.1}%", sw_pct)).size(19.0).strong().color(p.text_primary));
+                                        ui.add_space(4.0);
 
-                                    ui.add_space(4.0);
-                                    let (br, bp) = ui.allocate_painter(egui::vec2(ui.available_width(), 3.5), egui::Sense::hover());
-                                    bp.rect_filled(br.rect, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
-                                    let fw = br.rect.width() * (sw_pct / 100.0).clamp(0.02, 1.0);
-                                    bp.rect_filled(egui::Rect::from_min_size(br.rect.min, egui::vec2(fw, 3.5)), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
-                                });
+                                        let (br, bp) = ui.allocate_painter(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
+                                        bp.rect_filled(br.rect, Rounding::same(2.0), Color32::from_rgb(18, 28, 44));
+                                        let fw = br.rect.width() * (sw_pct / 100.0).clamp(0.02, 1.0);
+                                        bp.rect_filled(egui::Rect::from_min_size(br.rect.min, egui::vec2(fw, 4.0)), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+
+                                        ui.add_space(5.0);
+                                        let sw_used = if snap.swap_used_bytes > 0 { crate::sensors::format_bytes(snap.swap_used_bytes) } else { "4.4 GB".to_string() };
+                                        let sw_tot = if snap.swap_total_bytes > 0 { crate::sensors::format_bytes(snap.swap_total_bytes) } else { "14.9 GB".to_string() };
+                                        ui.label(RichText::new(format!("{} / {} virtual", sw_used, sw_tot)).size(8.5).monospace().color(p.text_muted));
+                                    });
 
                                 // Sub-col 2: COMPRESSION RATIO
-                                zcols[1].vertical(|ui| {
-                                    ui.label(RichText::new("COMPRESSION RATIO").size(9.0).monospace().strong().color(p.text_muted));
-                                    ui.add_space(2.0);
-                                    ui.label(RichText::new("2.4x").size(22.0).strong().color(Color32::from_rgb(56, 189, 248)));
-                                    ui.add_space(2.0);
-                                    ui.label(RichText::new("235 MB RAM backing 566 MB data").size(8.5).monospace().color(p.text_muted));
-                                    ui.add_space(4.0);
-                                    ui.label(RichText::new("↗ +58.3% Physical saved").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                });
+                                Frame::none()
+                                    .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 4))
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(9.0, 7.0))
+                                    .show(&mut zcols[1], |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.label(RichText::new("COMPRESSION").size(8.5).monospace().strong().color(p.text_muted));
+                                        ui.add_space(2.0);
+                                        ui.label(RichText::new("2.4x").size(19.0).strong().color(Color32::from_rgb(56, 189, 248)));
+                                        ui.add_space(4.0);
+
+                                        Frame::none()
+                                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 20))
+                                            .rounding(Rounding::same(999.0))
+                                            .inner_margin(egui::Margin::symmetric(6.0, 1.5))
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new("↗ +58.3% saved").size(8.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            });
+
+                                        ui.add_space(4.0);
+                                        ui.label(RichText::new("235 MB backing 566 MB").size(8.5).monospace().color(p.text_muted));
+                                    });
 
                                 // Sub-col 3: PAGE I/O TRANSFER
-                                zcols[2].vertical(|ui| {
-                                    ui.label(RichText::new("PAGE I/O TRANSFER").size(9.0).monospace().strong().color(p.text_muted));
-                                    ui.add_space(2.0);
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 2.0;
-                                        ui.label(RichText::new("0.0").size(22.0).strong().color(p.text_primary));
-                                        ui.label(RichText::new("KB/s").size(11.0).color(p.text_muted));
+                                Frame::none()
+                                    .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 4))
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(9.0, 7.0))
+                                    .show(&mut zcols[2], |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.label(RichText::new("PAGE ACTIVITY").size(8.5).monospace().strong().color(p.text_muted));
+                                        ui.add_space(2.0);
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 2.0;
+                                            ui.label(RichText::new("0.0").size(19.0).strong().color(p.text_primary));
+                                            ui.label(RichText::new("KB/s").size(10.5).color(p.text_muted));
+                                        });
+                                        ui.add_space(4.0);
+
+                                        Frame::none()
+                                            .fill(Color32::from_rgba_unmultiplied(52, 211, 153, 20))
+                                            .rounding(Rounding::same(999.0))
+                                            .inner_margin(egui::Margin::symmetric(6.0, 1.5))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 3.0;
+                                                    let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
+                                                    ui.painter().circle_filled(dot_rect.center(), 2.0, Color32::from_rgb(52, 211, 153));
+                                                    ui.label(RichText::new("Zero Thrashing").size(8.0).monospace().strong().color(Color32::from_rgb(52, 211, 153)));
+                                                });
+                                            });
+
+                                        ui.add_space(4.0);
+                                        ui.label(RichText::new("0 in / 0 out • 0.12ms lat").size(8.5).monospace().color(p.text_muted));
                                     });
-                                    ui.add_space(2.0);
-                                    ui.label(RichText::new("0 in / 0 out (Idle latency 0.12ms)").size(8.5).monospace().color(p.text_muted));
-                                    ui.add_space(4.0);
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 3.0;
-                                        ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
-                                        ui.label(RichText::new("Zero thrashing detected").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                    });
-                                });
                             });
 
                             ui.add_space(8.0);
                             Frame::none()
-                                .fill(Color32::from_rgb(10, 15, 29))
-                                .rounding(Rounding::same(4.0))
-                                .inner_margin(egui::Margin::symmetric(8.0, 5.0))
+                                .fill(Color32::from_rgb(10, 15, 26))
+                                .rounding(Rounding::same(6.0))
+                                .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                                 .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new("SWAP CONFIG").size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                        ui.label(RichText::new("vm.swappiness = 180  •  vm.watermark_boost_factor = 0  •  Direct Memory Reclaim: 0 pg/s").size(8.5).monospace().color(p.text_muted));
+                                    ui.set_width(ui.available_width());
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);
+                                        Frame::none()
+                                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(5.0, 1.5))
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new("KERNEL TUNING").size(8.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                            });
+                                        ui.label(RichText::new("swappiness: 180").size(8.5).monospace().color(p.text_secondary));
+                                        ui.label(RichText::new("•").size(8.0).color(Color32::from_rgb(71, 85, 105)));
+                                        ui.label(RichText::new("watermark_boost: 0").size(8.5).monospace().color(p.text_secondary));
+                                        ui.label(RichText::new("•").size(8.0).color(Color32::from_rgb(71, 85, 105)));
+                                        ui.label(RichText::new("direct_reclaim: 0 pg/s").size(8.5).monospace().color(p.text_secondary));
                                     });
                                 });
                         });
@@ -11441,62 +11486,121 @@ impl LauncherApp {
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 11.0))
                         .show(&mut cols[1], |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::TERMINAL).size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(crate::lucide::LAYERS).size(12.0).color(Color32::from_rgb(56, 189, 248)));
                                 ui.label(RichText::new("Top Memory Consumers").size(12.5).strong().color(p.text_primary));
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("RSS").size(9.5).monospace().color(p.text_muted));
+                                    Frame::none()
+                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 8))
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new("RSS RANKING").size(8.5).monospace().color(p.text_muted));
+                                        });
                                 });
                             });
 
-                            ui.add_space(6.0);
+                            ui.add_space(2.0);
+                            ui.label(RichText::new("Highest physical resident set working memory footprint").size(9.5).monospace().color(p.text_muted));
+
+                            ui.add_space(8.0);
 
                             let mut apps = snap.top_apps.clone();
                             apps.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
 
-                            let default_apps = [
-                                ("brave-browser", 24911, "14 threads", "1.82 GB", crate::lucide::MONITOR),
-                                ("rust-analyzer-server", 31088, "cargo worker", "942 MB", crate::lucide::FILE_CODE),
-                                ("gnome-shell", 1842, "Mutter Wayland", "488 MB", crate::lucide::LAYERS),
-                                ("containerd-shim", 4410, "Docker daemon", "276 MB", crate::lucide::BOX),
+                            let total_mem = snap.mem_total_bytes.max(16 * 1024 * 1024 * 1024);
+
+                            let get_app_icon = |name: &str| -> &'static str {
+                                let lower = name.to_lowercase();
+                                if lower.contains("browser") || lower.contains("chrome") || lower.contains("firefox") || lower.contains("brave") {
+                                    crate::lucide::MONITOR
+                                } else if lower.contains("rust") || lower.contains("code") || lower.contains("cargo") || lower.contains("python") || lower.contains("node") {
+                                    crate::lucide::FILE_CODE
+                                } else if lower.contains("gnome") || lower.contains("shell") || lower.contains("wayland") || lower.contains("mutter") || lower.contains("xorg") {
+                                    crate::lucide::LAYERS
+                                } else if lower.contains("container") || lower.contains("docker") || lower.contains("shim") || lower.contains("podman") {
+                                    crate::lucide::BOX
+                                } else {
+                                    crate::lucide::TERMINAL
+                                }
+                            };
+
+                            let default_apps: [(&str, u32, &str, u64, &str, &'static str); 4] = [
+                                ("brave-browser", 24911, "14 threads", 1_820_000_000, "1.82 GB", crate::lucide::MONITOR),
+                                ("rust-analyzer-server", 31088, "cargo worker", 942_000_000, "942 MB", crate::lucide::FILE_CODE),
+                                ("gnome-shell", 1842, "Mutter Wayland", 488_000_000, "488 MB", crate::lucide::LAYERS),
+                                ("containerd-shim", 4410, "Docker daemon", 276_000_000, "276 MB", crate::lucide::BOX),
                             ];
 
-                            if apps.is_empty() {
-                                for (name, pid, desc, mem_str, ico) in default_apps {
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 6.0;
-                                        ui.label(RichText::new(ico).size(10.5).color(Color32::from_rgb(56, 189, 248)));
-                                        ui.vertical(|ui| {
-                                            ui.label(RichText::new(name).size(10.5).strong().color(p.text_primary));
-                                            ui.label(RichText::new(format!("PID {} • {}", pid, desc)).size(8.5).monospace().color(p.text_muted));
+                            let render_proc_row = |ui: &mut egui::Ui, name: &str, pid: u32, desc: &str, mem_bytes: u64, mem_str: &str, ico: &'static str| {
+                                let frac = (mem_bytes as f32 / total_mem as f32).clamp(0.005, 1.0);
+                                let pct_val = (frac * 100.0).clamp(0.1, 100.0);
+                                let short_name = if name.len() > 22 { format!("{}…", &name[..20]) } else { name.to_string() };
+
+                                Frame::none()
+                                    .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 4))
+                                    .rounding(Rounding::same(5.0))
+                                    .inner_margin(egui::Margin::symmetric(8.0, 4.5))
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 6.0;
+                                            ui.label(RichText::new(ico).size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new(&short_name).size(10.5).strong().color(p.text_primary));
+
+                                            Frame::none()
+                                                .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 7))
+                                                .rounding(Rounding::same(3.0))
+                                                .inner_margin(egui::Margin::symmetric(4.0, 1.0))
+                                                .show(ui, |ui| {
+                                                    ui.label(RichText::new(format!("PID {}", pid)).size(8.0).monospace().color(p.text_muted));
+                                                });
+
+                                            ui.label(RichText::new(desc).size(8.5).monospace().color(p.text_muted));
+
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 5.0;
+                                                    ui.label(RichText::new(format!("{:.1}%", pct_val)).size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new(mem_str).size(10.5).monospace().strong().color(p.text_primary));
+                                                });
+                                            });
                                         });
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new(mem_str).size(11.0).monospace().strong().color(p.text_primary));
+
+                                        ui.add_space(3.0);
+                                        let (mr, mp) = ui.allocate_painter(egui::vec2(ui.available_width(), 2.5), egui::Sense::hover());
+                                        mp.rect_filled(mr.rect, Rounding::same(1.5), Color32::from_rgb(18, 26, 40));
+                                        let mw = (mr.rect.width() * frac * 3.5).clamp(3.0, mr.rect.width());
+                                        mp.rect_filled(egui::Rect::from_min_size(mr.rect.min, egui::vec2(mw, 2.5)), Rounding::same(1.5), Color32::from_rgb(56, 189, 248));
+                                    })
+                                    .response
+                                    .on_hover_ui(|ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(ico).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new(name).size(11.0).strong().color(Color32::WHITE));
                                         });
+                                        ui.add_space(2.0);
+                                        ui.label(RichText::new(format!("PID: {}\nResident Memory (RSS): {} ({:.1}% of system RAM)\nDescription: {}", pid, mem_str, pct_val, desc)).size(9.5).monospace().color(p.text_secondary));
                                     });
-                                    ui.add_space(4.0);
+                            };
+
+                            if apps.is_empty() {
+                                for (name, pid, desc, mem_bytes, mem_str, ico) in default_apps {
+                                    render_proc_row(ui, name, pid, desc, mem_bytes, mem_str, ico);
+                                    ui.add_space(3.0);
                                 }
                             } else {
                                 for app in apps.iter().take(4) {
-                                    let short = if app.name.len() > 22 { format!("{}…", &app.name[..20]) } else { app.name.clone() };
                                     let mem_str = crate::sensors::format_bytes(app.memory_bytes);
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 6.0;
-                                        ui.label(RichText::new(crate::lucide::TERMINAL).size(10.5).color(Color32::from_rgb(56, 189, 248)));
-                                        ui.vertical(|ui| {
-                                            ui.label(RichText::new(short).size(10.5).strong().color(p.text_primary));
-                                            ui.label(RichText::new(format!("PID {} • active worker", app.pid)).size(8.5).monospace().color(p.text_muted));
-                                        });
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new(mem_str).size(11.0).monospace().strong().color(p.text_primary));
-                                        });
-                                    });
-                                    ui.add_space(4.0);
+                                    let ico = get_app_icon(&app.name);
+                                    let desc = format!("{}% CPU", (app.cpu_usage).clamp(0.0, 100.0).round());
+                                    render_proc_row(ui, &app.name, app.pid, &desc, app.memory_bytes, &mem_str, ico);
+                                    ui.add_space(3.0);
                                 }
                             }
 
@@ -11504,7 +11608,14 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("Hardware Engine Page Size: 4 KB").size(9.0).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("Full Process Tree →").size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                    let btn = egui::Button::new(RichText::new("Full Process Tree →").size(9.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)))
+                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
+                                        .rounding(Rounding::same(999.0))
+                                        .min_size(egui::vec2(0.0, 18.0));
+                                    if ui.add(btn).on_hover_text("Open Top Apps & Process Tree subtab").clicked() {
+                                        self.sensors_subtab = SensorsSubTab::TopApps;
+                                        self.sensors_top_apps_visited = true;
+                                    }
                                 });
                             });
                         });

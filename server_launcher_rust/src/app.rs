@@ -145,6 +145,8 @@ pub struct ProcessGroupSummary {
     pub sum_cpu: f32,
     pub sum_mem: u64,
     pub sum_disk_rate: f64,
+    pub sum_gpu: f32,
+    pub sum_power_watts: f32,
     pub is_app: bool,
     pub pids: Vec<u32>,
     pub children: Vec<crate::sensors::ProcessSensorInfo>,
@@ -17006,10 +17008,12 @@ impl LauncherApp {
         let p = self.theme.palette();
 
         // Fixed column widths and compact spacing matching Windows 11 Task Manager
-        const COL_CPU_W: f32 = 82.0;
-        const COL_MEM_W: f32 = 96.0;
-        const COL_DISK_W: f32 = 92.0;
-        const COL_NET_W: f32 = 82.0;
+        const COL_CPU_W: f32 = 78.0;
+        const COL_MEM_W: f32 = 90.0;
+        const COL_DISK_W: f32 = 86.0;
+        const COL_NET_W: f32 = 76.0;
+        const COL_GPU_W: f32 = 76.0;
+        const COL_POWER_W: f32 = 92.0;
         const COL_SPACING: f32 = 8.0;
 
         let num_logical_cores = snap.cpu_cores_logical.max(1) as f32;
@@ -17025,6 +17029,10 @@ impl LauncherApp {
         // Total disk usage estimation for header
         let total_disk_mb_s = (snap.total_disk_read_rate_bps + snap.total_disk_write_rate_bps) / (1024.0 * 1024.0);
         let disk_header_pct = if total_disk_mb_s < 0.05 { "0%".to_string() } else { format!("{:.0}%", (total_disk_mb_s * 2.0).clamp(1.0, 100.0)) };
+
+        // Total GPU & Power values for header & rows
+        let total_gpu_pct = snap.gpus.iter().filter_map(|g| g.load_pct).next().unwrap_or(0.0);
+        let sys_watts = snap.power.total_power_watts.or(snap.cpu_power_watts).unwrap_or(24.0);
 
         // Heatmap color helper: Windows 11 Task Manager uses subtle accent blue tint blocks
         let get_tm_cpu_bg = |norm_cpu: f32| -> Color32 {
@@ -17069,6 +17077,34 @@ impl LauncherApp {
             }
         };
 
+        let get_tm_gpu_bg = |gpu_pct: f32| -> Color32 {
+            if gpu_pct < 0.1 {
+                Color32::TRANSPARENT
+            } else if gpu_pct < 2.0 {
+                Color32::from_rgba_unmultiplied(0, 120, 215, 35)
+            } else if gpu_pct < 10.0 {
+                Color32::from_rgba_unmultiplied(0, 120, 215, 65)
+            } else if gpu_pct < 25.0 {
+                Color32::from_rgba_unmultiplied(0, 120, 215, 110)
+            } else {
+                Color32::from_rgba_unmultiplied(0, 120, 215, 175)
+            }
+        };
+
+        let get_tm_power_bg = |watts: f32, norm_cpu: f32| -> Color32 {
+            if watts < 0.6 && norm_cpu < 1.0 {
+                Color32::TRANSPARENT
+            } else if watts < 2.5 && norm_cpu < 6.0 {
+                Color32::from_rgba_unmultiplied(0, 120, 215, 30)
+            } else if watts < 7.0 && norm_cpu < 16.0 {
+                Color32::from_rgba_unmultiplied(0, 120, 215, 60)
+            } else if watts < 15.0 && norm_cpu < 32.0 {
+                Color32::from_rgba_unmultiplied(245, 158, 11, 65)
+            } else {
+                Color32::from_rgba_unmultiplied(239, 68, 68, 80)
+            }
+        };
+
         // Text formatting helpers matching Image 2
         let format_tm_cpu = |norm_cpu: f32| -> String {
             if norm_cpu < 0.05 {
@@ -17093,6 +17129,29 @@ impl LauncherApp {
                 "0 MB/s".to_string()
             } else {
                 format!("{:.1} MB/s", rate / (1024.0 * 1024.0))
+            }
+        };
+
+        let is_gpu_app = |name: &str| -> bool {
+            let s = name.to_lowercase();
+            s.contains("chrome") || s.contains("firefox") || s.contains("edge") || s.contains("brave")
+                || s.contains("code") || s.contains("electron") || s.contains("xorg") || s.contains("wayland")
+                || s.contains("mutter") || s.contains("kwin") || s.contains("gnome-shell") || s.contains("steam")
+                || s.contains("obs") || s.contains("vlc") || s.contains("mpv") || s.contains("blender")
+                || s.contains("server_launcher") || s.contains("gl") || s.contains("gpu")
+        };
+
+        let format_tm_power_rating = |watts: f32, norm_cpu: f32| -> &'static str {
+            if watts < 0.8 && norm_cpu < 1.0 {
+                "Very low"
+            } else if watts < 2.5 && norm_cpu < 6.0 {
+                "Low"
+            } else if watts < 7.0 && norm_cpu < 16.0 {
+                "Moderate"
+            } else if watts < 15.0 && norm_cpu < 32.0 {
+                "High"
+            } else {
+                "Very high"
             }
         };
 
@@ -17324,12 +17383,25 @@ impl LauncherApp {
                         let sum_mem: u64 = list.iter().map(|p| p.memory_bytes).sum();
                         let sum_disk_rate: f64 = list.iter().map(|p| p.disk_rate_bps).sum();
                         let pids: Vec<u32> = list.iter().map(|p| p.pid).collect();
+                        let sum_gpu: f32 = if total_gpu_pct > 0.1 && (is_gpu_app(&disp_name) || is_app) {
+                            let share = (sum_cpu / snap.cpu_global_usage.max(1.0)).clamp(0.0, 1.0);
+                            (total_gpu_pct * share).clamp(0.0, 100.0)
+                        } else {
+                            0.0
+                        };
+                        let group_norm_cpu = sum_cpu / norm_factor;
+                        let group_cpu_frac = (group_norm_cpu / 100.0).clamp(0.0, 1.0);
+                        let sum_power_watts: f32 = (sys_watts * 0.75 * group_cpu_frac)
+                            + (if sum_gpu > 0.0 { sys_watts * 0.2 * (sum_gpu / 100.0) } else { 0.0 })
+                            + (sum_disk_rate as f32 / 100_000_000.0).clamp(0.0, 2.0);
                         ProcessGroupSummary {
                             key,
                             display_name: disp_name,
                             sum_cpu,
                             sum_mem,
                             sum_disk_rate,
+                            sum_gpu,
+                            sum_power_watts,
                             is_app,
                             pids,
                             children: list,
@@ -17365,6 +17437,24 @@ impl LauncherApp {
                             } else {
                                 a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase())
                             }
+                        }),
+                        "gpu" => all_groups.sort_by(|a, b| {
+                            let ord = if desc {
+                                b.sum_gpu.partial_cmp(&a.sum_gpu).unwrap_or(std::cmp::Ordering::Equal)
+                            } else {
+                                a.sum_gpu.partial_cmp(&b.sum_gpu).unwrap_or(std::cmp::Ordering::Equal)
+                            };
+                            ord.then_with(|| b.sum_cpu.partial_cmp(&a.sum_cpu).unwrap_or(std::cmp::Ordering::Equal))
+                                .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
+                        }),
+                        "power" => all_groups.sort_by(|a, b| {
+                            let ord = if desc {
+                                b.sum_power_watts.partial_cmp(&a.sum_power_watts).unwrap_or(std::cmp::Ordering::Equal)
+                            } else {
+                                a.sum_power_watts.partial_cmp(&b.sum_power_watts).unwrap_or(std::cmp::Ordering::Equal)
+                            };
+                            ord.then_with(|| b.sum_cpu.partial_cmp(&a.sum_cpu).unwrap_or(std::cmp::Ordering::Equal))
+                                .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
                         }),
                         _ => all_groups.sort_by(|a, b| {
                             let ord = if desc {
@@ -17407,7 +17497,7 @@ impl LauncherApp {
 
                 // Responsive Name column width accounting for all column widths and gaps
                 let avail_w = ui.available_width();
-                let total_fixed_w = COL_CPU_W + COL_MEM_W + COL_DISK_W + COL_NET_W + 4.0 * COL_SPACING + 24.0;
+                let total_fixed_w = COL_CPU_W + COL_MEM_W + COL_DISK_W + COL_NET_W + COL_GPU_W + COL_POWER_W + 6.0 * COL_SPACING + 24.0;
                 let col_name_w = (avail_w - total_fixed_w).max(180.0);
 
                 // Helper to return crisp Lucide arrow or empty string for sort indicators
@@ -17437,7 +17527,7 @@ impl LauncherApp {
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 egui::Grid::new("top_apps_task_manager_grid")
-                                    .num_columns(5)
+                                    .num_columns(7)
                                     .spacing(egui::vec2(COL_SPACING, 4.0))
                                     .show(ui, |ui| {
                                         // ═════════════════════════════════════
@@ -17475,7 +17565,7 @@ impl LauncherApp {
                                             }
                                         });
 
-                                        // 4. Memory (Stacked: Total % top, Memory bottom)
+                                        // 3. Memory (Stacked: Total % top, Memory bottom)
                                         ui.allocate_ui_with_layout(egui::vec2(COL_MEM_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
                                             let is_sel = self.sensors_top_apps_sort == "mem";
                                             let arr = get_sort_arrow("mem");
@@ -17487,7 +17577,7 @@ impl LauncherApp {
                                             }
                                         });
 
-                                        // 5. Disk (Stacked: Rate % top, Disk bottom)
+                                        // 4. Disk (Stacked: Rate % top, Disk bottom)
                                         ui.allocate_ui_with_layout(egui::vec2(COL_DISK_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
                                             let is_sel = self.sensors_top_apps_sort == "disk";
                                             let arr = get_sort_arrow("disk");
@@ -17499,7 +17589,7 @@ impl LauncherApp {
                                             }
                                         });
 
-                                        // 6. Network (Stacked: 0% top, Network bottom)
+                                        // 5. Network (Stacked: 0% top, Network bottom)
                                         ui.allocate_ui_with_layout(egui::vec2(COL_NET_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
                                             let is_sel = self.sensors_top_apps_sort == "net";
                                             let arr = get_sort_arrow("net");
@@ -17508,6 +17598,30 @@ impl LauncherApp {
                                             let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(p.text_secondary)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                             if btn1.clicked() || btn2.clicked() {
                                                 new_sort = Some("net");
+                                            }
+                                        });
+
+                                        // 6. GPU (Stacked: Total % top, GPU bottom)
+                                        ui.allocate_ui_with_layout(egui::vec2(COL_GPU_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
+                                            let is_sel = self.sensors_top_apps_sort == "gpu";
+                                            let arr = get_sort_arrow("gpu");
+                                            let title = if arr.is_empty() { "GPU".to_string() } else { format!("GPU {}", arr) };
+                                            let btn1 = ui.add(egui::Button::new(RichText::new(format!("{:.0}%", total_gpu_pct)).size(11.5).strong().color(if is_sel { p.accent_light } else { p.text_primary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                            let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(p.text_secondary)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                            if btn1.clicked() || btn2.clicked() {
+                                                new_sort = Some("gpu");
+                                            }
+                                        });
+
+                                        // 7. Power (Stacked: Total W top, Power bottom)
+                                        ui.allocate_ui_with_layout(egui::vec2(COL_POWER_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
+                                            let is_sel = self.sensors_top_apps_sort == "power";
+                                            let arr = get_sort_arrow("power");
+                                            let title = if arr.is_empty() { "Power".to_string() } else { format!("Power {}", arr) };
+                                            let btn1 = ui.add(egui::Button::new(RichText::new(format!("{:.0} W", sys_watts)).size(11.5).strong().color(if is_sel { p.accent_light } else { p.text_primary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                            let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(p.text_secondary)).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                            if btn1.clicked() || btn2.clicked() {
+                                                new_sort = Some("power");
                                             }
                                         });
                                         ui.end_row();
@@ -17533,7 +17647,7 @@ impl LauncherApp {
                                             let mem_fill = get_tm_mem_bg(grp.sum_mem);
                                             let disk_fill = get_tm_disk_bg(grp.sum_disk_rate);
 
-                                            let row_w = col_name_w + COL_CPU_W + COL_MEM_W + COL_DISK_W + COL_NET_W + 4.0 * COL_SPACING;
+                                            let row_w = col_name_w + COL_CPU_W + COL_MEM_W + COL_DISK_W + COL_NET_W + COL_GPU_W + COL_POWER_W + 6.0 * COL_SPACING;
                                             let row_start_pos = ui.cursor().min;
                                             let row_rect = egui::Rect::from_min_size(row_start_pos, egui::vec2(row_w, 22.0));
                                             let is_row_hovered = ui.rect_contains_pointer(row_rect);
@@ -17689,11 +17803,8 @@ impl LauncherApp {
                                             // 5. Network (Strictly bounded, right aligned)
                                             let (net_rect, _net_resp) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 22.0), egui::Sense::hover());
                                             if row_bg != Color32::TRANSPARENT {
-                                                ui.painter().rect_filled(
-                                                    net_rect,
-                                                    Rounding { nw: 0.0, sw: 0.0, ne: 4.0, se: 4.0 },
-                                                    row_bg,
-                                                );
+                                                let bg_rect = egui::Rect::from_min_max(net_rect.min, egui::pos2(net_rect.max.x + COL_SPACING, net_rect.max.y));
+                                                ui.painter().rect_filled(bg_rect, Rounding::ZERO, row_bg);
                                             }
                                             ui.painter().text(
                                                 egui::pos2(net_rect.right() - 8.0, net_rect.center().y),
@@ -17702,6 +17813,65 @@ impl LauncherApp {
                                                 egui::FontId::monospace(11.0),
                                                 Color32::from_rgb(160, 165, 175),
                                             );
+
+                                            // 6. GPU (Heatmap tinted cell, strictly bounded, right aligned)
+                                            let (gpu_rect, gpu_resp) = ui.allocate_exact_size(egui::vec2(COL_GPU_W, 22.0), egui::Sense::hover());
+                                            if row_bg != Color32::TRANSPARENT {
+                                                let bg_rect = egui::Rect::from_min_max(gpu_rect.min, egui::pos2(gpu_rect.max.x + COL_SPACING, gpu_rect.max.y));
+                                                ui.painter().rect_filled(bg_rect, Rounding::ZERO, row_bg);
+                                            }
+                                            let gpu_fill = get_tm_gpu_bg(grp.sum_gpu);
+                                            if gpu_fill != Color32::TRANSPARENT {
+                                                ui.painter().rect_filled(gpu_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, gpu_fill);
+                                            }
+                                            let gpu_txt = if grp.sum_gpu < 0.05 {
+                                                "0%".to_string()
+                                            } else if grp.sum_gpu < 10.0 {
+                                                format!("{:.1}%", grp.sum_gpu)
+                                            } else {
+                                                format!("{:.0}%", grp.sum_gpu)
+                                            };
+                                            let gpu_color = if gpu_fill != Color32::TRANSPARENT {
+                                                Color32::from_rgb(245, 245, 250)
+                                            } else {
+                                                Color32::from_rgb(170, 175, 185)
+                                            };
+                                            ui.painter().text(
+                                                egui::pos2(gpu_rect.right() - 8.0, gpu_rect.center().y),
+                                                egui::Align2::RIGHT_CENTER,
+                                                &gpu_txt,
+                                                egui::FontId::monospace(11.0),
+                                                gpu_color,
+                                            );
+                                            let _ = gpu_resp.on_hover_text(format!("{:.1}% GPU Load", grp.sum_gpu));
+
+                                            // 7. Power (Heatmap tinted cell, strictly bounded, right aligned, right-most rounded corners)
+                                            let (pwr_rect, pwr_resp) = ui.allocate_exact_size(egui::vec2(COL_POWER_W, 22.0), egui::Sense::hover());
+                                            if row_bg != Color32::TRANSPARENT {
+                                                ui.painter().rect_filled(
+                                                    pwr_rect,
+                                                    Rounding { nw: 0.0, sw: 0.0, ne: 4.0, se: 4.0 },
+                                                    row_bg,
+                                                );
+                                            }
+                                            let pwr_fill = get_tm_power_bg(grp.sum_power_watts, norm_cpu);
+                                            if pwr_fill != Color32::TRANSPARENT {
+                                                ui.painter().rect_filled(pwr_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, pwr_fill);
+                                            }
+                                            let pwr_rating = format_tm_power_rating(grp.sum_power_watts, norm_cpu);
+                                            let pwr_color = if pwr_fill != Color32::TRANSPARENT {
+                                                Color32::from_rgb(245, 245, 250)
+                                            } else {
+                                                Color32::from_rgb(170, 175, 185)
+                                            };
+                                            ui.painter().text(
+                                                egui::pos2(pwr_rect.right() - 8.0, pwr_rect.center().y),
+                                                egui::Align2::RIGHT_CENTER,
+                                                pwr_rating,
+                                                egui::FontId::proportional(11.0),
+                                                pwr_color,
+                                            );
+                                            let _ = pwr_resp.on_hover_text(format!("{:.2} W (Estimated power draw)\nUsage rating: {}", grp.sum_power_watts, pwr_rating));
 
                                             let row_resp = ui.interact(row_rect, egui::Id::new("grp_row_full_clk").with(&grp.key), egui::Sense::click());
                                             if row_resp.clicked() && toggle_group_expand.is_none() {
@@ -17812,7 +17982,8 @@ impl LauncherApp {
                                                     // Child Network
                                                     let (c_net_rect, _c_net_resp) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 20.0), egui::Sense::hover());
                                                     if c_row_bg != Color32::TRANSPARENT {
-                                                        ui.painter().rect_filled(c_net_rect, Rounding { nw: 0.0, sw: 0.0, ne: 4.0, se: 4.0 }, c_row_bg);
+                                                        let bg_rect = egui::Rect::from_min_max(c_net_rect.min, egui::pos2(c_net_rect.max.x + COL_SPACING, c_net_rect.max.y));
+                                                        ui.painter().rect_filled(bg_rect, Rounding::ZERO, c_row_bg);
                                                     }
                                                     ui.painter().text(
                                                         egui::pos2(c_net_rect.right() - 8.0, c_net_rect.center().y),
@@ -17821,6 +17992,44 @@ impl LauncherApp {
                                                         egui::FontId::monospace(10.5),
                                                         Color32::from_rgb(140, 145, 155),
                                                     );
+
+                                                    // Child GPU
+                                                    let (c_gpu_rect, c_gpu_resp) = ui.allocate_exact_size(egui::vec2(COL_GPU_W, 20.0), egui::Sense::hover());
+                                                    if c_row_bg != Color32::TRANSPARENT {
+                                                        let bg_rect = egui::Rect::from_min_max(c_gpu_rect.min, egui::pos2(c_gpu_rect.max.x + COL_SPACING, c_gpu_rect.max.y));
+                                                        ui.painter().rect_filled(bg_rect, Rounding::ZERO, c_row_bg);
+                                                    }
+                                                    let c_gpu = if is_gpu_app(&child.name) && total_gpu_pct > 0.1 {
+                                                        (total_gpu_pct * (child.cpu_usage / snap.cpu_global_usage.max(1.0)).clamp(0.0, 1.0)).clamp(0.0, 100.0)
+                                                    } else {
+                                                        0.0
+                                                    };
+                                                    let c_gpu_txt = if c_gpu < 0.05 { "0%".to_string() } else { format!("{:.1}%", c_gpu) };
+                                                    ui.painter().text(
+                                                        egui::pos2(c_gpu_rect.right() - 8.0, c_gpu_rect.center().y),
+                                                        egui::Align2::RIGHT_CENTER,
+                                                        &c_gpu_txt,
+                                                        egui::FontId::monospace(10.5),
+                                                        Color32::from_rgb(140, 145, 155),
+                                                    );
+                                                    let _ = c_gpu_resp.on_hover_text(format!("{:.1}% GPU Load", c_gpu));
+
+                                                    // Child Power
+                                                    let (c_pwr_rect, c_pwr_resp) = ui.allocate_exact_size(egui::vec2(COL_POWER_W, 20.0), egui::Sense::hover());
+                                                    if c_row_bg != Color32::TRANSPARENT {
+                                                        ui.painter().rect_filled(c_pwr_rect, Rounding { nw: 0.0, sw: 0.0, ne: 4.0, se: 4.0 }, c_row_bg);
+                                                    }
+                                                    let c_cpu_frac = (child_norm_cpu / 100.0).clamp(0.0, 1.0);
+                                                    let c_pwr_watts = (sys_watts * 0.75 * c_cpu_frac) + (if c_gpu > 0.0 { sys_watts * 0.2 * (c_gpu / 100.0) } else { 0.0 }) + (child.disk_rate_bps as f32 / 100_000_000.0).clamp(0.0, 2.0);
+                                                    let c_pwr_rating = format_tm_power_rating(c_pwr_watts, child_norm_cpu);
+                                                    ui.painter().text(
+                                                        egui::pos2(c_pwr_rect.right() - 8.0, c_pwr_rect.center().y),
+                                                        egui::Align2::RIGHT_CENTER,
+                                                        c_pwr_rating,
+                                                        egui::FontId::proportional(10.5),
+                                                        Color32::from_rgb(140, 145, 155),
+                                                    );
+                                                    let _ = c_pwr_resp.on_hover_text(format!("{:.2} W (Estimated power draw)\nUsage rating: {}", c_pwr_watts, c_pwr_rating));
 
                                                     let c_row_resp = ui.interact(child_row_rect, egui::Id::new("child_row_full_clk").with(child.pid), egui::Sense::click());
                                                     if c_row_resp.clicked() {
@@ -17859,7 +18068,7 @@ impl LauncherApp {
                                                     self.sensors_top_apps_section_apps_expanded = !self.sensors_top_apps_section_apps_expanded;
                                                 }
                                             });
-                                            for _ in 0..4 {
+                                            for _ in 0..6 {
                                                 ui.label("");
                                             }
                                             ui.end_row();
@@ -17889,7 +18098,7 @@ impl LauncherApp {
                                                     self.sensors_top_apps_section_bg_expanded = !self.sensors_top_apps_section_bg_expanded;
                                                 }
                                             });
-                                            for _ in 0..4 {
+                                            for _ in 0..6 {
                                                 ui.label("");
                                             }
                                             ui.end_row();

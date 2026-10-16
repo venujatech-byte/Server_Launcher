@@ -1061,6 +1061,29 @@ pub fn collect_hwmon_sensors() -> Vec<TempSensor> {
     result
 }
 
+/// Detects if the current system has any active physical fan controllers in hwmon.
+pub fn detect_active_fans() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let hwmon_dir = Path::new("/sys/class/hwmon");
+        if hwmon_dir.exists() {
+            if let Ok(entries) = fs::read_dir(hwmon_dir) {
+                for entry in entries.flatten() {
+                    if let Ok(files) = fs::read_dir(entry.path()) {
+                        for f in files.flatten() {
+                            let name = f.file_name().to_string_lossy().to_string();
+                            if name.starts_with("fan") && name.ends_with("_input") {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32>) {
     let mut freqs = Vec::new();
     let mut cpu_power_watts = None;

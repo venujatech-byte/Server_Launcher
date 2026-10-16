@@ -12,6 +12,18 @@ pub struct WifiActiveSocket {
     pub status: String,
 }
 
+/// Convert CIDR prefix (e.g. 24) to full dotted-decimal subnet mask string.
+pub fn cidr_to_subnet_mask(prefix: u8) -> String {
+    let mask = if prefix >= 32 {
+        0xFFFF_FFFF_u32
+    } else if prefix == 0 {
+        0
+    } else {
+        !((1_u32 << (32 - prefix)) - 1)
+    };
+    format!("{}.{}.{}.{} (/{})", (mask >> 24) & 0xFF, (mask >> 16) & 0xFF, (mask >> 8) & 0xFF, mask & 0xFF, prefix)
+}
+
 #[derive(Debug, Clone)]
 pub struct WifiSnapshot {
     pub interface: String,
@@ -34,6 +46,14 @@ pub struct WifiSnapshot {
     pub ip_v6: String,
     pub driver: String,
     pub pci_slot: String,
+    pub mtu: u32,
+    pub tx_bytes: u64,
+    pub lease_time_remaining: String,
+    pub netfilter_status: String,
+    pub nameserver_sync: String,
+    pub kernel_version: String,
+    pub jitter_ms: f32,
+    pub tunnel_id: String,
     pub active_sockets: Vec<WifiActiveSocket>,
     pub last_updated: Instant,
 }
@@ -50,34 +70,42 @@ impl Default for WifiSnapshot {
             bssid: "2A:A8:26:7E:CB:E1".to_string(),
             channel: 11,
             frequency_mhz: 2462,
-            rate: "1170 Mbit/s".to_string(),
+            rate: "866.7 Mbps".to_string(),
             signal_pct: 97,
             signal_dbm: -48,
             security: "WPA2".to_string(),
-            ip_v4: "10.111.93.116".to_string(),
+            ip_v4: "10.111.93.116/24".to_string(),
             subnet_mask: "255.255.255.0 (/24)".to_string(),
             gateway: "10.111.93.127".to_string(),
-            dns_resolvers: "127.0.0.53 (systemd-resolved)".to_string(),
-            ip_v6: "2405:6b00:6b:b6ef:7b5:bd69:a36a:1aaf/64".to_string(),
+            dns_resolvers: "127.0.0.53".to_string(),
+            ip_v6: "fe80::f1a1:8cf:7a9e:559a/64".to_string(),
             driver: "ath10k_pci".to_string(),
-            pci_slot: "PCIe 0000:02:00.0".to_string(),
+            pci_slot: "0000:02:00.0".to_string(),
+            mtu: 1500,
+            tx_bytes: 2_100_000_000,
+            lease_time_remaining: "18h 42m 11s".to_string(),
+            netfilter_status: "ACTIVE".to_string(),
+            nameserver_sync: "OK".to_string(),
+            kernel_version: "6.8.0-45-generic".to_string(),
+            jitter_ms: 0.8,
+            tunnel_id: "0x9AF2".to_string(),
             active_sockets: vec![
                 WifiActiveSocket {
-                    process: "sshd.service".into(),
+                    process: "antigravity-daemon".into(),
                     proto: "TCP".into(),
-                    port: ":22".into(),
+                    port: ":40369".into(),
                     status: "LISTEN".into(),
                 },
                 WifiActiveSocket {
-                    process: "rquickshare".into(),
+                    process: "code (VS Code Server)".into(),
                     proto: "TCP".into(),
-                    port: ":33197".into(),
+                    port: ":35983".into(),
                     status: "LISTEN".into(),
                 },
                 WifiActiveSocket {
-                    process: "Arduino_Cloud_Agent".into(),
+                    process: "antigravity-daemon".into(),
                     proto: "TCP".into(),
-                    port: ":8991".into(),
+                    port: ":43273".into(),
                     status: "LISTEN".into(),
                 },
                 WifiActiveSocket {
@@ -87,10 +115,28 @@ impl Default for WifiSnapshot {
                     status: "LISTEN".into(),
                 },
                 WifiActiveSocket {
-                    process: "systemd-resolved".into(),
-                    proto: "UDP".into(),
-                    port: ":53".into(),
-                    status: "BOUND".into(),
+                    process: "rquickshare (LAN Share)".into(),
+                    proto: "TCP".into(),
+                    port: ":33197".into(),
+                    status: "LISTEN".into(),
+                },
+                WifiActiveSocket {
+                    process: "daemon (sshd)".into(),
+                    proto: "TCP".into(),
+                    port: ":22".into(),
+                    status: "LISTEN".into(),
+                },
+                WifiActiveSocket {
+                    process: "antigravity-daemon".into(),
+                    proto: "TCP".into(),
+                    port: ":46207".into(),
+                    status: "LISTEN".into(),
+                },
+                WifiActiveSocket {
+                    process: "antigravity-daemon".into(),
+                    proto: "TCP".into(),
+                    port: ":32923".into(),
+                    status: "LISTEN".into(),
                 },
             ],
             last_updated: Instant::now(),
@@ -143,7 +189,7 @@ pub fn query_wifi_status() -> WifiSnapshot {
             if let Some(drv) = line.strip_prefix("DRIVER=") {
                 snap.driver = drv.trim().to_string();
             } else if let Some(slot) = line.strip_prefix("PCI_SLOT_NAME=") {
-                snap.pci_slot = format!("PCIe {}", slot.trim());
+                snap.pci_slot = slot.trim().to_string();
             }
         }
     }
@@ -229,6 +275,11 @@ pub fn query_wifi_status() -> WifiSnapshot {
                     for ip in &parts[2..] {
                         if ip.contains('.') && !ip.starts_with("127.") {
                             snap.ip_v4 = ip.to_string();
+                            if let Some(slash_idx) = ip.find('/') {
+                                if let Ok(cidr) = ip[slash_idx + 1..].parse::<u8>() {
+                                    snap.subnet_mask = cidr_to_subnet_mask(cidr);
+                                }
+                            }
                         } else if ip.contains(':') && !ip.starts_with("::1") {
                             snap.ip_v6 = ip.to_string();
                         }
@@ -262,11 +313,7 @@ pub fn query_wifi_status() -> WifiSnapshot {
             if let Some(ns) = line.strip_prefix("nameserver") {
                 let ip = ns.trim();
                 if !ip.is_empty() {
-                    if ip == "127.0.0.53" {
-                        dns_list.push("127.0.0.53 (systemd-resolved)".to_string());
-                    } else {
-                        dns_list.push(ip.to_string());
-                    }
+                    dns_list.push(ip.to_string());
                 }
             }
         }
@@ -275,7 +322,30 @@ pub fn query_wifi_status() -> WifiSnapshot {
         }
     }
 
-    // 10. Query real active listening sockets via `ss -tlpn`
+    // 10. Query MTU and TX bytes from sysfs
+    let mtu_path = format!("/sys/class/net/{}/mtu", snap.interface);
+    if let Ok(mtu_str) = fs::read_to_string(&mtu_path) {
+        if let Ok(val) = mtu_str.trim().parse::<u32>() {
+            snap.mtu = val;
+        }
+    }
+
+    let tx_path = format!("/sys/class/net/{}/statistics/tx_bytes", snap.interface);
+    if let Ok(tx_str) = fs::read_to_string(&tx_path) {
+        if let Ok(val) = tx_str.trim().parse::<u64>() {
+            snap.tx_bytes = val;
+        }
+    }
+
+    // 11. Read kernel version from /proc/sys/kernel/osrelease
+    if let Ok(kver) = fs::read_to_string("/proc/sys/kernel/osrelease") {
+        let trimmed = kver.trim();
+        if !trimmed.is_empty() {
+            snap.kernel_version = trimmed.to_string();
+        }
+    }
+
+    // 12. Query real active listening sockets via `ss -tlpn`
     let ss_out = Command::new("ss")
         .args(["-tlpn"])
         .output();
@@ -288,7 +358,12 @@ pub fn query_wifi_status() -> WifiSnapshot {
                     let parts: Vec<&str> = line.split_whitespace().collect();
                     if parts.len() >= 5 {
                         let local_addr = parts[3];
-                        let port = local_addr.rsplit(':').next().map(|p| format!(":{}", p)).unwrap_or_else(|| local_addr.to_string());
+                        let port_str = local_addr.rsplit(':').next().unwrap_or(local_addr);
+                        let port = if port_str.starts_with(':') {
+                            port_str.to_string()
+                        } else {
+                            format!(":{}", port_str)
+                        };
                         let proc_name = if let Some(users_idx) = line.find(r#"users:((""#) {
                             let after = &line[users_idx + 9..];
                             after.split('"').next().unwrap_or("unknown")
@@ -298,13 +373,13 @@ pub fn query_wifi_status() -> WifiSnapshot {
 
                         // Clean up friendly process name
                         let friendly_name = match proc_name {
-                            "sshd" => "sshd.service",
+                            "sshd" => "daemon (sshd)",
                             "rquickshare" => "rquickshare (LAN Share)",
                             "Arduino_Cloud_A" | "Arduino_Cloud_Agent" => "Arduino Cloud Agent",
                             "code" => "code (VS Code Server)",
                             "systemd-resolve" | "systemd-resolved" => "systemd-resolved",
                             "cupsd" => "cupsd (Printing)",
-                            "agy" => "antigravity-daemon",
+                            "agy" | "antigravity" | "antigravity-daemon" => "antigravity-daemon",
                             other => other,
                         };
 

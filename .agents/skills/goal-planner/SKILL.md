@@ -51,3 +51,4 @@ Whenever a `/goal` command or complex task is received, follow this 5-stage proc
 ### Stage 5: Clean Versioning & Status Reporting
 1. Commit verified changes to git with a conventional commit message (e.g., `git commit -m "fix(subsystem): description"`).
 2. Report results concisely to the user with clickable links (`file:///...`) to all modified files and symbols.
+

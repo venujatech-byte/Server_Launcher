@@ -9,3 +9,4 @@
      - **KISS / YAGNI**: Adhere to `/ponytail` design principles (minimal, clean, native standard library first).
      - **Git Versioning**: Commit verified changes cleanly to git upon compilation success.
      - **Documentation Integrity**: Maintain all comments, docstrings, and non-obvious design notes.
+

@@ -10119,7 +10119,7 @@ impl LauncherApp {
             };
 
             // Fetch or refresh sensors snapshot asynchronously without blocking UI thread
-            let snap = if let Some(hid) = host_id {
+            let _snap = if let Some(hid) = host_id {
                 let has_snap = self.remote_sensors_snapshots.lock().unwrap().contains_key(hid);
                 let last_fetch = self.remote_sensors_last_fetch.lock().unwrap().get(hid).copied();
                 let interval_passed = self.sensors_refresh_interval > 0
@@ -10239,47 +10239,7 @@ impl LauncherApp {
                             }
                             ui.add_space(2.0);
                         }
-
-                        ui.add_space(8.0);
-
-                        // NODE HOST Card (Never overlapping Temperature)
-                        Frame::none()
-                            .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 6))
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                            .show(ui, |ui| {
-                                ui.vertical(|ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new("NODE HOST").size(9.5).monospace().color(p.text_muted));
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new("Online").size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
-                                        });
-                                    });
-                                    ui.add_space(3.0);
-                                    let cpu_short = if !snap.cpu_brand.is_empty() {
-                                        snap.cpu_brand.split('@').next().unwrap_or(&snap.cpu_brand).trim().to_string()
-                                    } else if host_id.is_some() {
-                                        "Remote CPU".to_string()
-                                    } else {
-                                        "Intel CPU".to_string()
-                                    };
-                                    let ram_gb = (snap.mem_total_bytes as f64 / (1024.0 * 1024.0 * 1024.0)).round() as u64;
-                                    let ram_short = format!("{}GB RAM", if ram_gb > 0 { ram_gb } else { 8 });
-                                    ui.label(RichText::new(format!("{} • {}", cpu_short, ram_short)).size(10.0).monospace().color(p.text_primary));
-                                    ui.add_space(3.0);
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new("Uptime").size(9.5).monospace().color(p.text_muted));
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            let uptime_secs = if snap.uptime_secs > 0 { snap.uptime_secs } else if host_id.is_none() { get_system_uptime() } else { 0 };
-                                            let up_str = format_uptime(uptime_secs);
-                                            ui.label(RichText::new(up_str).size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
-                                        });
-                                    });
-                                });
-                            });
-
-                        ui.add_space(6.0);
+                        ui.add_space(4.0);
 
                         // Host Settings Row
                         ui.horizontal(|ui| {

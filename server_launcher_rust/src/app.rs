@@ -14391,11 +14391,6 @@ impl LauncherApp {
                 };
 
                 let octets: Vec<&str> = ip_without_cidr.split('.').collect();
-                let (line1, line2_prefix) = if octets.len() == 4 {
-                    (format!("{}.{}.{}", octets[0], octets[1], octets[2]), format!(".{}", octets[3]))
-                } else {
-                    (ip_without_cidr.to_string(), "".to_string())
-                };
 
                 let subnet_mask_str = if is_remote { "255.255.255.0 (/24)" } else { wifi_snap.subnet_mask.as_str() };
                 let gateway_str = if is_remote {
@@ -14440,7 +14435,7 @@ impl LauncherApp {
                                         let (icon_rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
                                         ui.painter().rect_filled(icon_rect, Rounding::same(6.0), Color32::from_rgb(20, 28, 44));
                                         let icon_char = if is_remote && !is_wireless { crate::lucide::SERVER } else { crate::lucide::LAYERS };
-                                        ui.painter().text(icon_rect.center(), egui::Align2::CENTER_CENTER, icon_char, egui::FontId::monospace(14.0), Color32::from_rgb(56, 189, 248));
+                                        ui.painter().text(icon_rect.center(), egui::Align2::CENTER_CENTER, icon_char, egui::FontId::proportional(14.0), Color32::from_rgb(56, 189, 248));
 
                                         ui.vertical(|ui| {
                                             ui.horizontal(|ui| {
@@ -14470,24 +14465,23 @@ impl LauncherApp {
 
                                 ui.add_space(10.0);
 
-                                // IPV4 (Prominent Big Display with Copy Button)
-                                ui.label(RichText::new("IPV4").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                // IPV4 (Prominent Display on a single row with Copy Button)
+                                ui.label(RichText::new("IPV4 ADDRESS").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                                 ui.add_space(2.0);
 
                                 ui.horizontal(|ui| {
-                                    ui.vertical(|ui| {
-                                        ui.label(RichText::new(&line1).size(20.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 0.0;
-                                            ui.label(RichText::new(&line2_prefix).size(20.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
-                                            ui.label(RichText::new(cidr_str).size(15.0).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                        });
-                                    });
+                                    ui.spacing_mut().item_spacing.x = 2.0;
+                                    ui.label(RichText::new(ip_without_cidr).size(18.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
+                                    ui.label(RichText::new(cidr_str).size(13.5).monospace().color(Color32::from_rgb(100, 116, 139)));
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         let (copy_rect, copy_resp) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::click());
                                         let copy_col = if copy_resp.hovered() { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(148, 163, 184) };
-                                        ui.painter().text(copy_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::COPY, egui::FontId::monospace(13.0), copy_col);
+                                        if copy_resp.hovered() {
+                                            ui.painter().rect_filled(copy_rect, Rounding::same(4.0), Color32::from_rgba_unmultiplied(56, 189, 248, 20));
+                                        }
+                                        ui.painter().text(copy_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::COPY, egui::FontId::proportional(12.5), copy_col);
+                                        let copy_resp = copy_resp.on_hover_text("Copy IPv4 address to clipboard");
                                         if copy_resp.clicked() {
                                             let text_to_copy = format!("{}{}", ip_without_cidr, cidr_str);
                                             ui.output_mut(|o| o.copied_text = text_to_copy.clone());
@@ -14560,35 +14554,24 @@ impl LauncherApp {
                                 });
                                 ui.add_space(4.0);
 
-                                // 4. IPV6 (with Copy Button)
+                                // 4. IPV6 (with Copy Button on single line)
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new("IPV6").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         let (copy_v6_rect, copy_v6_resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
                                         let copy_v6_col = if copy_v6_resp.hovered() { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(148, 163, 184) };
-                                        ui.painter().text(copy_v6_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::COPY, egui::FontId::monospace(11.0), copy_v6_col);
+                                        if copy_v6_resp.hovered() {
+                                            ui.painter().rect_filled(copy_v6_rect, Rounding::same(3.0), Color32::from_rgba_unmultiplied(56, 189, 248, 20));
+                                        }
+                                        ui.painter().text(copy_v6_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::COPY, egui::FontId::proportional(11.0), copy_v6_col);
+                                        let copy_v6_resp = copy_v6_resp.on_hover_text("Copy IPv6 address to clipboard");
                                         if copy_v6_resp.clicked() {
                                             ui.output_mut(|o| o.copied_text = ip_v6_str.to_string());
                                             self.wifi_status_msg = Some(("Copied IPv6 address to clipboard".to_string(), false, Instant::now()));
                                         }
 
-                                        // Split long IPv6 into two lines to prevent truncation
-                                        if ip_v6_str.len() > 18 {
-                                            let colon_pos = ip_v6_str[..18.min(ip_v6_str.len())].rfind(':').unwrap_or(12);
-                                            let v6_p1 = &ip_v6_str[..=colon_pos];
-                                            let v6_p2 = &ip_v6_str[colon_pos + 1..];
-                                            ui.vertical(|ui| {
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new(v6_p1).size(9.0).monospace().color(Color32::from_rgb(203, 213, 225)));
-                                                });
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new(v6_p2).size(9.0).monospace().color(Color32::from_rgb(203, 213, 225)));
-                                                });
-                                            });
-                                        } else {
-                                            ui.label(RichText::new(ip_v6_str).size(9.0).monospace().color(Color32::from_rgb(203, 213, 225)));
-                                        }
+                                        ui.label(RichText::new(ip_v6_str).size(9.0).monospace().color(Color32::from_rgb(203, 213, 225)));
                                     });
                                 });
                                 ui.add_space(4.0);

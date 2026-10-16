@@ -9372,162 +9372,153 @@ impl LauncherApp {
                 // 2. Row of 5 High-Density Metric Cards
                 ui.columns(5, |cols| {
                     // Card 1: TOTAL LOAD
-                    cols[0].vertical(|ui| {
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new("TOTAL LOAD").size(10.0).monospace().strong().color(p.text_muted));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new(format!("PEAK {:.0}%", self.cpu_peak_usage)).size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                    });
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .show(&mut cols[0], |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("TOTAL LOAD").size(10.0).monospace().strong().color(p.text_muted));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new(format!("PEAK {:.0}%", self.cpu_peak_usage)).size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                 });
-                                ui.add_space(4.0);
-                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Max), |ui| {
-                                    ui.label(RichText::new(format!("{:.1}", snap.cpu_global_usage)).size(28.0).strong().color(p.text_primary));
-                                    ui.add_space(2.0);
-                                    ui.label(RichText::new("%").size(14.0).color(p.text_muted));
-                                });
-                                ui.add_space(6.0);
-                                let bar_h = 4.0;
-                                let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), bar_h), egui::Sense::hover());
-                                ui.painter().rect_filled(rect, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
-                                let fill_w = rect.width() * (snap.cpu_global_usage / 100.0).clamp(0.02, 1.0);
-                                let fill_rect = egui::Rect::from_min_size(rect.min, egui::vec2(fill_w, bar_h));
-                                ui.painter().rect_filled(fill_rect, Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
                             });
-                    });
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 2.0;
+                                ui.label(RichText::new(format!("{:.1}", snap.cpu_global_usage)).size(28.0).strong().color(p.text_primary));
+                                ui.label(RichText::new("%").size(14.0).color(p.text_muted));
+                            });
+                            ui.add_space(6.0);
+                            let bar_h = 4.0;
+                            let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), bar_h), egui::Sense::hover());
+                            ui.painter().rect_filled(rect, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
+                            let fill_w = rect.width() * (snap.cpu_global_usage / 100.0).clamp(0.02, 1.0);
+                            let fill_rect = egui::Rect::from_min_size(rect.min, egui::vec2(fill_w, bar_h));
+                            ui.painter().rect_filled(fill_rect, Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                            ui.add_space(4.0);
+                        });
 
                     // Card 2: CLOCK AVG
-                    cols[1].vertical(|ui| {
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new("CLOCK AVG").size(10.0).monospace().strong().color(p.text_muted));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new(crate::lucide::GAUGE).size(11.0).color(p.text_muted));
-                                    });
-                                });
-                                ui.add_space(4.0);
-                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Max), |ui| {
-                                    let freq_ghz = snap.cpu_frequency_mhz as f64 / 1000.0;
-                                    let freq_str = if freq_ghz > 0.0 { format!("{:.2}", freq_ghz) } else { "2.25".to_string() };
-                                    ui.label(RichText::new(freq_str).size(28.0).strong().color(p.text_primary));
-                                    ui.add_space(2.0);
-                                    ui.label(RichText::new("GHz").size(12.0).color(p.text_muted));
-                                });
-                                ui.add_space(6.0);
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new("Base 1.10").size(10.0).monospace().color(p.text_muted));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new("Boost 3.10").size(10.0).monospace().color(p.text_muted));
-                                    });
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .show(&mut cols[1], |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("CLOCK AVG").size(10.0).monospace().strong().color(p.text_muted));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new(crate::lucide::GAUGE).size(11.0).color(p.text_muted));
                                 });
                             });
-                    });
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                let freq_ghz = snap.cpu_frequency_mhz as f64 / 1000.0;
+                                let freq_str = if freq_ghz > 0.0 { format!("{:.2}", freq_ghz) } else { "2.25".to_string() };
+                                ui.label(RichText::new(freq_str).size(28.0).strong().color(p.text_primary));
+                                ui.label(RichText::new("GHz").size(12.0).color(p.text_muted));
+                            });
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Base 1.10").size(10.0).monospace().color(p.text_muted));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new("Boost 3.10").size(10.0).monospace().color(p.text_muted));
+                                });
+                            });
+                        });
 
                     // Card 3: PKG POWER
-                    cols[2].vertical(|ui| {
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new("PKG POWER").size(10.0).monospace().strong().color(p.text_muted));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(p.text_muted));
-                                    });
-                                });
-                                ui.add_space(4.0);
-                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Max), |ui| {
-                                    let watts = snap.cpu_power_watts.unwrap_or(8.5);
-                                    ui.label(RichText::new(format!("{:.1}", watts)).size(28.0).strong().color(p.text_primary));
-                                    ui.add_space(2.0);
-                                    ui.label(RichText::new("Watts").size(12.0).color(p.text_muted));
-                                });
-                                ui.add_space(6.0);
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new("TDP Limit").size(10.0).monospace().color(p.text_muted));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let tdp = snap.cpu_tdp_watts.unwrap_or(12.0);
-                                        ui.label(RichText::new(format!("{:.1} W", tdp)).size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                    });
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .show(&mut cols[2], |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("PKG POWER").size(10.0).monospace().strong().color(p.text_muted));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(p.text_muted));
                                 });
                             });
-                    });
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                let watts = snap.cpu_power_watts.unwrap_or(8.5);
+                                ui.label(RichText::new(format!("{:.1}", watts)).size(28.0).strong().color(p.text_primary));
+                                ui.label(RichText::new("Watts").size(12.0).color(p.text_muted));
+                            });
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("TDP Limit").size(10.0).monospace().color(p.text_muted));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let tdp = snap.cpu_tdp_watts.unwrap_or(12.0);
+                                    ui.label(RichText::new(format!("{:.1} W", tdp)).size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                });
+                            });
+                        });
 
                     // Card 4: CORE VIDS
-                    cols[3].vertical(|ui| {
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new("CORE VIDS").size(10.0).monospace().strong().color(p.text_muted));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new(crate::lucide::HELP_CIRCLE).size(11.0).color(p.text_muted));
-                                    });
-                                });
-                                ui.add_space(4.0);
-                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Max), |ui| {
-                                    let vid = 0.75 + (snap.cpu_global_usage / 100.0) * 0.28;
-                                    ui.label(RichText::new(format!("{:.2}", vid)).size(28.0).strong().color(p.text_primary));
-                                    ui.add_space(2.0);
-                                    ui.label(RichText::new("V").size(12.0).color(p.text_muted));
-                                });
-                                ui.add_space(6.0);
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new("Offset").size(10.0).monospace().color(p.text_muted));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new("Adaptive").size(10.0).monospace().strong().color(Color32::from_rgb(34, 197, 94)));
-                                    });
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .show(&mut cols[3], |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("CORE VIDS").size(10.0).monospace().strong().color(p.text_muted));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new(crate::lucide::HELP_CIRCLE).size(11.0).color(p.text_muted));
                                 });
                             });
-                    });
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                let vid = 0.75 + (snap.cpu_global_usage / 100.0) * 0.28;
+                                ui.label(RichText::new(format!("{:.2}", vid)).size(28.0).strong().color(p.text_primary));
+                                ui.label(RichText::new("V").size(12.0).color(p.text_muted));
+                            });
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Offset").size(10.0).monospace().color(p.text_muted));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new("Adaptive").size(10.0).monospace().strong().color(Color32::from_rgb(34, 197, 94)));
+                                });
+                            });
+                        });
 
                     // Card 5: KERNEL UPTIME
-                    cols[4].vertical(|ui| {
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new("KERNEL UPTIME").size(10.0).monospace().strong().color(p.text_muted));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new(crate::lucide::CLOCK).size(11.0).color(p.text_muted));
-                                    });
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .show(&mut cols[4], |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("KERNEL UPTIME").size(10.0).monospace().strong().color(p.text_muted));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new(crate::lucide::CLOCK).size(11.0).color(p.text_muted));
                                 });
-                                ui.add_space(4.0);
-                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Max), |ui| {
-                                    let up_secs = get_system_uptime();
-                                    ui.label(RichText::new(format_uptime_hms(up_secs)).size(24.0).monospace().strong().color(p.text_primary));
-                                });
-                                ui.add_space(8.0);
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new("State").size(10.0).monospace().color(p.text_muted));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 4.0;
-                                            ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(34, 197, 94)));
-                                            ui.label(RichText::new("Active").size(10.0).monospace().strong().color(Color32::from_rgb(34, 197, 94)));
-                                        });
+                            });
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                let up_secs = get_system_uptime();
+                                ui.label(RichText::new(format_uptime_hms(up_secs)).size(24.0).monospace().strong().color(p.text_primary));
+                            });
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("State").size(10.0).monospace().color(p.text_muted));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                        ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(34, 197, 94)));
+                                        ui.label(RichText::new("Active").size(10.0).monospace().strong().color(Color32::from_rgb(34, 197, 94)));
                                     });
                                 });
                             });
-                    });
+                        });
                 });
 
                 ui.add_space(8.0);
@@ -9614,13 +9605,9 @@ impl LauncherApp {
                                             ui.label(RichText::new("CLOCK (GHz)").size(9.0).monospace().color(p.text_muted));
                                         });
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                                            ui.vertical(|ui| {
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                                                    ui.label(RichText::new(format!("{:.0}%", usage)).size(20.0).strong().color(Color32::from_rgb(56, 189, 248)));
-                                                });
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                                                    ui.label(RichText::new("LOAD").size(9.0).monospace().color(p.text_muted));
-                                                });
+                                            ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                                                ui.label(RichText::new(format!("{:.0}%", usage)).size(20.0).strong().color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new("LOAD").size(9.0).monospace().color(p.text_muted));
                                             });
                                         });
                                     });

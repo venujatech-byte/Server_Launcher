@@ -14693,7 +14693,7 @@ impl LauncherApp {
                                 let ep_badge_str = format!("{} Endpoints", endpoint_count);
 
                                 // Card Header
-                                let right_btn_w = 72.0;
+                                let right_btn_w = 78.0;
                                 let header_avail_w = ui.available_width();
                                 let left_w = (header_avail_w - right_btn_w - 8.0).max(100.0);
 
@@ -14703,7 +14703,7 @@ impl LauncherApp {
                                     ui.allocate_ui_with_layout(egui::vec2(left_w, 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                         let (icon_rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
                                         ui.painter().rect_filled(icon_rect, Rounding::same(6.0), Color32::from_rgb(20, 28, 44));
-                                        ui.painter().text(icon_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::RADIO, egui::FontId::monospace(14.0), Color32::from_rgb(56, 189, 248));
+                                        ui.painter().text(icon_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::RADIO, egui::FontId::proportional(14.0), Color32::from_rgb(56, 189, 248));
 
                                         ui.vertical(|ui| {
                                             ui.horizontal(|ui| {
@@ -14725,7 +14725,8 @@ impl LauncherApp {
                                         let (mon_rect, mon_resp) = ui.allocate_exact_size(egui::vec2(right_btn_w, 22.0), egui::Sense::click());
                                         let m_bg = if mon_resp.hovered() { Color32::from_rgb(125, 211, 252) } else { Color32::from_rgb(56, 189, 248) };
                                         ui.painter().rect_filled(mon_rect, Rounding::same(5.0), m_bg);
-                                        ui.painter().text(mon_rect.center(), egui::Align2::CENTER_CENTER, "Monitor", egui::FontId::monospace(8.5), Color32::from_rgb(10, 15, 29));
+                                        let btn_txt = format!("{} Monitor", crate::lucide::ACTIVITY);
+                                        ui.painter().text(mon_rect.center(), egui::Align2::CENTER_CENTER, btn_txt, egui::FontId::proportional(9.0), Color32::from_rgb(10, 15, 29));
                                         if mon_resp.clicked() {
                                             if !is_remote {
                                                 self.trigger_wifi_query(Some(ui.ctx().clone()));

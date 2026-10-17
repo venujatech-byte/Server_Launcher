@@ -55,6 +55,9 @@ pub struct ProcessSensorInfo {
     pub disk_read_rate_bps: f64,
     pub disk_write_rate_bps: f64,
     pub disk_rate_bps: f64,
+    pub net_rx_bytes: u64,
+    pub net_tx_bytes: u64,
+    pub net_rate_bps: f64,
     pub status: String,
 }
 
@@ -250,6 +253,7 @@ pub struct SystemSensorsCollector {
     prev_disk_write: HashMap<String, u64>,
     prev_disk_time: Instant,
     prev_proc_disk: HashMap<u32, (u64, u64)>,
+    prev_proc_net: HashMap<u32, (u64, u64)>,
 }
 
 impl Default for SystemSensorsCollector {
@@ -280,6 +284,7 @@ impl SystemSensorsCollector {
             prev_disk_write: HashMap::new(),
             prev_disk_time: now,
             prev_proc_disk: HashMap::new(),
+            prev_proc_net: HashMap::new(),
         }
     }
 
@@ -638,6 +643,7 @@ impl SystemSensorsCollector {
                     .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
             );
             let mut current_proc_disk = HashMap::new();
+            let mut current_proc_net = HashMap::new();
 
             for (pid, proc) in self.sys.processes() {
                 // Filter out OS-level threads so only actual processes are listed!
@@ -667,6 +673,46 @@ impl SystemSensorsCollector {
                 let w_rate = (written_b.saturating_sub(prev_w) as f64) / disk_elapsed_secs;
                 let disk_rate_bps = r_rate + w_rate;
 
+                // Network statistics per process via /proc/<pid>/io on Linux
+                let (proc_net_rx, proc_net_tx) = {
+                    #[cfg(target_os = "linux")]
+                    {
+                        if let Ok(content) = fs::read_to_string(format!("/proc/{}/io", pid_u32)) {
+                            let mut rchar = 0u64;
+                            let mut wchar = 0u64;
+                            let mut r_bytes = 0u64;
+                            let mut w_bytes = 0u64;
+                            for line in content.lines() {
+                                if let Some(val) = line.strip_prefix("rchar:") {
+                                    rchar = val.trim().parse().unwrap_or(0);
+                                } else if let Some(val) = line.strip_prefix("wchar:") {
+                                    wchar = val.trim().parse().unwrap_or(0);
+                                } else if let Some(val) = line.strip_prefix("read_bytes:") {
+                                    r_bytes = val.trim().parse().unwrap_or(0);
+                                } else if let Some(val) = line.strip_prefix("write_bytes:") {
+                                    w_bytes = val.trim().parse().unwrap_or(0);
+                                }
+                            }
+                            let rx = rchar.saturating_sub(r_bytes);
+                            let tx = wchar.saturating_sub(w_bytes);
+                            (rx, tx)
+                        } else {
+                            (0, 0)
+                        }
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        (0, 0)
+                    }
+                };
+
+                current_proc_net.insert(pid_u32, (proc_net_rx, proc_net_tx));
+
+                let (prev_nrx, prev_ntx) = self.prev_proc_net.get(&pid_u32).copied().unwrap_or((proc_net_rx, proc_net_tx));
+                let nrx_rate = (proc_net_rx.saturating_sub(prev_nrx) as f64) / disk_elapsed_secs;
+                let ntx_rate = (proc_net_tx.saturating_sub(prev_ntx) as f64) / disk_elapsed_secs;
+                let net_rate_bps = nrx_rate + ntx_rate;
+
                 let status = format!("{:?}", proc.status());
 
                 top_apps.push(ProcessSensorInfo {
@@ -679,19 +725,24 @@ impl SystemSensorsCollector {
                     disk_read_rate_bps: r_rate,
                     disk_write_rate_bps: w_rate,
                     disk_rate_bps,
+                    net_rx_bytes: proc_net_rx,
+                    net_tx_bytes: proc_net_tx,
+                    net_rate_bps,
                     status,
                 });
             }
             self.prev_proc_disk = current_proc_disk;
+            self.prev_proc_net = current_proc_net;
 
-            // Sort by CPU usage descending by default, then memory
+            // Sort by CPU usage descending by default, then network usage, then memory
             top_apps.sort_by(|a, b| {
                 b.cpu_usage
                     .partial_cmp(&a.cpu_usage)
                     .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| (b.net_rx_bytes + b.net_tx_bytes).cmp(&(a.net_rx_bytes + a.net_tx_bytes)))
                     .then_with(|| b.memory_bytes.cmp(&a.memory_bytes))
             });
-            top_apps.truncate(150);
+            top_apps.truncate(250);
         }
 
         let cpu_governor = {
@@ -2687,6 +2738,9 @@ print(json.dumps(data))
             let cpu_usage = a["cpu"].as_f64().unwrap_or(0.0) as f32;
             let memory_bytes = a["mem_bytes"].as_u64().unwrap_or(0);
             let status = a["status"].as_str().unwrap_or("Running").to_string();
+            let net_rx_bytes = a["net_rx_bytes"].as_u64().unwrap_or(0);
+            let net_tx_bytes = a["net_tx_bytes"].as_u64().unwrap_or(0);
+            let net_rate_bps = a["net_rate"].as_f64().unwrap_or(0.0);
             top_apps.push(ProcessSensorInfo {
                 pid,
                 name,
@@ -2697,6 +2751,9 @@ print(json.dumps(data))
                 disk_read_rate_bps: 0.0,
                 disk_write_rate_bps: 0.0,
                 disk_rate_bps: 0.0,
+                net_rx_bytes,
+                net_tx_bytes,
+                net_rate_bps,
                 status,
             });
         }
@@ -2910,6 +2967,7 @@ mod tests {
             assert!(app.disk_read_rate_bps >= 0.0);
             assert!(app.disk_write_rate_bps >= 0.0);
             assert!(app.disk_rate_bps >= 0.0);
+            assert!(app.net_rate_bps >= 0.0);
             assert!(!app.status.is_empty());
         }
     }

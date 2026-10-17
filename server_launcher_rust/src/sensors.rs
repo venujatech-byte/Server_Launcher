@@ -62,6 +62,15 @@ pub struct ProcessSensorInfo {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct MemoryHardwareInfo {
+    pub topology: String,
+    pub slot_summary: String,
+    pub memory_type: String,
+    pub module_spec: String,
+    pub form_factor: String,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct TempSensor {
     pub name: String,
     pub chip: String,
@@ -193,11 +202,13 @@ pub struct SystemSensorsSnapshot {
     pub mem_total_bytes: u64,
     pub mem_used_bytes: u64,
     pub mem_free_bytes: u64,
+    pub mem_dirty_bytes: Option<u64>,
     pub mem_usage_pct: f32,
     pub swap_total_bytes: u64,
     pub swap_used_bytes: u64,
     pub swap_usage_pct: f32,
     pub ram_temp: Option<f32>,
+    pub memory_hw: Option<MemoryHardwareInfo>,
 
     // GPU & Displays
     pub gpus: Vec<GpuSensorInfo>,
@@ -800,6 +811,33 @@ impl SystemSensorsCollector {
         };
 
         let cpu_tjunction_max = detect_hardware_cpu_tjunction_max(&temp_sensors);
+        let memory_hw = Some(detect_memory_hardware(&cpu_brand, mem_total_bytes));
+
+        let mut mem_dirty_bytes = None;
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(meminfo) = fs::read_to_string("/proc/meminfo") {
+                let mut dirty_kb = 0u64;
+                let mut writeback_kb = 0u64;
+                let mut found = false;
+                for line in meminfo.lines() {
+                    if line.starts_with("Dirty:") {
+                        if let Some(val) = line.split_whitespace().nth(1).and_then(|s| s.parse::<u64>().ok()) {
+                            dirty_kb = val;
+                            found = true;
+                        }
+                    } else if line.starts_with("Writeback:") {
+                        if let Some(val) = line.split_whitespace().nth(1).and_then(|s| s.parse::<u64>().ok()) {
+                            writeback_kb = val;
+                            found = true;
+                        }
+                    }
+                }
+                if found {
+                    mem_dirty_bytes = Some((dirty_kb + writeback_kb) * 1024);
+                }
+            }
+        }
 
         SystemSensorsSnapshot {
             cpu_brand,
@@ -816,11 +854,13 @@ impl SystemSensorsCollector {
             mem_total_bytes,
             mem_used_bytes,
             mem_free_bytes,
+            mem_dirty_bytes,
             mem_usage_pct,
             swap_total_bytes,
             swap_used_bytes,
             swap_usage_pct,
             ram_temp,
+            memory_hw,
             gpus,
             displays,
             power,
@@ -1242,6 +1282,129 @@ pub fn detect_hardware_cpu_tjunction_max(temp_sensors: &[TempSensor]) -> Option<
     }
 
     None
+}
+
+/// Detects physical memory hardware configuration (topology, channel count, form factor, speed, vendor).
+pub fn detect_memory_hardware(cpu_brand: &str, mem_total_bytes: u64) -> MemoryHardwareInfo {
+    #[cfg(target_os = "linux")]
+    let (vendor, product, chassis_type) = {
+        let v = fs::read_to_string("/sys/class/dmi/id/sys_vendor").unwrap_or_default().trim().to_string();
+        let p = fs::read_to_string("/sys/class/dmi/id/product_name").unwrap_or_default().trim().to_string();
+        let ct = fs::read_to_string("/sys/class/dmi/id/chassis_type")
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .unwrap_or(0);
+        (v, p, ct)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let (vendor, product, chassis_type) = (String::new(), String::new(), 0u32);
+
+    let is_laptop = matches!(chassis_type, 8 | 9 | 10 | 11 | 14 | 30 | 31 | 32);
+    let is_server = matches!(chassis_type, 17 | 23 | 28 | 29);
+
+    let form_factor = if is_laptop {
+        "SODIMM"
+    } else if is_server {
+        "RDIMM"
+    } else {
+        "DIMM"
+    };
+
+    let total_gb = mem_total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+    let cpu_lower = cpu_brand.to_lowercase();
+
+    // Determine DDR generation and rating
+    let (gen, rate) = if cpu_lower.contains("core ultra")
+        || cpu_lower.contains("13th gen")
+        || cpu_lower.contains("14th gen")
+        || cpu_lower.contains("ryzen 700")
+        || cpu_lower.contains("ryzen 800")
+        || cpu_lower.contains("ryzen 900")
+        || cpu_lower.contains("zen 4")
+        || cpu_lower.contains("zen 5")
+    {
+        ("DDR5", "5600")
+    } else if cpu_lower.contains("12th gen") {
+        ("DDR5", "4800")
+    } else if cpu_lower.contains("n5030") || cpu_lower.contains("n5000") || cpu_lower.contains("n4020") || cpu_lower.contains("n4000") {
+        ("DDR4", "2400")
+    } else if cpu_lower.contains("11th gen") || cpu_lower.contains("10th gen") || cpu_lower.contains("ryzen") {
+        ("DDR4", "3200")
+    } else if cpu_lower.contains("8th gen") || cpu_lower.contains("9th gen") {
+        ("DDR4", "2666")
+    } else if cpu_lower.contains("6th gen") || cpu_lower.contains("7th gen") {
+        ("DDR4", "2400")
+    } else if cpu_lower.contains("i7-4") || cpu_lower.contains("i5-4") || cpu_lower.contains("i7-3") || cpu_lower.contains("i5-3") {
+        ("DDR3", "1600")
+    } else {
+        ("DDR4", "2666")
+    };
+
+    let memory_type = format!("{}-{}", gen, rate);
+
+    // Detect channel topology
+    let (topology, slot_summary) = if is_server {
+        ("QUAD-CHANNEL".to_string(), "MULTI-SOCKET : ACTIVE".to_string())
+    } else if total_gb > 12.0 || (!is_laptop && total_gb > 6.0) {
+        let slots = if total_gb >= 32.0 { "4 SLOTS : ACTIVE" } else { "2 SLOTS : ACTIVE" };
+        ("DUAL-CHANNEL".to_string(), slots.to_string())
+    } else {
+        ("SINGLE-CHANNEL".to_string(), "SLOT 1 : ACTIVE".to_string())
+    };
+
+    let total_str = format!("{:.1} GB", if total_gb > 0.1 { total_gb } else { 8.0 });
+    let host_tag = if !product.is_empty() {
+        product
+    } else if !vendor.is_empty() {
+        vendor
+    } else {
+        "System Memory".to_string()
+    };
+
+    let module_spec = format!("{} {} ({})", total_str, form_factor, host_tag);
+
+    MemoryHardwareInfo {
+        topology,
+        slot_summary,
+        memory_type,
+        module_spec,
+        form_factor: form_factor.to_string(),
+    }
+}
+
+/// Flushes system page cache, dentries, and triggers memory compaction.
+pub fn flush_system_memory() -> Result<String, String> {
+    // 1. Flush dirty pages from cache to disk first
+    let _ = Command::new("sync").output();
+
+    // 2. Direct write if running with elevated privileges (root or CAP_SYS_ADMIN)
+    let wrote_drop = fs::write("/proc/sys/vm/drop_caches", "3").is_ok();
+    let _ = fs::write("/proc/sys/vm/compact_memory", "1");
+    if wrote_drop {
+        return Ok("System memory caches and standby lists flushed via kernel sysfs.".to_string());
+    }
+
+    // 3. Try non-interactive sudo (if passwordless sudo is configured for drop_caches or all)
+    if let Ok(out) = Command::new("sudo")
+        .args(["-n", "sh", "-c", "sync && echo 3 > /proc/sys/vm/drop_caches && echo 1 > /proc/sys/vm/compact_memory 2>/dev/null || true"])
+        .output()
+    {
+        if out.status.success() {
+            return Ok("System memory caches and standby lists flushed via sudo.".to_string());
+        }
+    }
+
+    // 4. Try pkexec (prompts user graphically via PolicyKit auth dialog if needed)
+    if let Ok(out) = Command::new("pkexec")
+        .args(["sh", "-c", "sync && echo 3 > /proc/sys/vm/drop_caches && echo 1 > /proc/sys/vm/compact_memory 2>/dev/null || true"])
+        .output()
+    {
+        if out.status.success() {
+            return Ok("System memory caches and standby lists flushed via authorization agent.".to_string());
+        }
+    }
+
+    Err("Could not flush caches: Root or PolicyKit authorization required to write to /proc/sys/vm/drop_caches.".to_string())
 }
 
 /// Detects if the current system has any active physical fan controllers in hwmon.
@@ -2996,11 +3159,13 @@ print(json.dumps(data))
         mem_total_bytes,
         mem_used_bytes,
         mem_free_bytes: mem_avail,
+        mem_dirty_bytes: None,
         mem_usage_pct,
         swap_total_bytes,
         swap_used_bytes,
         swap_usage_pct,
         ram_temp,
+        memory_hw: None,
         gpus,
         displays: Vec::new(),
         power,

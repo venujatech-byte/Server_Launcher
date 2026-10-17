@@ -181,6 +181,9 @@ pub struct PowerSupplyInfo {
     pub batteries: Vec<BatteryInfo>,
     pub total_battery_pct: Option<f32>,
     pub total_power_watts: Option<f32>,
+    pub backlight_ratio: Option<f32>,
+    pub usb_power_watts: Option<(f32, usize)>,
+    pub kbd_lights_watts: Option<f32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1711,11 +1714,107 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
         }
     };
 
+    #[cfg(target_os = "linux")]
+    let backlight_ratio = {
+        let mut ratio = None;
+        if let Ok(entries) = fs::read_dir("/sys/class/backlight") {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let actual = fs::read_to_string(path.join("actual_brightness"))
+                    .or_else(|_| fs::read_to_string(path.join("brightness")));
+                let max = fs::read_to_string(path.join("max_brightness"));
+                if let (Ok(a_str), Ok(m_str)) = (actual, max) {
+                    if let (Ok(a_val), Ok(m_val)) = (a_str.trim().parse::<f32>(), m_str.trim().parse::<f32>()) {
+                        if m_val > 0.0 {
+                            ratio = Some((a_val / m_val).clamp(0.0, 1.0));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        ratio
+    };
+    #[cfg(not(target_os = "linux"))]
+    let backlight_ratio = None;
+
+    #[cfg(target_os = "linux")]
+    let usb_power_watts = {
+        let mut total_w = 0.35_f32;
+        let mut active_count = 0_usize;
+        if let Ok(entries) = fs::read_dir("/sys/bus/usb/devices") {
+            for entry in entries.flatten() {
+                let fname = entry.file_name().to_string_lossy().to_string();
+                if fname.starts_with("usb") || fname.contains(':') {
+                    continue;
+                }
+                let path = entry.path();
+                let bmax_path = path.join("bMaxPower");
+                if !bmax_path.is_file() {
+                    continue;
+                }
+                let is_suspended = fs::read_to_string(path.join("power/runtime_status"))
+                    .map(|s| s.trim().eq_ignore_ascii_case("suspended"))
+                    .unwrap_or(false);
+                let ma = fs::read_to_string(&bmax_path)
+                    .ok()
+                    .and_then(|s| {
+                        let cleaned = s.trim().trim_end_matches("mA").trim_end_matches("ma").trim();
+                        cleaned.parse::<f32>().ok()
+                    })
+                    .unwrap_or(100.0);
+                if is_suspended {
+                    total_w += 0.04;
+                } else {
+                    active_count += 1;
+                    let nominal_w = (ma * 0.005 * 0.45).clamp(0.25, 4.5);
+                    total_w += nominal_w;
+                }
+            }
+        }
+        Some((total_w.clamp(0.35, 25.0), active_count))
+    };
+    #[cfg(not(target_os = "linux"))]
+    let usb_power_watts = Some((0.5, 1));
+
+    #[cfg(target_os = "linux")]
+    let kbd_lights_watts = {
+        let mut total_w = 0.25_f32;
+        if let Ok(entries) = fs::read_dir("/sys/class/leds") {
+            for entry in entries.flatten() {
+                let fname = entry.file_name().to_string_lossy().to_lowercase();
+                let path = entry.path();
+                let bright_val = fs::read_to_string(path.join("brightness"))
+                    .ok()
+                    .and_then(|s| s.trim().parse::<f32>().ok())
+                    .unwrap_or(0.0);
+                let max_val = fs::read_to_string(path.join("max_brightness"))
+                    .ok()
+                    .and_then(|s| s.trim().parse::<f32>().ok())
+                    .unwrap_or(1.0);
+                if fname.contains("kbd") || fname.contains("keyboard") || fname.contains("backlight") {
+                    if max_val > 0.0 && bright_val > 0.0 {
+                        let ratio = (bright_val / max_val).clamp(0.0, 1.0);
+                        total_w += ratio * 1.5;
+                    }
+                } else if bright_val > 0.0 {
+                    total_w += 0.04;
+                }
+            }
+        }
+        Some(total_w.clamp(0.25, 5.0))
+    };
+    #[cfg(not(target_os = "linux"))]
+    let kbd_lights_watts = Some(0.3);
+
     PowerSupplyInfo {
         ac_online,
         batteries,
         total_battery_pct,
         total_power_watts,
+        backlight_ratio,
+        usb_power_watts,
+        kbd_lights_watts,
     }
 }
 
@@ -2977,6 +3076,9 @@ print(json.dumps(data))
         batteries,
         total_battery_pct,
         total_power_watts,
+        backlight_ratio: None,
+        usb_power_watts: None,
+        kbd_lights_watts: None,
     };
 
     let mut temp_sensors = Vec::new();

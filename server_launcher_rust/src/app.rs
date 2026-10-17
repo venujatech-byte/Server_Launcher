@@ -466,6 +466,7 @@ pub struct LauncherApp {
 
     // Power Subsystem Status Toast
     pub power_status_msg: Option<(String, bool, Instant)>,
+    pub last_conservation_warn: Option<Instant>,
 
     // Cached grouped processes for Top Apps tab (prevents re-filtering and sorting every frame)
     pub sensors_cached_apps_groups: Vec<ProcessGroupSummary>,
@@ -743,6 +744,10 @@ impl LauncherApp {
             }
         }
 
+        let (init_cons_on, init_cons_ceil) = crate::power::query_charge_conservation();
+        let init_rapid = crate::power::query_rapid_charge();
+        let init_usb_on = crate::power::query_usb_always_on();
+
         Self {
             active_sidebar_tab: SidebarTab::Servers,
             scripts,
@@ -948,10 +953,10 @@ impl LauncherApp {
             per_disk_read_history: std::collections::HashMap::new(),
             last_telemetry_sample: Instant::now(),
             power_preset: crate::power::governor_to_preset_index(&crate::power::query_current_governor()),
-            power_conservation: true,
-            power_rapid_charge: false,
-            power_usb_always_on: true,
-            power_ceiling: 80.0,
+            power_conservation: init_cons_on,
+            power_rapid_charge: init_rapid,
+            power_usb_always_on: init_usb_on,
+            power_ceiling: init_cons_ceil as f32,
             fan_mode: 0, // Silent
             fan_full_blast: false,
             fan_test_start: None,
@@ -1001,6 +1006,7 @@ impl LauncherApp {
             wifi_cached_total_tx: 0,
             wifi_cached_total_rate: 0.0,
             power_status_msg: None,
+            last_conservation_warn: None,
             sensors_cached_apps_groups: Vec::new(),
             sensors_cached_bg_groups: Vec::new(),
             sensors_cached_snap_timestamp: None,
@@ -10765,6 +10771,31 @@ impl LauncherApp {
                     q.push_back(val);
                 }
             }
+
+            // Universal Software Battery Longevity Guard Check
+            if self.power_conservation && host_id.is_none() {
+                if let Some(true) = snap.power.ac_online {
+                    if let Some(bat_pct) = snap.power.total_battery_pct {
+                        if bat_pct >= self.power_ceiling {
+                            let should_warn = self.last_conservation_warn.map_or(true, |t| t.elapsed() >= Duration::from_secs(300));
+                            if should_warn {
+                                self.last_conservation_warn = Some(Instant::now());
+                                let ceil = self.power_ceiling;
+                                std::thread::spawn(move || {
+                                    let _ = std::process::Command::new("notify-send")
+                                        .args([
+                                            "-u", "normal",
+                                            "-i", "battery-full",
+                                            "Battery Conservation Alert",
+                                            &format!("Battery reached {:.0}% ceiling. Unplug AC to preserve cell longevity.", ceil)
+                                        ])
+                                        .output();
+                                });
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         ui.vertical(|ui| {
@@ -16154,7 +16185,6 @@ impl LauncherApp {
                 let bat_pct = snap.power.total_battery_pct.unwrap_or(100.0);
                 let remaining_wh = bat.and_then(|b| b.energy_wh).unwrap_or(if is_remote { 0.0 } else { 45.2 });
                 let full_wh = bat.and_then(|b| b.energy_full_wh).unwrap_or(if is_remote { 0.0 } else { 48.0 });
-                let design_wh = bat.and_then(|b| b.energy_design_wh).unwrap_or(if is_remote { 0.0 } else { 48.0 });
                 let bat_health = bat.and_then(|b| b.health_pct).unwrap_or_else(|| {
                     if let (Some(f), Some(d)) = (bat.and_then(|b| b.energy_full_wh), bat.and_then(|b| b.energy_design_wh)) {
                         if d > 0.0 {
@@ -16506,10 +16536,8 @@ impl LauncherApp {
 
                                     ui.add_space(10.0);
 
-                                    // 3 Metric Cards in row (Identical geometry, min_height, and padding)
+                                    // 3 Metric Cards in row
                                     ui.columns(3, |cols| {
-                                        let card_min_height = 96.0;
-
                                         // Card 1: State of Charge
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 15, 29))
@@ -16518,7 +16546,6 @@ impl LauncherApp {
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[0], |ui| {
                                                 ui.set_width(ui.available_width());
-                                                ui.set_min_height(card_min_height);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::BATTERY_CHARGING).size(11.0).color(Color32::from_rgb(56, 189, 248)));
@@ -16564,7 +16591,6 @@ impl LauncherApp {
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[1], |ui| {
                                                 ui.set_width(ui.available_width());
-                                                ui.set_min_height(card_min_height);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(Color32::from_rgb(56, 189, 248)));
@@ -16588,13 +16614,6 @@ impl LauncherApp {
                                                         ui.label(RichText::new(format!("{:.1}%", bat_health)).size(8.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
                                                     });
                                                 });
-                                                ui.add_space(2.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Design Spec").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new(format!("{:.1} Wh", design_wh)).size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                                    });
-                                                });
                                             });
 
                                         // Card 3: Lifecycle Endurance
@@ -16605,7 +16624,6 @@ impl LauncherApp {
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[2], |ui| {
                                                 ui.set_width(ui.available_width());
-                                                ui.set_min_height(card_min_height);
                                                 let cycles_val = bat.and_then(|b| b.cycle_count).unwrap_or(0);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
@@ -16634,14 +16652,6 @@ impl LauncherApp {
                                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                         let life_label = if cycles_val == 0 { "1000 (New)" } else { "1000 Total" };
                                                         ui.label(RichText::new(life_label).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                    });
-                                                });
-                                                ui.add_space(2.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Cell Condition").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        let cond_str = if cycles_val == 0 { "Factory New" } else if cycles_val < 350 { "Optimal Tier" } else { "Service Tier" };
-                                                        ui.label(RichText::new(cond_str).size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                                     });
                                                 });
                                             });
@@ -17208,10 +17218,13 @@ impl LauncherApp {
                                     .show(&mut cols[0], |ui| {
                                         ui.set_width(ui.available_width());
                                         let content_start_y = ui.cursor().min.y;
+                                        let mut cons_changed = false;
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new("Conservation Threshold").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                render_custom_toggle_switch(ui, &mut self.power_conservation);
+                                                if render_custom_toggle_switch(ui, &mut self.power_conservation) {
+                                                    cons_changed = true;
+                                                }
                                             });
                                         });
                                         ui.add_space(4.0);
@@ -17225,10 +17238,34 @@ impl LauncherApp {
                                         });
                                         ui.add_space(3.0);
                                         let (bar_r, bar_resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 6.0), egui::Sense::click_and_drag());
+                                        let prev_ceiling = self.power_ceiling;
                                         if bar_resp.dragged() || bar_resp.clicked() {
                                             if let Some(pos) = bar_resp.interact_pointer_pos() {
-                                                let ratio = ((pos.x - bar_r.left()) / bar_r.width()).clamp(0.5, 1.0);
+                                                let ratio = ((pos.x - bar_r.left()) / bar_r.width()).clamp(0.5, 0.95);
                                                 self.power_ceiling = (ratio * 100.0).round();
+                                            }
+                                        }
+                                        if (bar_resp.drag_stopped() || (bar_resp.clicked() && (prev_ceiling - self.power_ceiling).abs() >= 1.0)) && self.power_conservation {
+                                            cons_changed = true;
+                                        }
+                                        if cons_changed {
+                                            let enabled = self.power_conservation;
+                                            let ceiling = self.power_ceiling as u32;
+                                            if let Some(hid) = host_id {
+                                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                                    let host_name = host.name.clone();
+                                                    let cmd_str = crate::power::build_remote_power_command("conservation", enabled, ceiling);
+                                                    std::thread::spawn(move || {
+                                                        let mut cmd = crate::remote::build_ssh_command(&host, &cmd_str);
+                                                        let _ = cmd.output();
+                                                    });
+                                                    self.power_status_msg = Some((format!("Applied conservation threshold ({:.0}%) to remote host {}", ceiling, host_name), false, Instant::now()));
+                                                }
+                                            } else {
+                                                match crate::power::apply_charge_conservation(enabled, ceiling) {
+                                                    Ok(msg) => self.power_status_msg = Some((msg, false, Instant::now())),
+                                                    Err(err) => self.power_status_msg = Some((err, true, Instant::now())),
+                                                }
                                             }
                                         }
                                         ui.painter().rect_filled(bar_r, Rounding::same(3.0), Color32::from_rgb(14, 20, 36));
@@ -17264,12 +17301,34 @@ impl LauncherApp {
                                     .show(&mut cols[1], |ui| {
                                         ui.set_width(ui.available_width());
                                         let content_start_y = ui.cursor().min.y;
+                                        let mut rapid_changed = false;
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new("Rapid Charge Rate").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                render_custom_toggle_switch(ui, &mut self.power_rapid_charge);
+                                                if render_custom_toggle_switch(ui, &mut self.power_rapid_charge) {
+                                                    rapid_changed = true;
+                                                }
                                             });
                                         });
+                                        if rapid_changed {
+                                            let enabled = self.power_rapid_charge;
+                                            if let Some(hid) = host_id {
+                                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                                    let host_name = host.name.clone();
+                                                    let cmd_str = crate::power::build_remote_power_command("rapid_charge", enabled, 0);
+                                                    std::thread::spawn(move || {
+                                                        let mut cmd = crate::remote::build_ssh_command(&host, &cmd_str);
+                                                        let _ = cmd.output();
+                                                    });
+                                                    self.power_status_msg = Some((format!("Applied rapid charge setting to remote host {}", host_name), false, Instant::now()));
+                                                }
+                                            } else {
+                                                match crate::power::apply_rapid_charge(enabled) {
+                                                    Ok(msg) => self.power_status_msg = Some((msg, false, Instant::now())),
+                                                    Err(err) => self.power_status_msg = Some((err, true, Instant::now())),
+                                                }
+                                            }
+                                        }
                                         ui.add_space(4.0);
                                         ui.label(RichText::new("High-amperage ramp to reach 80% capacity within 45 minutes. Increased thermal load.").size(8.5).color(p.text_muted));
                                         ui.add_space(8.0);
@@ -17330,12 +17389,34 @@ impl LauncherApp {
                                     .show(&mut cols[2], |ui| {
                                         ui.set_width(ui.available_width());
                                         let content_start_y = ui.cursor().min.y;
+                                        let mut usb_changed = false;
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new("USB Always-On Standby").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                render_custom_toggle_switch(ui, &mut self.power_usb_always_on);
+                                                if render_custom_toggle_switch(ui, &mut self.power_usb_always_on) {
+                                                    usb_changed = true;
+                                                }
                                             });
                                         });
+                                        if usb_changed {
+                                            let enabled = self.power_usb_always_on;
+                                            if let Some(hid) = host_id {
+                                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                                    let host_name = host.name.clone();
+                                                    let cmd_str = crate::power::build_remote_power_command("usb_always_on", enabled, 0);
+                                                    std::thread::spawn(move || {
+                                                        let mut cmd = crate::remote::build_ssh_command(&host, &cmd_str);
+                                                        let _ = cmd.output();
+                                                    });
+                                                    self.power_status_msg = Some((format!("Applied USB standby setting to remote host {}", host_name), false, Instant::now()));
+                                                }
+                                            } else {
+                                                match crate::power::apply_usb_always_on(enabled) {
+                                                    Ok(msg) => self.power_status_msg = Some((msg, false, Instant::now())),
+                                                    Err(err) => self.power_status_msg = Some((err, true, Instant::now())),
+                                                }
+                                            }
+                                        }
                                         ui.add_space(4.0);
                                         ui.label(RichText::new("Permits Type-C and Type-A downstream ports to charge external devices when suspended.").size(8.5).color(p.text_muted));
                                         ui.add_space(8.0);
@@ -17388,6 +17469,7 @@ impl LauncherApp {
                                         }
                                     });
                             });
+
 
                             ui.data_mut(|d| d.insert_temp(card_height_id, observed_max_inner_h + 20.0));
                         });

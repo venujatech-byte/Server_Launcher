@@ -90,20 +90,10 @@ impl Default for CpuTdpProfile {
     }
 }
 
-/// Fallback CPU classification heuristic based on /proc/cpuinfo model name and core count.
-fn classify_cpu_nominal_tdp() -> f32 {
-    let cpu_info = fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
-    let model_line = cpu_info
-        .lines()
-        .find(|l| l.starts_with("model name"))
-        .unwrap_or("")
-        .to_lowercase();
-
-    let core_count = cpu_info
-        .lines()
-        .filter(|l| l.starts_with("processor"))
-        .count()
-        .max(1);
+/// Heuristic CPU classification based on processor model string and core count.
+pub fn classify_nominal_tdp_from_model_and_cores(model: &str, cores: usize) -> f32 {
+    let model_line = model.to_lowercase();
+    let core_count = cores.max(1);
 
     // Ultra-low power SoCs (4W - 6W)
     if model_line.contains("silver")
@@ -169,7 +159,24 @@ fn classify_cpu_nominal_tdp() -> f32 {
     }
 }
 
-fn calculate_turbo_tdp(nominal: f32) -> f32 {
+/// Fallback CPU classification heuristic based on /proc/cpuinfo model name and core count.
+fn classify_cpu_nominal_tdp() -> f32 {
+    let cpu_info = fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
+    let model_line = cpu_info
+        .lines()
+        .find(|l| l.starts_with("model name"))
+        .unwrap_or("");
+
+    let core_count = cpu_info
+        .lines()
+        .filter(|l| l.starts_with("processor"))
+        .count()
+        .max(1);
+
+    classify_nominal_tdp_from_model_and_cores(model_line, core_count)
+}
+
+pub fn calculate_turbo_tdp(nominal: f32) -> f32 {
     if nominal <= 8.0 {
         (nominal * 1.33).round().max(nominal + 1.5) // e.g. 6W -> 8W
     } else if nominal <= 15.0 {
@@ -182,6 +189,41 @@ fn calculate_turbo_tdp(nominal: f32) -> f32 {
         (nominal * 1.45).round() // e.g. 65W -> 95W
     } else {
         (nominal * 1.50).round() // e.g. 125W -> 185W
+    }
+}
+
+/// Constructs an accurate CpuTdpProfile for a target machine (local or remote)
+/// using detected RAPL constraint, CPU model name, and core count.
+pub fn tdp_profile_from_nominal_or_cpu(nominal_opt: Option<f32>, model_name: &str, core_count: usize) -> CpuTdpProfile {
+    let nominal_watts = if let Some(n) = nominal_opt {
+        let rounded = (n * 2.0).round() / 2.0;
+        if rounded > 0.0 { rounded } else { 15.0 }
+    } else {
+        classify_nominal_tdp_from_model_and_cores(model_name, core_count)
+    };
+
+    let quiet_pl1_watts = if nominal_watts <= 8.0 {
+        ((nominal_watts * 0.75) * 2.0).round() / 2.0
+    } else if nominal_watts <= 20.0 {
+        (nominal_watts * 0.67).round().max(7.0)
+    } else if nominal_watts <= 35.0 {
+        (nominal_watts * 0.70).round()
+    } else if nominal_watts <= 65.0 {
+        (nominal_watts * 0.65).round()
+    } else {
+        (nominal_watts * 0.70).round()
+    };
+
+    let balanced_pl1_watts = nominal_watts;
+    let turbo_pl2_watts = calculate_turbo_tdp(nominal_watts);
+
+    CpuTdpProfile {
+        nominal_watts,
+        quiet_pl1_watts,
+        balanced_pl1_watts,
+        turbo_pl2_watts,
+        has_rapl: nominal_opt.is_some(),
+        has_platform_profile: false,
     }
 }
 

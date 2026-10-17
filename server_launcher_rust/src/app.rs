@@ -16003,17 +16003,17 @@ impl LauncherApp {
 
                 let ac_online = snap.power.ac_online.unwrap_or(true);
                 let bat_pct = snap.power.total_battery_pct.unwrap_or(100.0);
-                let remaining_wh = bat.and_then(|b| b.energy_wh).unwrap_or(if is_remote { 0.0 } else { 45.2 });
-                let full_wh = bat.and_then(|b| b.energy_full_wh).unwrap_or(if is_remote { 0.0 } else { 48.0 });
+                let full_wh = bat.and_then(|b| b.energy_full_wh).or_else(|| bat.and_then(|b| b.energy_design_wh)).unwrap_or(50.0);
+                let remaining_wh = bat.and_then(|b| b.energy_wh).unwrap_or((full_wh * (bat_pct / 100.0)).max(0.1));
                 let bat_health = bat.and_then(|b| b.health_pct).unwrap_or_else(|| {
                     if let (Some(f), Some(d)) = (bat.and_then(|b| b.energy_full_wh), bat.and_then(|b| b.energy_design_wh)) {
                         if d > 0.0 {
                             (f / d * 100.0).clamp(10.0, 100.0)
                         } else {
-                            95.0
+                            96.0
                         }
                     } else {
-                        95.0
+                        96.0
                     }
                 });
 
@@ -16022,8 +16022,13 @@ impl LauncherApp {
                     .filter(|&w| w > 0.5)
                     .unwrap_or_else(|| snap.cpu_power_watts.unwrap_or(8.0).max(4.0));
 
-                let (est_time_str, _est_time_short, status_str, status_col, status_bg) = if is_remote && !has_battery {
-                    ("AC Grid Connected".to_string(), "Mains".to_string(), "AC MAINS • PLATINUM".to_string(), Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                let (est_time_str, _est_time_short, status_str, status_col, status_bg) = if !has_battery {
+                    let st_str = if is_remote {
+                        format!("AC MAINS • HOST '{}'", host_id.unwrap_or("REMOTE"))
+                    } else {
+                        "AC MAINS • DIRECT FEED".to_string()
+                    };
+                    ("AC Grid Connected".to_string(), "Mains".to_string(), st_str, Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
                 } else if ac_online {
                     if bat_pct >= 99.0 {
                         ("Fully Charged".to_string(), "Full".to_string(), "AC ONLINE • 100% • FULLY CHARGED".to_string(), Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
@@ -16140,8 +16145,12 @@ impl LauncherApp {
 
                             // Row 3: Subtitle spanning the full card width underneath
                             ui.horizontal_wrapped(|ui| {
-                                let sub_str = if is_remote && !has_battery {
-                                    "AC server power telemetry & energy states".to_string()
+                                let sub_str = if !has_battery {
+                                    if is_remote {
+                                        format!("Hardware AC power telemetry • Uptime {}", format_uptime(snap.uptime_secs))
+                                    } else {
+                                        "AC continuous feed power telemetry & energy states".to_string()
+                                    }
                                 } else {
                                     format!("ACPI battery health & power telemetry • Remaining: {}", est_time_str)
                                 };
@@ -16177,11 +16186,34 @@ impl LauncherApp {
                 let left_w = ((total_w - gap) * 0.64).max(380.0);
                 let right_w = (total_w - left_w - gap).max(220.0);
 
+                let num_cores = snap.cpu_cores_physical.max(snap.cpu_cores_logical).max(1);
+                let profile = if is_remote {
+                    crate::power::tdp_profile_from_nominal_or_cpu(snap.cpu_tdp_watts, &snap.cpu_brand, num_cores)
+                } else {
+                    self.cpu_tdp_profile
+                };
+                let active_gov = if is_remote {
+                    snap.cpu_governor.clone().unwrap_or_else(|| "performance".to_string())
+                } else {
+                    crate::power::query_current_governor()
+                };
+                let active_preset_idx = if is_remote {
+                    snap.cpu_governor.as_deref().map(crate::power::governor_to_preset_index).unwrap_or(self.power_preset)
+                } else {
+                    self.power_preset
+                };
+                let cpu_load = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
+                let raw_cpu = snap.cpu_power_watts.unwrap_or_else(|| {
+                    let tdp = snap.cpu_tdp_watts.unwrap_or(profile.nominal_watts);
+                    let idle = (tdp * 0.12).clamp(1.5, 20.0);
+                    idle + (tdp - idle) * (0.35 * cpu_load + 0.65 * cpu_load.powf(1.35))
+                });
+
                 ui.horizontal(|ui| {
                     // Left Column
                     ui.allocate_ui_with_layout(egui::vec2(left_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        if is_remote && !has_battery {
-                            // Remote Host Direct AC Power Supply Card
+                        if !has_battery {
+                            // Direct AC Power Supply Card (Desktop, Mini-PC, Server, or Workstation without battery)
                             Frame::none()
                                 .fill(p.bg_card)
                                 .rounding(Rounding::same(8.0))
@@ -16191,7 +16223,11 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         ui.label(RichText::new(crate::lucide::ZAP).size(12.0).color(Color32::from_rgb(56, 189, 248)));
-                                        let psu_hdr = format!("POWER SUPPLY // DIRECT AC GRID FEED • HOST '{}'", host_id.unwrap_or("REMOTE"));
+                                        let psu_hdr = if is_remote {
+                                            format!("POWER SUPPLY // DIRECT AC GRID FEED • HOST '{}'", host_id.unwrap_or("REMOTE"))
+                                        } else {
+                                            "POWER SUPPLY // DIRECT AC GRID FEED".to_string()
+                                        };
                                         ui.label(RichText::new(psu_hdr).size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -16200,16 +16236,42 @@ impl LauncherApp {
                                                 .rounding(Rounding::same(4.0))
                                                 .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                                 .show(ui, |ui| {
-                                                    ui.label(RichText::new("80 PLUS Platinum").size(9.0).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
+                                                    let badge_txt = if num_cores >= 16 || snap.cpu_brand.to_lowercase().contains("xeon") || snap.cpu_brand.to_lowercase().contains("epyc") {
+                                                        "Enterprise Platform"
+                                                    } else if !snap.gpus.is_empty() {
+                                                        "Workstation Grade"
+                                                    } else {
+                                                        "AC Continuous Feed"
+                                                    };
+                                                    ui.label(RichText::new(badge_txt).size(9.0).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
                                                 });
                                         });
                                     });
 
                                     ui.add_space(10.0);
 
-                                    // 3 Metric Cards in row
+                                    let render_ac_meta_row = |ui: &mut egui::Ui, label: &str, val: &str, val_col: Color32| {
+                                        ui.horizontal(|ui| {
+                                            let avail = ui.available_width();
+                                            let left_w = (avail * 0.40).clamp(28.0, 55.0);
+                                            let right_w = (avail - left_w - 4.0).max(10.0);
+                                            ui.allocate_ui_with_layout(egui::vec2(left_w, 14.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                ui.add(egui::Label::new(RichText::new(label).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184))).truncate());
+                                            });
+                                            ui.allocate_ui_with_layout(egui::vec2(right_w, 14.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.add(egui::Label::new(RichText::new(val).size(8.5).monospace().strong().color(val_col)).truncate());
+                                            });
+                                        });
+                                    };
+
+                                    // 3 Metric Cards in row (Equal Height Synced)
+                                    let ac_card_height_id = ui.make_persistent_id("ac_power_top_metric_cards_h");
+                                    let target_ac_card_h: f32 = ui.data(|d| d.get_temp::<f32>(ac_card_height_id)).unwrap_or(118.0).max(118.0);
+                                    let mut observed_ac_max_inner_h: f32 = 98.0;
+                                    let needed_ac_inner_h = (target_ac_card_h - 20.0).max(98.0);
+
                                     ui.columns(3, |cols| {
-                                        // Card 1: Power Delivery Mode
+                                        // Card 1: Power Delivery Feed
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 15, 29))
                                             .stroke(Stroke::NONE)
@@ -16217,10 +16279,12 @@ impl LauncherApp {
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[0], |ui| {
                                                 ui.set_width(ui.available_width());
+                                                let content_start_y = ui.cursor().min.y;
+
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::PLUG).size(11.0).color(Color32::from_rgb(56, 189, 248)));
-                                                    ui.label(RichText::new("Power Delivery Mode").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                    ui.label(RichText::new("Power Delivery Feed").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                                 });
                                                 ui.add_space(4.0);
                                                 ui.horizontal(|ui| {
@@ -16231,10 +16295,20 @@ impl LauncherApp {
                                                 let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
                                                 ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
                                                 ui.add_space(8.0);
-                                                ui.label(RichText::new("Grid-Tied Continuous Feed").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+
+                                                render_ac_meta_row(ui, "Feed", "AC Mains Feed", Color32::from_rgb(203, 213, 225));
+                                                ui.add_space(3.0);
+                                                let up_str = format_uptime(snap.uptime_secs);
+                                                render_ac_meta_row(ui, "Uptime", &up_str, Color32::from_rgb(56, 189, 248));
+
+                                                let inner_h = ui.cursor().min.y - content_start_y;
+                                                observed_ac_max_inner_h = observed_ac_max_inner_h.max(inner_h);
+                                                if inner_h < needed_ac_inner_h {
+                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_ac_inner_h - inner_h));
+                                                }
                                             });
 
-                                        // Card 2: Regulated Rails
+                                        // Card 2: Processor Package Draw
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 15, 29))
                                             .stroke(Stroke::NONE)
@@ -16242,30 +16316,40 @@ impl LauncherApp {
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[1], |ui| {
                                                 ui.set_width(ui.available_width());
+                                                let content_start_y = ui.cursor().min.y;
+
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::ACTIVITY).size(11.0).color(Color32::from_rgb(56, 189, 248)));
-                                                    ui.label(RichText::new("Supply Rail & Ripple").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                    ui.label(RichText::new("Processor Package Draw").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                                 });
                                                 ui.add_space(4.0);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 2.0;
-                                                    ui.label(RichText::new("12.0").size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                                    ui.label(RichText::new("V ATX").size(11.0).color(Color32::from_rgb(148, 163, 184)));
+                                                    ui.label(RichText::new(format!("{:.1}", raw_cpu)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                                    ui.label(RichText::new("W Package").size(11.0).color(Color32::from_rgb(148, 163, 184)));
                                                 });
                                                 ui.add_space(8.0);
                                                 let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
+                                                let fill_ratio = (raw_cpu / profile.turbo_pl2_watts.max(15.0)).clamp(0.05, 1.0);
+                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * fill_ratio, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
                                                 ui.add_space(8.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("DC Ripple Factor").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new("< 18 mV").size(8.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
-                                                    });
-                                                });
+
+                                                let pl1_s = format!("{:.0} W", profile.balanced_pl1_watts);
+                                                let pl2_s = format!("{:.0} W", profile.turbo_pl2_watts);
+                                                render_ac_meta_row(ui, "PL1 Cap", &pl1_s, Color32::from_rgb(203, 213, 225));
+                                                ui.add_space(3.0);
+                                                render_ac_meta_row(ui, "PL2 Peak", &pl2_s, Color32::from_rgb(56, 189, 248));
+
+                                                let inner_h = ui.cursor().min.y - content_start_y;
+                                                observed_ac_max_inner_h = observed_ac_max_inner_h.max(inner_h);
+                                                if inner_h < needed_ac_inner_h {
+                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_ac_inner_h - inner_h));
+                                                }
                                             });
 
-                                        // Card 3: Cell Subsystem
+                                        // Card 3: Thermal Dissipation
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 15, 29))
                                             .stroke(Stroke::NONE)
@@ -16273,49 +16357,74 @@ impl LauncherApp {
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[2], |ui| {
                                                 ui.set_width(ui.available_width());
+                                                let content_start_y = ui.cursor().min.y;
+
+                                                let temp_c = snap.cpu_temp.unwrap_or(36.0);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(Color32::from_rgb(56, 189, 248)));
-                                                    ui.label(RichText::new("Battery Subsystem").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                    ui.label(RichText::new("Thermal Dissipation").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                                 });
                                                 ui.add_space(4.0);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 2.0;
-                                                    ui.label(RichText::new("Direct AC").size(20.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                                 });
+                                                    ui.label(RichText::new(format!("{:.1}", temp_c)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                                    ui.label(RichText::new("°C Core").size(11.0).color(Color32::from_rgb(148, 163, 184)));
+                                                });
                                                 ui.add_space(8.0);
                                                 let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
+                                                let temp_ratio = (temp_c / 95.0).clamp(0.05, 1.0);
+                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * temp_ratio, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
                                                 ui.add_space(8.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Wear Degradation").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new("0% (Mains)").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                    });
-                                                });
+
+                                                let clk_s = format!("{} MHz", snap.cpu_frequency_mhz);
+                                                render_ac_meta_row(ui, "Gov", &active_gov, Color32::from_rgb(203, 213, 225));
+                                                ui.add_space(3.0);
+                                                render_ac_meta_row(ui, "Clock", &clk_s, Color32::from_rgb(56, 189, 248));
+
+                                                let inner_h = ui.cursor().min.y - content_start_y;
+                                                observed_ac_max_inner_h = observed_ac_max_inner_h.max(inner_h);
+                                                if inner_h < needed_ac_inner_h {
+                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_ac_inner_h - inner_h));
+                                                }
                                             });
                                     });
+
+                                    ui.data_mut(|d| d.insert_temp(ac_card_height_id, observed_ac_max_inner_h + 20.0));
 
                                     ui.add_space(12.0);
 
                                     // Row of 4 Sub-chips
                                     ui.columns(4, |cols| {
                                         let temp_val = snap.cpu_temp.unwrap_or(36.0);
+                                        let topology_str = if num_cores >= 16 || snap.cpu_brand.to_lowercase().contains("xeon") || snap.cpu_brand.to_lowercase().contains("epyc") {
+                                            "Rackmount / Server".to_string()
+                                        } else if !snap.gpus.is_empty() {
+                                            "Desktop Workstation".to_string()
+                                        } else {
+                                            "Desktop / Compact PC".to_string()
+                                        };
+                                        let vrm_str = if snap.cpu_tdp_watts.is_some() {
+                                            "RAPL Digital Regulation".to_string()
+                                        } else {
+                                            "Active Digital PMIC".to_string()
+                                        };
                                         let chips = [
-                                            ("Mains Standard", "230V / 115V Pure Sine".to_string(), Color32::from_rgb(241, 245, 249)),
-                                            ("Topology Type", "Rackmount / Server PSU".to_string(), Color32::from_rgb(241, 245, 249)),
-                                            ("Thermal Envelope", format!("{:.1} °C", temp_val), Color32::from_rgb(203, 213, 225)),
-                                            ("DC Converter", "Active VRM Bypass".to_string(), Color32::from_rgb(203, 213, 225)),
+                                            ("Mains Standard", "230V / 115V AC Pure Sine".to_string(), Color32::from_rgb(241, 245, 249)),
+                                            ("Chassis Topology", topology_str, Color32::from_rgb(241, 245, 249)),
+                                            ("Thermal Margin", format!("{:.1} °C Headroom", (95.0 - temp_val).max(0.0)), Color32::from_rgb(203, 213, 225)),
+                                            ("Power Regulation", vrm_str, Color32::from_rgb(203, 213, 225)),
                                         ];
                                         for (i, (title, val, val_col)) in chips.into_iter().enumerate() {
                                             Frame::none()
                                                 .fill(Color32::from_rgb(10, 15, 29))
-                                                .rounding(Rounding::same(4.0))
+                                                .rounding(Rounding::same(6.0))
                                                 .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                                                 .show(&mut cols[i], |ui| {
                                                     ui.set_width(ui.available_width());
                                                     ui.label(RichText::new(title).size(8.0).monospace().color(p.text_muted));
-                                                    ui.add_space(1.0);
+                                                    ui.add_space(2.0);
                                                     ui.label(RichText::new(val).size(9.5).monospace().strong().color(val_col));
                                                 });
                                         }
@@ -16333,8 +16442,8 @@ impl LauncherApp {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         ui.label(RichText::new(crate::lucide::BATTERY).size(12.0).color(Color32::from_rgb(56, 189, 248)));
                                         let bat_name = bat.map(|b| b.name.as_str()).unwrap_or("BAT1");
-                                        let bat_mfg = bat.map(|b| b.manufacturer.trim()).filter(|s| !s.is_empty()).unwrap_or(if is_remote { "OEM" } else { "COMPAL" });
-                                        let bat_model = bat.map(|b| b.model_name.trim()).filter(|s| !s.is_empty()).unwrap_or(if is_remote { "Standard Pack" } else { "PABAS0241231" });
+                                        let bat_mfg = bat.map(|b| b.manufacturer.trim()).filter(|s| !s.is_empty()).unwrap_or(if is_remote { "OEM Pack" } else { "COMPAL" });
+                                        let bat_model = bat.map(|b| b.model_name.trim()).filter(|s| !s.is_empty()).unwrap_or(if is_remote { "Lithium-Ion Pack" } else { "PABAS0241231" });
                                         let bat_hdr = format!("PRIMARY CELL TELEMETRY // {} ({} {})", bat_name, bat_mfg, bat_model);
                                         ui.label(RichText::new(bat_hdr).size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
@@ -16584,7 +16693,6 @@ impl LauncherApp {
 
                                 // 3 Presets in row
                                 ui.columns(3, |cols| {
-                                    let profile = self.cpu_tdp_profile;
                                     let quiet_desc = if profile.quiet_pl1_watts.fract() == 0.0 {
                                         format!("Continuous PL1 Cap ({:.0}W)", profile.quiet_pl1_watts)
                                     } else {
@@ -16608,7 +16716,7 @@ impl LauncherApp {
                                     ];
                                     for (name, desc, gov_name, idx) in &presets {
                                         let idx = *idx;
-                                        let is_sel = self.power_preset == idx;
+                                        let is_sel = active_preset_idx == idx;
                                         let border = if is_sel { Stroke::new(1.2_f32, Color32::from_rgb(56, 189, 248)) } else { Stroke::NONE };
                                         let bg = if is_sel { Color32::from_rgba_unmultiplied(56, 189, 248, 18) } else { Color32::from_rgb(10, 15, 29) };
 
@@ -16626,12 +16734,12 @@ impl LauncherApp {
                                                     if is_sel {
                                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                             Frame::none()
-                                                                .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 30))
-                                                                .rounding(Rounding::same(3.0))
-                                                                .inner_margin(egui::Margin::symmetric(5.0, 1.5))
-                                                                .show(ui, |ui| {
-                                                                    ui.label(RichText::new("ACTIVE").size(7.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                                                });
+                                                                 .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 30))
+                                                                 .rounding(Rounding::same(3.0))
+                                                                 .inner_margin(egui::Margin::symmetric(5.0, 1.5))
+                                                                 .show(ui, |ui| {
+                                                                     ui.label(RichText::new("ACTIVE").size(7.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                                                 });
                                                         });
                                                     }
                                                 });
@@ -16655,7 +16763,7 @@ impl LauncherApp {
                                             if let Some(hid) = host_id {
                                                 if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
                                                     let host_name = host.name.clone();
-                                                    let cmd_str = crate::power::build_remote_preset_command(idx, &self.cpu_tdp_profile);
+                                                    let cmd_str = crate::power::build_remote_preset_command(idx, &profile);
                                                     std::thread::spawn(move || {
                                                         let mut cmd = crate::remote::build_ssh_command(&host, &cmd_str);
                                                         let _ = cmd.output();
@@ -16663,7 +16771,7 @@ impl LauncherApp {
                                                     self.power_status_msg = Some((format!("Applied preset to remote host {}", host_name), false, Instant::now()));
                                                 }
                                             } else {
-                                                match crate::power::apply_thermal_power_preset(idx, &self.cpu_tdp_profile) {
+                                                match crate::power::apply_thermal_power_preset(idx, &profile) {
                                                     Ok(msg) => self.power_status_msg = Some((msg, false, Instant::now())),
                                                     Err(err) => self.power_status_msg = Some((err, true, Instant::now())),
                                                 }
@@ -16701,15 +16809,13 @@ impl LauncherApp {
                                 // Realtime live telemetry calculation for components and total draw
                                 let disk_mb_s = ((snap.total_disk_read_rate_bps + snap.total_disk_write_rate_bps) / (1024.0 * 1024.0)) as f32;
                                 let net_mb_s = ((snap.total_rx_rate_bps + snap.total_tx_rate_bps) / (1024.0 * 1024.0)) as f32;
-                                let cpu_load = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
                                 let mem_ratio = (snap.mem_usage_pct / 100.0).clamp(0.0, 1.0);
-                                let gpu_load = snap.gpus.iter().filter_map(|g| g.load_pct).next().unwrap_or(0.0);
 
                                 let is_discharging = !ac_online || bat.map(|b| b.status.eq_ignore_ascii_case("discharging")).unwrap_or(false);
                                 let is_charging = ac_online && bat.map(|b| b.status.eq_ignore_ascii_case("charging")).unwrap_or(false);
 
-                                let (badge_str, badge_col) = if is_remote && !has_battery {
-                                    ("Direct PSU Line".to_string(), Color32::from_rgb(148, 163, 184))
+                                let (badge_str, badge_col) = if !has_battery {
+                                    ("Direct PSU Line".to_string(), Color32::from_rgb(56, 189, 248))
                                 } else if is_discharging {
                                     ("Battery active".to_string(), Color32::from_rgb(245, 158, 11))
                                 } else if is_charging {
@@ -16718,110 +16824,80 @@ impl LauncherApp {
                                     ("Bypass active".to_string(), Color32::from_rgb(56, 189, 248))
                                 };
 
-                                let (watts_val, components): (f32, Vec<(&'static str, f32, f32)>) = if is_remote {
-                                    let raw_cpu = snap.cpu_power_watts.unwrap_or_else(|| {
-                                        let tdp = snap.cpu_tdp_watts.unwrap_or(65.0);
-                                        let idle = (tdp * 0.15).clamp(8.0, 25.0);
-                                        idle + (tdp - idle) * (0.35 * cpu_load + 0.65 * cpu_load.powf(1.35))
-                                    });
-
-                                    let (num_rotational, num_ssd) = {
-                                        let mut rot = 0;
-                                        let mut ssd = 0;
-                                        for d in &snap.physical_disks {
-                                            if d.is_ssd { ssd += 1; } else { rot += 1; }
-                                        }
-                                        if rot == 0 && ssd == 0 {
-                                            if snap.disks.is_empty() { (0, 1) } else { (0, snap.disks.len()) }
-                                        } else {
-                                            (rot, ssd)
-                                        }
-                                    };
-                                    let hdd_draw = (num_rotational as f32 * 4.5) + (disk_mb_s * 0.15).clamp(0.0, 15.0);
-                                    let ssd_draw = (num_ssd.max(1) as f32 * 1.2) + (disk_mb_s * 0.08).clamp(0.0, 10.0);
-                                    let raw_storage = (hdd_draw + ssd_draw).clamp(4.0, 45.0);
-
-                                    let raw_net = (3.0 + (net_mb_s * 0.15)).clamp(3.0, 25.0);
-                                    let raw_usb = 1.2_f32; // Remote server USB/BMC bus draw
-                                    let raw_mb = (10.0 + mem_ratio * 12.0).clamp(10.0, 40.0);
-                                    let total = raw_cpu + raw_storage + raw_net + raw_usb + raw_mb;
-
-                                    (
-                                        total,
-                                        vec![
-                                            ("CPU Package & Cores", raw_cpu, snap.cpu_tdp_watts.unwrap_or(150.0).max(raw_cpu * 1.25)),
-                                            ("Storage Subsystem (HDD/NVMe)", raw_storage, 45.0),
-                                            ("Network PHY & Transceivers", raw_net, 30.0),
-                                            ("USB & Management Rails", raw_usb, 15.0),
-                                            ("Motherboard Chipset & RAM", raw_mb, 45.0),
-                                        ],
-                                    )
+                                // GPU telemetry
+                                let (raw_gpu, gpu_cap) = if !snap.gpus.is_empty() {
+                                    let mut total_g_w = 0.0_f32;
+                                    let mut total_g_cap = 0.0_f32;
+                                    for g in &snap.gpus {
+                                        let limit = g.power_limit_watts.unwrap_or(if is_remote { 75.0 } else { 35.0 });
+                                        let g_load = (g.load_pct.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0);
+                                        let w = g.power_watts.unwrap_or_else(|| {
+                                            (limit * 0.08).max(0.5) + (limit * 0.92) * g_load
+                                        });
+                                        total_g_w += w;
+                                        total_g_cap += limit.max(w * 1.25);
+                                    }
+                                    (total_g_w, total_g_cap.max(total_g_w * 1.25))
                                 } else {
-                                    let tdp = snap.cpu_tdp_watts.unwrap_or(15.0);
-                                    let raw_cpu = snap.cpu_power_watts.unwrap_or_else(|| {
-                                        let idle = (tdp * 0.15).clamp(1.5, 6.0);
-                                        idle + (tdp - idle) * (0.35 * cpu_load + 0.65 * cpu_load.powf(1.35))
-                                    });
+                                    let g_tdp = (profile.nominal_watts * 0.30).clamp(3.0, 35.0);
+                                    let g_load = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
+                                    let igpu_w = (g_tdp * 0.06).max(0.3) + (g_tdp * 0.40) * (g_load * 0.5);
+                                    (igpu_w, g_tdp)
+                                };
 
-                                    let gpu_tdp = if snap.gpus.is_empty() {
-                                        tdp * 0.35
+                                // Storage subsystem
+                                let (num_rotational, num_ssd) = {
+                                    let mut rot = 0;
+                                    let mut ssd = 0;
+                                    for d in &snap.physical_disks {
+                                        if d.is_ssd { ssd += 1; } else { rot += 1; }
+                                    }
+                                    if rot == 0 && ssd == 0 {
+                                        if snap.disks.is_empty() { (0, 1) } else { (0, snap.disks.len()) }
                                     } else {
-                                        snap.gpus[0].power_limit_watts.unwrap_or(35.0)
-                                    };
-                                    let raw_gpu = snap.gpus.iter().filter_map(|g| g.power_watts).next().unwrap_or_else(|| {
-                                        (gpu_tdp * 0.08).max(0.3) + (gpu_tdp * 0.92) * (gpu_load / 100.0)
-                                    });
+                                        (rot, ssd)
+                                    }
+                                };
+                                let hdd_draw = (num_rotational as f32 * 2.2) + (disk_mb_s * 0.10).clamp(0.0, 8.0);
+                                let ssd_draw = (num_ssd.max(1) as f32 * 0.5) + (disk_mb_s * 0.04).clamp(0.0, 4.0);
+                                let raw_storage = (hdd_draw + ssd_draw).clamp(0.5, 50.0);
+                                let storage_cap = (num_rotational as f32 * 7.0 + num_ssd as f32 * 3.5).clamp(5.0, 60.0);
 
+                                // Motherboard chipset & memory
+                                let mem_gb = (snap.mem_total_bytes as f32 / (1024.0 * 1024.0 * 1024.0)).max(4.0);
+                                let ram_draw = (mem_gb / 8.0) * (0.35 + mem_ratio * 0.55);
+                                let chipset_draw = if has_battery { 1.0 } else if num_cores >= 16 { 5.0 } else { 2.2 };
+                                let raw_mb = (chipset_draw + ram_draw).clamp(1.2, 35.0);
+                                let mb_cap = (chipset_draw * 2.0 + (mem_gb / 8.0) * 1.8).clamp(6.0, 40.0);
+
+                                // Network PHY & bus
+                                let raw_net = (0.4 + (net_mb_s * 0.06)).clamp(0.4, 20.0);
+                                let net_cap = 15.0_f32;
+
+                                // USB & Peripherals
+                                let (base_usb_w, usb_device_count) = snap.power.usb_power_watts.unwrap_or((0.45, 0));
+                                let usb_cap = (usb_device_count as f32 * 4.5 + 5.0).clamp(8.0, 30.0);
+
+                                // CPU cap
+                                let cpu_cap = profile.turbo_pl2_watts.max(raw_cpu * 1.25);
+
+                                let (watts_val, components): (f32, Vec<(&'static str, f32, f32)>) = if has_battery {
                                     let br = snap.power.backlight_ratio.unwrap_or(0.40);
-                                    let raw_display = if has_battery {
-                                        1.0 + br * 2.8 // Panel logic 1.0W + LED backlight 0 - 2.8W
-                                    } else {
-                                        0.8 // External monitor HDMI/DP buffer
-                                    };
-
-                                    // Storage Subsystem (Mechanical HDD spindle + NVMe/SSD)
-                                    let (num_rotational, num_ssd) = {
-                                        let mut rot = 0;
-                                        let mut ssd = 0;
-                                        for d in &snap.physical_disks {
-                                             if d.is_ssd { ssd += 1; } else { rot += 1; }
-                                        }
-                                        if rot == 0 && ssd == 0 {
-                                            if snap.disks.is_empty() { (0, 1) } else { (0, snap.disks.len()) }
-                                        } else {
-                                            (rot, ssd)
-                                        }
-                                    };
-                                    let hdd_watts = (num_rotational as f32 * 1.85) + (disk_mb_s * 0.12).clamp(0.0, 3.5);
-                                    let ssd_watts = (num_ssd.max(1) as f32 * 0.45) + (disk_mb_s * 0.05).clamp(0.0, 2.5);
-                                    let raw_storage = (hdd_watts + ssd_watts).clamp(0.6, 25.0);
-
-                                    // USB Ports & Peripherals power (from background telemetry)
-                                    let (base_usb_w, usb_device_count) = snap.power.usb_power_watts.unwrap_or((0.35, 0));
-
-                                    // Keyboard controller & LED illumination / backlights (from background telemetry)
+                                    let raw_display = 1.0 + br * 2.8;
+                                    let disp_cap = 6.0_f32;
                                     let raw_kbd_lights = snap.power.kbd_lights_watts.unwrap_or(0.25);
-
-                                    // Motherboard chipset logic & RAM
-                                    let raw_mb = (1.2 + mem_ratio * 0.7).clamp(1.0, 5.0);
+                                    let kbd_cap = 4.0_f32;
 
                                     let bat_power = snap.power.total_power_watts.filter(|&w| w > 0.1);
 
                                     let (final_watts, c_cpu, c_gpu, c_disp, c_storage, c_usb, c_kbd_lights, c_mb) = if is_discharging && bat_power.is_some() {
                                         let total = bat_power.unwrap();
-                                        // Base internal consumption
-                                        let base_internal = raw_cpu + raw_gpu + raw_display + raw_storage + raw_kbd_lights + raw_mb;
-
-                                        // If total battery discharge exceeds the internal base components,
-                                        // the excess is power drawn by USB ports & external peripherals/accessories
+                                        let base_internal = raw_cpu + raw_gpu + raw_display + raw_storage + raw_kbd_lights + raw_mb + base_usb_w;
                                         let c_usb_raw = if total > base_internal {
                                             base_usb_w.max(total - base_internal)
                                         } else {
                                             base_usb_w
                                         };
-
-                                        // Crucially keep CPU package draw strictly untouched from sensor/load model:
-                                        // Drawing power from USB ports/accessories must NEVER inflate CPU power!
                                         let non_cpu_sum = (raw_display + raw_storage + c_usb_raw + raw_kbd_lights + raw_mb).max(0.1);
                                         let target_non_cpu = (total - raw_cpu - raw_gpu).max(0.1);
                                         let scale = (target_non_cpu / non_cpu_sum).clamp(0.4, 1.8);
@@ -16845,26 +16921,39 @@ impl LauncherApp {
                                         (total, raw_cpu, raw_gpu, raw_display, raw_storage, base_usb_w, raw_kbd_lights, raw_mb)
                                     };
 
-                                    let cpu_cap = tdp.max(c_cpu * 1.25);
-                                    let gpu_cap = (tdp * 0.6).max(c_gpu * 1.5).max(4.0);
-                                    let disp_cap = 6.0_f32;
-                                    let storage_cap = (num_rotational as f32 * 5.0 + num_ssd as f32 * 3.0).clamp(6.0, 35.0);
-                                    let usb_cap = (usb_device_count as f32 * 4.5 + 5.0).clamp(10.0, 35.0);
-                                    let kbd_lights_cap = 4.0_f32;
-                                    let mb_cap = 8.0_f32;
+                                    let mut comps = vec![
+                                        ("CPU Package (PL0/1)", c_cpu, cpu_cap),
+                                    ];
+                                    if !snap.gpus.is_empty() {
+                                        comps.push(("Graphics Subsystem (GPU)", c_gpu, gpu_cap));
+                                    } else {
+                                        comps.push(("Integrated GPU (iGPU)", c_gpu, gpu_cap));
+                                    }
+                                    comps.push(("eDP Panel & Backlight", c_disp, disp_cap));
+                                    comps.push(("Drives & Storage (HDD/NVMe)", c_storage, storage_cap));
+                                    comps.push(("USB Ports & Peripherals", c_usb, usb_cap));
+                                    comps.push(("Keyboard & System Lights", c_kbd_lights, kbd_cap));
+                                    comps.push(("Motherboard Logic & RAM", c_mb, mb_cap));
 
-                                    (
-                                        final_watts,
-                                        vec![
-                                            ("CPU Package (PL0/1)", c_cpu, cpu_cap),
-                                            ("Integrated GPU", c_gpu, gpu_cap),
-                                            ("eDP Panel & Backlight", c_disp, disp_cap),
-                                            ("Drives & Storage (HDD/NVMe)", c_storage, storage_cap),
-                                            ("USB Ports & Peripherals", c_usb, usb_cap),
-                                            ("Keyboard & System Lights", c_kbd_lights, kbd_lights_cap),
-                                            ("Motherboard Logic & RAM", c_mb, mb_cap),
-                                        ],
-                                    )
+                                    (final_watts, comps)
+                                } else {
+                                    let fan_draw = ((snap.cpu_temp.unwrap_or(35.0) - 30.0) / 40.0).clamp(0.0, 1.0) * 5.0 + 1.2;
+                                    let fan_cap = 15.0_f32;
+                                    let total = raw_cpu + (if !snap.gpus.is_empty() { raw_gpu } else { 0.0 }) + raw_storage + raw_net + raw_mb + base_usb_w + fan_draw;
+
+                                    let mut comps = vec![
+                                        ("CPU Package & Cores", raw_cpu, cpu_cap),
+                                    ];
+                                    if !snap.gpus.is_empty() {
+                                        comps.push(("Graphics Subsystem (GPU)", raw_gpu, gpu_cap));
+                                    }
+                                    comps.push(("Storage Subsystem (HDD/NVMe)", raw_storage, storage_cap));
+                                    comps.push(("Network PHY & Interface", raw_net, net_cap));
+                                    comps.push(("Motherboard Logic & RAM", raw_mb, mb_cap));
+                                    comps.push(("Chassis Cooling & Fans", fan_draw, fan_cap));
+                                    comps.push(("USB & System Peripherals", base_usb_w, usb_cap));
+
+                                    (total, comps)
                                 };
 
                                 ui.horizontal(|ui| {
@@ -16922,8 +17011,8 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 3. Bottom Card: Conservation & Longevity Circuit (Local) or Server AC Power Policy (Remote)
-                if is_remote && !has_battery {
+                // 3. Bottom Card: Conservation & Longevity Circuit (Battery) or Platform Governance (AC Continuous)
+                if !has_battery {
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
@@ -16933,7 +17022,12 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 ui.label(RichText::new(crate::lucide::SLIDERS).size(12.0).color(Color32::from_rgb(56, 189, 248)));
-                                ui.label(RichText::new("Server AC Power Policy").size(12.0).strong().color(p.text_primary));
+                                let card_title = if is_remote {
+                                    format!("PLATFORM POWER & THERMAL GOVERNANCE • HOST '{}'", host_id.unwrap_or("REMOTE"))
+                                } else {
+                                    "PLATFORM POWER & THERMAL GOVERNANCE".to_string()
+                                };
+                                ui.label(RichText::new(card_title).size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()
@@ -16945,7 +17039,7 @@ impl LauncherApp {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 ui.label(RichText::new(crate::lucide::SHIELD).size(10.0).color(Color32::from_rgb(56, 189, 248)));
-                                                ui.label(RichText::new("HIGH AVAILABILITY").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                                ui.label(RichText::new("CONTINUOUS AC OPERATION").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                             });
                                         });
                                 });
@@ -16953,9 +17047,27 @@ impl LauncherApp {
 
                             ui.add_space(10.0);
 
-                            // 3 Columns
+                            let gov_card_height_id = ui.make_persistent_id("platform_power_card_h");
+                            let target_gov_h: f32 = ui.data(|d| d.get_temp::<f32>(gov_card_height_id)).unwrap_or(84.0);
+                            let mut observed_gov_max_inner_h: f32 = 64.0;
+                            let needed_gov_inner_h = (target_gov_h - 20.0).max(64.0);
+
+                            let render_gov_meta_row = |ui: &mut egui::Ui, label: &str, val: &str, val_col: Color32| {
+                                ui.horizontal(|ui| {
+                                    let avail = ui.available_width();
+                                    let left_w = (avail * 0.45).clamp(30.0, 80.0);
+                                    let right_w = (avail - left_w - 4.0).max(10.0);
+                                    ui.allocate_ui_with_layout(egui::vec2(left_w, 14.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                        ui.add(egui::Label::new(RichText::new(label).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184))).truncate());
+                                    });
+                                    ui.allocate_ui_with_layout(egui::vec2(right_w, 14.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.add(egui::Label::new(RichText::new(val).size(8.5).monospace().strong().color(val_col)).truncate());
+                                    });
+                                });
+                            };
+
                             ui.columns(3, |cols| {
-                                // Col 1: AC Power Loss Recovery
+                                // Col 1: Delivery & Governor
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 15, 29))
                                     .stroke(Stroke::NONE)
@@ -16963,25 +17075,24 @@ impl LauncherApp {
                                     .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                     .show(&mut cols[0], |ui| {
                                         ui.set_width(ui.available_width());
-                                        ui.set_min_height(80.0);
-                                        ui.label(RichText::new("AC Power Loss Recovery").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                        let content_start_y = ui.cursor().min.y;
+                                        ui.label(RichText::new("Delivery & Governor").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                         ui.add_space(8.0);
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(14, 20, 36))
-                                            .stroke(Stroke::NONE)
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Policy:").size(8.5).monospace().color(p.text_muted));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new("Always Power On").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                                    });
-                                                });
-                                            });
+                                        render_gov_meta_row(ui, "Feed", "AC Grid Mains", Color32::from_rgb(241, 245, 249));
+                                        ui.add_space(3.0);
+                                        render_gov_meta_row(ui, "Governor", &active_gov, Color32::from_rgb(56, 189, 248));
+                                        ui.add_space(3.0);
+                                        let clk_str = format!("{} MHz", snap.cpu_frequency_mhz);
+                                        render_gov_meta_row(ui, "Clock", &clk_str, Color32::from_rgb(203, 213, 225));
+
+                                        let inner_h = ui.cursor().min.y - content_start_y;
+                                        observed_gov_max_inner_h = observed_gov_max_inner_h.max(inner_h);
+                                        if inner_h < needed_gov_inner_h {
+                                            ui.allocate_space(egui::vec2(ui.available_width(), needed_gov_inner_h - inner_h));
+                                        }
                                     });
 
-                                // Col 2: PCIe ASPM & C-States
+                                // Col 2: Thermal & TDP Limits
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 15, 29))
                                     .stroke(Stroke::NONE)
@@ -16989,25 +17100,27 @@ impl LauncherApp {
                                     .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                     .show(&mut cols[1], |ui| {
                                         ui.set_width(ui.available_width());
-                                        ui.set_min_height(80.0);
-                                        ui.label(RichText::new("PCIe ASPM & C-States").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                        let content_start_y = ui.cursor().min.y;
+                                        ui.label(RichText::new("Thermal & TDP Limits").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                         ui.add_space(8.0);
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(14, 20, 36))
-                                            .stroke(Stroke::NONE)
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("State:").size(8.5).monospace().color(p.text_muted));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new("Autonomous C6").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                                    });
-                                                });
-                                            });
+                                        let pl1_str = format!("{:.0} W", profile.balanced_pl1_watts);
+                                        render_gov_meta_row(ui, "PL1 Limit", &pl1_str, Color32::from_rgb(203, 213, 225));
+                                        ui.add_space(3.0);
+                                        let pl2_str = format!("{:.0} W", profile.turbo_pl2_watts);
+                                        render_gov_meta_row(ui, "PL2 Burst", &pl2_str, Color32::from_rgb(56, 189, 248));
+                                        ui.add_space(3.0);
+                                        let temp_c = snap.cpu_temp.unwrap_or(36.0);
+                                        let hr_str = format!("{:.1} °C Headroom", (95.0 - temp_c).max(0.0));
+                                        render_gov_meta_row(ui, "Headroom", &hr_str, Color32::from_rgb(241, 245, 249));
+
+                                        let inner_h = ui.cursor().min.y - content_start_y;
+                                        observed_gov_max_inner_h = observed_gov_max_inner_h.max(inner_h);
+                                        if inner_h < needed_gov_inner_h {
+                                            ui.allocate_space(egui::vec2(ui.available_width(), needed_gov_inner_h - inner_h));
+                                        }
                                     });
 
-                                // Col 3: UPS & Emergency Standby
+                                // Col 3: Hardware Topology
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 15, 29))
                                     .stroke(Stroke::NONE)
@@ -17015,26 +17128,48 @@ impl LauncherApp {
                                     .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                     .show(&mut cols[2], |ui| {
                                         ui.set_width(ui.available_width());
-                                        ui.set_min_height(80.0);
-                                        ui.label(RichText::new("UPS Delivery").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                        let content_start_y = ui.cursor().min.y;
+                                        ui.label(RichText::new("Hardware Topology").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                         ui.add_space(8.0);
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(14, 20, 36))
-                                            .stroke(Stroke::NONE)
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Line:").size(8.5).monospace().color(p.text_muted));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new("Grid 230V/115V").size(8.5).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
-                                                    });
-                                                });
-                                            });
+                                        let cpu_topo = format!("{} Physical Cores", num_cores);
+                                        render_gov_meta_row(ui, "CPU Topology", &cpu_topo, Color32::from_rgb(203, 213, 225));
+                                        ui.add_space(3.0);
+                                        let gpu_topo = if !snap.gpus.is_empty() {
+                                            format!("{} GPU(s) Active", snap.gpus.len())
+                                        } else {
+                                            "Integrated Logic".to_string()
+                                        };
+                                        render_gov_meta_row(ui, "Graphics", &gpu_topo, Color32::from_rgb(56, 189, 248));
+                                        ui.add_space(3.0);
+                                        let disk_cnt = snap.physical_disks.len().max(snap.disks.len()).max(1);
+                                        let disk_topo = format!("{} Storage Drive(s)", disk_cnt);
+                                        render_gov_meta_row(ui, "Storage", &disk_topo, Color32::from_rgb(241, 245, 249));
+
+                                        let inner_h = ui.cursor().min.y - content_start_y;
+                                        observed_gov_max_inner_h = observed_gov_max_inner_h.max(inner_h);
+                                        if inner_h < needed_gov_inner_h {
+                                            ui.allocate_space(egui::vec2(ui.available_width(), needed_gov_inner_h - inner_h));
+                                        }
                                     });
                             });
+
+                            ui.data_mut(|d| d.insert_temp(gov_card_height_id, observed_gov_max_inner_h + 20.0));
                         });
                 } else {
+                    if is_remote {
+                        if ui.ctx().dragged_id().is_none() {
+                            if let Some(limit) = snap.power.charge_limit {
+                                if limit < 100 {
+                                    self.power_conservation = true;
+                                    self.power_ceiling = limit as f32;
+                                } else {
+                                    self.power_conservation = false;
+                                    self.power_ceiling = 100.0;
+                                }
+                            }
+                        }
+                    }
+
                     Frame::none()
                         .fill(p.bg_card)
                         .stroke(Stroke::NONE)

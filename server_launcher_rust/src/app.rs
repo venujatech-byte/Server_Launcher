@@ -215,6 +215,48 @@ pub struct ProcessGroupSummary {
     pub children: Vec<crate::sensors::ProcessSensorInfo>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SettingsTab {
+    #[default]
+    Appearance,
+    Autostart,
+    Backup,
+    Shortcuts,
+    About,
+}
+
+impl SettingsTab {
+    pub fn all() -> &'static [SettingsTab] {
+        &[
+            SettingsTab::Appearance,
+            SettingsTab::Autostart,
+            SettingsTab::Backup,
+            SettingsTab::Shortcuts,
+            SettingsTab::About,
+        ]
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            SettingsTab::Appearance => "Appearance",
+            SettingsTab::Autostart => "Startup",
+            SettingsTab::Backup => "Data & Backup",
+            SettingsTab::Shortcuts => "Shortcuts",
+            SettingsTab::About => "About",
+        }
+    }
+
+    pub fn icon(&self) -> &'static str {
+        match self {
+            SettingsTab::Appearance => crate::lucide::PALETTE,
+            SettingsTab::Autostart => crate::lucide::ROCKET,
+            SettingsTab::Backup => crate::lucide::PACKAGE,
+            SettingsTab::Shortcuts => crate::lucide::KEYBOARD,
+            SettingsTab::About => crate::lucide::INFO,
+        }
+    }
+}
+
 pub struct LauncherApp {
     pub active_sidebar_tab: SidebarTab,
     pub scripts: Vec<CustomScript>,
@@ -288,6 +330,9 @@ pub struct LauncherApp {
     pub remote_reboot_modal: RemoteRebootModalState,
     pub remote_shutdown_modal: RemoteShutdownModalState,
     pub theme: ThemeMode,
+    pub custom_accent_color: Option<String>,
+    pub settings_active_tab: SettingsTab,
+    pub settings_custom_hex_input: String,
     pub last_applied_palette: Option<crate::theme::ThemePalette>,
     pub app_autostart: bool,
     pub auto_scroll: HashMap<String, bool>,
@@ -735,6 +780,7 @@ impl LauncherApp {
             .as_deref()
             .map(ThemeMode::from_id_str)
             .unwrap_or_default();
+        let custom_accent_color = config_file.accent_color.clone();
 
         let mut script_executions = HashMap::new();
         for sc in &scripts {
@@ -796,6 +842,9 @@ impl LauncherApp {
             remote_reboot_modal: RemoteRebootModalState::default(),
             remote_shutdown_modal: RemoteShutdownModalState::default(),
             theme,
+            custom_accent_color: custom_accent_color.clone(),
+            settings_active_tab: SettingsTab::default(),
+            settings_custom_hex_input: custom_accent_color.unwrap_or_else(|| "#3584e4".to_string()),
             last_applied_palette: None,
             app_autostart,
             auto_scroll: HashMap::new(),
@@ -1170,6 +1219,7 @@ impl LauncherApp {
             scripts: self.scripts.clone(),
             saved_commands: self.saved_commands.clone(),
             theme: Some(self.theme.id_str().to_string()),
+            accent_color: self.custom_accent_color.clone(),
             app_autostart: self.app_autostart,
             journal_refresh_interval: Some(self.journal_refresh_interval),
         };
@@ -1782,7 +1832,7 @@ impl LauncherApp {
         pid: Option<u32>,
         cwd: &str,
     ) {
-        let p = self.theme.palette();
+        let p = self.palette();
         Frame::none()
             .fill(p.terminal_bg)
             .stroke(Stroke::NONE)
@@ -2503,7 +2553,7 @@ impl LauncherApp {
     }
 
     fn render_machines_nav_bar(&mut self, ui: &mut Ui) {
-        let p = self.theme.palette();
+        let p = self.palette();
 
         let mut host_to_edit: Option<SshRemoteHost> = None;
         let mut host_to_delete: Option<String> = None;
@@ -2859,7 +2909,7 @@ impl LauncherApp {
     }
 
     fn render_remote_servers_left_panel(&mut self, ui: &mut Ui, host: &SshRemoteHost) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let is_scanning = {
             let map = self.remote_scanning.lock().unwrap();
             map.contains(&host.id)
@@ -3268,7 +3318,7 @@ impl LauncherApp {
     }
 
     fn render_remote_servers_right_panel(&mut self, ui: &mut Ui, host: &SshRemoteHost) {
-        let p = self.theme.palette();
+        let p = self.palette();
         ui.vertical(|ui| {
             // Interactive SSH Shell Terminal
             ui.horizontal(|ui| {
@@ -3691,7 +3741,7 @@ impl eframe::App for LauncherApp {
                 .filter(|s| s.state == ServiceState::Running || s.state == ServiceState::Starting)
                 .map(|s| (s.config.name.clone(), if s.config.port > 0 { Some(s.config.port) } else { None }, s.pid))
                 .collect();
-            let p = self.theme.palette();
+            let p = self.palette();
             let choice = render_close_confirmation_modal(ctx, &mut self.close_confirm_open, &running_info, &p);
             match choice {
                 CloseConfirmChoice::StopAndExit => {
@@ -3749,7 +3799,7 @@ impl eframe::App for LauncherApp {
 
         // GTK4 / System theme: live-follow desktop color scheme + accent changes
         if self.theme == ThemeMode::Gtk4 {
-            let p = self.theme.palette();
+            let p = self.palette();
             if self.last_applied_palette.as_ref() != Some(&p) {
                 ctx.set_visuals(p.egui_visuals());
                 self.last_applied_palette = Some(p);
@@ -3757,7 +3807,7 @@ impl eframe::App for LauncherApp {
         }
 
         self.handle_global_shortcuts(ctx);
-        let p = self.theme.palette();
+        let p = self.palette();
 
         // ═════════════════════════════════════════════════════════════════════
         // 0. DEDICATED SLIM CUSTOM TITLEBAR (Height 22px)
@@ -6172,7 +6222,7 @@ impl LauncherApp {
     // TOP NAVIGATION TABS BAR (Servers, Scripts, Commands, SystemMD, Sensors)
     // ═════════════════════════════════════════════════════════════════════════
     fn render_sidebar_tabs_bar(&mut self, ui: &mut Ui) {
-        let p = self.theme.palette();
+        let p = self.palette();
         Frame::none()
             .fill(p.bg_card)
             .stroke(Stroke::NONE)
@@ -6316,7 +6366,7 @@ impl LauncherApp {
     }
 
     fn render_scripts_left_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         ui.set_width(ui.available_width());
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
@@ -6521,7 +6571,7 @@ impl LauncherApp {
     }
 
     fn render_scripts_right_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let selected_id = self.selected_script_id.clone().or_else(|| {
             self.scripts
                 .iter()
@@ -6702,7 +6752,7 @@ impl LauncherApp {
     // COMMANDS TAB: Saved Snippets Library & Interactive Terminal
     // ═════════════════════════════════════════════════════════════════════════
     fn render_commands_left_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         ui.set_width(ui.available_width());
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
@@ -7056,7 +7106,7 @@ impl LauncherApp {
     }
 
     fn render_commands_right_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let host_opt = host_id.and_then(|hid| self.ssh_hosts.iter().find(|h| h.id == hid).cloned());
 
         let term = if let Some(h) = &host_opt {
@@ -7420,7 +7470,7 @@ impl LauncherApp {
     // SYSTEMD TAB: Services List, Controller, and Journalctl Viewer
     // ═════════════════════════════════════════════════════════════════════════
     fn render_systemd_left_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let user_mode = if let Some(hid) = host_id {
             *self.remote_services_user.entry(hid.to_string()).or_insert(true)
         } else {
@@ -7708,7 +7758,7 @@ impl LauncherApp {
     }
 
     fn render_systemd_right_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let user_mode = if let Some(hid) = host_id {
             *self.remote_services_user.entry(hid.to_string()).or_insert(true)
         } else {
@@ -8194,7 +8244,7 @@ impl LauncherApp {
         user_mode: bool,
         host_opt: Option<&SshRemoteHost>,
     ) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let (files_info, is_files_loading) = self.load_systemd_unit_files(&s.name, user_mode, host_opt);
 
         // Determine available files
@@ -8639,7 +8689,7 @@ impl LauncherApp {
         host_opt: Option<&SshRemoteHost>,
         services_list: &[SystemdService],
     ) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let (deps, is_deps_loading) = self.load_systemd_unit_dependencies(&s.name, user_mode, host_opt);
 
         let mut navigate_to_unit: Option<String> = None;
@@ -9121,10 +9171,11 @@ impl LauncherApp {
 
         let mut is_open = self.settings_modal_open;
         let screen = ctx.screen_rect();
-        let modal_w = 540.0_f32.min(screen.width() - 40.0).max(360.0);
-        let max_h = (screen.height() - 80.0).max(400.0);
+        let modal_w = 640.0_f32.min(screen.width() - 30.0).max(380.0);
+        let max_h = (screen.height() - 50.0).max(480.0);
 
         let mut change_theme: Option<ThemeMode> = None;
+        let mut change_accent: Option<Option<String>> = None;
         let mut toggle_boot = false;
         let mut do_import = false;
         let mut do_export = false;
@@ -9142,351 +9193,544 @@ impl LauncherApp {
             .pivot(egui::Align2::CENTER_CENTER)
             .min_width(modal_w)
             .max_width(modal_w)
-            .default_height(480.0)
+            .default_height(580.0)
             .max_height(max_h)
             .frame(
                 egui::Frame::none()
-                    .fill(Color32::from_rgb(17, 19, 27))
+                    .fill(Color32::from_rgb(16, 17, 24))
                     .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
-                    .rounding(Rounding::same(16.0))
+                    .rounding(Rounding::same(18.0))
                     .shadow(egui::epaint::Shadow {
-                        offset: egui::vec2(0.0, 8.0),
-                        blur: 24.0,
+                        offset: egui::vec2(0.0, 12.0),
+                        blur: 32.0,
                         spread: 0.0,
-                        color: Color32::from_black_alpha(160),
+                        color: Color32::from_black_alpha(180),
                     })
-                    .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
+                    .inner_margin(egui::Margin::symmetric(18.0, 16.0)),
             )
             .show(ctx, |ui| {
-                crate::modals::render_modal_titlebar(ui, "Settings & Preferences", &mut is_open);
-                ui.add_space(8.0);
-            ui.add_space(4.0);
-
-            ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 10.0;
-
-                    // ─────────────────────────────────────────────────────────────
-                    // SECTION 1: 🎨 Themes & Visual Styling
-                    // ─────────────────────────────────────────────────────────────
+                // Header with Modal Icon Pill, Title & Close Button
+                ui.horizontal(|ui| {
                     Frame::none()
-                        .fill(palette.bg_card)
+                        .fill(palette.accent_subtle)
                         .stroke(Stroke::NONE)
-                        .rounding(Rounding::same(10.0))
-                        .inner_margin(egui::Margin::same(12.0))
+                        .rounding(Rounding::same(999.0))
+                        .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                         .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    RichText::new(format!("{} Theme & Visual Styling", crate::lucide::PALETTE))
-                                        .size(13.0)
+                            ui.label(RichText::new(crate::lucide::SETTINGS).size(14.0).color(palette.accent));
+                        });
+                    ui.add_space(4.0);
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new("Settings & Preferences").size(15.0).strong().color(palette.text_primary));
+                        ui.label(RichText::new("Customize themes, accent colors, system autostart, and server backups").size(10.5).color(palette.text_muted));
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let btn_close = egui::Button::new(RichText::new("✕").size(12.0).strong().color(palette.text_muted))
+                            .fill(palette.bg_button)
+                            .stroke(Stroke::NONE)
+                            .rounding(Rounding::same(999.0))
+                            .min_size(egui::vec2(26.0, 26.0));
+                        if ui.add(btn_close).on_hover_text("Close settings (Esc)").clicked() {
+                            close_requested = true;
+                        }
+                    });
+                });
+
+                ui.add_space(10.0);
+
+                // Segmented Tab Navigation Bar
+                Frame::none()
+                    .fill(Color32::from_rgb(12, 13, 19))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 28, 40)))
+                    .rounding(Rounding::same(12.0))
+                    .inner_margin(egui::Margin::symmetric(5.0, 5.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let tabs = SettingsTab::all();
+                            let avail_w = ui.available_width() - ((tabs.len() - 1) as f32 * 4.0);
+                            let tab_w = (avail_w / tabs.len() as f32).max(50.0);
+
+                            for &tab in tabs {
+                                let is_active = self.settings_active_tab == tab;
+                                let (bg, fg) = if is_active {
+                                    (palette.accent, palette.accent_text)
+                                } else {
+                                    (Color32::TRANSPARENT, palette.text_secondary)
+                                };
+
+                                let btn = egui::Button::new(
+                                    RichText::new(format!("{} {}", tab.icon(), tab.label()))
+                                        .size(11.0)
                                         .strong()
-                                        .color(palette.text_primary),
-                                );
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let mut selected_theme = self.theme;
-                                    egui::ComboBox::from_id_salt("settings_theme_dropdown")
-                                        .selected_text(
-                                            RichText::new(format!(
-                                                "{} {}",
-                                                self.theme.emoji(),
-                                                self.theme.name()
-                                            ))
-                                            .size(11.5)
-                                            .color(palette.text_primary),
+                                        .color(fg),
+                                )
+                                .fill(bg)
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(8.0))
+                                .min_size(egui::vec2(tab_w, 28.0));
+
+                                if ui.add(btn).clicked() {
+                                    self.settings_active_tab = tab;
+                                }
+                            }
+                        });
+                    });
+
+                ui.add_space(10.0);
+
+                // Tab Content inside ScrollArea
+                ScrollArea::vertical()
+                    .id_salt("settings_tab_content_scroll")
+                    .auto_shrink([false, false])
+                    .max_height(max_h - 145.0)
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 12.0;
+
+                        match self.settings_active_tab {
+                            SettingsTab::Appearance => {
+                                // 1. ACCENT COLOR CARD
+                                Frame::none()
+                                    .fill(palette.bg_card)
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(28, 30, 44)))
+                                    .rounding(Rounding::same(12.0))
+                                    .inner_margin(egui::Margin::same(14.0))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(format!("{} Accent Color", crate::lucide::SPARKLES)).size(13.0).strong().color(palette.text_primary));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                let current_hex_str = crate::theme::format_hex_color(palette.accent);
+                                                Frame::none()
+                                                    .fill(palette.accent_subtle)
+                                                    .stroke(Stroke::NONE)
+                                                    .rounding(Rounding::same(999.0))
+                                                    .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+                                                    .show(ui, |ui| {
+                                                        ui.horizontal(|ui| {
+                                                            ui.spacing_mut().item_spacing.x = 4.0;
+                                                            ui.label(RichText::new("●").size(8.0).color(palette.accent));
+                                                            ui.label(RichText::new(format!("Active: {}", current_hex_str)).size(10.0).monospace().strong().color(palette.accent));
+                                                        });
+                                                    });
+                                            });
+                                        });
+
+                                        ui.add_space(2.0);
+                                        ui.label(RichText::new("Choose an accent color applied universally across navigation, telemetry pills, sensors charts, waveforms, and button highlights.").size(10.5).color(palette.text_muted));
+                                        ui.add_space(10.0);
+
+                                        // Follow System / GTK4 Accent Button
+                                        let is_system_selected = self.custom_accent_color.as_deref() == Some("system")
+                                            || self.custom_accent_color.as_deref() == Some("gtk4");
+                                        let sys_bg = if is_system_selected { palette.accent } else { palette.bg_button };
+                                        let sys_fg = if is_system_selected { palette.accent_text } else { palette.text_primary };
+                                        let gtk4_color = crate::theme::current_gtk4_accent_color();
+                                        let gtk4_hex = crate::theme::format_hex_color(gtk4_color);
+
+                                        let btn_sys = egui::Button::new(
+                                            RichText::new(format!("{} Follow Desktop / GTK4 Accent (Live: {})", crate::lucide::MONITOR, gtk4_hex))
+                                                .size(11.0)
+                                                .strong()
+                                                .color(sys_fg),
                                         )
-                                        .width(175.0)
-                                        .show_ui(ui, |ui| {
+                                        .fill(sys_bg)
+                                        .stroke(Stroke::NONE)
+                                        .rounding(Rounding::same(999.0))
+                                        .min_size(egui::vec2(ui.available_width(), 28.0));
+
+                                        if ui.add(btn_sys).on_hover_text("Automatically sync with desktop GNOME/GTK4 accent color in real-time").clicked() {
+                                            change_accent = Some(Some("system".to_string()));
+                                        }
+
+                                        ui.add_space(8.0);
+                                        ui.label(RichText::new("CURATED ACCENT SWATCHES").size(10.0).monospace().strong().color(palette.text_muted));
+                                        ui.add_space(6.0);
+
+                                        // Swatch Grid: 14 presets (2 columns of 7)
+                                        let presets = crate::theme::ACCENT_PRESETS;
+                                        egui::Grid::new("accent_swatches_grid")
+                                            .num_columns(2)
+                                            .spacing(egui::vec2(8.0, 6.0))
+                                            .min_col_width(ui.available_width() * 0.48)
+                                            .show(ui, |ui| {
+                                                for (i, p_set) in presets.iter().enumerate() {
+                                                    let is_active = if let Some(ref c_str) = self.custom_accent_color {
+                                                        c_str.eq_ignore_ascii_case(p_set.hex)
+                                                    } else {
+                                                        false
+                                                    };
+
+                                                    let bg_card = if is_active {
+                                                        palette.accent_subtle
+                                                    } else {
+                                                        palette.bg_subtle
+                                                    };
+                                                    let border_stroke = if is_active {
+                                                        Stroke::new(1.5_f32, p_set.color)
+                                                    } else {
+                                                        Stroke::NONE
+                                                    };
+
+                                                    Frame::none()
+                                                        .fill(bg_card)
+                                                        .stroke(border_stroke)
+                                                        .rounding(Rounding::same(8.0))
+                                                        .inner_margin(egui::Margin::symmetric(10.0, 7.0))
+                                                        .show(ui, |ui| {
+                                                            ui.horizontal(|ui| {
+                                                                ui.spacing_mut().item_spacing.x = 8.0;
+
+                                                                // Color dot
+                                                                let (resp, painter) = ui.allocate_painter(egui::vec2(16.0, 16.0), egui::Sense::hover());
+                                                                painter.circle_filled(resp.rect.center(), 7.0, p_set.color);
+                                                                if is_active {
+                                                                    painter.circle_stroke(resp.rect.center(), 7.0, Stroke::new(1.5_f32, Color32::WHITE));
+                                                                }
+
+                                                                ui.vertical(|ui| {
+                                                                    ui.label(RichText::new(p_set.name).size(11.0).strong().color(palette.text_primary));
+                                                                    ui.label(RichText::new(p_set.hex).size(9.5).monospace().color(palette.text_muted));
+                                                                });
+
+                                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                                    if is_active {
+                                                                        ui.label(RichText::new("✓").size(12.0).strong().color(palette.accent));
+                                                                    } else {
+                                                                        let btn_apply = egui::Button::new(RichText::new("Use").size(10.0).color(palette.text_secondary))
+                                                                            .fill(palette.bg_button)
+                                                                            .stroke(Stroke::NONE)
+                                                                            .rounding(Rounding::same(999.0))
+                                                                            .min_size(egui::vec2(42.0, 20.0));
+                                                                        if ui.add(btn_apply).clicked() {
+                                                                            change_accent = Some(Some(p_set.hex.to_string()));
+                                                                        }
+                                                                    }
+                                                                });
+                                                            });
+                                                        });
+
+                                                    if i % 2 == 1 {
+                                                        ui.end_row();
+                                                    }
+                                                }
+                                            });
+
+                                        ui.add_space(8.0);
+
+                                        // Custom Hex input row
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 6.0;
+                                            ui.label(RichText::new("Custom Hex:").size(11.0).color(palette.text_secondary));
+
+                                            let te = egui::TextEdit::singleline(&mut self.settings_custom_hex_input)
+                                                .desired_width(85.0)
+                                                .font(egui::TextStyle::Monospace);
+                                            ui.add(te);
+
+                                            let btn_apply_hex = egui::Button::new(RichText::new("Apply").size(10.5).strong().color(palette.accent_text))
+                                                .fill(palette.accent)
+                                                .stroke(Stroke::NONE)
+                                                .rounding(Rounding::same(999.0))
+                                                .min_size(egui::vec2(55.0, 22.0));
+                                            if ui.add(btn_apply_hex).clicked() {
+                                                if let Some(_) = crate::theme::parse_hex_color(&self.settings_custom_hex_input) {
+                                                    let formatted = self.settings_custom_hex_input.trim().to_string();
+                                                    change_accent = Some(Some(formatted));
+                                                }
+                                            }
+
+                                            let btn_reset = egui::Button::new(RichText::new("Reset to Theme Default").size(10.5).color(palette.text_muted))
+                                                .fill(palette.bg_button)
+                                                .stroke(Stroke::NONE)
+                                                .rounding(Rounding::same(999.0))
+                                                .min_size(egui::vec2(140.0, 22.0));
+                                            if ui.add(btn_reset).on_hover_text("Clear custom accent and restore the native theme palette").clicked() {
+                                                change_accent = Some(None);
+                                            }
+                                        });
+
+                                        ui.add_space(10.0);
+
+                                        // Live Component Preview Box
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(12, 13, 19))
+                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 28, 40)))
+                                            .rounding(Rounding::same(8.0))
+                                            .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new("LIVE PREVIEW:").size(9.5).monospace().strong().color(palette.text_muted));
+                                                    ui.add_space(6.0);
+
+                                                    // Chip
+                                                    Frame::none()
+                                                        .fill(palette.accent_subtle)
+                                                        .stroke(Stroke::NONE)
+                                                        .rounding(Rounding::same(999.0))
+                                                        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+                                                        .show(ui, |ui| {
+                                                            ui.label(RichText::new("● 8080 Active").size(10.0).strong().color(palette.accent));
+                                                        });
+
+                                                    ui.add_space(4.0);
+
+                                                    // Button
+                                                    let btn_demo = egui::Button::new(RichText::new("Action Button").size(10.5).strong().color(palette.accent_text))
+                                                        .fill(palette.accent)
+                                                        .stroke(Stroke::NONE)
+                                                        .rounding(Rounding::same(999.0))
+                                                        .min_size(egui::vec2(85.0, 22.0));
+                                                    ui.add(btn_demo);
+
+                                                    ui.add_space(4.0);
+
+                                                    // Sparkline preview
+                                                    let demo_pts = [15.0_f32, 22.0, 48.0, 35.0, 60.0, 42.0, 85.0, 70.0];
+                                                    draw_core_waveform(ui, 70.0, 20.0, &demo_pts, palette.accent);
+                                                });
+                                            });
+                                    });
+
+                                // 2. BASE THEME MODE CARD
+                                Frame::none()
+                                    .fill(palette.bg_card)
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(28, 30, 44)))
+                                    .rounding(Rounding::same(12.0))
+                                    .inner_margin(egui::Margin::same(14.0))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(format!("{} Base Theme", crate::lucide::PALETTE)).size(13.0).strong().color(palette.text_primary));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                let mut selected_theme = self.theme;
+                                                egui::ComboBox::from_id_salt("settings_theme_dropdown_v2")
+                                                    .selected_text(RichText::new(format!("{} {}", self.theme.emoji(), self.theme.name())).size(11.5).color(palette.text_primary))
+                                                    .width(180.0)
+                                                    .show_ui(ui, |ui| {
+                                                        for &thm in ThemeMode::all() {
+                                                            let label = format!("{} {}", thm.emoji(), thm.name());
+                                                            if ui.selectable_value(&mut selected_theme, thm, RichText::new(label).size(11.5)).clicked() {
+                                                                change_theme = Some(thm);
+                                                            }
+                                                        }
+                                                    });
+                                            });
+                                        });
+
+                                        ui.add_space(2.0);
+                                        ui.label(RichText::new("Select obsidian dark, catppuccin, dracula, nord, light, or dynamic GTK4 system theme.").size(10.5).color(palette.text_muted));
+                                        ui.add_space(8.0);
+
+                                        // Theme Pills
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
                                             for &thm in ThemeMode::all() {
-                                                let label = format!("{} {}", thm.emoji(), thm.name());
-                                                if ui.selectable_value(
-                                                    &mut selected_theme,
-                                                    thm,
-                                                    RichText::new(label).size(11.5),
-                                                ).clicked() {
+                                                let is_active = self.theme == thm;
+                                                let (bg, fg) = if is_active {
+                                                    (palette.accent, palette.accent_text)
+                                                } else {
+                                                    (palette.bg_button, palette.text_secondary)
+                                                };
+                                                let btn = egui::Button::new(RichText::new(format!("{} {}", thm.emoji(), thm.name())).size(10.5).strong().color(fg))
+                                                    .fill(bg)
+                                                    .stroke(Stroke::NONE)
+                                                    .rounding(Rounding::same(999.0))
+                                                    .min_size(egui::vec2(0.0, 24.0));
+                                                if ui.add(btn).clicked() {
                                                     change_theme = Some(thm);
                                                 }
                                             }
                                         });
-                                });
-                            });
-
-                            ui.add_space(2.0);
-                            ui.label(
-                                RichText::new(
-                                    "Choose an aesthetic palette tailored for high-density developer operations.",
-                                )
-                                .size(10.5)
-                                .color(palette.text_muted),
-                            );
-
-                            ui.add_space(8.0);
-
-                            // Quick theme pills
-                            ui.horizontal_wrapped(|ui| {
-                                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                                for &thm in ThemeMode::all() {
-                                    let is_active = self.theme == thm;
-                                    let (bg, fg) = if is_active {
-                                        (palette.accent, palette.accent_text)
-                                    } else {
-                                        (palette.bg_subtle, palette.text_secondary)
-                                    };
-                                    let btn = egui::Button::new(
-                                        RichText::new(format!("{} {}", thm.emoji(), thm.name()))
-                                            .size(10.5)
-                                            .strong()
-                                            .color(fg),
-                                    )
-                                    .fill(bg)
-                                    .stroke(Stroke::NONE)
-                                    .rounding(Rounding::same(999.0))
-                                    .min_size(egui::vec2(0.0, 24.0));
-
-                                    if ui.add(btn).clicked() {
-                                        change_theme = Some(thm);
-                                    }
-                                }
-                            });
-                        });
-
-                    // ─────────────────────────────────────────────────────────────
-                    // SECTION 2: 🚀 System Startup & Boot
-                    // ─────────────────────────────────────────────────────────────
-                    Frame::none()
-                        .fill(palette.bg_card)
-                        .stroke(Stroke::NONE)
-                        .rounding(Rounding::same(10.0))
-                        .inner_margin(egui::Margin::same(12.0))
-                        .show(ui, |ui| {
-                            let is_boot = crate::autostart::is_app_autostart_enabled();
-
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    RichText::new(format!("{} System Startup (Autostart on Boot)", crate::lucide::ROCKET))
-                                        .size(13.0)
-                                        .strong()
-                                        .color(palette.text_primary),
-                                );
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let (btn_txt, btn_bg, btn_fg) = if is_boot {
-                                        ("Turn OFF Autostart", palette.danger_subtle, palette.danger)
-                                    } else {
-                                        ("Turn ON Autostart", palette.success_subtle, palette.success)
-                                    };
-                                    let btn = egui::Button::new(
-                                        RichText::new(btn_txt)
-                                            .size(11.0)
-                                            .strong()
-                                            .color(btn_fg),
-                                    )
-                                    .fill(btn_bg)
-                                    .stroke(Stroke::NONE)
-                                    .rounding(Rounding::same(999.0))
-                                    .min_size(egui::vec2(130.0, 26.0));
-
-                                    if ui.add(btn).clicked() {
-                                        toggle_boot = true;
-                                    }
-
-                                    let (badge_txt, badge_bg, badge_fg) = if is_boot {
-                                        (format!("{} ENABLED", crate::lucide::CHECK), palette.success_subtle, palette.success)
-                                    } else {
-                                        (format!("{} DISABLED", crate::lucide::CIRCLE), palette.bg_subtle, palette.text_muted)
-                                    };
-                                    Frame::none()
-                                        .fill(badge_bg)
-                                        .stroke(Stroke::NONE)
-                                        .rounding(Rounding::same(999.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                                        .show(ui, |ui| {
-                                            ui.label(RichText::new(badge_txt).size(10.0).strong().color(badge_fg));
-                                        });
-                                });
-                            });
-
-                            ui.add_space(2.0);
-                            ui.label(
-                                RichText::new(
-                                    "When enabled, Server Launcher initializes silently on login or desktop startup.",
-                                )
-                                .size(10.5)
-                                .color(palette.text_muted),
-                            );
-                        });
-
-                    // ─────────────────────────────────────────────────────────────
-                    // SECTION 3: 📦 Servers Configuration (Import / Export)
-                    // ─────────────────────────────────────────────────────────────
-                    Frame::none()
-                        .fill(palette.bg_card)
-                        .stroke(Stroke::NONE)
-                        .rounding(Rounding::same(10.0))
-                        .inner_margin(egui::Margin::same(12.0))
-                        .show(ui, |ui| {
-                            ui.label(
-                                RichText::new(format!("{} Servers Configuration (Import & Export)", crate::lucide::PACKAGE))
-                                    .size(13.0)
-                                    .strong()
-                                    .color(palette.text_primary),
-                            );
-                            ui.add_space(2.0);
-                            ui.label(
-                                RichText::new(
-                                    "Load configuration profiles from a servers.json file, or export current servers.",
-                                )
-                                .size(10.5)
-                                .color(palette.text_muted),
-                            );
-                            ui.add_space(8.0);
-
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 8.0;
-
-                                let btn_import = egui::Button::new(
-                                    RichText::new(format!("{} Import servers.json", crate::lucide::DOWNLOAD))
-                                        .size(11.5)
-                                        .strong()
-                                        .color(palette.accent_text),
-                                )
-                                .fill(palette.accent)
-                                .stroke(Stroke::NONE)
-                                .rounding(Rounding::same(999.0))
-                                .min_size(egui::vec2(150.0, 28.0));
-                                if ui.add(btn_import).on_hover_text("Select and import servers.json file").clicked() {
-                                    do_import = true;
-                                }
-
-                                let btn_export = egui::Button::new(
-                                    RichText::new(format!("{} Export servers.json", crate::lucide::UPLOAD))
-                                        .size(11.5)
-                                        .strong()
-                                        .color(palette.text_primary),
-                                )
-                                .fill(palette.bg_button)
-                                .stroke(Stroke::NONE)
-                                .rounding(Rounding::same(999.0))
-                                .min_size(egui::vec2(150.0, 28.0));
-                                if ui.add(btn_export).on_hover_text("Export current servers to servers.json file").clicked() {
-                                    do_export = true;
-                                }
-                            });
-
-                            if let Some((ref msg, is_err, _)) = self.import_status_msg {
-                                ui.add_space(6.0);
-                                let color = if is_err { palette.danger } else { Color32::from_rgb(16, 185, 129) };
-                                Frame::none()
-                                    .fill(palette.bg_subtle)
-                                    .stroke(Stroke::NONE)
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                                    .show(ui, |ui| {
-                                        ui.label(RichText::new(msg).size(10.5).color(color));
                                     });
                             }
-                        });
+                            SettingsTab::Autostart => {
+                                // AUTOSTART CARD
+                                Frame::none()
+                                    .fill(palette.bg_card)
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(28, 30, 44)))
+                                    .rounding(Rounding::same(12.0))
+                                    .inner_margin(egui::Margin::same(16.0))
+                                    .show(ui, |ui| {
+                                        let is_boot = crate::autostart::is_app_autostart_enabled();
 
-                    // ─────────────────────────────────────────────────────────────
-                    // SECTION 4: ⌨ Keyboard Shortcuts Reference
-                    // ─────────────────────────────────────────────────────────────
-                    Frame::none()
-                        .fill(palette.bg_card)
-                        .stroke(Stroke::NONE)
-                        .rounding(Rounding::same(10.0))
-                        .inner_margin(egui::Margin::same(12.0))
-                        .show(ui, |ui| {
-                            ui.label(
-                                RichText::new(format!("{} Keyboard Shortcuts", crate::lucide::KEYBOARD))
-                                    .size(13.0)
-                                    .strong()
-                                    .color(palette.text_primary),
-                            );
-                            ui.add_space(6.0);
-
-                            let shortcuts = [
-                                ("Ctrl+P / Ctrl+K", "Quick Launch & Command Palette"),
-                                ("Ctrl+,", "Open Settings & Preferences"),
-                                ("Ctrl+A", "Start All Servers"),
-                                ("Ctrl+X", "Stop All Servers"),
-                                ("Ctrl+F", "Focus Instance Search Bar"),
-                                ("Esc", "Close Modals / Dismiss Dialogs"),
-                            ];
-
-                            for (keys, desc) in shortcuts {
-                                ui.horizontal(|ui| {
-                                    Frame::none()
-                                        .fill(palette.bg_subtle)
-                                        .stroke(Stroke::NONE)
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                        .show(ui, |ui| {
-                                            ui.label(
-                                                RichText::new(keys)
-                                                    .size(10.5)
-                                                    .monospace()
-                                                    .strong()
-                                                    .color(palette.accent),
-                                            );
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(format!("{} Automatic Launch on Boot", crate::lucide::ROCKET)).size(14.0).strong().color(palette.text_primary));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                let mut boot_toggle = is_boot;
+                                                if render_custom_toggle_switch(ui, &mut boot_toggle, palette.accent) {
+                                                    toggle_boot = true;
+                                                }
+                                            });
                                         });
-                                    ui.label(RichText::new(desc).size(11.0).color(palette.text_secondary));
-                                });
-                                ui.add_space(1.0);
+
+                                        ui.add_space(4.0);
+                                        ui.label(RichText::new("When enabled, Server Launcher initializes silently upon system startup or desktop login into the background system tray.").size(11.0).color(palette.text_muted));
+                                        ui.add_space(12.0);
+
+                                        let (status_txt, status_bg, status_fg) = if is_boot {
+                                            (format!("{} Active (Desktop Entry Configured)", crate::lucide::CHECK), palette.success_subtle, palette.success)
+                                        } else {
+                                            (format!("{} Inactive (Manual Launch Only)", crate::lucide::CIRCLE), palette.bg_subtle, palette.text_muted)
+                                        };
+
+                                        Frame::none()
+                                            .fill(status_bg)
+                                            .stroke(Stroke::NONE)
+                                            .rounding(Rounding::same(8.0))
+                                            .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new(status_txt).size(11.0).strong().color(status_fg));
+                                            });
+                                    });
                             }
-                        });
+                            SettingsTab::Backup => {
+                                // SERVERS IMPORT / EXPORT CARD
+                                Frame::none()
+                                    .fill(palette.bg_card)
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(28, 30, 44)))
+                                    .rounding(Rounding::same(12.0))
+                                    .inner_margin(egui::Margin::same(16.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(format!("{} Configuration Data & Backups", crate::lucide::PACKAGE)).size(14.0).strong().color(palette.text_primary));
+                                        ui.add_space(4.0);
+                                        ui.label(RichText::new("Import external servers.json files, merge configurations, or export portable snapshots of all services.").size(11.0).color(palette.text_muted));
+                                        ui.add_space(14.0);
 
-                    // ─────────────────────────────────────────────────────────────
-                    // SECTION 5: ℹ️ System Diagnostics & Information
-                    // ─────────────────────────────────────────────────────────────
-                    Frame::none()
-                        .fill(palette.bg_subtle)
-                        .stroke(Stroke::NONE)
-                        .rounding(Rounding::same(10.0))
-                        .inner_margin(egui::Margin::same(10.0))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Host IP:").size(10.5).color(palette.text_muted));
-                                ui.label(RichText::new(&self.lan_ip).size(10.5).monospace().color(palette.text_primary));
-                                ui.add_space(8.0);
-                                ui.label(RichText::new("Managed Servers:").size(10.5).color(palette.text_muted));
-                                ui.label(RichText::new(format!("{}", self.services.len())).size(10.5).strong().color(palette.text_primary));
-                            });
-                            ui.add_space(2.0);
-                            ui.horizontal_wrapped(|ui| {
-                                ui.label(RichText::new("Config File:").size(10.5).color(palette.text_muted));
-                                ui.label(RichText::new(self.config_path.display().to_string()).size(10.5).monospace().color(palette.text_secondary));
-                            });
-                        });
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 10.0;
 
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let btn_done = egui::Button::new(
-                                RichText::new("Done")
-                                    .size(11.5)
-                                    .strong()
-                                    .color(palette.accent_text),
-                            )
+                                            let btn_import = egui::Button::new(RichText::new(format!("{} Import servers.json", crate::lucide::DOWNLOAD)).size(11.5).strong().color(palette.accent_text))
+                                                .fill(palette.accent)
+                                                .stroke(Stroke::NONE)
+                                                .rounding(Rounding::same(999.0))
+                                                .min_size(egui::vec2(160.0, 32.0));
+                                            if ui.add(btn_import).on_hover_text("Select and import servers.json file").clicked() {
+                                                do_import = true;
+                                            }
+
+                                            let btn_export = egui::Button::new(RichText::new(format!("{} Export servers.json", crate::lucide::UPLOAD)).size(11.5).strong().color(palette.text_primary))
+                                                .fill(palette.bg_button)
+                                                .stroke(Stroke::NONE)
+                                                .rounding(Rounding::same(999.0))
+                                                .min_size(egui::vec2(160.0, 32.0));
+                                            if ui.add(btn_export).on_hover_text("Export current servers to servers.json file").clicked() {
+                                                do_export = true;
+                                            }
+                                        });
+
+                                        if let Some((ref msg, is_err, _)) = self.import_status_msg {
+                                            ui.add_space(10.0);
+                                            let color = if is_err { palette.danger } else { palette.success };
+                                            Frame::none()
+                                                .fill(palette.bg_subtle)
+                                                .stroke(Stroke::NONE)
+                                                .rounding(Rounding::same(6.0))
+                                                .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                                                .show(ui, |ui| {
+                                                    ui.label(RichText::new(msg).size(11.0).color(color));
+                                                });
+                                        }
+                                    });
+                            }
+                            SettingsTab::Shortcuts => {
+                                // KEYBOARD SHORTCUTS MATRIX
+                                Frame::none()
+                                    .fill(palette.bg_card)
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(28, 30, 44)))
+                                    .rounding(Rounding::same(12.0))
+                                    .inner_margin(egui::Margin::same(16.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(format!("{} Keyboard Shortcuts Cockpit", crate::lucide::KEYBOARD)).size(14.0).strong().color(palette.text_primary));
+                                        ui.add_space(4.0);
+                                        ui.label(RichText::new("Global accelerators and navigation keys for zero-friction orchestrations.").size(11.0).color(palette.text_muted));
+                                        ui.add_space(12.0);
+
+                                        let shortcuts = [
+                                            ("Ctrl+P / Ctrl+K", "Quick Launch & Command Palette"),
+                                            ("Ctrl+,", "Open Settings & Preferences"),
+                                            ("Ctrl+A", "Start All Servers"),
+                                            ("Ctrl+X", "Stop All Servers"),
+                                            ("Ctrl+F", "Focus Instance Search Bar"),
+                                            ("Esc", "Close Modals / Dismiss Dialogs"),
+                                        ];
+
+                                        for (keys, desc) in shortcuts {
+                                            ui.horizontal(|ui| {
+                                                Frame::none()
+                                                    .fill(palette.bg_subtle)
+                                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(32, 34, 48)))
+                                                    .rounding(Rounding::same(6.0))
+                                                    .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+                                                    .show(ui, |ui| {
+                                                        ui.label(RichText::new(keys).size(10.5).monospace().strong().color(palette.accent));
+                                                    });
+                                                ui.add_space(6.0);
+                                                ui.label(RichText::new(desc).size(11.5).color(palette.text_secondary));
+                                            });
+                                            ui.add_space(3.0);
+                                        }
+                                    });
+                            }
+                            SettingsTab::About => {
+                                // DIAGNOSTICS & SYSTEM INFO
+                                Frame::none()
+                                    .fill(palette.bg_card)
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(28, 30, 44)))
+                                    .rounding(Rounding::same(12.0))
+                                    .inner_margin(egui::Margin::same(16.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(format!("{} System Diagnostics", crate::lucide::INFO)).size(14.0).strong().color(palette.text_primary));
+                                        ui.add_space(10.0);
+
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("Host LAN IP:").size(11.0).color(palette.text_muted));
+                                            ui.label(RichText::new(&self.lan_ip).size(11.0).monospace().strong().color(palette.text_primary));
+                                            ui.add_space(12.0);
+                                            ui.label(RichText::new("Managed Servers:").size(11.0).color(palette.text_muted));
+                                            ui.label(RichText::new(format!("{}", self.services.len())).size(11.0).strong().color(palette.text_primary));
+                                        });
+
+                                        ui.add_space(8.0);
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.label(RichText::new("Active Config File:").size(11.0).color(palette.text_muted));
+                                            ui.label(RichText::new(self.config_path.display().to_string()).size(10.5).monospace().color(palette.text_secondary));
+                                        });
+                                    });
+                            }
+                        }
+                    });
+
+                ui.add_space(12.0);
+
+                // Footer Done Button
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let btn_done = egui::Button::new(RichText::new("Done").size(12.0).strong().color(palette.accent_text))
                             .fill(palette.accent)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(80.0, 26.0));
-                            if ui.add(btn_done).clicked() {
-                                close_requested = true;
-                            }
-                        });
+                            .min_size(egui::vec2(90.0, 30.0));
+                        if ui.add(btn_done).clicked() {
+                            close_requested = true;
+                        }
                     });
                 });
-        });
+            });
 
         if close_requested {
             is_open = false;
         }
 
         // Apply any actions after UI pass (avoids borrow conflict)
+        if let Some(acc) = change_accent {
+            self.custom_accent_color = acc;
+            let pal = self.palette();
+            ctx.set_visuals(pal.egui_visuals());
+            self.last_applied_palette = Some(pal);
+            self.persist_config();
+        }
         if let Some(thm) = change_theme {
             if thm != self.theme {
                 self.theme = thm;
-                let pal = self.theme.palette();
+                let pal = self.palette();
                 ctx.set_visuals(pal.egui_visuals());
                 self.last_applied_palette = Some(pal);
                 self.persist_config();
@@ -9509,10 +9753,7 @@ impl LauncherApp {
         self.settings_modal_open = is_open;
     }
 
-    // ═════════════════════════════════════════════════════════════════════════
-    // PROCESS MODALS: Properties, Memory Maps, Open Files, Set Affinity
-    // ═════════════════════════════════════════════════════════════════════════
-    fn render_proc_properties_modal(&mut self, ctx: &Context, palette: &crate::theme::ThemePalette) {
+        fn render_proc_properties_modal(&mut self, ctx: &Context, palette: &crate::theme::ThemePalette) {
         if let Some((pid, res)) = self.proc_details_receiver.lock().unwrap().take() {
             if self.proc_properties_pid == pid {
                 self.proc_properties_loading = false;
@@ -10221,11 +10462,32 @@ impl LauncherApp {
 
 
     #[inline]
+    pub fn palette(&self) -> crate::theme::ThemePalette {
+        let mut p = self.theme.palette();
+        if let Some(ref acc_str) = self.custom_accent_color {
+            if acc_str == "system" || acc_str == "gtk4" {
+                p.apply_accent(crate::theme::current_gtk4_accent_color());
+            } else if let Some(c) = crate::theme::parse_hex_color(acc_str) {
+                p.apply_accent(c);
+            }
+        }
+        p
+    }
+
+    #[inline]
     pub fn sensors_accent_color(&self, p: &crate::theme::ThemePalette) -> Color32 {
-        if self.theme == ThemeMode::Gtk4 {
-            p.accent
+        p.accent
+    }
+
+    pub fn host_display_name(&self, host_id: Option<&str>) -> String {
+        if let Some(hid) = host_id {
+            self.ssh_hosts
+                .iter()
+                .find(|h| h.id == hid)
+                .map(|h| h.name.clone())
+                .unwrap_or_else(|| hid.to_string())
         } else {
-            crate::theme::current_gtk4_accent_color()
+            "Local Host".to_string()
         }
     }
 
@@ -10233,7 +10495,7 @@ impl LauncherApp {
     // SENSORS TAB: System Brief Info Panel (Persistent Top Bar Next to Tabs)
     // ═════════════════════════════════════════════════════════════════════════
     fn render_system_brief_info_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         let snap = if let Some(hid) = host_id {
             self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_else(|| Arc::new(crate::sensors::SystemSensorsSnapshot::default()))
@@ -10245,58 +10507,81 @@ impl LauncherApp {
             .fill(p.bg_card)
             .stroke(Stroke::NONE)
             .rounding(Rounding::same(999.0))
-            .inner_margin(egui::Margin::symmetric(14.0, 5.0))
+            .inner_margin(egui::Margin::symmetric(12.0, 4.5))
             .show(ui, |ui| {
-                ui.set_width(ui.available_width());
+                let total_avail_w = ui.available_width();
+                let right_w = 76.0;
+                let left_w = (total_avail_w - right_w - 6.0).max(30.0);
+
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
+                    ui.spacing_mut().item_spacing.x = 6.0;
 
-                    // Left Icon + Host / System Name
-                    ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.5).color(accent));
-                    let host_name = if let Some(hid) = host_id {
-                        self.ssh_hosts.iter().find(|h| h.id == hid).map(|h| h.name.clone()).unwrap_or_else(|| "Remote Host".into())
-                    } else {
-                        "Local Host".into()
-                    };
-                    ui.label(RichText::new(host_name).size(11.0).strong().color(p.text_primary));
+                    // 1. Left Telemetry Strip (strictly bounded to left_w to NEVER collide with right controls)
+                    ui.allocate_ui_with_layout(egui::vec2(left_w, ui.available_height()), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.set_clip_rect(ui.max_rect());
+                        ui.spacing_mut().item_spacing.x = 6.0;
 
-                    ui.label(RichText::new("•").size(10.0).color(p.border));
+                        // Left Icon + Host / System Name
+                        ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(accent));
+                        let host_name = self.host_display_name(host_id);
+                        ui.label(RichText::new(host_name).size(10.5).strong().color(p.text_primary));
 
-                    // CPU brief info
-                    let cpu_label = if !snap.cpu_brand.is_empty() {
-                        snap.cpu_brand.split('@').next().unwrap_or(&snap.cpu_brand).trim()
-                    } else if host_id.is_some() {
-                        "Remote CPU"
-                    } else {
-                        "Intel CPU"
-                    };
-                    let cores_label = format!("{}C/{}T", snap.cpu_cores_physical.max(1), snap.cpu_cores_logical.max(1));
-                    ui.label(RichText::new(format!("{} {}", crate::lucide::CPU, cpu_label)).size(10.5).color(p.text_secondary));
-                    ui.label(RichText::new(cores_label).size(10.0).monospace().color(p.text_muted));
+                        // CPU brief info (clean up "(R)", "(TM)", "CPU" to keep it concise)
+                        if ui.available_width() > 140.0 {
+                            ui.label(RichText::new("•").size(9.5).color(p.border));
 
-                    ui.label(RichText::new("•").size(10.0).color(p.border));
+                            let cpu_clean = if !snap.cpu_brand.is_empty() {
+                                let b = snap.cpu_brand
+                                    .replace("(R)", "")
+                                    .replace("(TM)", "")
+                                    .replace("CPU", "");
+                                let first_part = b.split('@').next().unwrap_or(&b).trim();
+                                first_part.split_whitespace().collect::<Vec<_>>().join(" ")
+                            } else if host_id.is_some() {
+                                "Remote CPU".to_string()
+                            } else {
+                                "Local CPU".to_string()
+                            };
 
-                    // RAM brief info
-                    let ram_gb = (snap.mem_total_bytes as f64 / (1024.0 * 1024.0 * 1024.0)).round() as u64;
-                    let ram_label = if ram_gb > 0 { format!("{}GB RAM", ram_gb) } else { "8GB RAM".to_string() };
-                    ui.label(RichText::new(format!("{} {}", crate::lucide::RAM, ram_label)).size(10.5).color(p.text_secondary));
+                            let cpu_disp = if ui.available_width() < 240.0 && cpu_clean.len() > 18 {
+                                format!("{}…", &cpu_clean[..17])
+                            } else {
+                                cpu_clean
+                            };
 
-                    ui.label(RichText::new("•").size(10.0).color(p.border));
+                            let cores_label = format!("{}C/{}T", snap.cpu_cores_physical.max(1), snap.cpu_cores_logical.max(1));
+                            ui.label(RichText::new(format!("{} {}", crate::lucide::CPU, cpu_disp)).size(10.0).color(p.text_secondary));
+                            ui.label(RichText::new(cores_label).size(9.5).monospace().color(p.text_muted));
+                        }
 
-                    // Storage brief info
-                    let phys_disk: u64 = snap.physical_disks.iter().map(|d| d.total_bytes).sum();
-                    let total_disk = if phys_disk > 0 { phys_disk } else { snap.disks.iter().map(|d| d.total_bytes).sum() };
-                    if total_disk > 0 {
-                        ui.label(RichText::new(format!("{} {}", crate::lucide::STORAGE, crate::sensors::format_bytes(total_disk))).size(10.5).color(p.text_secondary));
-                        ui.label(RichText::new("•").size(10.0).color(p.border));
-                    }
+                        // RAM brief info
+                        if ui.available_width() > 65.0 {
+                            ui.label(RichText::new("•").size(9.5).color(p.border));
+                            let ram_gb = (snap.mem_total_bytes as f64 / (1024.0 * 1024.0 * 1024.0)).round() as u64;
+                            let ram_label = if ram_gb > 0 { format!("{}GB RAM", ram_gb) } else { "8GB RAM".to_string() };
+                            ui.label(RichText::new(format!("{} {}", crate::lucide::RAM, ram_label)).size(10.0).color(p.text_secondary));
+                        }
 
-                    // System Uptime
-                    let up_secs = if snap.uptime_secs > 0 { snap.uptime_secs } else if host_id.is_none() { get_system_uptime() } else { 0 };
-                    ui.label(RichText::new(format!("Up {}", format_uptime(up_secs))).size(10.0).monospace().color(p.text_muted));
+                        // Storage brief info
+                        let phys_disk: u64 = snap.physical_disks.iter().map(|d| d.total_bytes).sum();
+                        let total_disk = if phys_disk > 0 { phys_disk } else { snap.disks.iter().map(|d| d.total_bytes).sum() };
+                        if total_disk > 0 && ui.available_width() > 70.0 {
+                            ui.label(RichText::new("•").size(9.5).color(p.border));
+                            ui.label(RichText::new(format!("{} {}", crate::lucide::STORAGE, crate::sensors::format_bytes(total_disk))).size(10.0).color(p.text_secondary));
+                        }
 
-                    // Right side: Refresh + Live Badge
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // System Uptime
+                        if ui.available_width() > 75.0 {
+                            let up_secs = if snap.uptime_secs > 0 { snap.uptime_secs } else if host_id.is_none() { get_system_uptime() } else { 0 };
+                            ui.label(RichText::new("•").size(9.5).color(p.border));
+                            ui.label(RichText::new(format!("Up {}", format_uptime(up_secs))).size(9.5).monospace().color(p.text_muted));
+                        }
+                    });
+
+                    // 2. Right Actions (LIVE badge + Refresh button)
+                    ui.allocate_ui_with_layout(egui::vec2(right_w, ui.available_height()), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 5.0;
+
                         let btn_ref = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(10.5).color(p.text_secondary))
                             .fill(p.bg_button)
                             .rounding(Rounding::same(999.0));
@@ -10314,12 +10599,12 @@ impl LauncherApp {
                         Frame::none()
                             .fill(accent_with_alpha(accent, 25))
                             .rounding(Rounding::same(999.0))
-                            .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+                            .inner_margin(egui::Margin::symmetric(7.0, 2.5))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 4.0;
-                                    ui.label(RichText::new("●").size(8.0).color(accent));
-                                    ui.label(RichText::new("LIVE").size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                    ui.label(RichText::new("●").size(7.5).color(accent));
+                                    ui.label(RichText::new("LIVE").size(9.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                 });
                             });
                     });
@@ -10331,7 +10616,7 @@ impl LauncherApp {
     // SENSORS TAB: Left Sidebar (Quick Overview Cards & Category Filters)
     // ═════════════════════════════════════════════════════════════════════════
     fn render_sensors_left_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
@@ -10498,7 +10783,7 @@ impl LauncherApp {
     // SENSORS TAB: Right Main Area (Full Sensors & Hardware Monitor Viewer)
     // ═════════════════════════════════════════════════════════════════════════
     fn render_sensors_right_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let accent = self.sensors_accent_color(&p);
 
         let is_fetching = if let Some(hid) = host_id {
@@ -10730,7 +11015,7 @@ impl LauncherApp {
     // SENSORS PAGE: Overview Dashboard (Matching media_1792121759405_52cfc968.png)
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_overview_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, _host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         ScrollArea::vertical()
             .id_salt("sensors_overview_scroll")
@@ -11019,7 +11304,7 @@ impl LauncherApp {
     // SENSORS PAGE: CPU Dashboard (Matching media_1792113265094_cd2e3f19.png)
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_cpu_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         ScrollArea::vertical()
             .id_salt("sensors_cpu_scroll")
@@ -11410,7 +11695,7 @@ impl LauncherApp {
     // SENSORS PAGE: RAM Dashboard (Matching media_1792116273219_0ccb7bbe.png)
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_ram_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         ScrollArea::vertical()
             .id_salt("sensors_ram_scroll")
@@ -12035,7 +12320,7 @@ impl LauncherApp {
     // SENSORS PAGE: GPU Dashboard
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_gpu_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
         ScrollArea::vertical()
@@ -12124,7 +12409,7 @@ impl LauncherApp {
                                 ui.spacing_mut().item_spacing.x = 4.0;
                                 ui.label(RichText::new("●").size(7.0).color(accent));
                                 let overline = if is_remote {
-                                    format!("REMOTE GPU SUBSYSTEM • HOST '{}' • GPU {}", host_id.unwrap_or("Remote"), active_gpu_idx + 1)
+                                    format!("REMOTE GPU SUBSYSTEM • HOST '{}' • GPU {}", self.host_display_name(host_id), active_gpu_idx + 1)
                                 } else {
                                     format!("GPU ENGINE #{}", active_gpu_idx + 1)
                                 };
@@ -13063,7 +13348,7 @@ impl LauncherApp {
     // SENSORS PAGE: Storage Dashboard (Matching media_1792116273204_464a968b.png)
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_storage_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
         ScrollArea::vertical()
@@ -13098,7 +13383,7 @@ impl LauncherApp {
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
                                 let overline = if is_remote {
-                                    format!("STORAGE • HOST '{}'", host_id.unwrap_or("Remote"))
+                                    format!("STORAGE • HOST '{}'", self.host_display_name(host_id))
                                 } else {
                                     "STORAGE / I/O".to_string()
                                 };
@@ -13983,7 +14268,7 @@ impl LauncherApp {
     // SENSORS PAGE: Wi-Fi & Network Dashboard
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_wifi_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
 
@@ -14029,7 +14314,7 @@ impl LauncherApp {
                                 ui.spacing_mut().item_spacing.x = 4.0;
                                 ui.label(RichText::new("●").size(7.0).color(accent));
                                 let overline = if is_remote {
-                                    format!("WI-FI & NETWORK • HOST '{}'", host_id.unwrap_or("Remote").to_uppercase())
+                                    format!("WI-FI & NETWORK • HOST '{}'", self.host_display_name(host_id).to_uppercase())
                                 } else {
                                     format!("WI-FI & NETWORK • {}", wifi_snap.interface.to_uppercase())
                                 };
@@ -14215,7 +14500,7 @@ impl LauncherApp {
                             // Row 3: Subtitle spanning the full card width underneath (wrapped, never overlaps)
                             ui.horizontal_wrapped(|ui| {
                                 if is_remote {
-                                    ui.label(RichText::new(format!("SSH link to host '{}'", host_id.unwrap_or("remote"))).size(10.0).color(Color32::from_rgb(148, 163, 184)));
+                                    ui.label(RichText::new(format!("SSH link to host '{}'", self.host_display_name(host_id))).size(10.0).color(Color32::from_rgb(148, 163, 184)));
                                 } else {
                                     ui.label(RichText::new("802.11ac Wi-Fi • Auto-rate").size(10.0).color(Color32::from_rgb(148, 163, 184)));
                                 }
@@ -14569,7 +14854,7 @@ impl LauncherApp {
                 let link_rate_str = if is_remote { "1.0 Gbps" } else { wifi_snap.rate.as_str() };
                 let jitter_val = if is_remote { 0.4 } else { wifi_snap.jitter_ms };
                 let tunnel_id_str = if is_remote {
-                    let h_prefix = host_id.unwrap_or("REMOTE");
+                    let h_prefix = self.host_display_name(host_id);
                     format!("ID: SSH-0x{:X}", h_prefix.as_bytes().iter().fold(0u16, |acc, &b| acc.wrapping_add(b as u16)))
                 } else {
                     format!("ID: {}", wifi_snap.tunnel_id)
@@ -15067,7 +15352,7 @@ impl LauncherApp {
     // SENSORS PAGE: Application Data Usage Dashboard
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_data_usage_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
 
@@ -15109,7 +15394,7 @@ impl LauncherApp {
                             let avail_w = ui.available_width();
                             let is_narrow = avail_w < 680.0;
                             let title_str = if is_remote {
-                                format!("Data Usage • Host '{}'", host_id.unwrap_or("Remote"))
+                                format!("Data Usage • Host '{}'", self.host_display_name(host_id))
                             } else {
                                 "Application Data Usage".to_string()
                             };
@@ -16039,7 +16324,7 @@ impl LauncherApp {
     // SENSORS PAGE: Power Dashboard
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_power_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
         let bat = snap.power.batteries.first();
@@ -16074,7 +16359,7 @@ impl LauncherApp {
 
                 let (est_time_str, _est_time_short, status_str, status_col, status_bg) = if !has_battery {
                     let st_str = if is_remote {
-                        format!("AC MAINS • HOST '{}'", host_id.unwrap_or("REMOTE"))
+                        format!("AC MAINS • HOST '{}'", self.host_display_name(host_id))
                     } else {
                         "AC MAINS • DIRECT FEED".to_string()
                     };
@@ -16144,7 +16429,7 @@ impl LauncherApp {
                             let is_narrow = avail_w < 680.0;
 
                             let title_str = if is_remote {
-                                format!("Power & Thermal • Host '{}'", host_id.unwrap_or("Remote"))
+                                format!("Power & Thermal • Host '{}'", self.host_display_name(host_id))
                             } else {
                                 "Power & Battery".to_string()
                             };
@@ -16274,7 +16559,7 @@ impl LauncherApp {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         ui.label(RichText::new(crate::lucide::ZAP).size(12.0).color(accent));
                                         let psu_hdr = if is_remote {
-                                            format!("POWER SUPPLY // DIRECT AC GRID FEED • HOST '{}'", host_id.unwrap_or("REMOTE"))
+                                            format!("POWER SUPPLY // DIRECT AC GRID FEED • HOST '{}'", self.host_display_name(host_id))
                                         } else {
                                             "POWER SUPPLY // DIRECT AC GRID FEED".to_string()
                                         };
@@ -17073,7 +17358,7 @@ impl LauncherApp {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 ui.label(RichText::new(crate::lucide::SLIDERS).size(12.0).color(accent));
                                 let card_title = if is_remote {
-                                    format!("PLATFORM POWER & THERMAL GOVERNANCE • HOST '{}'", host_id.unwrap_or("REMOTE"))
+                                    format!("PLATFORM POWER & THERMAL GOVERNANCE • HOST '{}'", self.host_display_name(host_id))
                                 } else {
                                     "PLATFORM POWER & THERMAL GOVERNANCE".to_string()
                                 };
@@ -17475,7 +17760,7 @@ impl LauncherApp {
     // SENSORS PAGE: Bluetooth Dashboard
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_bluetooth_page(&mut self, ui: &mut Ui, _snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
 
@@ -17500,7 +17785,7 @@ impl LauncherApp {
                                     ui.add_space(2.0);
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 8.0;
-                                        let title_str = format!("Remote RF Controller & Peripherals • Host '{}'", host_id.unwrap_or("Remote"));
+                                        let title_str = format!("Remote RF Controller & Peripherals • Host '{}'", self.host_display_name(host_id));
                                         ui.label(RichText::new(title_str).size(16.5).strong().color(p.text_primary));
 
                                         Frame::none()
@@ -18355,7 +18640,7 @@ impl LauncherApp {
     // SENSORS PAGE: Temperature Dashboard
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_temperature_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
 
@@ -18410,7 +18695,7 @@ impl LauncherApp {
                             "THERMAL SUBSYSTEM"
                         };
                         let title_str = if is_remote {
-                            format!("Hardware Thermal Sensors & Cooling • Host '{}'", host_id.unwrap_or("Remote"))
+                            format!("Hardware Thermal Sensors & Cooling • Host '{}'", self.host_display_name(host_id))
                         } else {
                             "Hardware Thermal Sensors & Fan Control".to_string()
                         };
@@ -19159,7 +19444,7 @@ impl LauncherApp {
     }
 
     fn render_sensors_top_apps_tab(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
-        let p = self.theme.palette();
+        let p = self.palette();
         let accent = self.sensors_accent_color(&p);
 
         // Fixed column widths and compact spacing matching Windows 11 Task Manager
@@ -20559,7 +20844,7 @@ impl LauncherApp {
     // LEFT SIDEBAR: Group Filter + Server Cards (Expands full height)
     // ═════════════════════════════════════════════════════════════════════════
     fn render_servers_left_panel(&mut self, ui: &mut Ui) {
-        let p = self.theme.palette();
+        let p = self.palette();
         ui.set_width(ui.available_width());
         ui.set_max_width(ui.available_width());
         ui.vertical(|ui| {
@@ -21207,7 +21492,7 @@ impl LauncherApp {
     // RIGHT PANEL: Notebook Tabs Bar + Overview / Server Log View
     // ═════════════════════════════════════════════════════════════════════════
     fn render_servers_right_panel(&mut self, ui: &mut Ui) {
-        let p = self.theme.palette();
+        let p = self.palette();
         ui.vertical(|ui| {
             // Notebook Tabs Strip (Material 3 Dark Cockpit)
             let online_count = self.services.iter().filter(|s| s.state == ServiceState::Running).count();
@@ -21377,7 +21662,7 @@ impl LauncherApp {
     // Right Panel Tab 0: "Server Overview" (Fills available height)
     // ─────────────────────────────────────────────────────────────────────────
     fn render_overview_content(&mut self, ui: &mut Ui) {
-        let p = self.theme.palette();
+        let p = self.palette();
         // Heading Row: Servers running on this PC | last scan: HH:MM:SS | Search Box | Refresh button
         ui.horizontal(|ui| {
             ui.label(
@@ -22710,7 +22995,7 @@ impl LauncherApp {
         // ─────────────────────────────────────────────────────────────────────
         // Section A: Upper Controls Cockpit (Card)
         // ─────────────────────────────────────────────────────────────────────
-        let p = self.theme.palette();
+        let p = self.palette();
         Frame::none()
             .fill(p.bg_card)
             .stroke(Stroke::new(1.0_f32, p.border))

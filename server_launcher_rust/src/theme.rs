@@ -584,7 +584,72 @@ pub struct ThemePalette {
     pub log_warning: Color32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccentPreset {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub hex: &'static str,
+    pub color: Color32,
+}
+
+pub const ACCENT_PRESETS: &[AccentPreset] = &[
+    AccentPreset { id: "gtk4", name: "GTK4 / System Blue", hex: "#3584e4", color: Color32::from_rgb(0x35, 0x84, 0xe4) },
+    AccentPreset { id: "cyan", name: "Cyber Cyan", hex: "#38bdf8", color: Color32::from_rgb(0x38, 0xbd, 0xf8) },
+    AccentPreset { id: "violet", name: "Electric Violet", hex: "#c4c0ff", color: Color32::from_rgb(0xc4, 0xc0, 0xff) },
+    AccentPreset { id: "indigo", name: "Lavender Indigo", hex: "#818cf8", color: Color32::from_rgb(0x81, 0x8c, 0xf8) },
+    AccentPreset { id: "purple", name: "Mauve Purple", hex: "#cba6f7", color: Color32::from_rgb(0xcb, 0xa6, 0xf7) },
+    AccentPreset { id: "pink", name: "Neon Pink", hex: "#ec4899", color: Color32::from_rgb(0xec, 0x48, 0x99) },
+    AccentPreset { id: "ruby", name: "Ruby Red", hex: "#e01b24", color: Color32::from_rgb(0xe0, 0x1b, 0x24) },
+    AccentPreset { id: "coral", name: "Coral Rose", hex: "#f43f5e", color: Color32::from_rgb(0xf4, 0x3f, 0x5e) },
+    AccentPreset { id: "orange", name: "Sunset Orange", hex: "#ff7800", color: Color32::from_rgb(0xff, 0x78, 0x00) },
+    AccentPreset { id: "amber", name: "Amber Gold", hex: "#f59e0b", color: Color32::from_rgb(0xf5, 0x9e, 0x0b) },
+    AccentPreset { id: "emerald", name: "Emerald Green", hex: "#2ec27e", color: Color32::from_rgb(0x2e, 0xc2, 0x7e) },
+    AccentPreset { id: "teal", name: "Deep Teal", hex: "#2190a4", color: Color32::from_rgb(0x21, 0x90, 0xa4) },
+    AccentPreset { id: "nord", name: "Frost Blue", hex: "#88c0d0", color: Color32::from_rgb(0x88, 0xc0, 0xd0) },
+    AccentPreset { id: "slate", name: "Titanium Slate", hex: "#94a3b8", color: Color32::from_rgb(0x94, 0xa3, 0xb8) },
+];
+
+pub fn parse_hex_color(hex: &str) -> Option<Color32> {
+    let s = hex.trim().trim_start_matches('#');
+    if s.len() == 6 {
+        let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+        Some(Color32::from_rgb(r, g, b))
+    } else if s.len() == 8 {
+        let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+        let a = u8::from_str_radix(&s[6..8], 16).ok()?;
+        Some(Color32::from_rgba_unmultiplied(r, g, b, a))
+    } else if s.len() == 3 {
+        let r = u8::from_str_radix(&s[0..1].repeat(2), 16).ok()?;
+        let g = u8::from_str_radix(&s[1..2].repeat(2), 16).ok()?;
+        let b = u8::from_str_radix(&s[2..3].repeat(2), 16).ok()?;
+        Some(Color32::from_rgb(r, g, b))
+    } else {
+        None
+    }
+}
+
+pub fn format_hex_color(c: Color32) -> String {
+    format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b())
+}
+
 impl ThemePalette {
+    pub fn apply_accent(&mut self, accent: Color32) {
+        let bg = self.bg_app;
+        self.accent = accent;
+        self.accent_hover = mix_color(accent, Color32::WHITE, 0.18);
+        self.accent_light = mix_color(accent, Color32::WHITE, 0.38);
+        self.accent_subtle = mix_color(accent, bg, 0.86);
+        self.accent_text = if luminance(accent) > 150.0 {
+            Color32::from_rgb(0x11, 0x11, 0x17)
+        } else {
+            Color32::WHITE
+        };
+    }
+
     pub fn egui_visuals(&self) -> Visuals {
         let mut visuals = if self.is_dark {
             Visuals::dark()

@@ -18714,30 +18714,34 @@ impl LauncherApp {
                             draw_interactive_fan_curve(ui, 135.0, cpu_temp, cpu_fan_pct);
 
                             ui.add_space(8.0);
-                            ui.horizontal_wrapped(|ui| {
-                                ui.spacing_mut().item_spacing.x = 8.0;
-                                let node_chips = if !has_active_fans {
+                            ui.columns(4, |cols| {
+                                let node_chips: [(&str, Color32, &str); 4] = if !has_active_fans {
                                     [
-                                        ("P1: 30°C → Ambient", Color32::from_rgb(203, 213, 225)),
-                                        ("P2: 50°C → Nominal", Color32::from_rgb(203, 213, 225)),
-                                        ("P3: 75°C → Warm", Color32::from_rgb(203, 213, 225)),
-                                        ("P4: 90°C → Throttle (CRIT)", Color32::from_rgb(248, 113, 113)),
+                                        ("P1: 30°C → Ambient", Color32::from_rgb(203, 213, 225), "P1 Node: 30°C (Ambient baseline)"),
+                                        ("P2: 50°C → Nominal", Color32::from_rgb(203, 213, 225), "P2 Node: 50°C (Nominal operating temp)"),
+                                        ("P3: 75°C → Warm", Color32::from_rgb(203, 213, 225), "P3 Node: 75°C (Warm sustained workload)"),
+                                        ("P4: 90°C → Throttle", Color32::from_rgb(248, 113, 113), "P4 Node: 90°C (Thermal throttle threshold - CRIT)"),
                                     ]
                                 } else {
                                     [
-                                        ("P1: 30°C → 20%", Color32::from_rgb(203, 213, 225)),
-                                        ("P2: 50°C → 45%", Color32::from_rgb(203, 213, 225)),
-                                        ("P3: 75°C → 75%", Color32::from_rgb(203, 213, 225)),
-                                        ("P4: 90°C → 100% (CRIT)", Color32::from_rgb(248, 113, 113)),
+                                        ("P1: 30°C → 20%", Color32::from_rgb(203, 213, 225), "P1 Node: 30°C → 20% minimum duty cycle"),
+                                        ("P2: 50°C → 45%", Color32::from_rgb(203, 213, 225), "P2 Node: 50°C → 45% nominal duty cycle"),
+                                        ("P3: 75°C → 75%", Color32::from_rgb(203, 213, 225), "P3 Node: 75°C → 75% high load duty cycle"),
+                                        ("P4: 90°C → 100%", Color32::from_rgb(248, 113, 113), "P4 Node: 90°C → 100% maximum duty cycle (CRIT)"),
                                     ]
                                 };
-                                for (lbl, col) in node_chips {
+                                for (i, (lbl, col, tip)) in node_chips.iter().enumerate() {
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 14, 22))
+                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)))
                                         .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(7.0, 3.0))
-                                        .show(ui, |ui| {
-                                            ui.label(RichText::new(lbl).size(8.5).monospace().strong().color(col));
+                                        .inner_margin(egui::Margin::symmetric(4.0, 3.5))
+                                        .show(&mut cols[i], |ui| {
+                                            ui.set_width(ui.available_width());
+                                            ui.centered_and_justified(|ui| {
+                                                ui.add(egui::Label::new(RichText::new(*lbl).size(8.0).monospace().strong().color(*col)).truncate())
+                                                    .on_hover_text(*tip);
+                                            });
                                         });
                                 }
                             });

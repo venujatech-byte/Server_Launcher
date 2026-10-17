@@ -364,20 +364,15 @@ pub struct LauncherApp {
     pub adb_package_filter: String,
     pub adb_package_is_system: bool,
     pub adb_packages_cache: Vec<crate::adb::AdbPackageInfo>,
-    #[allow(dead_code)]
     pub adb_scrcpy_max_fps: u32,
-    #[allow(dead_code)]
     pub adb_scrcpy_bitrate_mbps: u32,
-    #[allow(dead_code)]
     pub adb_scrcpy_stay_awake: bool,
-    #[allow(dead_code)]
     pub adb_scrcpy_screen_off: bool,
-    #[allow(dead_code)]
     pub adb_scrcpy_no_audio: bool,
-    #[allow(dead_code)]
     pub adb_scrcpy_pids: HashMap<String, u32>,
+    pub adb_mirror_mode: AdbScreenMirrorMode,
 
-    // Built-in Screen Mirroring State (Native in-app screen share, no scrcpy)
+    // Built-in Screen Mirroring State (Native in-app screen share)
     pub adb_mirror_active: bool,
     pub adb_mirror_texture: Option<egui::TextureHandle>,
     pub adb_mirror_frame_rx: Option<std::sync::mpsc::Receiver<(Vec<u8>, usize, usize)>>,
@@ -1184,6 +1179,7 @@ impl LauncherApp {
             adb_scrcpy_screen_off: false,
             adb_scrcpy_no_audio: false,
             adb_scrcpy_pids: HashMap::new(),
+            adb_mirror_mode: AdbScreenMirrorMode::BuiltIn,
             adb_mirror_active: false,
             adb_mirror_texture: None,
             adb_mirror_frame_rx: None,

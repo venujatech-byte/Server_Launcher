@@ -488,6 +488,18 @@ pub fn stop_scrcpy(pid: u32) {
     }
 }
 
+/// Checks if a scrcpy process is still actively running.
+pub fn is_scrcpy_running(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        unsafe { libc::kill(pid as i32, 0) == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
 /// Lists installed packages on device (third-party or system).
 pub fn list_packages(serial: &str, third_party_only: bool) -> Vec<AdbPackageInfo> {
     let flag = if third_party_only { "-3" } else { "-s" };

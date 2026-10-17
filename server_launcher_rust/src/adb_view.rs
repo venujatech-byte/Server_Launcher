@@ -1,6 +1,13 @@
 use egui::{pos2, Align, Align2, Layout, Rect, Vec2};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AdbScreenMirrorMode {
+    #[default]
+    BuiltIn,
+    Scrcpy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AdbSubTab {
     #[default]
     Overview,
@@ -488,6 +495,44 @@ impl LauncherApp {
         self.adb_mirror_drag_start = None;
     }
 
+    pub fn is_scrcpy_active(&mut self, serial: &str) -> bool {
+        if let Some(&pid) = self.adb_scrcpy_pids.get(serial) {
+            if crate::adb::is_scrcpy_running(pid) {
+                return true;
+            } else {
+                self.adb_scrcpy_pids.remove(serial);
+            }
+        }
+        false
+    }
+
+    pub fn launch_scrcpy_for_device(&mut self, serial: &str) {
+        let is_running = self.is_scrcpy_active(serial);
+        if is_running {
+            if let Some(pid) = self.adb_scrcpy_pids.remove(serial) {
+                crate::adb::stop_scrcpy(pid);
+                self.adb_status_msg = Some(("Stopped scrcpy mirror".to_string(), false, Instant::now()));
+            }
+        } else {
+            match crate::adb::launch_scrcpy(
+                serial,
+                self.adb_scrcpy_stay_awake,
+                self.adb_scrcpy_screen_off,
+                self.adb_scrcpy_no_audio,
+                Some(self.adb_scrcpy_max_fps),
+                Some(self.adb_scrcpy_bitrate_mbps),
+            ) {
+                Ok(pid) => {
+                    self.adb_scrcpy_pids.insert(serial.to_string(), pid);
+                    self.adb_status_msg = Some((format!("scrcpy window launched (PID {})", pid), false, Instant::now()));
+                }
+                Err(e) => {
+                    self.adb_status_msg = Some((format!("scrcpy error: {}", e), true, Instant::now()));
+                }
+            }
+        }
+    }
+
     pub fn connect_wireless_device(&mut self, current_serial: &str, target: &str, fallback_name: &str) -> Result<String, String> {
         let target = target.trim();
         let formatted = if !target.contains(':') {
@@ -739,7 +784,7 @@ impl LauncherApp {
                             let _ = crate::adb::launch_external_adb_terminal(&serial);
                         }
 
-                        // Built-in Screen Mirroring Quick Toggle (No scrcpy)
+                        // Built-in Screen Mirroring Quick Toggle
                         let is_mirror_on = self.adb_mirror_active;
                         let mirror_btn_text = if is_mirror_on {
                             RichText::new(format!("{} Pause Mirror", crate::lucide::PAUSE)).size(10.5).strong().color(Color32::WHITE)
@@ -753,11 +798,27 @@ impl LauncherApp {
                             .rounding(Rounding::same(6.0));
                         if ui.add(btn_mirror).on_hover_text("Open and toggle real-time built-in screen mirroring").clicked() {
                             self.adb_active_subtab = AdbSubTab::ScreenShare;
+                            self.adb_mirror_mode = AdbScreenMirrorMode::BuiltIn;
                             if is_mirror_on {
                                 self.stop_builtin_mirror();
                             } else {
                                 self.start_builtin_mirror(&serial);
                             }
+                        }
+
+                        // scrcpy External HD Mirror Quick Toggle
+                        let is_scrcpy_on = self.is_scrcpy_active(&serial);
+                        let scrcpy_btn_text = if is_scrcpy_on {
+                            RichText::new(format!("{} Stop scrcpy", crate::lucide::SQUARE)).size(10.5).strong().color(Color32::WHITE)
+                        } else {
+                            RichText::new("⚡ scrcpy HD").size(10.5).strong().color(Color32::WHITE)
+                        };
+                        let scrcpy_btn_bg = if is_scrcpy_on { Color32::from_rgb(220, 38, 38) } else { Color32::from_rgb(14, 116, 144) };
+                        let btn_scrcpy = egui::Button::new(scrcpy_btn_text)
+                            .fill(scrcpy_btn_bg)
+                            .rounding(Rounding::same(6.0));
+                        if ui.add(btn_scrcpy).on_hover_text("Launch high-performance external scrcpy display window").clicked() {
+                            self.launch_scrcpy_for_device(&serial);
                         }
                     });
                 });
@@ -1020,11 +1081,89 @@ impl LauncherApp {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // TAB 2: BUILT-IN REAL-TIME SCREEN MIRRORING (NO SCRCPY)
+    // TAB 2: SCREEN SHARE (BUILT-IN EMBEDDED & SCRCPY DUAL MODES)
     // ─────────────────────────────────────────────────────────────────────────
     fn render_adb_screenshare_tab(&mut self, ui: &mut Ui, adb_dev: &crate::config::AdbDeviceConfig) {
         let p = self.palette();
         let serial = adb_dev.serial.clone();
+
+        // 1. Dual Mode Switcher Bar
+        Frame::none()
+            .fill(p.bg_card)
+            .rounding(Rounding::same(10.0))
+            .inner_margin(egui::Margin::symmetric(14.0, 8.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let is_builtin = self.adb_mirror_mode == AdbScreenMirrorMode::BuiltIn;
+                    let is_scrcpy = self.adb_mirror_mode == AdbScreenMirrorMode::Scrcpy;
+                    let is_scrcpy_on = self.is_scrcpy_active(&serial);
+
+                    let btn_builtin = egui::Button::new(
+                        RichText::new("📱 Built-in Embedded View")
+                            .size(11.0)
+                            .strong()
+                            .color(if is_builtin { Color32::WHITE } else { p.text_secondary }),
+                    )
+                    .fill(if is_builtin { p.accent } else { Color32::TRANSPARENT })
+                    .rounding(Rounding::same(6.0));
+                    if ui.add(btn_builtin).clicked() {
+                        self.adb_mirror_mode = AdbScreenMirrorMode::BuiltIn;
+                    }
+
+                    let scrcpy_tag = if is_scrcpy_on { "⚡ scrcpy HD Mirror (Active)" } else { "⚡ scrcpy HD Mirror" };
+                    let scrcpy_col = if is_scrcpy {
+                        Color32::WHITE
+                    } else if is_scrcpy_on {
+                        Color32::from_rgb(34, 197, 94)
+                    } else {
+                        p.text_secondary
+                    };
+                    let btn_scrcpy = egui::Button::new(
+                        RichText::new(scrcpy_tag)
+                            .size(11.0)
+                            .strong()
+                            .color(scrcpy_col),
+                    )
+                    .fill(if is_scrcpy { Color32::from_rgb(2, 132, 199) } else { Color32::TRANSPARENT })
+                    .rounding(Rounding::same(6.0));
+                    if ui.add(btn_scrcpy).clicked() {
+                        self.adb_mirror_mode = AdbScreenMirrorMode::Scrcpy;
+                    }
+
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if is_scrcpy_on {
+                            let btn_stop = egui::Button::new(RichText::new("■ Stop scrcpy").size(10.5).color(Color32::from_rgb(248, 113, 113)))
+                                .fill(p.bg_button)
+                                .rounding(Rounding::same(6.0));
+                            if ui.add(btn_stop).on_hover_text("Terminate active external scrcpy process").clicked() {
+                                self.launch_scrcpy_for_device(&serial);
+                            }
+                        } else {
+                            let btn_launch = egui::Button::new(RichText::new("⚡ Quick Launch scrcpy").size(10.5).color(Color32::from_rgb(56, 189, 248)))
+                                .fill(p.bg_button)
+                                .rounding(Rounding::same(6.0));
+                            if ui.add(btn_launch).on_hover_text("Launch high-performance external scrcpy window").clicked() {
+                                self.launch_scrcpy_for_device(&serial);
+                            }
+                        }
+                    });
+                });
+            });
+
+        ui.add_space(6.0);
+
+        match self.adb_mirror_mode {
+            AdbScreenMirrorMode::BuiltIn => {
+                self.render_adb_builtin_mirror(ui, &serial);
+            }
+            AdbScreenMirrorMode::Scrcpy => {
+                self.render_adb_scrcpy_panel(ui, &serial);
+            }
+        }
+    }
+
+    fn render_adb_builtin_mirror(&mut self, ui: &mut Ui, serial: &str) {
+        let p = self.palette();
 
         // 1. Repaint trigger for real-time video stream
         if self.adb_mirror_active {
@@ -1059,7 +1198,7 @@ impl LauncherApp {
 
         // 3. Auto-start mirror on first tab entry if not active
         if !self.adb_mirror_active && self.adb_mirror_texture.is_none() {
-            self.start_builtin_mirror(&serial);
+            self.start_builtin_mirror(serial);
         }
 
         ui.vertical(|ui| {
@@ -1089,7 +1228,7 @@ impl LauncherApp {
                         let text_edit = ui.add(
                             egui::TextEdit::singleline(&mut self.adb_screenshare_text_input)
                                 .hint_text("Type on device (press Enter)...")
-                                .desired_width(170.0)
+                                .desired_width(170.0),
                         );
                         let enter_hit = text_edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                         let btn_send = egui::Button::new(RichText::new("Send").size(10.5).color(p.text_primary))
@@ -1098,7 +1237,7 @@ impl LauncherApp {
                         if (enter_hit || ui.add(btn_send).clicked()) && !self.adb_screenshare_text_input.trim().is_empty() {
                             let text = self.adb_screenshare_text_input.clone();
                             self.adb_screenshare_text_input.clear();
-                            let ser = serial.clone();
+                            let ser = serial.to_string();
                             std::thread::spawn(move || {
                                 let _ = crate::adb::send_text(&ser, &text);
                             });
@@ -1106,12 +1245,20 @@ impl LauncherApp {
 
                         // Right-aligned toolbar actions
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            // Pop out to scrcpy
+                            let btn_pop = egui::Button::new(RichText::new("⚡ Pop Out scrcpy").size(10.5).color(Color32::from_rgb(56, 189, 248)))
+                                .fill(p.bg_button)
+                                .rounding(Rounding::same(6.0));
+                            if ui.add(btn_pop).on_hover_text("Open external hardware-accelerated scrcpy window").clicked() {
+                                self.launch_scrcpy_for_device(serial);
+                            }
+
                             // Wake / Screen Lock toggle
                             let btn_wake = egui::Button::new(RichText::new(format!("{} Power / Wake", crate::lucide::POWER)).size(10.5).color(p.text_primary))
                                 .fill(p.bg_button)
                                 .rounding(Rounding::same(6.0));
                             if ui.add(btn_wake).on_hover_text("Send Power keyevent to wake or sleep device").clicked() {
-                                let ser = serial.clone();
+                                let ser = serial.to_string();
                                 std::thread::spawn(move || {
                                     let _ = crate::adb::send_keyevent(&ser, 26);
                                 });
@@ -1125,7 +1272,7 @@ impl LauncherApp {
                                 let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
                                 let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
                                 let dest = std::path::PathBuf::from(home).join("Downloads").join(format!("screenshot_{}.png", ts));
-                                match crate::adb::take_screenshot(&serial, &dest) {
+                                match crate::adb::take_screenshot(serial, &dest) {
                                     Ok(_) => self.adb_status_msg = Some((format!("Screenshot saved to {}", dest.display()), false, Instant::now())),
                                     Err(e) => self.adb_status_msg = Some((format!("Screenshot failed: {}", e), true, Instant::now())),
                                 }
@@ -1144,7 +1291,7 @@ impl LauncherApp {
                                     .fill(Color32::from_rgb(2, 132, 199))
                                     .rounding(Rounding::same(6.0));
                                 if ui.add(btn_resume).clicked() {
-                                    self.start_builtin_mirror(&serial);
+                                    self.start_builtin_mirror(serial);
                                 }
                             }
                         });
@@ -1221,7 +1368,7 @@ impl LauncherApp {
                                     let y1 = (((start_p.y - screen_rect.min.y) / screen_rect.height()) * dev_h).clamp(0.0, dev_h) as i32;
                                     let x2 = (((end_p.x - screen_rect.min.x) / screen_rect.width()) * dev_w).clamp(0.0, dev_w) as i32;
                                     let y2 = (((end_p.y - screen_rect.min.y) / screen_rect.height()) * dev_h).clamp(0.0, dev_h) as i32;
-                                    let ser = serial.clone();
+                                    let ser = serial.to_string();
                                     if delta.length() > 8.0 {
                                         std::thread::spawn(move || {
                                             let _ = crate::adb::send_swipe(&ser, x1, y1, x2, y2, 220);
@@ -1238,7 +1385,7 @@ impl LauncherApp {
                                 let (dev_w, dev_h) = (self.adb_mirror_device_res.0 as f32, self.adb_mirror_device_res.1 as f32);
                                 let x = (((pos.x - screen_rect.min.x) / screen_rect.width()) * dev_w).clamp(0.0, dev_w) as i32;
                                 let y = (((pos.y - screen_rect.min.y) / screen_rect.height()) * dev_h).clamp(0.0, dev_h) as i32;
-                                let ser = serial.clone();
+                                let ser = serial.to_string();
                                 std::thread::spawn(move || {
                                     let _ = crate::adb::send_tap(&ser, x, y);
                                 });
@@ -1258,7 +1405,7 @@ impl LauncherApp {
                                     .fill(p.accent)
                                     .rounding(Rounding::same(6.0));
                                 if ui.add(btn_start).clicked() {
-                                    self.start_builtin_mirror(&serial);
+                                    self.start_builtin_mirror(serial);
                                 }
                             });
                         });
@@ -1287,7 +1434,7 @@ impl LauncherApp {
                                         .fill(Color32::TRANSPARENT)
                                         .rounding(Rounding::same(999.0));
                                     if ui.add(btn).clicked() {
-                                        let ser = serial.clone();
+                                        let ser = serial.to_string();
                                         std::thread::spawn(move || {
                                             let _ = crate::adb::send_keyevent(&ser, keycode);
                                         });
@@ -1299,6 +1446,160 @@ impl LauncherApp {
                 });
             });
         });
+    }
+
+    fn render_adb_scrcpy_panel(&mut self, ui: &mut Ui, serial: &str) {
+        let p = self.palette();
+        let is_running = self.is_scrcpy_active(serial);
+        let mut toggle_scrcpy = false;
+
+        ScrollArea::vertical()
+            .id_salt("adb_scrcpy_dashboard_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+
+                // 1. Status & Launcher Banner
+                Frame::none()
+                    .fill(p.bg_card)
+                    .rounding(Rounding::same(12.0))
+                    .inner_margin(egui::Margin::symmetric(18.0, 16.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            Frame::none()
+                                .fill(Color32::from_rgb(14, 40, 58))
+                                .rounding(Rounding::same(10.0))
+                                .inner_margin(egui::Margin::symmetric(14.0, 14.0))
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new(crate::lucide::SCREEN_SHARE).size(26.0).color(Color32::from_rgb(56, 189, 248)));
+                                });
+
+                            ui.add_space(8.0);
+                            ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("Real-time Screen Mirroring & Control (scrcpy)").size(15.0).strong().color(p.text_primary));
+                                    if is_running {
+                                        let pid = self.adb_scrcpy_pids.get(serial).copied().unwrap_or(0);
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(22, 101, 52))
+                                            .rounding(Rounding::same(999.0))
+                                            .inner_margin(egui::Margin::symmetric(8.0, 2.0))
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new(format!("● LIVE (PID {})", pid)).size(9.5).monospace().color(Color32::from_rgb(187, 247, 208)));
+                                            });
+                                    } else {
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(31, 41, 55))
+                                            .rounding(Rounding::same(999.0))
+                                            .inner_margin(egui::Margin::symmetric(8.0, 2.0))
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new("○ INACTIVE").size(9.5).monospace().color(p.text_muted));
+                                            });
+                                    }
+                                });
+                                ui.add_space(2.0);
+                                ui.label(RichText::new("Hardware-accelerated ultra-low latency (<35ms), 60–120 FPS external window with keyboard/mouse forwarding and audio streaming.")
+                                    .size(11.0).color(p.text_muted));
+                            });
+
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if is_running {
+                                    let btn_stop = egui::Button::new(RichText::new(format!("{} Stop Mirroring", crate::lucide::SQUARE)).size(12.0).strong().color(Color32::WHITE))
+                                        .fill(Color32::from_rgb(220, 38, 38))
+                                        .rounding(Rounding::same(8.0))
+                                        .min_size(Vec2::new(140.0, 34.0));
+                                    if ui.add(btn_stop).clicked() {
+                                        toggle_scrcpy = true;
+                                    }
+                                } else {
+                                    let btn_start = egui::Button::new(RichText::new(format!("{} Launch Screen Mirror", crate::lucide::PLAY)).size(12.0).strong().color(Color32::WHITE))
+                                        .fill(Color32::from_rgb(2, 132, 199))
+                                        .rounding(Rounding::same(8.0))
+                                        .min_size(Vec2::new(170.0, 34.0));
+                                    if ui.add(btn_start).clicked() {
+                                        toggle_scrcpy = true;
+                                    }
+                                }
+                            });
+                        });
+                    });
+
+                ui.add_space(12.0);
+
+                // 2. Stream & Display Parameters Card
+                Frame::none()
+                    .fill(p.bg_card)
+                    .rounding(Rounding::same(12.0))
+                    .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new("STREAM & DISPLAY PARAMETERS").size(10.5).monospace().strong().color(p.text_secondary));
+                        ui.add_space(10.0);
+
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut self.adb_scrcpy_stay_awake, "Stay Awake on Host Power (--stay-awake)");
+                            ui.add_space(16.0);
+                            ui.checkbox(&mut self.adb_scrcpy_screen_off, "Turn Off Physical Device Screen (--turn-screen-off)");
+                            ui.add_space(16.0);
+                            ui.checkbox(&mut self.adb_scrcpy_no_audio, "Mute Audio Forwarding (--no-audio)");
+                        });
+
+                        ui.add_space(12.0);
+
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Target Bitrate:").size(11.0).color(p.text_secondary));
+                            ui.add(egui::Slider::new(&mut self.adb_scrcpy_bitrate_mbps, 2..=32).text("Mbps").step_by(2.0));
+
+                            ui.add_space(20.0);
+
+                            ui.label(RichText::new("Max Framerate:").size(11.0).color(p.text_secondary));
+                            ui.add(egui::Slider::new(&mut self.adb_scrcpy_max_fps, 30..=120).text("FPS").step_by(10.0));
+                        });
+                    });
+
+                ui.add_space(12.0);
+
+                // 3. scrcpy Keyboard Shortcuts & Controls Card
+                Frame::none()
+                    .fill(p.bg_card)
+                    .rounding(Rounding::same(12.0))
+                    .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new("SCRCPY KEYBOARD SHORTCUTS (MOD = Alt or Super)").size(10.5).monospace().strong().color(p.text_secondary));
+                        ui.add_space(10.0);
+
+                        let shortcuts = [
+                            ("MOD + f", "Toggle Fullscreen mode"),
+                            ("MOD + h", "Press Home button"),
+                            ("MOD + b", "Press Back button"),
+                            ("MOD + s", "Open App Switcher (Recents)"),
+                            ("MOD + p", "Power on / off screen"),
+                            ("MOD + Up / Down", "Increase / decrease volume"),
+                            ("MOD + c / v", "Copy / Paste to or from device clipboard"),
+                            ("Drag & Drop .apk", "Directly install APK on device"),
+                        ];
+
+                        ui.columns(2, |cols| {
+                            for (i, (key, desc)) in shortcuts.iter().enumerate() {
+                                let target_col = &mut cols[i % 2];
+                                target_col.horizontal(|ui| {
+                                    Frame::none()
+                                        .fill(Color32::from_rgb(24, 28, 40))
+                                        .rounding(Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new(*key).size(10.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                        });
+                                    ui.label(RichText::new(*desc).size(10.5).color(p.text_muted));
+                                });
+                                target_col.add_space(6.0);
+                            }
+                        });
+                    });
+            });
+
+        if toggle_scrcpy {
+            self.launch_scrcpy_for_device(serial);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

@@ -368,12 +368,12 @@ pub fn query_wifi_status() -> WifiSnapshot {
                             let after = &line[users_idx + 9..];
                             after.split('"').next().unwrap_or("unknown")
                         } else {
-                            "daemon"
+                            "system"
                         };
 
                         // Clean up friendly process name
                         let friendly_name = match proc_name {
-                            "sshd" => "daemon (sshd)",
+                            "sshd" => "sshd",
                             "rquickshare" => "rquickshare (LAN Share)",
                             "Arduino_Cloud_A" | "Arduino_Cloud_Agent" => "Arduino Cloud Agent",
                             "code" => "code (VS Code Server)",

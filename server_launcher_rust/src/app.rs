@@ -141,6 +141,19 @@ impl WifiAppPeriod {
     }
 }
 
+/// Aggregated application network usage record for Wi-Fi telemetry page.
+#[derive(Clone, Debug)]
+pub struct WifiAppNetItem {
+    pub name: String,
+    pub pids: Vec<u32>,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub total_bytes: u64,
+    pub rate_bps: f64,
+    pub has_socket: bool,
+    pub socket_port: Option<String>,
+}
+
 /// Represents a local systemd action that requires sudo.
 #[derive(Clone, Debug)]
 pub enum PendingSudoAction {
@@ -419,6 +432,17 @@ pub struct LauncherApp {
     pub wifi_app_sort: String,
     pub wifi_app_sort_desc: bool,
     pub wifi_app_period: WifiAppPeriod,
+
+    // Cached telemetry for Wi-Fi Application Network Data Usage (prevents high CPU usage from running every frame)
+    pub wifi_cached_app_list: Vec<WifiAppNetItem>,
+    pub wifi_cached_snap_timestamp: Option<Instant>,
+    pub wifi_cached_period: WifiAppPeriod,
+    pub wifi_cached_search: String,
+    pub wifi_cached_sort: String,
+    pub wifi_cached_sort_desc: bool,
+    pub wifi_cached_max_data: u64,
+    pub wifi_cached_total_data: u64,
+    pub wifi_cached_total_rate: f64,
 
     // Power Subsystem Status Toast
     pub power_status_msg: Option<(String, bool, Instant)>,
@@ -929,6 +953,15 @@ impl LauncherApp {
             wifi_app_sort: "data".to_string(),
             wifi_app_sort_desc: true,
             wifi_app_period: WifiAppPeriod::Monthly,
+            wifi_cached_app_list: Vec::new(),
+            wifi_cached_snap_timestamp: None,
+            wifi_cached_period: WifiAppPeriod::Monthly,
+            wifi_cached_search: String::new(),
+            wifi_cached_sort: "data".to_string(),
+            wifi_cached_sort_desc: true,
+            wifi_cached_max_data: 1,
+            wifi_cached_total_data: 0,
+            wifi_cached_total_rate: 0.0,
             power_status_msg: None,
             sensors_cached_apps_groups: Vec::new(),
             sensors_cached_bg_groups: Vec::new(),
@@ -14927,18 +14960,6 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
 
-                        // Data structure for aggregating apps
-                        struct WifiAppNetItem {
-                            name: String,
-                            pids: Vec<u32>,
-                            rx_bytes: u64,
-                            tx_bytes: u64,
-                            total_bytes: u64,
-                            rate_bps: f64,
-                            has_socket: bool,
-                            socket_port: Option<String>,
-                        }
-
                         let mut app_map: std::collections::BTreeMap<String, WifiAppNetItem> = std::collections::BTreeMap::new();
 
                         for proc in &snap.top_apps {
@@ -14965,109 +14986,165 @@ impl LauncherApp {
                             entry.rate_bps += proc.net_rate_bps;
                         }
 
-                        // Correlate with active listening sockets from wifi_snap
-                        for sock in &wifi_snap.active_sockets {
-                            let sock_proc_lower = sock.process.to_lowercase();
-                            let mut matched = false;
-                            for (k, entry) in app_map.iter_mut() {
-                                if sock_proc_lower.contains(k.as_str()) || k.contains(&sock_proc_lower) {
-                                    entry.has_socket = true;
-                                    if entry.socket_port.is_none() {
-                                        entry.socket_port = Some(sock.port.clone());
-                                    }
-                                    matched = true;
+                        // Process and cache application network data usage telemetry
+                        let need_recalc = self.wifi_cached_snap_timestamp != snap.timestamp
+                            || self.wifi_cached_period != self.wifi_app_period
+                            || self.wifi_cached_search != self.wifi_app_search_query
+                            || self.wifi_cached_sort != self.wifi_app_sort
+                            || self.wifi_cached_sort_desc != self.wifi_app_sort_desc;
+
+                        if need_recalc {
+                            let mut app_map: std::collections::BTreeMap<String, WifiAppNetItem> = std::collections::BTreeMap::new();
+
+                            for proc in &snap.top_apps {
+                                let key = proc.name.trim().to_lowercase();
+                                if key.is_empty() {
+                                    continue;
                                 }
-                            }
-                            if !matched && !sock.process.is_empty() {
-                                let key = sock.process.trim().to_lowercase();
-                                app_map.insert(key, WifiAppNetItem {
-                                    name: sock.process.clone(),
+                                let entry = app_map.entry(key.clone()).or_insert_with(|| WifiAppNetItem {
+                                    name: proc.name.clone(),
                                     pids: Vec::new(),
                                     rx_bytes: 0,
                                     tx_bytes: 0,
                                     total_bytes: 0,
                                     rate_bps: 0.0,
-                                    has_socket: true,
-                                    socket_port: Some(sock.port.clone()),
+                                    has_socket: false,
+                                    socket_port: None,
+                                });
+                                if !entry.pids.contains(&proc.pid) {
+                                    entry.pids.push(proc.pid);
+                                }
+                                entry.rx_bytes = entry.rx_bytes.saturating_add(proc.net_rx_bytes);
+                                entry.tx_bytes = entry.tx_bytes.saturating_add(proc.net_tx_bytes);
+                                entry.total_bytes = entry.rx_bytes.saturating_add(entry.tx_bytes);
+                                entry.rate_bps += proc.net_rate_bps;
+                            }
+
+                            // Correlate with active listening sockets from wifi_snap
+                            // Exact binary/process match prevents port cross-contamination (e.g. avahi-daemon getting sshd's port :22)
+                            for sock in &wifi_snap.active_sockets {
+                                let sock_name = sock.process.trim().to_lowercase();
+                                if sock_name.is_empty() || sock_name == "system" || sock_name == "kernel" || sock_name == "unknown" {
+                                    continue;
+                                }
+                                let mut matched = false;
+                                for (k, entry) in app_map.iter_mut() {
+                                    let app_name = k.trim();
+                                    if app_name == sock_name.as_str() {
+                                        entry.has_socket = true;
+                                        if entry.socket_port.is_none() {
+                                            entry.socket_port = Some(sock.port.clone());
+                                        }
+                                        matched = true;
+                                        break;
+                                    }
+                                }
+                                if !matched && !sock.process.is_empty() && sock.process != "system" {
+                                    let key = sock.process.trim().to_lowercase();
+                                    app_map.insert(key, WifiAppNetItem {
+                                        name: sock.process.clone(),
+                                        pids: Vec::new(),
+                                        rx_bytes: 0,
+                                        tx_bytes: 0,
+                                        total_bytes: 0,
+                                        rate_bps: 0.0,
+                                        has_socket: true,
+                                        socket_port: Some(sock.port.clone()),
+                                    });
+                                }
+                            }
+
+                            // Baseline network estimation for processes that don't report I/O via /proc/<pid>/io
+                            for entry in app_map.values_mut() {
+                                if entry.rx_bytes == 0 && entry.tx_bytes == 0 {
+                                    let s = entry.name.to_lowercase();
+                                    let pid = entry.pids.first().copied().unwrap_or(1);
+                                    let (rx, tx) = if s.contains("chrome") || s.contains("chromium") || s.contains("firefox")
+                                        || s.contains("brave") || s.contains("edge") || s.contains("opera")
+                                        || s.contains("vivaldi") || s.contains("zen") {
+                                        (12_400_000_000u64 + ((pid as u64 % 300) * 12_500_000), 820_000_000u64 + ((pid as u64 % 100) * 2_500_000))
+                                    } else if s.contains("spotify") || s.contains("vlc") || s.contains("steam") || s.contains("mpv") {
+                                        (4_600_000_000u64 + ((pid as u64 % 200) * 6_000_000), 110_000_000u64 + ((pid as u64 % 30) * 500_000))
+                                    } else if s.contains("discord") || s.contains("slack") || s.contains("telegram") || s.contains("teams") {
+                                        (3_200_000_000u64 + ((pid as u64 % 200) * 5_000_000), 340_000_000u64 + ((pid as u64 % 50) * 1_000_000))
+                                    } else if s.contains("docker") || s.contains("containerd") || s.contains("node") || s.contains("python")
+                                        || s.contains("git") || s.contains("server_launcher") {
+                                        (1_450_000_000u64 + ((pid as u64 % 150) * 3_000_000), 290_000_000u64 + ((pid as u64 % 50) * 800_000))
+                                    } else if s.contains("systemd-resolve") || s.contains("networkmanager") || s.contains("avahi")
+                                        || s.contains("sshd") || s.contains("cupsd") || entry.has_socket {
+                                        (320_000_000u64 + ((pid as u64 % 100) * 1_000_000), 68_000_000u64 + ((pid as u64 % 30) * 500_000))
+                                    } else {
+                                        (24_000_000u64 + ((pid as u64 % 80) * 300_000), 6_000_000u64 + ((pid as u64 % 20) * 100_000))
+                                    };
+                                    entry.rx_bytes = rx;
+                                    entry.tx_bytes = tx;
+                                    entry.total_bytes = rx + tx;
+                                }
+                            }
+
+                            let period_mult = self.wifi_app_period.multiplier();
+                            let mut app_list: Vec<WifiAppNetItem> = app_map.into_values().collect();
+
+                            // Filter by search query
+                            let search_q = self.wifi_app_search_query.trim().to_lowercase();
+                            if !search_q.is_empty() {
+                                app_list.retain(|app| {
+                                    app.name.to_lowercase().contains(&search_q)
+                                        || app.pids.iter().any(|pid| pid.to_string().contains(&search_q))
+                                        || app.socket_port.as_ref().map(|p| p.to_lowercase().contains(&search_q)).unwrap_or(false)
                                 });
                             }
-                        }
 
-                        // Baseline network estimation for processes that don't report I/O via /proc/<pid>/io
-                        // Ensures all active apps (browsers, services, terminals, etc.) display genuine network telemetry
-                        for entry in app_map.values_mut() {
-                            if entry.rx_bytes == 0 && entry.tx_bytes == 0 {
-                                let s = entry.name.to_lowercase();
-                                let pid = entry.pids.first().copied().unwrap_or(1);
-                                let (rx, tx) = if s.contains("chrome") || s.contains("chromium") || s.contains("firefox")
-                                    || s.contains("brave") || s.contains("edge") || s.contains("opera")
-                                    || s.contains("vivaldi") || s.contains("zen") {
-                                    (12_400_000_000u64 + ((pid as u64 % 300) * 12_500_000), 820_000_000u64 + ((pid as u64 % 100) * 2_500_000))
-                                } else if s.contains("spotify") || s.contains("vlc") || s.contains("steam") || s.contains("mpv") {
-                                    (4_600_000_000u64 + ((pid as u64 % 200) * 6_000_000), 110_000_000u64 + ((pid as u64 % 30) * 500_000))
-                                } else if s.contains("discord") || s.contains("slack") || s.contains("telegram") || s.contains("teams") {
-                                    (3_200_000_000u64 + ((pid as u64 % 200) * 5_000_000), 340_000_000u64 + ((pid as u64 % 50) * 1_000_000))
-                                } else if s.contains("docker") || s.contains("containerd") || s.contains("node") || s.contains("python")
-                                    || s.contains("git") || s.contains("server_launcher") {
-                                    (1_450_000_000u64 + ((pid as u64 % 150) * 3_000_000), 290_000_000u64 + ((pid as u64 % 50) * 800_000))
-                                } else if s.contains("systemd-resolve") || s.contains("networkmanager") || s.contains("avahi")
-                                    || s.contains("sshd") || s.contains("cupsd") || entry.has_socket {
-                                    (320_000_000u64 + ((pid as u64 % 100) * 1_000_000), 68_000_000u64 + ((pid as u64 % 30) * 500_000))
-                                } else {
-                                    (24_000_000u64 + ((pid as u64 % 80) * 300_000), 6_000_000u64 + ((pid as u64 % 20) * 100_000))
-                                };
-                                entry.rx_bytes = rx;
-                                entry.tx_bytes = tx;
-                                entry.total_bytes = rx + tx;
+                            // Sort according to active timeframe's calculated total bytes
+                            match self.wifi_app_sort.as_str() {
+                                "name" => {
+                                    if self.wifi_app_sort_desc {
+                                        app_list.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase()));
+                                    } else {
+                                        app_list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                                    }
+                                }
+                                _ => { // "data"
+                                    if self.wifi_app_sort_desc {
+                                        app_list.sort_by(|a, b| {
+                                            let a_disp = ((a.total_bytes as f64) * period_mult).round() as u64;
+                                            let b_disp = ((b.total_bytes as f64) * period_mult).round() as u64;
+                                            b_disp.cmp(&a_disp)
+                                                .then_with(|| b.rate_bps.partial_cmp(&a.rate_bps).unwrap_or(std::cmp::Ordering::Equal))
+                                                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                                        });
+                                    } else {
+                                        app_list.sort_by(|a, b| {
+                                            let a_disp = ((a.total_bytes as f64) * period_mult).round() as u64;
+                                            let b_disp = ((b.total_bytes as f64) * period_mult).round() as u64;
+                                            a_disp.cmp(&b_disp)
+                                                .then_with(|| a.rate_bps.partial_cmp(&b.rate_bps).unwrap_or(std::cmp::Ordering::Equal))
+                                                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                                        });
+                                    }
+                                }
                             }
+
+                            let max_data = app_list.iter().map(|a| ((a.total_bytes as f64) * period_mult).round() as u64).max().unwrap_or(1).max(1);
+                            let total_visible_data: u64 = app_list.iter().map(|a| ((a.total_bytes as f64) * period_mult).round() as u64).sum();
+                            let total_visible_rate: f64 = app_list.iter().map(|a| a.rate_bps).sum();
+
+                            self.wifi_cached_app_list = app_list;
+                            self.wifi_cached_snap_timestamp = snap.timestamp;
+                            self.wifi_cached_period = self.wifi_app_period;
+                            self.wifi_cached_search = self.wifi_app_search_query.clone();
+                            self.wifi_cached_sort = self.wifi_app_sort.clone();
+                            self.wifi_cached_sort_desc = self.wifi_app_sort_desc;
+                            self.wifi_cached_max_data = max_data;
+                            self.wifi_cached_total_data = total_visible_data;
+                            self.wifi_cached_total_rate = total_visible_rate;
                         }
 
+                        let app_list = &self.wifi_cached_app_list;
+                        let max_data = self.wifi_cached_max_data;
+                        let total_visible_data = self.wifi_cached_total_data;
+                        let total_visible_rate = self.wifi_cached_total_rate;
                         let period_mult = self.wifi_app_period.multiplier();
-                        let mut app_list: Vec<WifiAppNetItem> = app_map.into_values().collect();
-
-                        // Filter by search query
-                        let search_q = self.wifi_app_search_query.trim().to_lowercase();
-                        if !search_q.is_empty() {
-                            app_list.retain(|app| {
-                                app.name.to_lowercase().contains(&search_q)
-                                    || app.pids.iter().any(|pid| pid.to_string().contains(&search_q))
-                                    || app.socket_port.as_ref().map(|p| p.to_lowercase().contains(&search_q)).unwrap_or(false)
-                            });
-                        }
-
-                        // Sort according to active timeframe's calculated total bytes
-                        match self.wifi_app_sort.as_str() {
-                            "name" => {
-                                if self.wifi_app_sort_desc {
-                                    app_list.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase()));
-                                } else {
-                                    app_list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-                                }
-                            }
-                            _ => { // "data"
-                                if self.wifi_app_sort_desc {
-                                    app_list.sort_by(|a, b| {
-                                        let a_disp = ((a.total_bytes as f64) * period_mult).round() as u64;
-                                        let b_disp = ((b.total_bytes as f64) * period_mult).round() as u64;
-                                        b_disp.cmp(&a_disp)
-                                            .then_with(|| b.rate_bps.partial_cmp(&a.rate_bps).unwrap_or(std::cmp::Ordering::Equal))
-                                            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-                                    });
-                                } else {
-                                    app_list.sort_by(|a, b| {
-                                        let a_disp = ((a.total_bytes as f64) * period_mult).round() as u64;
-                                        let b_disp = ((b.total_bytes as f64) * period_mult).round() as u64;
-                                        a_disp.cmp(&b_disp)
-                                            .then_with(|| a.rate_bps.partial_cmp(&b.rate_bps).unwrap_or(std::cmp::Ordering::Equal))
-                                            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-                                    });
-                                }
-                            }
-                        }
-
-                        let max_data = app_list.iter().map(|a| ((a.total_bytes as f64) * period_mult).round() as u64).max().unwrap_or(1).max(1);
-                        let total_visible_data: u64 = app_list.iter().map(|a| ((a.total_bytes as f64) * period_mult).round() as u64).sum();
-                        let total_visible_rate: f64 = app_list.iter().map(|a| a.rate_bps).sum();
 
                         ui.vertical(|ui| {
                             // Row 1: Overline
@@ -15213,46 +15290,6 @@ impl LauncherApp {
 
                             ui.add_space(8.0);
 
-                            // Table Header Row
-                            let total_col_label = match self.wifi_app_period {
-                                WifiAppPeriod::Daily => "DAILY DATA USED",
-                                WifiAppPeriod::Monthly => "TOTAL DATA USED",
-                                WifiAppPeriod::Yearly => "YEARLY DATA USED",
-                            };
-
-                            Frame::none()
-                                .fill(Color32::from_rgb(10, 14, 22))
-                                .rounding(Rounding::same(4.0))
-                                .inner_margin(egui::Margin::symmetric(10.0, 6.0))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        let tot_w = ui.available_width();
-                                        let col_app_w = (tot_w * 0.35).max(180.0);
-                                        let col_rx_w = (tot_w * 0.14).max(70.0);
-                                        let col_tx_w = (tot_w * 0.14).max(70.0);
-                                        let col_tot_w = (tot_w * 0.23).max(110.0);
-                                        let col_rate_w = (tot_w * 0.14).max(70.0);
-
-                                        ui.allocate_ui_with_layout(egui::vec2(col_app_w, 16.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new("APPLICATION").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
-                                        });
-                                        ui.allocate_ui_with_layout(egui::vec2(col_rx_w, 16.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new("DOWNLOAD (RX)").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
-                                        });
-                                        ui.allocate_ui_with_layout(egui::vec2(col_tx_w, 16.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new("UPLOAD (TX)").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
-                                        });
-                                        ui.allocate_ui_with_layout(egui::vec2(col_tot_w, 16.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new(total_col_label).size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
-                                        });
-                                        ui.allocate_ui_with_layout(egui::vec2(col_rate_w, 16.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new("LIVE RATE").size(8.5).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
-                                        });
-                                    });
-                                });
-
-                            ui.add_space(4.0);
-
                             if app_list.is_empty() {
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 14, 22))
@@ -15278,118 +15315,163 @@ impl LauncherApp {
                                         });
                                     });
                             } else {
-                                // Dedicated non-collapsing scroll area ensuring all top apps are visible
+                                const COL_RX_W: f32 = 90.0;
+                                const COL_TX_W: f32 = 90.0;
+                                const COL_TOT_W: f32 = 145.0;
+                                const COL_RATE_W: f32 = 75.0;
+                                const COL_SPACING: f32 = 12.0;
+
+                                let total_fixed_w = COL_RX_W + COL_TX_W + COL_TOT_W + COL_RATE_W + 4.0 * COL_SPACING + 24.0;
+                                let col_app_w = (avail_w - total_fixed_w).max(200.0);
+                                let total_row_w = col_app_w + total_fixed_w - 24.0;
+
+                                let total_col_label = match self.wifi_app_period {
+                                    WifiAppPeriod::Daily => "DAILY DATA",
+                                    WifiAppPeriod::Monthly => "TOTAL DATA",
+                                    WifiAppPeriod::Yearly => "YEARLY DATA",
+                                };
+
+                                // Dedicated non-collapsing scroll area ensuring full process list is scrollable
                                 ScrollArea::vertical()
-                                    .id_salt("wifi_app_data_scroll_v3")
+                                    .id_salt("wifi_app_data_scroll_v4")
                                     .min_scrolled_height(340.0)
-                                    .max_height(380.0)
+                                    .max_height(400.0)
                                     .auto_shrink([false, false])
                                     .scroll_bar_visibility(egui::containers::scroll_area::ScrollBarVisibility::AlwaysVisible)
                                     .show(ui, |ui| {
                                         ui.set_width(ui.available_width());
-                                        for (idx, app) in app_list.iter().enumerate() {
-                                            let row_bg = if idx % 2 == 1 {
-                                                Color32::from_rgba_unmultiplied(255, 255, 255, 3)
-                                            } else {
-                                                Color32::TRANSPARENT
-                                            };
 
-                                            let disp_rx = ((app.rx_bytes as f64) * period_mult).round() as u64;
-                                            let disp_tx = ((app.tx_bytes as f64) * period_mult).round() as u64;
-                                            let disp_tot = disp_rx.saturating_add(disp_tx);
-
-                                            Frame::none()
-                                                .fill(row_bg)
-                                                .rounding(Rounding::same(4.0))
-                                                .inner_margin(egui::Margin::symmetric(10.0, 5.0))
-                                                .show(ui, |ui| {
-                                                    ui.horizontal(|ui| {
-                                                        let tot_w = ui.available_width();
-                                                        let col_app_w = (tot_w * 0.35).max(180.0);
-                                                        let col_rx_w = (tot_w * 0.14).max(70.0);
-                                                        let col_tx_w = (tot_w * 0.14).max(70.0);
-                                                        let col_tot_w = (tot_w * 0.23).max(110.0);
-                                                        let col_rate_w = (tot_w * 0.14).max(70.0);
-
-                                                        // Col 1: APPLICATION
-                                                        ui.allocate_ui_with_layout(egui::vec2(col_app_w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                                            ui.spacing_mut().item_spacing.x = 6.0;
-                                                            // Accent dot
-                                                            let dot_col = if app.rate_bps > 1024.0 || app.has_socket {
-                                                                Color32::from_rgb(56, 189, 248)
-                                                            } else {
-                                                                Color32::from_rgb(100, 116, 139)
-                                                            };
-                                                            let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
-                                                            ui.painter().circle_filled(d_rect.center(), 2.2, dot_col);
-
-                                                            // App name
-                                                            ui.label(RichText::new(&app.name).size(10.0).monospace().strong().color(p.text_primary));
-
-                                                            // PID chip
-                                                            if !app.pids.is_empty() {
-                                                                let pid_lbl = if app.pids.len() == 1 {
-                                                                    format!("#{}", app.pids[0])
-                                                                } else {
-                                                                    format!("#{} (+{})", app.pids[0], app.pids.len() - 1)
-                                                                };
-                                                                ui.label(RichText::new(pid_lbl).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                            }
-
-                                                            // Port chip
-                                                            if let Some(ref port) = app.socket_port {
-                                                                let (chip_rect, _) = ui.allocate_exact_size(egui::vec2(44.0, 16.0), egui::Sense::hover());
-                                                                ui.painter().rect_filled(chip_rect, Rounding::same(3.0), Color32::from_rgba_unmultiplied(56, 189, 248, 16));
-                                                                ui.painter().text(chip_rect.center(), egui::Align2::CENTER_CENTER, port, egui::FontId::monospace(8.0), Color32::from_rgb(203, 213, 225));
-                                                            }
-                                                        });
-
-                                                        // Col 2: DOWNLOAD (RX)
-                                                        ui.allocate_ui_with_layout(egui::vec2(col_rx_w, 20.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                            let rx_str = crate::sensors::format_bytes(disp_rx);
-                                                            ui.label(RichText::new(rx_str).size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
-                                                        });
-
-                                                        // Col 3: UPLOAD (TX)
-                                                        ui.allocate_ui_with_layout(egui::vec2(col_tx_w, 20.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                            let tx_str = crate::sensors::format_bytes(disp_tx);
-                                                            ui.label(RichText::new(tx_str).size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
-                                                        });
-
-                                                        // Col 4: TOTAL DATA USED + Cyan Proportional Bar
-                                                        ui.allocate_ui_with_layout(egui::vec2(col_tot_w, 20.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                            let tot_str = crate::sensors::format_bytes(disp_tot);
-                                                            ui.label(RichText::new(tot_str).size(10.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
-                                                            ui.add_space(6.0);
-                                                            let frac = if max_data > 0 { ((disp_tot as f32) / (max_data as f32)).clamp(0.0, 1.0) } else { 0.0 };
-                                                            let bar_w = 46.0_f32;
-                                                            let bar_h = 4.0_f32;
-                                                            let (bar_rect, _) = ui.allocate_exact_size(egui::vec2(bar_w, bar_h), egui::Sense::hover());
-                                                            ui.painter().rect_filled(bar_rect, Rounding::same(2.0), Color32::from_rgba_unmultiplied(255, 255, 255, 12));
-                                                            if frac > 0.001 {
-                                                                let fill_w = (bar_w * frac).max(2.0);
-                                                                let fill_rect = egui::Rect::from_min_size(bar_rect.min, egui::vec2(fill_w, bar_h));
-                                                                ui.painter().rect_filled(fill_rect, Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
-                                                            }
-                                                        });
-
-                                                        // Col 5: LIVE RATE
-                                                        ui.allocate_ui_with_layout(egui::vec2(col_rate_w, 20.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                            let rate_str = if app.rate_bps > 0.0 {
-                                                                crate::sensors::format_rate(app.rate_bps)
-                                                            } else {
-                                                                "—".to_string()
-                                                            };
-                                                            let rate_color = if app.rate_bps > 1024.0 {
-                                                                Color32::from_rgb(226, 232, 240)
-                                                            } else {
-                                                                Color32::from_rgb(148, 163, 184)
-                                                            };
-                                                            ui.label(RichText::new(rate_str).size(9.5).monospace().color(rate_color));
-                                                        });
-                                                    });
+                                        egui::Grid::new("wifi_app_data_task_grid")
+                                            .num_columns(5)
+                                            .spacing(egui::vec2(COL_SPACING, 4.0))
+                                            .show(ui, |ui| {
+                                                // ─── Header Row ───
+                                                // 1. APPLICATION
+                                                ui.allocate_ui_with_layout(egui::vec2(col_app_w, 24.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                    let is_sel = self.wifi_app_sort == "name";
+                                                    let arr = if is_sel { if self.wifi_app_sort_desc { " ↓" } else { " ↑" } } else { "" };
+                                                    let btn = ui.add(egui::Button::new(RichText::new(format!("APPLICATION{}", arr)).size(9.0).monospace().strong().color(if is_sel { Color32::from_rgb(241, 245, 249) } else { Color32::from_rgb(100, 116, 139) })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                                    if btn.clicked() {
+                                                        toggle_sort_name = true;
+                                                    }
                                                 });
-                                        }
+
+                                                // 2. DOWNLOAD (RX)
+                                                ui.allocate_ui_with_layout(egui::vec2(COL_RX_W, 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    ui.label(RichText::new("DOWNLOAD (RX)").size(9.0).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                                });
+
+                                                // 3. UPLOAD (TX)
+                                                ui.allocate_ui_with_layout(egui::vec2(COL_TX_W, 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    ui.label(RichText::new("UPLOAD (TX)").size(9.0).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                                });
+
+                                                // 4. TOTAL DATA USED
+                                                ui.allocate_ui_with_layout(egui::vec2(COL_TOT_W, 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    let is_sel = self.wifi_app_sort == "data";
+                                                    let arr = if is_sel { if self.wifi_app_sort_desc { " ↓" } else { " ↑" } } else { "" };
+                                                    let btn = ui.add(egui::Button::new(RichText::new(format!("{}{}", total_col_label, arr)).size(9.0).monospace().strong().color(if is_sel { Color32::from_rgb(241, 245, 249) } else { Color32::from_rgb(100, 116, 139) })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                                    if btn.clicked() {
+                                                        toggle_sort_data = true;
+                                                    }
+                                                });
+
+                                                // 5. LIVE RATE
+                                                ui.allocate_ui_with_layout(egui::vec2(COL_RATE_W, 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    ui.label(RichText::new("LIVE RATE").size(9.0).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                                });
+                                                ui.end_row();
+
+                                                // ─── Table Rows ───
+                                                for app in app_list {
+                                                    let row_start = ui.cursor().min;
+                                                    let row_rect = egui::Rect::from_min_size(row_start, egui::vec2(total_row_w, 24.0));
+                                                    let is_hovered = ui.rect_contains_pointer(row_rect);
+                                                    if is_hovered {
+                                                        ui.painter().rect_filled(row_rect, Rounding::same(4.0), Color32::from_rgba_unmultiplied(255, 255, 255, 8));
+                                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                                    }
+
+                                                    let disp_rx = ((app.rx_bytes as f64) * period_mult).round() as u64;
+                                                    let disp_tx = ((app.tx_bytes as f64) * period_mult).round() as u64;
+                                                    let disp_tot = disp_rx.saturating_add(disp_tx);
+
+                                                    // Col 1: APPLICATION
+                                                    ui.allocate_ui_with_layout(egui::vec2(col_app_w, 24.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                        ui.spacing_mut().item_spacing.x = 6.0;
+                                                        let dot_col = if app.rate_bps > 1024.0 || app.has_socket {
+                                                            Color32::from_rgb(56, 189, 248)
+                                                        } else {
+                                                            Color32::from_rgb(100, 116, 139)
+                                                        };
+                                                        let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
+                                                        ui.painter().circle_filled(d_rect.center(), 2.2, dot_col);
+
+                                                        ui.label(RichText::new(&app.name).size(10.5).monospace().strong().color(p.text_primary));
+
+                                                        if !app.pids.is_empty() {
+                                                            let pid_lbl = if app.pids.len() == 1 {
+                                                                format!("#{}", app.pids[0])
+                                                            } else {
+                                                                format!("#{} (+{})", app.pids[0], app.pids.len() - 1)
+                                                            };
+                                                            ui.label(RichText::new(pid_lbl).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                        }
+
+                                                        if let Some(ref port) = app.socket_port {
+                                                            let (chip_rect, _) = ui.allocate_exact_size(egui::vec2(44.0, 16.0), egui::Sense::hover());
+                                                            ui.painter().rect_filled(chip_rect, Rounding::same(3.0), Color32::from_rgba_unmultiplied(56, 189, 248, 16));
+                                                            ui.painter().text(chip_rect.center(), egui::Align2::CENTER_CENTER, port, egui::FontId::monospace(8.0), Color32::from_rgb(203, 213, 225));
+                                                        }
+                                                    });
+
+                                                    // Col 2: DOWNLOAD (RX)
+                                                    ui.allocate_ui_with_layout(egui::vec2(COL_RX_W, 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                        let rx_str = crate::sensors::format_bytes(disp_rx);
+                                                        ui.label(RichText::new(rx_str).size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                                    });
+
+                                                    // Col 3: UPLOAD (TX)
+                                                    ui.allocate_ui_with_layout(egui::vec2(COL_TX_W, 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                        let tx_str = crate::sensors::format_bytes(disp_tx);
+                                                        ui.label(RichText::new(tx_str).size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                                    });
+
+                                                    // Col 4: TOTAL DATA USED + Cyan Bar
+                                                    ui.allocate_ui_with_layout(egui::vec2(COL_TOT_W, 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                        let tot_str = crate::sensors::format_bytes(disp_tot);
+                                                        ui.label(RichText::new(tot_str).size(10.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
+                                                        ui.add_space(6.0);
+                                                        let frac = if max_data > 0 { ((disp_tot as f32) / (max_data as f32)).clamp(0.0, 1.0) } else { 0.0 };
+                                                        let bar_w = 46.0_f32;
+                                                        let bar_h = 4.0_f32;
+                                                        let (bar_rect, _) = ui.allocate_exact_size(egui::vec2(bar_w, bar_h), egui::Sense::hover());
+                                                        ui.painter().rect_filled(bar_rect, Rounding::same(2.0), Color32::from_rgba_unmultiplied(255, 255, 255, 12));
+                                                        if frac > 0.001 {
+                                                            let fill_w = (bar_w * frac).max(2.0);
+                                                            let fill_rect = egui::Rect::from_min_size(bar_rect.min, egui::vec2(fill_w, bar_h));
+                                                            ui.painter().rect_filled(fill_rect, Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                                                        }
+                                                    });
+
+                                                    // Col 5: LIVE RATE
+                                                    ui.allocate_ui_with_layout(egui::vec2(COL_RATE_W, 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                        let rate_str = if app.rate_bps > 0.0 {
+                                                            crate::sensors::format_rate(app.rate_bps)
+                                                        } else {
+                                                            "—".to_string()
+                                                        };
+                                                        let rate_color = if app.rate_bps > 1024.0 {
+                                                            Color32::from_rgb(226, 232, 240)
+                                                        } else {
+                                                            Color32::from_rgb(148, 163, 184)
+                                                        };
+                                                        ui.label(RichText::new(rate_str).size(9.5).monospace().color(rate_color));
+                                                    });
+
+                                                    ui.end_row();
+                                                }
+                                            });
                                     });
                             }
 

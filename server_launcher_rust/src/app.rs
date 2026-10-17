@@ -408,11 +408,12 @@ pub struct LauncherApp {
     pub last_telemetry_sample: Instant,
 
     // Power & Battery State (matching Image 1)
-    pub power_preset: usize, // 0: Eco 6W, 1: Balanced 12W, 2: Turbo 18W
+    pub power_preset: usize, // 0: Eco, 1: Balanced, 2: Turbo
     pub power_conservation: bool, // 80% ceiling
     pub power_rapid_charge: bool,
     pub power_usb_always_on: bool,
     pub power_ceiling: f32,
+    pub cpu_tdp_profile: crate::power::CpuTdpProfile,
 
     // Thermal & Fan Control State (matching Image 2)
     pub fan_mode: usize, // 0: Silent, 1: Balanced, 2: Turbo Max
@@ -747,6 +748,7 @@ impl LauncherApp {
         let (init_cons_on, init_cons_ceil) = crate::power::query_charge_conservation();
         let init_rapid = crate::power::query_rapid_charge();
         let init_usb_on = crate::power::query_usb_always_on();
+        let cpu_tdp_profile = crate::power::detect_cpu_tdp_capability();
 
         Self {
             active_sidebar_tab: SidebarTab::Servers,
@@ -952,11 +954,12 @@ impl LauncherApp {
             per_disk_write_history: std::collections::HashMap::new(),
             per_disk_read_history: std::collections::HashMap::new(),
             last_telemetry_sample: Instant::now(),
-            power_preset: crate::power::governor_to_preset_index(&crate::power::query_current_governor()),
+            power_preset: crate::power::query_current_preset(),
             power_conservation: init_cons_on,
             power_rapid_charge: init_rapid,
             power_usb_always_on: init_usb_on,
             power_ceiling: init_cons_ceil as f32,
+            cpu_tdp_profile,
             fan_mode: 0, // Silent
             fan_full_blast: false,
             fan_test_start: None,
@@ -16730,12 +16733,30 @@ impl LauncherApp {
 
                                 // 3 Presets in row
                                 ui.columns(3, |cols| {
-                                    let presets = [
-                                        ("Quiet / Eco", "Continuous PL1 Cap (6W)", "powersave", 0),
-                                        ("Balanced", "Optimized Dynamic (12W)", "schedutil", 1),
-                                        ("Turbo Boost", "Peak Burst TDP (18W)", "performance", 2),
+                                    let profile = self.cpu_tdp_profile;
+                                    let quiet_desc = if profile.quiet_pl1_watts.fract() == 0.0 {
+                                        format!("Continuous PL1 Cap ({:.0}W)", profile.quiet_pl1_watts)
+                                    } else {
+                                        format!("Continuous PL1 Cap ({:.1}W)", profile.quiet_pl1_watts)
+                                    };
+                                    let balanced_desc = if profile.balanced_pl1_watts.fract() == 0.0 {
+                                        format!("Optimized Dynamic ({:.0}W)", profile.balanced_pl1_watts)
+                                    } else {
+                                        format!("Optimized Dynamic ({:.1}W)", profile.balanced_pl1_watts)
+                                    };
+                                    let turbo_desc = if profile.turbo_pl2_watts.fract() == 0.0 {
+                                        format!("Peak Burst TDP ({:.0}W)", profile.turbo_pl2_watts)
+                                    } else {
+                                        format!("Peak Burst TDP ({:.1}W)", profile.turbo_pl2_watts)
+                                    };
+
+                                    let presets: [(&str, String, &str, usize); 3] = [
+                                        ("Quiet / Eco", quiet_desc, "powersave", 0),
+                                        ("Balanced", balanced_desc, "schedutil", 1),
+                                        ("Turbo Boost", turbo_desc, "performance", 2),
                                     ];
-                                    for &(name, desc, gov_name, idx) in &presets {
+                                    for (name, desc, gov_name, idx) in &presets {
+                                        let idx = *idx;
                                         let is_sel = self.power_preset == idx;
                                         let border = if is_sel { Stroke::new(1.2_f32, Color32::from_rgb(56, 189, 248)) } else { Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)) };
                                         let bg = if is_sel { Color32::from_rgba_unmultiplied(56, 189, 248, 18) } else { Color32::from_rgb(10, 15, 29) };
@@ -16749,7 +16770,7 @@ impl LauncherApp {
                                                 ui.set_width(ui.available_width());
                                                 ui.horizontal(|ui| {
                                                     let title_col = if is_sel { Color32::from_rgb(241, 245, 249) } else { Color32::from_rgb(203, 213, 225) };
-                                                    ui.label(RichText::new(name).size(11.0).strong().color(title_col));
+                                                    ui.label(RichText::new(*name).size(11.0).strong().color(title_col));
 
                                                     if is_sel {
                                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -16773,33 +16794,32 @@ impl LauncherApp {
                                                     .show(ui, |ui| {
                                                         ui.horizontal(|ui| {
                                                             ui.label(RichText::new("GOV:").size(8.0).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                                            ui.label(RichText::new(gov_name).size(9.0).monospace().strong().color(if is_sel { Color32::from_rgb(241, 245, 249) } else { Color32::from_rgb(203, 213, 225) }));
+                                                            ui.label(RichText::new(*gov_name).size(9.0).monospace().strong().color(if is_sel { Color32::from_rgb(241, 245, 249) } else { Color32::from_rgb(203, 213, 225) }));
                                                         });
                                                     });
                                             });
 
                                         if frame_resp.response.interact(egui::Sense::click()).clicked() {
                                             self.power_preset = idx;
-                                            let target_gov = crate::power::preset_to_governor(idx);
                                             if let Some(hid) = host_id {
                                                 if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
                                                     let host_name = host.name.clone();
-                                                    let target_gov_str = target_gov.to_string();
+                                                    let cmd_str = crate::power::build_remote_preset_command(idx, &self.cpu_tdp_profile);
                                                     std::thread::spawn(move || {
-                                                        let cmd_str = format!("echo {} | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true", target_gov_str);
                                                         let mut cmd = crate::remote::build_ssh_command(&host, &cmd_str);
                                                         let _ = cmd.output();
                                                     });
-                                                    self.power_status_msg = Some((format!("Applied governor '{}' to remote host {}", target_gov, host_name), false, Instant::now()));
+                                                    self.power_status_msg = Some((format!("Applied preset to remote host {}", host_name), false, Instant::now()));
                                                 }
                                             } else {
-                                                match crate::power::apply_governor(target_gov) {
+                                                match crate::power::apply_thermal_power_preset(idx, &self.cpu_tdp_profile) {
                                                     Ok(msg) => self.power_status_msg = Some((msg, false, Instant::now())),
                                                     Err(err) => self.power_status_msg = Some((err, true, Instant::now())),
                                                 }
                                             }
                                         }
                                     }
+
                                 });
                             });
                     });

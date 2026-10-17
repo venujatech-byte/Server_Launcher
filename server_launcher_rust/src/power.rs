@@ -36,6 +36,21 @@ pub fn governor_to_preset_index(gov: &str) -> usize {
     }
 }
 
+/// Detects the currently active thermal/power preset from ACPI EC platform profile or CPU governor.
+pub fn query_current_preset() -> usize {
+    if let Ok(p) = fs::read_to_string("/sys/firmware/acpi/platform_profile") {
+        let trimmed = p.trim().to_lowercase();
+        if trimmed == "low-power" || trimmed == "quiet" || trimmed == "cool" {
+            return 0;
+        } else if trimmed == "performance" || trimmed == "boost" {
+            return 2;
+        } else if trimmed == "balanced" || trimmed == "normal" {
+            return 1;
+        }
+    }
+    governor_to_preset_index(&query_current_governor())
+}
+
 /// Converts a preset index to the corresponding governor string.
 pub fn preset_to_governor(idx: usize) -> &'static str {
     match idx {
@@ -43,6 +58,455 @@ pub fn preset_to_governor(idx: usize) -> &'static str {
         2 => "performance",
         _ => "schedutil",
     }
+}
+
+/// Real CPU TDP capabilities detected from hardware RAPL MSRs, ACPI EC interfaces, or CPU silicon classification.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CpuTdpProfile {
+    /// Nominal / Base processor TDP (Watts).
+    pub nominal_watts: f32,
+    /// Quiet / Eco PL1 limit (Watts) — reduced thermal load & fan silence.
+    pub quiet_pl1_watts: f32,
+    /// Balanced PL1 limit (Watts) — standard factory continuous power.
+    pub balanced_pl1_watts: f32,
+    /// Turbo Boost PL2 burst limit (Watts) — maximum transient silicon output.
+    pub turbo_pl2_watts: f32,
+    /// Whether Intel/AMD RAPL sysfs power capping interface was detected.
+    pub has_rapl: bool,
+    /// Whether Linux standard ACPI EC platform_profile was detected.
+    pub has_platform_profile: bool,
+}
+
+impl Default for CpuTdpProfile {
+    fn default() -> Self {
+        Self {
+            nominal_watts: 15.0,
+            quiet_pl1_watts: 10.0,
+            balanced_pl1_watts: 15.0,
+            turbo_pl2_watts: 25.0,
+            has_rapl: false,
+            has_platform_profile: false,
+        }
+    }
+}
+
+/// Fallback CPU classification heuristic based on /proc/cpuinfo model name and core count.
+fn classify_cpu_nominal_tdp() -> f32 {
+    let cpu_info = fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
+    let model_line = cpu_info
+        .lines()
+        .find(|l| l.starts_with("model name"))
+        .unwrap_or("")
+        .to_lowercase();
+
+    let core_count = cpu_info
+        .lines()
+        .filter(|l| l.starts_with("processor"))
+        .count()
+        .max(1);
+
+    // Ultra-low power SoCs (4W - 6W)
+    if model_line.contains("silver")
+        || model_line.contains("atom")
+        || model_line.contains("celeron n")
+        || model_line.contains("celeron j")
+        || model_line.contains("pentium n")
+        || model_line.contains("pentium j")
+        || model_line.contains("n5000")
+        || model_line.contains("n5030")
+        || model_line.contains("n6000")
+        || model_line.contains("n100")
+        || model_line.contains("n200")
+        || model_line.contains("n300")
+    {
+        return 6.0;
+    }
+
+    // Y-series ultra-mobile (7W)
+    if model_line.contains("7y") || model_line.contains("8y") || model_line.contains("y54") {
+        return 7.0;
+    }
+
+    // High-performance mobile H / HS / HX / HK (45W - 55W)
+    if model_line.contains(" h ")
+        || model_line.ends_with("h")
+        || model_line.contains(" hs")
+        || model_line.contains(" hx")
+        || model_line.contains(" hk")
+    {
+        return 45.0;
+    }
+
+    // P-series mobile (28W)
+    if model_line.contains(" p ") || model_line.contains("260p") || model_line.contains("340p") || model_line.contains("360p") {
+        return 28.0;
+    }
+
+    // Server / HEDT (125W - 250W)
+    if model_line.contains("xeon") || model_line.contains("epyc") || model_line.contains("threadripper") {
+        return 180.0;
+    }
+
+    // Desktop unlocked K / KF / KS / X (105W - 125W)
+    if model_line.contains(" k ") || model_line.ends_with("k") || model_line.contains(" kf") || model_line.contains(" ks") || model_line.contains(" x") {
+        return 125.0;
+    }
+
+    // Standard U-series mobile (15W)
+    if model_line.contains(" u ") || model_line.ends_with("u") || model_line.contains("g1") || model_line.contains("g4") || model_line.contains("g7") {
+        return 15.0;
+    }
+
+    // Generic heuristic based on logical core count
+    if core_count <= 2 {
+        10.0
+    } else if core_count <= 4 {
+        15.0
+    } else if core_count <= 8 {
+        45.0
+    } else {
+        65.0
+    }
+}
+
+fn calculate_turbo_tdp(nominal: f32) -> f32 {
+    if nominal <= 8.0 {
+        (nominal * 1.33).round().max(nominal + 1.5) // e.g. 6W -> 8W
+    } else if nominal <= 15.0 {
+        (nominal * 1.60).round() // e.g. 15W -> 24W
+    } else if nominal <= 28.0 {
+        (nominal * 1.50).round() // e.g. 28W -> 42W
+    } else if nominal <= 45.0 {
+        (nominal * 1.45).round() // e.g. 45W -> 65W
+    } else if nominal <= 65.0 {
+        (nominal * 1.45).round() // e.g. 65W -> 95W
+    } else {
+        (nominal * 1.50).round() // e.g. 125W -> 185W
+    }
+}
+
+/// Queries the real processor TDP capabilities across Intel, AMD, and ARM architectures.
+/// Scans Intel/AMD RAPL (Running Average Power Limit) sysfs registers, ACPI EC platform profiles,
+/// hwmon power capping, or CPU classification heuristics.
+pub fn detect_cpu_tdp_capability() -> CpuTdpProfile {
+    let mut detected_pl1: Option<f32> = None;
+    let mut detected_pl2: Option<f32> = None;
+    let mut has_rapl = false;
+
+    // 1. Scan Intel & AMD RAPL via powercap sysfs (/sys/class/powercap/intel-rapl)
+    if let Ok(entries) = fs::read_dir("/sys/class/powercap") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if fname.starts_with("intel-rapl:") && !fname[11..].contains(':') {
+                // This is a package root domain (package-0, package-1)
+                has_rapl = true;
+                // Constraint 0: PL1 (Long term)
+                let c0_file = path.join("constraint_0_power_limit_uw");
+                let c0_max_file = path.join("constraint_0_max_power_uw");
+                if let Ok(s) = fs::read_to_string(&c0_file).or_else(|_| fs::read_to_string(&c0_max_file)) {
+                    if let Ok(uw) = s.trim().parse::<u64>() {
+                        if uw > 500_000 && uw < 1_000_000_000 {
+                            let w = (uw as f32) / 1_000_000.0;
+                            detected_pl1 = Some(w);
+                        }
+                    }
+                }
+                // Constraint 1: PL2 (Short term / Peak Burst)
+                let c1_file = path.join("constraint_1_power_limit_uw");
+                let c1_max_file = path.join("constraint_1_max_power_uw");
+                if let Ok(s) = fs::read_to_string(&c1_file).or_else(|_| fs::read_to_string(&c1_max_file)) {
+                    if let Ok(uw) = s.trim().parse::<u64>() {
+                        if uw > 500_000 && uw < 1_000_000_000 {
+                            let w = (uw as f32) / 1_000_000.0;
+                            if w > detected_pl1.unwrap_or(0.0) {
+                                detected_pl2 = Some(w);
+                            }
+                        }
+                    }
+                }
+                if detected_pl1.is_some() {
+                    break;
+                }
+            }
+        }
+    }
+
+    // 2. Scan hwmon power caps if RAPL was not found
+    if detected_pl1.is_none() {
+        if let Ok(entries) = fs::read_dir("/sys/class/hwmon") {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                for cap_name in ["power1_cap", "power1_max", "power1_crit"] {
+                    if let Ok(s) = fs::read_to_string(p.join(cap_name)) {
+                        if let Ok(uw) = s.trim().parse::<u64>() {
+                            if uw > 1_000_000 && uw < 1_000_000_000 {
+                                let w = (uw as f32) / 1_000_000.0;
+                                detected_pl1 = Some(w);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if detected_pl1.is_some() {
+                    break;
+                }
+            }
+        }
+    }
+
+    // 3. Nominal TDP
+    let nominal_watts = if let Some(pl1) = detected_pl1 {
+        let rounded = (pl1 * 2.0).round() / 2.0;
+        if rounded > 0.0 { rounded } else { 15.0 }
+    } else {
+        classify_cpu_nominal_tdp()
+    };
+
+    // Calculate real 3 TDP limits based on processor capability
+    let quiet_pl1_watts = if nominal_watts <= 8.0 {
+        ((nominal_watts * 0.75) * 2.0).round() / 2.0 // e.g. 6W -> 4.5W
+    } else if nominal_watts <= 20.0 {
+        (nominal_watts * 0.67).round().max(7.0) // e.g. 15W -> 10W
+    } else if nominal_watts <= 35.0 {
+        (nominal_watts * 0.70).round() // e.g. 28W -> 20W
+    } else if nominal_watts <= 65.0 {
+        (nominal_watts * 0.65).round() // e.g. 45W -> 30W, 65W -> 45W
+    } else {
+        (nominal_watts * 0.70).round() // e.g. 125W -> 85W
+    };
+
+    let balanced_pl1_watts = nominal_watts;
+
+    let turbo_pl2_watts = if let Some(pl2) = detected_pl2 {
+        let rounded = (pl2 * 2.0).round() / 2.0;
+        if rounded > balanced_pl1_watts { rounded } else { calculate_turbo_tdp(nominal_watts) }
+    } else {
+        calculate_turbo_tdp(nominal_watts)
+    };
+
+    let has_platform_profile = Path::new("/sys/firmware/acpi/platform_profile").exists();
+
+    CpuTdpProfile {
+        nominal_watts,
+        quiet_pl1_watts,
+        balanced_pl1_watts,
+        turbo_pl2_watts,
+        has_rapl,
+        has_platform_profile,
+    }
+}
+
+/// Applies thermal, EC (Embedded Controller), and RAPL TDP power limits for the selected preset index:
+/// 0 = Quiet / Eco (powersave, low-power EC platform profile, clamped PL1)
+/// 1 = Balanced (schedutil, balanced EC platform profile, nominal PL1)
+/// 2 = Turbo Boost (performance, performance EC platform profile, peak PL2 burst)
+pub fn apply_thermal_power_preset(idx: usize, profile: &CpuTdpProfile) -> Result<String, String> {
+    let gov = preset_to_governor(idx);
+    let mut applied_actions: Vec<String> = Vec::new();
+
+    // 1. CPU Scaling Governor
+    let gov_applied = apply_governor(gov);
+    if gov_applied.is_ok() {
+        applied_actions.push(format!("Gov: {}", gov));
+    }
+
+    // 2. CPU Energy Performance Preference (EPP)
+    let epp_val = match idx {
+        0 => "power",
+        2 => "performance",
+        _ => "balance_performance",
+    };
+    let mut epp_set = false;
+    if let Ok(entries) = fs::read_dir("/sys/devices/system/cpu") {
+        for entry in entries.flatten() {
+            let path = entry.path().join("cpufreq/energy_performance_preference");
+            if path.exists() {
+                if fs::write(&path, epp_val).is_ok() {
+                    epp_set = true;
+                }
+            }
+        }
+    }
+    if epp_set {
+        applied_actions.push(format!("EPP: {}", epp_val));
+    }
+
+    // 3. Embedded Controller (EC) via ACPI platform_profile (/sys/firmware/acpi/platform_profile)
+    let ec_profile = match idx {
+        0 => "low-power",
+        2 => "performance",
+        _ => "balanced",
+    };
+    let acpi_profile_path = "/sys/firmware/acpi/platform_profile";
+    if Path::new(acpi_profile_path).exists() {
+        let choice = if let Ok(choices) = fs::read_to_string("/sys/firmware/acpi/platform_profile_choices") {
+            if idx == 0 && choices.contains("quiet") && !choices.contains("low-power") {
+                "quiet"
+            } else {
+                ec_profile
+            }
+        } else {
+            ec_profile
+        };
+
+        if fs::write(acpi_profile_path, choice).is_ok() {
+            applied_actions.push(format!("EC: {}", choice));
+        } else {
+            let choice_s = choice.to_string();
+            std::thread::spawn(move || {
+                let cmd = format!("echo {} | tee /sys/firmware/acpi/platform_profile", choice_s);
+                let _ = Command::new("pkexec").args(["sh", "-c", &cmd]).output();
+            });
+            applied_actions.push(format!("EC: {} (auth)", choice));
+        }
+    }
+
+    // 4. Vendor-Specific EC Hardware Registers
+    // Lenovo IdeaPad / Legion EC Thermal Mode
+    for lenovo_thermal in [
+        "/sys/bus/platform/drivers/ideapad_laptop/VPC2004:00/thermal_mode",
+        "/sys/bus/platform/devices/VPC2004:00/thermal_mode",
+    ] {
+        if Path::new(lenovo_thermal).exists() {
+            let t_val = match idx { 0 => "1", 2 => "3", _ => "2" };
+            if fs::write(lenovo_thermal, t_val).is_ok() {
+                applied_actions.push(format!("Lenovo EC: mode {}", t_val));
+            }
+        }
+    }
+
+    // ASUS EC Thermal Throttle Policy
+    let asus_thermal = "/sys/devices/platform/asus-nb-wmi/throttle_thermal_policy";
+    if Path::new(asus_thermal).exists() {
+        let t_val = match idx { 0 => "2", 2 => "1", _ => "0" };
+        let _ = fs::write(asus_thermal, t_val);
+        applied_actions.push(format!("ASUS EC: policy {}", t_val));
+    }
+
+    // Dell EC Thermal Management via cctk / smbios-thermal-ctl
+    let dell_mode = match idx { 0 => "Quiet", 2 => "Performance", _ => "Balanced" };
+    let cctk_path = Command::new("which").arg("cctk").output();
+    if let Ok(out) = cctk_path {
+        if out.status.success() {
+            let arg = format!("--ThermalManagement={}", dell_mode);
+            std::thread::spawn(move || {
+                let _ = Command::new("pkexec").args(["cctk", &arg]).output();
+            });
+            applied_actions.push(format!("Dell EC: {}", dell_mode));
+        }
+    }
+    let smbios_th = Command::new("which").arg("smbios-thermal-ctl").output();
+    if let Ok(out) = smbios_th {
+        if out.status.success() {
+            let arg = format!("--set-thermal-mode={}", dell_mode.to_lowercase());
+            std::thread::spawn(move || {
+                let _ = Command::new("pkexec").args(["smbios-thermal-ctl", &arg]).output();
+            });
+            applied_actions.push(format!("Dell EC: {}", dell_mode));
+        }
+    }
+
+    // 5. Hardware RAPL (Running Average Power Limit) Real Silicon TDP Enforcement
+    let (target_pl1_w, target_pl2_w) = match idx {
+        0 => (profile.quiet_pl1_watts, profile.quiet_pl1_watts * 1.15),
+        2 => (profile.turbo_pl2_watts, profile.turbo_pl2_watts * 1.25),
+        _ => (profile.balanced_pl1_watts, profile.balanced_pl1_watts * 1.25),
+    };
+    let target_pl1_uw = (target_pl1_w * 1_000_000.0) as u64;
+    let target_pl2_uw = (target_pl2_w * 1_000_000.0) as u64;
+
+    let mut rapl_written = false;
+    let mut rapl_files_to_elevate = Vec::new();
+
+    if let Ok(entries) = fs::read_dir("/sys/class/powercap") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if fname.starts_with("intel-rapl:") && !fname[11..].contains(':') {
+                let c0 = path.join("constraint_0_power_limit_uw");
+                let c1 = path.join("constraint_1_power_limit_uw");
+                let en = path.join("enabled");
+
+                let _ = fs::write(&en, "1");
+
+                if fs::write(&c0, format!("{}", target_pl1_uw)).is_ok() {
+                    rapl_written = true;
+                    let _ = fs::write(&c1, format!("{}", target_pl2_uw));
+                } else {
+                    rapl_files_to_elevate.push((c0, c1, en));
+                }
+            }
+        }
+    }
+
+    if rapl_written {
+        applied_actions.push(format!("PL1: {:.1}W", target_pl1_w));
+    } else if !rapl_files_to_elevate.is_empty() {
+        let files = rapl_files_to_elevate;
+        std::thread::spawn(move || {
+            for (c0, c1, en) in files {
+                let cmd = format!(
+                    "echo 1 | tee \"{}\" 2>/dev/null; echo {} | tee \"{}\" 2>/dev/null; echo {} | tee \"{}\" 2>/dev/null",
+                    en.display(), target_pl1_uw, c0.display(), target_pl2_uw, c1.display()
+                );
+                let _ = Command::new("pkexec").args(["sh", "-c", &cmd]).output();
+            }
+        });
+        applied_actions.push(format!("PL1: {:.1}W (auth)", target_pl1_w));
+    }
+
+    let preset_name = match idx {
+        0 => "Quiet / Eco",
+        2 => "Turbo Boost",
+        _ => "Balanced",
+    };
+
+    if applied_actions.is_empty() {
+        Ok(format!("{} active: Governor '{}' configured", preset_name, gov))
+    } else {
+        Ok(format!("{} applied [{}]", preset_name, applied_actions.join(" • ")))
+    }
+}
+
+/// Builds an SSH command to configure thermal preset, EC platform profile, and RAPL TDP limits on a remote host.
+pub fn build_remote_preset_command(idx: usize, profile: &CpuTdpProfile) -> String {
+    let gov = preset_to_governor(idx);
+    let ec_profile = match idx { 0 => "low-power", 2 => "performance", _ => "balanced" };
+    let epp = match idx { 0 => "power", 2 => "performance", _ => "balance_performance" };
+    let lenovo_ec = match idx { 0 => "1", 2 => "3", _ => "2" };
+    let asus_ec = match idx { 0 => "2", 2 => "1", _ => "0" };
+    let dell_mode = match idx { 0 => "Quiet", 2 => "Performance", _ => "Balanced" };
+
+    let (target_pl1_w, target_pl2_w) = match idx {
+        0 => (profile.quiet_pl1_watts, profile.quiet_pl1_watts * 1.15),
+        2 => (profile.turbo_pl2_watts, profile.turbo_pl2_watts * 1.25),
+        _ => (profile.balanced_pl1_watts, profile.balanced_pl1_watts * 1.25),
+    };
+    let pl1_uw = (target_pl1_w * 1_000_000.0) as u64;
+    let pl2_uw = (target_pl2_w * 1_000_000.0) as u64;
+
+    format!(
+        "echo {gov} | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true; \
+         echo {epp} | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference 2>/dev/null || true; \
+         echo {ec} | sudo tee /sys/firmware/acpi/platform_profile 2>/dev/null || true; \
+         echo {lenovo} | sudo tee /sys/bus/platform/drivers/ideapad_laptop/VPC2004:00/thermal_mode 2>/dev/null || true; \
+         echo {lenovo} | sudo tee /sys/bus/platform/devices/VPC2004:00/thermal_mode 2>/dev/null || true; \
+         echo {asus} | sudo tee /sys/devices/platform/asus-nb-wmi/throttle_thermal_policy 2>/dev/null || true; \
+         sudo cctk --ThermalManagement={dell} 2>/dev/null || true; \
+         sudo smbios-thermal-ctl --set-thermal-mode={dell_lower} 2>/dev/null || true; \
+         for f in /sys/class/powercap/intel-rapl:*/constraint_0_power_limit_uw; do echo {pl1} | sudo tee \"$f\" 2>/dev/null; done; \
+         for f in /sys/class/powercap/intel-rapl:*/constraint_1_power_limit_uw; do echo {pl2} | sudo tee \"$f\" 2>/dev/null; done || true",
+        gov = gov,
+        epp = epp,
+        ec = ec_profile,
+        lenovo = lenovo_ec,
+        asus = asus_ec,
+        dell = dell_mode,
+        dell_lower = dell_mode.to_lowercase(),
+        pl1 = pl1_uw,
+        pl2 = pl2_uw
+    )
 }
 
 /// Applies the CPU governor via direct sysfs or cpupower / pkexec.
@@ -90,6 +554,7 @@ pub fn apply_governor(gov: &str) -> Result<String, String> {
 
     Ok(format!("Requested governor '{}' via authorization agent", gov))
 }
+
 
 /// Queries the current battery charge conservation threshold from sysfs or vendor platform drivers.
 /// Returns (is_active, ceiling_percentage).

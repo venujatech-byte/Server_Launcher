@@ -125,3 +125,4 @@ jobs:
             - **Commit**: [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
             - **Branch**: `${{ github.ref_name }}`
             - **Artifacts**: Linux (`.tar.gz`) & Windows (`.zip`)
+

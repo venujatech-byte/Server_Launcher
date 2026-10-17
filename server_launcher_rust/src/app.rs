@@ -19338,19 +19338,6 @@ impl LauncherApp {
                                                     });
                                                 });
                                         } else {
-                                            Frame::none()
-                                                .fill(pill_bg)
-                                                .stroke(Stroke::NONE)
-                                                .rounding(pill_rounding)
-                                                .inner_margin(pill_margin)
-                                                .show(ui, |ui| {
-                                                    ui.horizontal(|ui| {
-                                                        ui.spacing_mut().item_spacing.x = 4.0;
-                                                        ui.label(RichText::new(crate::lucide::STOP).size(9.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
-                                                        ui.label(RichText::new("Idle").size(11.0).monospace().color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
-                                                    });
-                                                });
-
                                             if s.config.port > 0 {
                                                 Frame::none()
                                                     .fill(pill_bg)
@@ -20130,19 +20117,6 @@ impl LauncherApp {
                                             });
                                         });
                                 } else {
-                                    Frame::none()
-                                        .fill(pill_bg)
-                                        .stroke(Stroke::NONE)
-                                        .rounding(pill_rounding)
-                                        .inner_margin(pill_margin)
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.spacing_mut().item_spacing.x = 4.0;
-                                                ui.label(RichText::new(crate::lucide::STOP).size(9.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
-                                                ui.label(RichText::new("Idle").size(11.0).monospace().color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
-                                            });
-                                        });
-
                                     if s.config.port > 0 {
                                         Frame::none()
                                             .fill(pill_bg)

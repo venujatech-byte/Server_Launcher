@@ -72,37 +72,29 @@ jobs:
         run: |
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             TAG_NAME="${{ github.ref_name }}"
-            IS_PRERELEASE=false
             RELEASE_TITLE="Release ${TAG_NAME}"
           else
-            TAG_NAME="continuous"
-            IS_PRERELEASE=true
-            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-            RELEASE_TITLE="Continuous Build (${SHORT_SHA})"
+            CARGO_VERSION=$(grep -m1 '^version = ' server_launcher_rust/Cargo.toml | cut -d '"' -f 2)
+            MAJOR_MINOR=$(echo "$CARGO_VERSION" | cut -d '.' -f 1,2)
+            TAG_NAME="v${MAJOR_MINOR}.${{ github.run_number }}"
+            RELEASE_TITLE="Release ${TAG_NAME}"
           fi
           echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
-          echo "is_prerelease=${IS_PRERELEASE}" >> "$GITHUB_OUTPUT"
           echo "release_title=${RELEASE_TITLE}" >> "$GITHUB_OUTPUT"
-
-      - name: Update Continuous Git Tag
-        if: steps.release_info.outputs.tag_name == 'continuous'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -f continuous ${{ github.sha }}
-          git push -f origin continuous
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release_info.outputs.tag_name }}
           name: ${{ steps.release_info.outputs.release_title }}
-          prerelease: ${{ steps.release_info.outputs.is_prerelease == 'true' }}
+          target_commitish: ${{ github.sha }}
+          prerelease: false
+          make_latest: true
           files: release-assets/*
           generate_release_notes: true
-          make_latest: ${{ steps.release_info.outputs.is_prerelease == 'false' }}
           body: |
             ### Automated Build
+            - **Version**: `${{ steps.release_info.outputs.tag_name }}`
             - **Commit**: [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
             - **Branch**: `${{ github.ref_name }}`
             - **Artifact**: Linux (`server_launcher-linux-x86_64.tar.gz`)

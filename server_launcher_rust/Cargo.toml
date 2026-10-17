@@ -1,6 +1,6 @@
 [package]
 name = "server_launcher"
-version = "1.0.0"
+version = "0.1.0"
 edition = "2021"
 authors = ["Venuka Silva"]
 description = "Cross-platform developer server launcher for Linux & Windows written in Rust"

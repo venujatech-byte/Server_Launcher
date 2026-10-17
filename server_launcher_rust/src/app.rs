@@ -16154,6 +16154,7 @@ impl LauncherApp {
                 let bat_pct = snap.power.total_battery_pct.unwrap_or(100.0);
                 let remaining_wh = bat.and_then(|b| b.energy_wh).unwrap_or(if is_remote { 0.0 } else { 45.2 });
                 let full_wh = bat.and_then(|b| b.energy_full_wh).unwrap_or(if is_remote { 0.0 } else { 48.0 });
+                let design_wh = bat.and_then(|b| b.energy_design_wh).unwrap_or(if is_remote { 0.0 } else { 48.0 });
                 let bat_health = bat.and_then(|b| b.health_pct).unwrap_or_else(|| {
                     if let (Some(f), Some(d)) = (bat.and_then(|b| b.energy_full_wh), bat.and_then(|b| b.energy_design_wh)) {
                         if d > 0.0 {
@@ -16505,8 +16506,10 @@ impl LauncherApp {
 
                                     ui.add_space(10.0);
 
-                                    // 3 Metric Cards in row
+                                    // 3 Metric Cards in row (Identical geometry, min_height, and padding)
                                     ui.columns(3, |cols| {
+                                        let card_min_height = 96.0;
+
                                         // Card 1: State of Charge
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 15, 29))
@@ -16515,6 +16518,7 @@ impl LauncherApp {
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[0], |ui| {
                                                 ui.set_width(ui.available_width());
+                                                ui.set_min_height(card_min_height);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::BATTERY_CHARGING).size(11.0).color(Color32::from_rgb(56, 189, 248)));
@@ -16560,6 +16564,7 @@ impl LauncherApp {
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[1], |ui| {
                                                 ui.set_width(ui.available_width());
+                                                ui.set_min_height(card_min_height);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(Color32::from_rgb(56, 189, 248)));
@@ -16583,6 +16588,13 @@ impl LauncherApp {
                                                         ui.label(RichText::new(format!("{:.1}%", bat_health)).size(8.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
                                                     });
                                                 });
+                                                ui.add_space(2.0);
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new("Design Spec").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                        ui.label(RichText::new(format!("{:.1} Wh", design_wh)).size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                                    });
+                                                });
                                             });
 
                                         // Card 3: Lifecycle Endurance
@@ -16593,6 +16605,7 @@ impl LauncherApp {
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[2], |ui| {
                                                 ui.set_width(ui.available_width());
+                                                ui.set_min_height(card_min_height);
                                                 let cycles_val = bat.and_then(|b| b.cycle_count).unwrap_or(0);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
@@ -16621,6 +16634,14 @@ impl LauncherApp {
                                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                         let life_label = if cycles_val == 0 { "1000 (New)" } else { "1000 Total" };
                                                         ui.label(RichText::new(life_label).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                    });
+                                                });
+                                                ui.add_space(2.0);
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new("Cell Condition").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                        let cond_str = if cycles_val == 0 { "Factory New" } else if cycles_val < 350 { "Optimal Tier" } else { "Service Tier" };
+                                                        ui.label(RichText::new(cond_str).size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
                                                     });
                                                 });
                                             });

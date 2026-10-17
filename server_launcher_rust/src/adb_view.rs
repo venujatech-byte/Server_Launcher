@@ -79,6 +79,19 @@ impl LauncherApp {
         let screen = ctx.screen_rect();
         let modal_w = 560.0_f32.min(screen.width() - 32.0);
 
+        // 1. Semi-transparent backdrop overlay with click-outside dismissal
+        let backdrop_area = egui::Area::new(egui::Id::new("add_device_selector_backdrop"))
+            .fixed_pos(screen.min)
+            .order(egui::Order::Middle);
+        let bg_resp = backdrop_area.show(ctx, |ui| {
+            let (rect, resp) = ui.allocate_exact_size(screen.size(), egui::Sense::click());
+            ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha(150));
+            resp
+        }).inner;
+        if bg_resp.clicked() {
+            self.add_device_selector_modal_open = false;
+        }
+
         egui::Window::new("Add Connection or Device")
             .id(egui::Id::new("add_device_selector_dialog"))
             .title_bar(false)
@@ -118,11 +131,11 @@ impl LauncherApp {
                         ui.label(RichText::new("Choose the connection target type to configure").size(11.0).color(p.text_muted));
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let btn_close = egui::Button::new(RichText::new("✕").size(12.0).strong().color(p.text_muted))
+                        let btn_close = egui::Button::new(RichText::new(crate::lucide::X).size(12.0).color(p.text_muted))
                             .fill(p.bg_button)
                             .rounding(Rounding::same(999.0))
                             .min_size(Vec2::splat(26.0));
-                        if ui.add(btn_close).clicked() {
+                        if ui.add(btn_close).on_hover_text("Close dialog (Esc)").clicked() {
                             self.add_device_selector_modal_open = false;
                         }
                     });
@@ -132,7 +145,10 @@ impl LauncherApp {
 
                 // Option 1: SSH Remote PC
                 let mut choose_ssh = false;
-                let (ssh_rect, ssh_resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 94.0), egui::Sense::click());
+                let (ssh_rect, ssh_resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 100.0), egui::Sense::click());
+                if ssh_resp.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
                 let ssh_hover = ssh_resp.hovered();
                 let ssh_bg = if ssh_hover { Color32::from_rgb(22, 26, 38) } else { Color32::from_rgb(14, 16, 23) };
                 let ssh_border = if ssh_hover { p.accent } else { Color32::from_rgb(34, 38, 54) };
@@ -158,6 +174,10 @@ impl LauncherApp {
                             ui.label(RichText::new("Connect via SSH protocol to manage Linux servers, systemd units, custom bash scripts, terminal sessions, and live sensors telemetry.")
                                 .size(10.5).color(p.text_muted));
                         });
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let arrow_col = if ssh_hover { p.accent } else { p.text_muted.gamma_multiply(0.6) };
+                            ui.label(RichText::new(crate::lucide::CHEVRON_RIGHT).size(16.0).color(arrow_col));
+                        });
                     });
                 });
                 if ssh_resp.clicked() {
@@ -168,7 +188,10 @@ impl LauncherApp {
 
                 // Option 2: Android / ADB Device
                 let mut choose_adb = false;
-                let (adb_rect, adb_resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 94.0), egui::Sense::click());
+                let (adb_rect, adb_resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 100.0), egui::Sense::click());
+                if adb_resp.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
                 let adb_hover = adb_resp.hovered();
                 let adb_bg = if adb_hover { Color32::from_rgb(22, 26, 38) } else { Color32::from_rgb(14, 16, 23) };
                 let adb_border = if adb_hover { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(34, 38, 54) };
@@ -191,14 +214,20 @@ impl LauncherApp {
                                 ui.label(RichText::new("USB & Wireless ADB").size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
                             });
                             ui.add_space(3.0);
-                            ui.label(RichText::new("Full Android control suite: screen mirror (scrcpy), bidirectional clipboard share, interactive shell terminal, storage explorer, and firmware / recovery tools.")
+                            ui.label(RichText::new("Full Android control suite: screen mirror (built-in & scrcpy), bidirectional clipboard share, interactive shell terminal, storage explorer, and firmware / recovery tools.")
                                 .size(10.5).color(p.text_muted));
+                        });
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let arrow_col = if adb_hover { Color32::from_rgb(56, 189, 248) } else { p.text_muted.gamma_multiply(0.6) };
+                            ui.label(RichText::new(crate::lucide::CHEVRON_RIGHT).size(16.0).color(arrow_col));
                         });
                     });
                 });
                 if adb_resp.clicked() {
                     choose_adb = true;
                 }
+
+                ui.add_space(4.0);
 
                 if choose_ssh {
                     self.add_device_selector_modal_open = false;
@@ -227,6 +256,19 @@ impl LauncherApp {
         let p = self.palette();
         let screen = ctx.screen_rect();
         let modal_w = 600.0_f32.min(screen.width() - 32.0);
+
+        // Backdrop overlay
+        let backdrop_area = egui::Area::new(egui::Id::new("adb_add_modal_backdrop"))
+            .fixed_pos(screen.min)
+            .order(egui::Order::Middle);
+        let bg_resp = backdrop_area.show(ctx, |ui| {
+            let (rect, resp) = ui.allocate_exact_size(screen.size(), egui::Sense::click());
+            ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha(150));
+            resp
+        }).inner;
+        if bg_resp.clicked() {
+            self.adb_add_modal_open = false;
+        }
 
         egui::Window::new("Connect Android Device (ADB)")
             .id(egui::Id::new("adb_add_device_dialog"))
@@ -267,11 +309,11 @@ impl LauncherApp {
                         ui.label(RichText::new("Pair attached USB devices or connect via Wireless ADB (TCP/IP)").size(11.0).color(p.text_muted));
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let btn_close = egui::Button::new(RichText::new("✕").size(12.0).strong().color(p.text_muted))
+                        let btn_close = egui::Button::new(RichText::new(crate::lucide::X).size(12.0).color(p.text_muted))
                             .fill(p.bg_button)
                             .rounding(Rounding::same(999.0))
                             .min_size(Vec2::splat(26.0));
-                        if ui.add(btn_close).clicked() {
+                        if ui.add(btn_close).on_hover_text("Close dialog (Esc)").clicked() {
                             self.adb_add_modal_open = false;
                         }
                     });
@@ -2553,10 +2595,10 @@ impl LauncherApp {
                                         }
                                     }
 
-                                    let btn_manual_disc = egui::Button::new(RichText::new("✕ Disconnect").size(11.0).color(p.text_secondary))
+                                    let btn_manual_disc = egui::Button::new(RichText::new(format!("{} Disconnect", crate::lucide::X)).size(11.0).color(p.text_secondary))
                                         .fill(p.bg_button)
                                         .rounding(Rounding::same(6.0))
-                                        .min_size(Vec2::new(100.0, 28.0));
+                                        .min_size(Vec2::new(110.0, 28.0));
                                     if ui.add(btn_manual_disc).clicked() {
                                         let ip = self.adb_wireless_ip_input.trim();
                                         let port = self.adb_wireless_port_input.trim();

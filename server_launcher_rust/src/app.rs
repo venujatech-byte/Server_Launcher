@@ -9393,7 +9393,7 @@ impl LauncherApp {
                         ui.label(RichText::new("Customize themes, accent colors, system autostart, and server backups").size(10.5).color(palette.text_muted));
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let btn_close = egui::Button::new(RichText::new("✕").size(12.0).strong().color(palette.text_muted))
+                        let btn_close = egui::Button::new(RichText::new(crate::lucide::X).size(12.0).color(palette.text_muted))
                             .fill(palette.bg_button)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))

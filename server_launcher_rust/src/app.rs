@@ -11818,7 +11818,8 @@ impl LauncherApp {
                             ui.columns(3, |zcols| {
                                 // Sub-col 1: SWAP SPACE ALLOCATED
                                 Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 4))
+                                    .fill(Color32::from_rgb(10, 15, 26))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)))
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(9.0, 7.0))
                                     .show(&mut zcols[0], |ui| {
@@ -11842,7 +11843,8 @@ impl LauncherApp {
 
                                 // Sub-col 2: COMPRESSION RATIO
                                 Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 4))
+                                    .fill(Color32::from_rgb(10, 15, 26))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)))
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(9.0, 7.0))
                                     .show(&mut zcols[1], |ui| {
@@ -11865,7 +11867,8 @@ impl LauncherApp {
 
                                 // Sub-col 3: PAGE I/O TRANSFER
                                 Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 4))
+                                    .fill(Color32::from_rgb(10, 15, 26))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)))
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(9.0, 7.0))
                                     .show(&mut zcols[2], |ui| {
@@ -11899,17 +11902,13 @@ impl LauncherApp {
                             ui.add_space(8.0);
                             Frame::none()
                                 .fill(Color32::from_rgb(10, 15, 26))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)))
                                 .rounding(Rounding::same(6.0))
                                 .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                                 .show(ui, |ui| {
                                     ui.set_width(ui.available_width());
                                     ui.horizontal_wrapped(|ui| {
                                         ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);
-                                        Frame::none()
-                                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 22))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(5.0, 1.5))
-                             
                                     });
                                 });
                         });
@@ -11973,7 +11972,8 @@ impl LauncherApp {
                                 let short_name = if name.chars().count() > 22 { format!("{}…", name.chars().take(20).collect::<String>()) } else { name.to_string() };
 
                                 Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 4))
+                                    .fill(Color32::from_rgb(10, 15, 26))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)))
                                     .rounding(Rounding::same(5.0))
                                     .inner_margin(egui::Margin::symmetric(8.0, 4.5))
                                     .show(ui, |ui| {
@@ -11984,11 +11984,11 @@ impl LauncherApp {
                                             ui.label(RichText::new(&short_name).size(10.5).strong().color(p.text_primary));
 
                                             Frame::none()
-                                                .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 7))
+                                                .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
                                                 .rounding(Rounding::same(3.0))
                                                 .inner_margin(egui::Margin::symmetric(4.0, 1.0))
                                                 .show(ui, |ui| {
-                                                    ui.label(RichText::new(format!("PID {}", pid)).size(8.0).monospace().color(p.text_muted));
+                                                    ui.label(RichText::new(format!("PID {}", pid)).size(8.0).monospace().color(Color32::from_rgb(203, 213, 225)));
                                                 });
 
                                             ui.label(RichText::new(desc).size(8.5).monospace().color(p.text_muted));

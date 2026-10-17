@@ -11004,9 +11004,7 @@ impl LauncherApp {
                                         .fill(Color32::from_rgb(18, 38, 58))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                        .show(ui, |ui| {
-                                            ui.label(RichText::new("ACTIVE GOVERNOR").size(9.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                        });
+                       
                                 });
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -11173,7 +11171,7 @@ impl LauncherApp {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(Color32::from_rgb(56, 189, 248)));
-                            ui.label(RichText::new("Utilization History (60 Seconds)").size(12.5).strong().color(p.text_primary));
+                            ui.label(RichText::new("Utilization").size(12.5).strong().color(p.text_primary));
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.horizontal(|ui| {
@@ -11398,10 +11396,10 @@ impl LauncherApp {
                                     .rounding(Rounding::same(4.0))
                                     .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                     .show(ui, |ui| {
-                                        let slot_label = if host_id.is_some() { "REMOTE // ACTIVE" } else { "SLOT 1 // ACTIVE" };
+                                        let slot_label = if host_id.is_some() { "REMOTE : ACTIVE" } else { "SLOT 1 : ACTIVE" };
                                         ui.label(RichText::new(slot_label).size(9.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                     });
-                                let topol_label = if host_id.is_some() { "PHYSICAL TOPOLOGY: HOST MEMORY POOL" } else { "PHYSICAL TOPOLOGY: SINGLE-CHANNEL" };
+                                let topol_label = if host_id.is_some() { "HOST MEMORY POOL" } else { "SINGLE-CHANNEL" };
                                 ui.label(RichText::new(topol_label).size(9.0).monospace().color(p.text_muted));
                             });
 
@@ -11572,33 +11570,10 @@ impl LauncherApp {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                             ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
-                            ui.label(RichText::new("Real-Time Allocation Waveform").size(12.5).strong().color(p.text_primary));
-                            ui.label(RichText::new("60 SECONDS HISTORY").size(9.5).monospace().color(p.text_muted));
+                            ui.label(RichText::new("Real-Time Memmory Allocation").size(12.5).strong().color(p.text_primary));
+        
 
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 8.0;
-                                    Frame::none()
-                                        .fill(Color32::from_rgb(18, 28, 42))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                        .show(ui, |ui| {
-                                            ui.label(RichText::new("1000ms Sample").size(9.0).monospace().color(p.text_muted));
-                                        });
 
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 4.0;
-                                        ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(96, 165, 250)));
-                                        ui.label(RichText::new("Cached Buffer").size(9.5).monospace().color(p.text_muted));
-                                    });
-
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 4.0;
-                                        ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(56, 189, 248)));
-                                        ui.label(RichText::new("Committed Active").size(9.5).monospace().color(p.text_muted));
-                                    });
-                                });
-                            });
                         });
 
                         ui.add_space(8.0);
@@ -11725,14 +11700,12 @@ impl LauncherApp {
                                         .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
                                         .rounding(Rounding::same(999.0))
                                         .inner_margin(egui::Margin::symmetric(7.0, 2.0))
-                                        .show(ui, |ui| {
-                                            ui.label(RichText::new("OPTIMAL").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                        });
+                                     
                                 });
                             });
 
                             ui.add_space(2.0);
-                            ui.label(RichText::new("/dev/zram0 • Priority 32767 • lz4 kernel stream").size(9.5).monospace().color(p.text_muted));
+                            
 
                             ui.add_space(8.0);
 
@@ -11782,8 +11755,7 @@ impl LauncherApp {
                                             });
 
                                         ui.add_space(4.0);
-                                        ui.label(RichText::new("235 MB backing 566 MB").size(8.5).monospace().color(p.text_muted));
-                                    });
+                                                                            });
 
                                 // Sub-col 3: PAGE I/O TRANSFER
                                 Frame::none()
@@ -11809,14 +11781,13 @@ impl LauncherApp {
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 3.0;
                                                     let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
-                                                    ui.painter().circle_filled(dot_rect.center(), 2.0, Color32::from_rgb(52, 211, 153));
+                                                    ui.painter().circle_filled(dot_rect.center(), 2.0, Color32::from_rgb(56, 189, 248));
                                                     ui.label(RichText::new("Zero Thrashing").size(8.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                                 });
                                             });
 
                                         ui.add_space(4.0);
-                                        ui.label(RichText::new("0 in / 0 out • 0.12ms lat").size(8.5).monospace().color(p.text_muted));
-                                    });
+                                                                            });
                             });
 
                             ui.add_space(8.0);
@@ -11832,14 +11803,7 @@ impl LauncherApp {
                                             .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 22))
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(5.0, 1.5))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new("KERNEL TUNING").size(8.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                            });
-                                        ui.label(RichText::new("swappiness: 180").size(8.5).monospace().color(p.text_secondary));
-                                        ui.label(RichText::new("•").size(8.0).color(Color32::from_rgb(71, 85, 105)));
-                                        ui.label(RichText::new("watermark_boost: 0").size(8.5).monospace().color(p.text_secondary));
-                                        ui.label(RichText::new("•").size(8.0).color(Color32::from_rgb(71, 85, 105)));
-                                        ui.label(RichText::new("direct_reclaim: 0 pg/s").size(8.5).monospace().color(p.text_secondary));
+                             
                                     });
                                 });
                         });
@@ -11861,14 +11825,12 @@ impl LauncherApp {
                                         .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 8))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                        .show(ui, |ui| {
-                                            ui.label(RichText::new("RSS RANKING").size(8.5).monospace().color(p.text_muted));
-                                        });
+                                   
                                 });
                             });
 
                             ui.add_space(2.0);
-                            ui.label(RichText::new("Highest physical resident set working memory footprint").size(9.5).monospace().color(p.text_muted));
+                            
 
                             ui.add_space(8.0);
 
@@ -11968,7 +11930,7 @@ impl LauncherApp {
 
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("Hardware Engine Page Size: 4 KB").size(9.0).monospace().color(p.text_muted));
+                        
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     let btn = egui::Button::new(RichText::new("Full Process Tree →").size(9.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)))
                                         .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
@@ -12064,7 +12026,7 @@ impl LauncherApp {
                                 let overline = if is_remote {
                                     format!("REMOTE GPU SUBSYSTEM • HOST '{}' • GPU {}", host_id.unwrap_or("Remote"), active_gpu_idx + 1)
                                 } else {
-                                    format!("GPU ENGINE #{} • ACTIVE DISPATCH", active_gpu_idx + 1)
+                                    format!("GPU ENGINE #{}", active_gpu_idx + 1)
                                 };
                                 ui.label(RichText::new(overline).size(9.0).monospace().color(p.text_muted));
                             });
@@ -12350,31 +12312,7 @@ impl LauncherApp {
                             ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(Color32::from_rgb(56, 189, 248)));
                             ui.label(RichText::new("ENGINE UTILIZATION TRACE (60S WINDOW)").size(12.5).strong().color(p.text_primary));
 
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 12.0;
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 3.0;
-                                        ui.label(RichText::new("—").size(9.0).strong().color(Color32::from_rgb(96, 165, 250)));
-                                        ui.label(RichText::new("Media Enhance").size(9.0).monospace().color(p.text_muted));
-                                    });
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 3.0;
-                                        ui.label(RichText::new("—").size(9.0).strong().color(Color32::from_rgb(148, 163, 184)));
-                                        ui.label(RichText::new("Media Decode").size(9.0).monospace().color(p.text_muted));
-                                    });
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 3.0;
-                                        ui.label(RichText::new("—").size(9.0).strong().color(Color32::from_rgb(56, 189, 248)));
-                                        ui.label(RichText::new("Blitter (Copy)").size(9.0).monospace().color(p.text_muted));
-                                    });
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 3.0;
-                                        ui.label(RichText::new("—").size(9.0).strong().color(Color32::from_rgb(56, 189, 248)));
-                                        ui.label(RichText::new("3D Raster").size(9.0).monospace().color(p.text_muted));
-                                    });
-                                });
-                            });
+                      
                         });
 
                         ui.add_space(8.0);
@@ -12459,9 +12397,7 @@ impl LauncherApp {
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                     ui.label(RichText::new("0.0 %").size(15.0).monospace().strong().color(p.text_muted));
                                                 });
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new("Standby • Zero Overhead").size(8.5).monospace().color(p.text_muted));
-                                                });
+                                               
                                             });
                                         });
                                     });
@@ -12487,9 +12423,7 @@ impl LauncherApp {
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                     ui.label(RichText::new(if is_remote && gpu.is_none() { "0.0 %" } else { "0.8 %" }).size(15.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
                                                 });
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new(if is_remote && gpu.is_none() { "Headless Pass-through" } else { "Filter State: Passthrough" }).size(8.5).monospace().color(p.text_muted));
-                                                });
+                                              
                                             });
                                         });
                                     });
@@ -12772,24 +12706,7 @@ impl LauncherApp {
 
                             ui.add_space(14.0);
 
-                            // Footer
-                            ui.horizontal(|ui| {
-                                let btn = egui::Button::new(RichText::new("Topology →").size(9.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)))
-                                    .fill(Color32::TRANSPARENT)
-                                    .frame(false);
-                                ui.add(btn).on_hover_text("View DRM KMS connector topology");
 
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let port_txt = if is_remote && gpu.is_none() {
-                                        "/dev/pts".to_string()
-                                    } else if let Some(d) = active_disp {
-                                        d.connector_id.map(|id| format!("ID {}", id)).unwrap_or_else(|| "Port 0x1".to_string())
-                                    } else {
-                                        "Port 0x0".to_string()
-                                    };
-                                    ui.label(RichText::new(port_txt).size(9.5).monospace().color(p.text_muted));
-                                });
-                            });
                         });
 
                     // Right Column: Hardware Acceleration
@@ -12897,7 +12814,7 @@ impl LauncherApp {
                                                     ui.painter().circle_filled(dot_rect.center(), 2.0, Color32::from_rgb(52, 211, 153));
                                                 });
                                             });
-                                            ui.add_space(3.0);
+                                     
                                             let mc1_val = if is_remote && gpu.is_none() { "SimpleDRM" } else { "Active (RC6)" };
                                             ui.label(RichText::new(mc1_val).size(11.0).monospace().strong().color(p.text_primary));
                                         });
@@ -12926,30 +12843,7 @@ impl LauncherApp {
 
                             ui.add_space(14.0);
 
-                            // Footer
-                            ui.horizontal(|ui| {
-                                let ft_txt = if is_remote && gpu.is_none() {
-                                    "Linux DRM Simpledrm".to_string()
-                                } else if let Some(g) = gpu.as_ref() {
-                                    if g.name.contains("UHD 605") {
-                                        "Intel Gen9 LP (UHD 605)".to_string()
-                                    } else if !g.name.is_empty() {
-                                        g.name.clone()
-                                    } else {
-                                        "Gen9 LP".to_string()
-                                    }
-                                } else {
-                                    "Gen9 LP".to_string()
-                                };
-                                ui.label(RichText::new(ft_txt).size(9.5).monospace().color(p.text_muted));
 
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let btn = egui::Button::new(RichText::new("Details →").size(9.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)))
-                                        .fill(Color32::TRANSPARENT)
-                                        .frame(false);
-                                    ui.add(btn).on_hover_text("View DRM driver capabilities and Vulkan extensions");
-                                });
-                            });
                         });
                 });
 
@@ -13457,7 +13351,7 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.label(RichText::new("Live Throughput Activity (60s Window)").size(12.5).strong().color(p.text_primary));
+                            
 
                             // Interactive Disk Selector Pills
                             if drives_list.len() > 1 {
@@ -13495,7 +13389,7 @@ impl LauncherApp {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 10.0;
-                                    ui.label(RichText::new("Scale: 0 - 100 MB/s").size(9.0).monospace().color(p.text_muted));
+                                    
 
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.0;
@@ -14761,14 +14655,7 @@ impl LauncherApp {
                             });
 
                         // Footer below Left Card
-                        ui.add_space(6.0);
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
-                            let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
-                            ui.painter().circle_filled(d_rect.center(), 2.2, Color32::from_rgb(56, 189, 248));
-                            let footer_str = format!("FILTER: OK • DNS: OK • KERNEL: {}", kernel_str);
-                            ui.label(RichText::new(footer_str).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
-                        });
+
                     });
 
                     ui.add_space(gap);
@@ -14945,12 +14832,7 @@ impl LauncherApp {
                                 });
                             });
 
-                        // Footer below Right Card
-                        ui.add_space(6.0);
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let core_label = if is_remote { "SSH TELEMETRY • POLL: 1000ms" } else { "TAURI CORE • POLL: 500ms" };
-                            ui.label(RichText::new(core_label).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
-                        });
+          
                     });
                 });
 
@@ -15179,14 +15061,8 @@ impl LauncherApp {
                         };
 
                         ui.vertical(|ui| {
-                            // Row 1: Overline
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 4.0;
-                                ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
-                                ui.label(RichText::new("APPLICATION NETWORK TELEMETRY • DATA USAGE ACCUMULATOR").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
-                            });
+                     
 
-                            ui.add_space(3.0);
 
                             // Row 2: Title & Badges on Left, Search & Sort Toolbar on Right
                             let avail_w = ui.available_width();
@@ -15569,28 +15445,7 @@ impl LauncherApp {
                                     });
                             }
 
-                            // Bottom Summary inside Section 6
-                            ui.add_space(8.0);
-                            let period_tag = match self.wifi_app_period {
-                                WifiAppPeriod::Daily => "Daily Window",
-                                WifiAppPeriod::Monthly => "Monthly Window",
-                                WifiAppPeriod::Yearly => "Annual Window",
-                            };
-                            ui.horizontal(|ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 5.0;
-                                    let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
-                                    ui.painter().circle_filled(d_rect.center(), 2.0, Color32::from_rgb(56, 189, 248));
-                                    ui.label(RichText::new(format!("Aggregated Bandwidth: {} ({}) • Live Rate: {}", crate::sensors::format_bytes(total_visible_data), period_tag, crate::sensors::format_rate(total_visible_rate))).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                });
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let sort_mode_str = match self.wifi_app_sort.as_str() {
-                                        "name" => format!("Order: Name ({}) • Timeframe: {}", if self.wifi_app_sort_desc { "Z-A" } else { "A-Z" }, self.wifi_app_period.short_label()),
-                                        _ => format!("Order: Data Used ({}) • Timeframe: {}", if self.wifi_app_sort_desc { "High to Low" } else { "Low to High" }, self.wifi_app_period.short_label()),
-                                    };
-                                    ui.label(RichText::new(sort_mode_str).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                });
-                            });
+                            
                         });
                     });
 
@@ -16498,10 +16353,7 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 ui.label(RichText::new(crate::lucide::SLIDERS).size(12.0).color(Color32::from_rgb(56, 189, 248)));
-                                ui.vertical(|ui| {
-                                    ui.label(RichText::new("Conservation & Longevity Circuit").size(12.5).strong().color(p.text_primary));
-                                    ui.label(RichText::new("Embedded controller firmware limits & bus power delivery").size(9.0).monospace().color(p.text_muted));
-                                });
+                          
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()

@@ -14,26 +14,14 @@ permissions:
 
 jobs:
   build:
-    name: Build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            artifact_name: server_launcher-linux-x86_64.tar.gz
-            asset_path: server_launcher-linux-x86_64.tar.gz
-
-          - os: windows-latest
-            artifact_name: server_launcher-windows-x86_64.zip
-            asset_path: server_launcher-windows-x86_64.zip
+    name: Build (Linux x86_64)
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install Linux dependencies
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config libx11-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgtk-3-dev
@@ -51,21 +39,14 @@ jobs:
         run: cargo build --release
 
       - name: Package Linux binary
-        if: runner.os == 'Linux'
         run: |
           tar -czf server_launcher-linux-x86_64.tar.gz -C server_launcher_rust/target/release server_launcher
-
-      - name: Package Windows binary
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Compress-Archive -Path server_launcher_rust/target/release/server_launcher.exe -DestinationPath server_launcher-windows-x86_64.zip
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.asset_path }}
+          name: server_launcher-linux-x86_64.tar.gz
+          path: server_launcher-linux-x86_64.tar.gz
           if-no-files-found: error
 
   publish:
@@ -124,5 +105,5 @@ jobs:
             ### Automated Build
             - **Commit**: [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
             - **Branch**: `${{ github.ref_name }}`
-            - **Artifacts**: Linux (`.tar.gz`) & Windows (`.zip`)
+            - **Artifact**: Linux (`server_launcher-linux-x86_64.tar.gz`)
 

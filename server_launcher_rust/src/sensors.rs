@@ -2305,7 +2305,7 @@ use egui::Color32;
 
 pub fn temp_color(temp: f32) -> Color32 {
     if temp < 55.0 {
-        Color32::from_rgb(56, 189, 248) // Cybernetic Cyan / Blue
+        crate::theme::current_gtk4_accent_color()
     } else if temp < 75.0 {
         Color32::from_rgb(148, 163, 184) // Slate grey
     } else {

@@ -464,6 +464,10 @@ fn current_gtk4_system_style() -> Gtk4SystemStyle {
     guard.1
 }
 
+pub fn current_gtk4_accent_color() -> Color32 {
+    current_gtk4_system_style().accent
+}
+
 fn detect_gtk4_system_style() -> Gtk4SystemStyle {
     #[cfg(target_os = "linux")]
     {

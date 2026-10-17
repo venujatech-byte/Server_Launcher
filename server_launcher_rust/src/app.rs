@@ -4843,6 +4843,11 @@ fn format_uptime_hms(secs: u64) -> String {
     format!("{}:{:02}:{:02}", hours, mins, s)
 }
 
+#[inline]
+fn accent_with_alpha(color: Color32, alpha: u8) -> Color32 {
+    Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
+}
+
 fn draw_waveform(ui: &mut Ui, height: f32, values: &VecDeque<f32>, max_val: f32, stroke_color: Color32, fill_color: Color32) {
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let rect = response.rect;
@@ -4994,6 +4999,7 @@ fn draw_ram_waveform(
     height: f32,
     history: &VecDeque<(f32, f32)>,
     total_str: &str,
+    accent: Color32,
 ) {
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let rect = response.rect;
@@ -5056,8 +5062,8 @@ fn draw_ram_waveform(
         })
         .collect();
 
-    let top_fill = Color32::from_rgba_unmultiplied(56, 189, 248, 55);
-    let bot_fill = Color32::from_rgba_unmultiplied(56, 189, 248, 3);
+    let top_fill = accent_with_alpha(accent, 55);
+    let bot_fill = accent_with_alpha(accent, 3);
     let mut mesh = egui::Mesh::default();
     for i in 0..(ram_pts.len() - 1) {
         let p1 = ram_pts[i];
@@ -5076,12 +5082,12 @@ fn draw_ram_waveform(
     painter.add(egui::Shape::mesh(mesh));
 
     for i in 0..(ram_pts.len() - 1) {
-        painter.line_segment([ram_pts[i], ram_pts[i + 1]], Stroke::new(2.0_f32, Color32::from_rgb(56, 189, 248)));
+        painter.line_segment([ram_pts[i], ram_pts[i + 1]], Stroke::new(2.0_f32, accent));
     }
 
     if let Some(&last_pt) = ram_pts.last() {
-        painter.circle_filled(last_pt, 5.0, Color32::from_rgba_unmultiplied(56, 189, 248, 90));
-        painter.circle_filled(last_pt, 2.8, Color32::from_rgb(56, 189, 248));
+        painter.circle_filled(last_pt, 5.0, accent_with_alpha(accent, 90));
+        painter.circle_filled(last_pt, 2.8, accent);
     }
 }
 
@@ -5090,6 +5096,7 @@ fn draw_disk_waveform(
     height: f32,
     write_hist: &VecDeque<f32>,
     read_hist: &VecDeque<f32>,
+    accent: Color32,
 ) {
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let rect = response.rect;
@@ -5181,8 +5188,8 @@ fn draw_disk_waveform(
         let b1 = egui::pos2(p1.x, rect.bottom() - 6.0);
         let b2 = egui::pos2(p2.x, rect.bottom() - 6.0);
         let idx = mesh_write.vertices.len() as u32;
-        let c_top = Color32::from_rgba_unmultiplied(56, 189, 248, 45);
-        let c_bot = Color32::from_rgba_unmultiplied(56, 189, 248, 3);
+        let c_top = accent_with_alpha(accent, 45);
+        let c_bot = accent_with_alpha(accent, 3);
         mesh_write.vertices.push(egui::epaint::Vertex { pos: p1, uv: egui::epaint::WHITE_UV, color: c_top });
         mesh_write.vertices.push(egui::epaint::Vertex { pos: p2, uv: egui::epaint::WHITE_UV, color: c_top });
         mesh_write.vertices.push(egui::epaint::Vertex { pos: b2, uv: egui::epaint::WHITE_UV, color: c_bot });
@@ -5192,12 +5199,12 @@ fn draw_disk_waveform(
     painter.add(egui::Shape::mesh(mesh_write));
 
     for i in 0..(write_pts.len() - 1) {
-        painter.line_segment([write_pts[i], write_pts[i + 1]], Stroke::new(1.8_f32, Color32::from_rgb(56, 189, 248)));
+        painter.line_segment([write_pts[i], write_pts[i + 1]], Stroke::new(1.8_f32, accent));
     }
 
     if let Some(&last_pt) = write_pts.last() {
-        painter.circle_filled(last_pt, 4.5, Color32::from_rgba_unmultiplied(56, 189, 248, 80));
-        painter.circle_filled(last_pt, 2.5, Color32::from_rgb(56, 189, 248));
+        painter.circle_filled(last_pt, 4.5, accent_with_alpha(accent, 80));
+        painter.circle_filled(last_pt, 2.5, accent);
     }
 }
 
@@ -5337,6 +5344,7 @@ fn draw_dual_network_chart(
     tx_hist: &VecDeque<f32>,
     rx_hist: &VecDeque<f32>,
     peak_val: f32,
+    accent: Color32,
 ) {
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let rect = response.rect;
@@ -5355,7 +5363,7 @@ fn draw_dual_network_chart(
         y_peak,
         rect.left() + 10.0,
         rect.right() - 10.0,
-        Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 120)),
+        Stroke::new(1.2_f32, accent_with_alpha(accent, 120)),
         6.0,
         4.0,
     );
@@ -5396,8 +5404,8 @@ fn draw_dual_network_chart(
         .collect();
 
     let mut mesh = egui::Mesh::default();
-    let c_top = Color32::from_rgba_unmultiplied(56, 189, 248, 30);
-    let c_bot = Color32::from_rgba_unmultiplied(56, 189, 248, 2);
+    let c_top = accent_with_alpha(accent, 30);
+    let c_bot = accent_with_alpha(accent, 2);
     for i in 0..(tx_pts.len() - 1) {
         let p1 = tx_pts[i];
         let p2 = tx_pts[i + 1];
@@ -5413,7 +5421,7 @@ fn draw_dual_network_chart(
     painter.add(egui::Shape::mesh(mesh));
 
     for i in 0..(tx_pts.len() - 1) {
-        painter.line_segment([tx_pts[i], tx_pts[i + 1]], Stroke::new(2.0_f32, Color32::from_rgb(56, 189, 248)));
+        painter.line_segment([tx_pts[i], tx_pts[i + 1]], Stroke::new(2.0_f32, accent));
     }
 }
 
@@ -5422,6 +5430,7 @@ fn draw_sockets_chart(
     height: f32,
     tcp_hist: &VecDeque<f32>,
     udp_hist: &VecDeque<f32>,
+    accent: Color32,
 ) {
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let rect = response.rect;
@@ -5436,7 +5445,7 @@ fn draw_sockets_chart(
         y_mid,
         rect.left() + 10.0,
         rect.right() - 10.0,
-        Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 100)),
+        Stroke::new(1.2_f32, accent_with_alpha(accent, 100)),
         6.0,
         4.0,
     );
@@ -5462,8 +5471,8 @@ fn draw_sockets_chart(
         .collect();
 
     let mut mesh_tcp = egui::Mesh::default();
-    let c_top = Color32::from_rgba_unmultiplied(56, 189, 248, 35);
-    let c_bot = Color32::from_rgba_unmultiplied(56, 189, 248, 2);
+    let c_top = accent_with_alpha(accent, 35);
+    let c_bot = accent_with_alpha(accent, 2);
     for i in 0..(tcp_pts.len() - 1) {
         let p1 = tcp_pts[i];
         let p2 = tcp_pts[i + 1];
@@ -5479,7 +5488,7 @@ fn draw_sockets_chart(
     painter.add(egui::Shape::mesh(mesh_tcp));
 
     for i in 0..(tcp_pts.len() - 1) {
-        painter.line_segment([tcp_pts[i], tcp_pts[i + 1]], Stroke::new(2.0_f32, Color32::from_rgb(56, 189, 248)));
+        painter.line_segment([tcp_pts[i], tcp_pts[i + 1]], Stroke::new(2.0_f32, accent));
     }
 
     let udp_pts: Vec<egui::Pos2> = udp_hist
@@ -5618,7 +5627,7 @@ fn render_reg_item(ui: &mut Ui, label: &str, val: &str, text_muted: Color32, val
     ui.add_space(2.0);
 }
 
-fn render_custom_toggle_switch(ui: &mut Ui, on: &mut bool) -> bool {
+fn render_custom_toggle_switch(ui: &mut Ui, on: &mut bool, accent: Color32) -> bool {
     let desired_size = egui::vec2(34.0, 18.0);
     let (rect, mut response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
     if response.clicked() {
@@ -5628,7 +5637,7 @@ fn render_custom_toggle_switch(ui: &mut Ui, on: &mut bool) -> bool {
     if ui.is_rect_visible(rect) {
         let how_on = if *on { 1.0_f32 } else { 0.0_f32 };
         let bg = if *on {
-            Color32::from_rgb(56, 189, 248)
+            accent
         } else {
             Color32::from_rgb(30, 41, 59)
         };
@@ -5671,7 +5680,7 @@ fn draw_circular_tachometer(ui: &mut Ui, size: f32, pct: f32, accent_color: Colo
     painter.text(center, egui::Align2::CENTER_CENTER, text, egui::FontId::monospace(size * 0.28), Color32::from_rgb(241, 245, 249));
 }
 
-fn draw_interactive_fan_curve(ui: &mut Ui, height: f32, active_temp: f32, active_duty: f32) {
+fn draw_interactive_fan_curve(ui: &mut Ui, height: f32, active_temp: f32, active_duty: f32, accent: Color32) {
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let rect = response.rect;
 
@@ -5726,8 +5735,8 @@ fn draw_interactive_fan_curve(ui: &mut Ui, height: f32, active_temp: f32, active
     }
 
     let mut mesh = egui::Mesh::default();
-    let c_top = Color32::from_rgba_unmultiplied(56, 189, 248, 25);
-    let c_bot = Color32::from_rgba_unmultiplied(56, 189, 248, 2);
+    let c_top = accent_with_alpha(accent, 25);
+    let c_bot = accent_with_alpha(accent, 2);
     for i in 0..(curve_pts.len() - 1) {
         let p1 = curve_pts[i];
         let p2 = curve_pts[i + 1];
@@ -5743,13 +5752,12 @@ fn draw_interactive_fan_curve(ui: &mut Ui, height: f32, active_temp: f32, active
     painter.add(egui::Shape::mesh(mesh));
 
     for i in 0..(curve_pts.len() - 1) {
-        painter.line_segment([curve_pts[i], curve_pts[i + 1]], Stroke::new(2.4_f32, Color32::from_rgb(56, 189, 248)));
+        painter.line_segment([curve_pts[i], curve_pts[i + 1]], Stroke::new(2.4_f32, accent));
     }
 
-    for (idx, &(t, d)) in nodes.iter().enumerate() {
+    for &(t, d) in nodes.iter() {
         let pt = to_pos(t, d);
-        let is_crit = idx == 3;
-        let col = if is_crit { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(56, 189, 248) };
+        let col = accent;
         painter.circle_filled(pt, 5.0, col);
         painter.circle_stroke(pt, 5.0, Stroke::new(1.5_f32, Color32::from_rgb(10, 14, 22)));
     }
@@ -5770,7 +5778,7 @@ fn draw_interactive_fan_curve(ui: &mut Ui, height: f32, active_temp: f32, active
     };
 
     let active_pt = to_pos(active_temp, norm_duty);
-    painter.circle_filled(active_pt, 7.0, Color32::from_rgba_unmultiplied(56, 189, 248, 90));
+    painter.circle_filled(active_pt, 7.0, accent_with_alpha(accent, 90));
     painter.circle_filled(active_pt, 4.0, Color32::from_rgb(241, 245, 249));
 
     let tag_str = if active_duty > 0.0 {
@@ -5781,11 +5789,11 @@ fn draw_interactive_fan_curve(ui: &mut Ui, height: f32, active_temp: f32, active
     let tag_w = if active_duty > 0.0 { 68.0 } else { 82.0 };
     let tag_rect = egui::Rect::from_min_size(egui::pos2(active_pt.x + 8.0, active_pt.y - 10.0), egui::vec2(tag_w, 18.0));
     painter.rect_filled(tag_rect, Rounding::same(4.0), Color32::from_rgb(18, 28, 42));
-    painter.rect_stroke(tag_rect, Rounding::same(4.0), Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)));
+    painter.rect_stroke(tag_rect, Rounding::same(4.0), Stroke::new(1.0_f32, accent));
     painter.text(tag_rect.center(), egui::Align2::CENTER_CENTER, tag_str, egui::FontId::monospace(9.0), Color32::from_rgb(241, 245, 249));
 }
 
-fn draw_rf_frequency_waveform(ui: &mut Ui, height: f32) {
+fn draw_rf_frequency_waveform(ui: &mut Ui, height: f32, accent: Color32) {
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let rect = response.rect;
 
@@ -5802,19 +5810,19 @@ fn draw_rf_frequency_waveform(ui: &mut Ui, height: f32) {
         egui::pos2(x, y)
     }).collect();
 
-    draw_dotted_hline(&painter, y_mid, rect.left() + 10.0, rect.right() - 10.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 80)), 4.0, 4.0);
+    draw_dotted_hline(&painter, y_mid, rect.left() + 10.0, rect.right() - 10.0, Stroke::new(1.0_f32, accent_with_alpha(accent, 80)), 4.0, 4.0);
 
     for i in 0..(pts.len() - 1) {
-        painter.line_segment([pts[i], pts[i + 1]], Stroke::new(2.0_f32, Color32::from_rgb(56, 189, 248)));
+        painter.line_segment([pts[i], pts[i + 1]], Stroke::new(2.0_f32, accent));
     }
 
     if let Some(&mid_pt) = pts.get(n / 2) {
-        painter.circle_filled(mid_pt, 6.0, Color32::from_rgba_unmultiplied(56, 189, 248, 90));
+        painter.circle_filled(mid_pt, 6.0, accent_with_alpha(accent, 90));
         painter.circle_filled(mid_pt, 3.5, Color32::from_rgb(241, 245, 249));
     }
 }
 
-fn draw_wifi_realtime_waveform(ui: &mut Ui, height: f32, rx_history: &VecDeque<f32>, tx_history: &VecDeque<f32>) {
+fn draw_wifi_realtime_waveform(ui: &mut Ui, height: f32, rx_history: &VecDeque<f32>, tx_history: &VecDeque<f32>, accent: Color32) {
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let rect = response.rect;
 
@@ -5902,8 +5910,8 @@ fn draw_wifi_realtime_waveform(ui: &mut Ui, height: f32, rx_history: &VecDeque<f
         let b1 = egui::pos2(p1.x, y_base);
         let b2 = egui::pos2(p2.x, y_base);
         let idx = mesh_rx.vertices.len() as u32;
-        let c_top = Color32::from_rgba_unmultiplied(56, 189, 248, 35);
-        let c_bot = Color32::from_rgba_unmultiplied(56, 189, 248, 2);
+        let c_top = accent_with_alpha(accent, 35);
+        let c_bot = accent_with_alpha(accent, 2);
         mesh_rx.vertices.push(egui::epaint::Vertex { pos: p1, uv: egui::epaint::WHITE_UV, color: c_top });
         mesh_rx.vertices.push(egui::epaint::Vertex { pos: p2, uv: egui::epaint::WHITE_UV, color: c_top });
         mesh_rx.vertices.push(egui::epaint::Vertex { pos: b2, uv: egui::epaint::WHITE_UV, color: c_bot });
@@ -5913,7 +5921,7 @@ fn draw_wifi_realtime_waveform(ui: &mut Ui, height: f32, rx_history: &VecDeque<f
     painter.add(egui::Shape::mesh(mesh_rx));
 
     for i in 0..(rx_pts.len() - 1) {
-        painter.line_segment([rx_pts[i], rx_pts[i + 1]], Stroke::new(2.0_f32, Color32::from_rgb(56, 189, 248)));
+        painter.line_segment([rx_pts[i], rx_pts[i + 1]], Stroke::new(2.0_f32, accent));
     }
 
     // 2. TX Points (Slate / Light Gray line)
@@ -5937,12 +5945,12 @@ fn draw_wifi_realtime_waveform(ui: &mut Ui, height: f32, rx_history: &VecDeque<f
         painter.circle_filled(last_tx, 3.5, Color32::from_rgb(203, 213, 225));
     }
     if let Some(&last_rx) = rx_pts.last() {
-        painter.circle_filled(last_rx, 6.0, Color32::from_rgba_unmultiplied(56, 189, 248, 90));
+        painter.circle_filled(last_rx, 6.0, accent_with_alpha(accent, 90));
         painter.circle_filled(last_rx, 3.5, Color32::from_rgb(241, 245, 249));
     }
 }
 
-fn draw_thermal_dual_waveform(ui: &mut Ui, height: f32, cpu_temp: f32, gpu_temp: f32) {
+fn draw_thermal_dual_waveform(ui: &mut Ui, height: f32, cpu_temp: f32, gpu_temp: f32, accent: Color32) {
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let rect = response.rect;
 
@@ -5973,8 +5981,8 @@ fn draw_thermal_dual_waveform(ui: &mut Ui, height: f32, cpu_temp: f32, gpu_temp:
     }).collect();
 
     let mut mesh = egui::Mesh::default();
-    let c_top = Color32::from_rgba_unmultiplied(56, 189, 248, 40);
-    let c_bot = Color32::from_rgba_unmultiplied(56, 189, 248, 2);
+    let c_top = accent_with_alpha(accent, 40);
+    let c_bot = accent_with_alpha(accent, 2);
     for i in 0..(cpu_pts.len() - 1) {
         let p1 = cpu_pts[i];
         let p2 = cpu_pts[i + 1];
@@ -5990,7 +5998,7 @@ fn draw_thermal_dual_waveform(ui: &mut Ui, height: f32, cpu_temp: f32, gpu_temp:
     painter.add(egui::Shape::mesh(mesh));
 
     for i in 0..(cpu_pts.len() - 1) {
-        painter.line_segment([cpu_pts[i], cpu_pts[i + 1]], Stroke::new(2.2_f32, Color32::from_rgb(56, 189, 248)));
+        painter.line_segment([cpu_pts[i], cpu_pts[i + 1]], Stroke::new(2.2_f32, accent));
     }
 
     let gpu_pts: Vec<egui::Pos2> = (0..n).map(|i| {
@@ -6005,17 +6013,17 @@ fn draw_thermal_dual_waveform(ui: &mut Ui, height: f32, cpu_temp: f32, gpu_temp:
     }
 
     if let Some(&last_cpu) = cpu_pts.last() {
-        painter.circle_filled(last_cpu, 5.0, Color32::from_rgba_unmultiplied(56, 189, 248, 90));
+        painter.circle_filled(last_cpu, 5.0, accent_with_alpha(accent, 90));
         painter.circle_filled(last_cpu, 2.8, Color32::from_rgb(241, 245, 249));
 
         let tag_rect = egui::Rect::from_min_size(egui::pos2(last_cpu.x - 76.0, last_cpu.y - 20.0), egui::vec2(72.0, 16.0));
         painter.rect_filled(tag_rect, Rounding::same(3.0), Color32::from_rgb(18, 28, 42));
-        painter.rect_stroke(tag_rect, Rounding::same(3.0), Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)));
+        painter.rect_stroke(tag_rect, Rounding::same(3.0), Stroke::new(1.0_f32, accent));
         painter.text(tag_rect.center(), egui::Align2::CENTER_CENTER, format!("{:.1}°C CPU", cpu_temp), egui::FontId::monospace(9.0), Color32::from_rgb(241, 245, 249));
     }
 }
 
-fn draw_power_realtime_waveform(ui: &mut Ui, height: f32, watts: f32, _is_ac: bool) {
+fn draw_power_realtime_waveform(ui: &mut Ui, height: f32, watts: f32, _is_ac: bool, accent: Color32) {
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let rect = response.rect;
 
@@ -6055,8 +6063,8 @@ fn draw_power_realtime_waveform(ui: &mut Ui, height: f32, watts: f32, _is_ac: bo
 
     // Gradient Mesh Fill under curve
     let mut mesh = egui::Mesh::default();
-    let c_top = Color32::from_rgba_unmultiplied(56, 189, 248, 38);
-    let c_bot = Color32::from_rgba_unmultiplied(56, 189, 248, 2);
+    let c_top = accent_with_alpha(accent, 38);
+    let c_bot = accent_with_alpha(accent, 2);
     for i in 0..(pts.len() - 1) {
         let p1 = pts[i];
         let p2 = pts[i + 1];
@@ -6073,12 +6081,12 @@ fn draw_power_realtime_waveform(ui: &mut Ui, height: f32, watts: f32, _is_ac: bo
 
     // Outer glow line segment
     for i in 0..(pts.len() - 1) {
-        painter.line_segment([pts[i], pts[i + 1]], Stroke::new(2.4_f32, Color32::from_rgb(56, 189, 248)));
+        painter.line_segment([pts[i], pts[i + 1]], Stroke::new(2.4_f32, accent));
     }
 
     // Glowing telemetry head on the rightmost point
     if let Some(&last_pt) = pts.last() {
-        painter.circle_filled(last_pt, 6.0, Color32::from_rgba_unmultiplied(56, 189, 248, 80));
+        painter.circle_filled(last_pt, 6.0, accent_with_alpha(accent, 80));
         painter.circle_filled(last_pt, 3.0, Color32::from_rgb(241, 245, 249));
 
         // Floating readout chip
@@ -6086,7 +6094,7 @@ fn draw_power_realtime_waveform(ui: &mut Ui, height: f32, watts: f32, _is_ac: bo
         let tag_h = 16.0_f32;
         let tag_rect = egui::Rect::from_min_size(egui::pos2(last_pt.x - tag_w - 6.0, (last_pt.y - tag_h - 4.0).max(rect.top() + 4.0)), egui::vec2(tag_w, tag_h));
         painter.rect_filled(tag_rect, Rounding::same(3.0), Color32::from_rgb(18, 28, 42));
-        painter.rect_stroke(tag_rect, Rounding::same(3.0), Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)));
+        painter.rect_stroke(tag_rect, Rounding::same(3.0), Stroke::new(1.0_f32, accent));
         let label_str = format!("{:.1} W LOAD", watts);
         painter.text(tag_rect.center(), egui::Align2::CENTER_CENTER, label_str, egui::FontId::monospace(8.5), Color32::from_rgb(241, 245, 249));
     }
@@ -10212,11 +10220,21 @@ impl LauncherApp {
     }
 
 
+    #[inline]
+    pub fn sensors_accent_color(&self, p: &crate::theme::ThemePalette) -> Color32 {
+        if self.theme == ThemeMode::Gtk4 {
+            p.accent
+        } else {
+            crate::theme::current_gtk4_accent_color()
+        }
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // SENSORS TAB: System Brief Info Panel (Persistent Top Bar Next to Tabs)
     // ═════════════════════════════════════════════════════════════════════════
     fn render_system_brief_info_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let accent = self.sensors_accent_color(&p);
         let snap = if let Some(hid) = host_id {
             self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_else(|| Arc::new(crate::sensors::SystemSensorsSnapshot::default()))
         } else {
@@ -10234,7 +10252,7 @@ impl LauncherApp {
                     ui.spacing_mut().item_spacing.x = 8.0;
 
                     // Left Icon + Host / System Name
-                    ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.5).color(Color32::from_rgb(56, 189, 248)));
+                    ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.5).color(accent));
                     let host_name = if let Some(hid) = host_id {
                         self.ssh_hosts.iter().find(|h| h.id == hid).map(|h| h.name.clone()).unwrap_or_else(|| "Remote Host".into())
                     } else {
@@ -10294,13 +10312,13 @@ impl LauncherApp {
                         }
 
                         Frame::none()
-                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
+                            .fill(accent_with_alpha(accent, 25))
                             .rounding(Rounding::same(999.0))
                             .inner_margin(egui::Margin::symmetric(8.0, 3.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 4.0;
-                                    ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new("●").size(8.0).color(accent));
                                     ui.label(RichText::new("LIVE").size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                 });
                             });
@@ -10314,6 +10332,7 @@ impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     fn render_sensors_left_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let accent = self.sensors_accent_color(&p);
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
             ui.set_max_width(ui.available_width());
@@ -10418,12 +10437,12 @@ impl LauncherApp {
                         for (tab, label, icon) in items {
                             let is_active = self.sensors_subtab == tab;
                             let bg = if is_active {
-                                Color32::from_rgb(56, 189, 248) // Cybernetic Cyan Pill (Image 1)
+                                accent
                             } else {
                                 Color32::TRANSPARENT
                             };
                             let fg = if is_active {
-                                Color32::from_rgb(15, 23, 42) // Dark text when selected
+                                p.accent_text
                             } else {
                                 Color32::from_rgb(148, 163, 184) // Slate gray text
                             };
@@ -10480,6 +10499,7 @@ impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     fn render_sensors_right_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let accent = self.sensors_accent_color(&p);
 
         let is_fetching = if let Some(hid) = host_id {
             self.remote_sensors_in_flight.lock().unwrap().contains(hid)
@@ -10669,14 +10689,14 @@ impl LauncherApp {
                 if let Some(err_msg) = self.remote_sensors_errors.lock().unwrap().get(hid) {
                     ui.add_space(4.0);
                     Frame::none()
-                        .fill(Color32::from_rgba_premultiplied(56, 189, 248, 25))
+                        .fill(accent_with_alpha(accent, 25))
                         .stroke(Stroke::NONE)
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::ALERT_TRIANGLE).size(11.5).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(crate::lucide::ALERT_TRIANGLE).size(11.5).color(accent));
                                 ui.label(RichText::new("Remote sensor query notice:").size(11.5).strong().color(Color32::from_rgb(226, 232, 240)));
                                 ui.label(RichText::new(err_msg).size(11.0).color(p.text_secondary));
                             });
@@ -10711,6 +10731,7 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_overview_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, _host_id: Option<&str>) {
         let p = self.theme.palette();
+        let accent = self.sensors_accent_color(&p);
         ScrollArea::vertical()
             .id_salt("sensors_overview_scroll")
             .auto_shrink([false, false])
@@ -10728,7 +10749,7 @@ impl LauncherApp {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(accent));
                                 ui.label(RichText::new("CPU").size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                             });
                             ui.add_space(6.0);
@@ -10751,7 +10772,7 @@ impl LauncherApp {
                             });
                             ui.add_space(4.0);
                             let cpu_slice: Vec<f32> = self.cpu_history.iter().copied().collect();
-                            draw_card_sparkline(ui, 32.0, &cpu_slice, 100.0, Some(0.12), Color32::from_rgb(56, 189, 248));
+                            draw_card_sparkline(ui, 32.0, &cpu_slice, 100.0, Some(0.12), accent);
                         });
 
                     // Card 2: RAM
@@ -10763,7 +10784,7 @@ impl LauncherApp {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::RAM).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(crate::lucide::RAM).size(12.0).color(accent));
                                 ui.label(RichText::new("RAM").size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                             });
                             ui.add_space(6.0);
@@ -10792,7 +10813,7 @@ impl LauncherApp {
                             });
                             ui.add_space(4.0);
                             let ram_slice: Vec<f32> = self.ram_history.iter().map(|(r, _)| *r).collect();
-                            draw_card_sparkline(ui, 32.0, &ram_slice, 100.0, Some(0.85), Color32::from_rgb(56, 189, 248));
+                            draw_card_sparkline(ui, 32.0, &ram_slice, 100.0, Some(0.85), accent);
                         });
 
                     // Card 3: SWAP
@@ -10804,7 +10825,7 @@ impl LauncherApp {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::REFRESH_CW).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(crate::lucide::REFRESH_CW).size(12.0).color(accent));
                                 ui.label(RichText::new("SWAP").size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                             });
                             ui.add_space(6.0);
@@ -10827,7 +10848,7 @@ impl LauncherApp {
                             });
                             ui.add_space(4.0);
                             let swap_slice: Vec<f32> = self.ram_history.iter().map(|(_, s)| *s).collect();
-                            draw_card_sparkline(ui, 32.0, &swap_slice, 100.0, Some(0.08), Color32::from_rgb(56, 189, 248));
+                            draw_card_sparkline(ui, 32.0, &swap_slice, 100.0, Some(0.08), accent);
                         });
 
                     // Card 4: STORAGE
@@ -10839,7 +10860,7 @@ impl LauncherApp {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::STORAGE).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(crate::lucide::STORAGE).size(12.0).color(accent));
                                 ui.label(RichText::new("STORAGE").size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                             });
                             ui.add_space(6.0);
@@ -10867,7 +10888,7 @@ impl LauncherApp {
                             });
                             ui.add_space(4.0);
                             let st_history = [storage_pct, storage_pct, storage_pct, storage_pct, storage_pct];
-                            draw_card_sparkline(ui, 32.0, &st_history, 100.0, Some(0.65), Color32::from_rgb(56, 189, 248));
+                            draw_card_sparkline(ui, 32.0, &st_history, 100.0, Some(0.65), accent);
                         });
                 });
 
@@ -10907,7 +10928,7 @@ impl LauncherApp {
                                                 ui.label(RichText::new(&rx_str).size(11.5).strong().color(Color32::from_rgb(241, 245, 249)));
                                             });
                                             ui.horizontal(|ui| {
-                                                ui.label(RichText::new(crate::lucide::ARROW_UP).size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new(crate::lucide::ARROW_UP).size(11.0).color(accent));
                                                 ui.label(RichText::new("Up").size(10.0).color(Color32::from_rgb(148, 163, 184)));
                                                 ui.label(RichText::new(&tx_str).size(11.5).strong().color(Color32::from_rgb(241, 245, 249)));
                                             });
@@ -10916,7 +10937,7 @@ impl LauncherApp {
                                 });
 
                                 ui.add_space(10.0);
-                                draw_dual_network_chart(ui, 130.0, &self.net_tx_history, &self.net_rx_history, self.net_peak_mb);
+                                draw_dual_network_chart(ui, 130.0, &self.net_tx_history, &self.net_rx_history, self.net_peak_mb, accent);
 
                                 ui.add_space(10.0);
                                 let (sep_rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
@@ -10973,7 +10994,7 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 12.0;
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new("—").size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                        ui.label(RichText::new("—").size(11.0).color(accent));
                                         ui.label(RichText::new("TCP").size(10.0).monospace().color(p.text_muted));
                                         ui.label(RichText::new(format!("{}", tcp_c)).size(10.5).strong().color(Color32::from_rgb(241, 245, 249)));
                                     });
@@ -10985,7 +11006,7 @@ impl LauncherApp {
                                 });
 
                                 ui.add_space(10.0);
-                                draw_sockets_chart(ui, 130.0, &self.socket_tcp_history, &self.socket_udp_history);
+                                draw_sockets_chart(ui, 130.0, &self.socket_tcp_history, &self.socket_udp_history, accent);
                             });
                     });
                 });
@@ -10999,6 +11020,7 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_cpu_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let accent = self.sensors_accent_color(&p);
         ScrollArea::vertical()
             .id_salt("sensors_cpu_scroll")
             .auto_shrink([false, false])
@@ -11049,14 +11071,14 @@ impl LauncherApp {
 
                                     // PL1 Limit badge
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
+                                        .fill(accent_with_alpha(accent, 25))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 3.5))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 5.0;
                                                 let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                                ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
+                                                ui.painter().circle_filled(d_rect.center(), 2.8, accent);
                                                 let pl1 = snap.cpu_tdp_watts.unwrap_or(12.0);
                                                 ui.label(RichText::new(format!("PL1 Limit: {:.1}W", pl1)).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                             });
@@ -11107,7 +11129,7 @@ impl LauncherApp {
                         &cpu_slice,
                         100.0,
                         Some(0.12),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -11137,7 +11159,7 @@ impl LauncherApp {
                         &clock_hist,
                         3.5,
                         Some(0.4),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -11160,7 +11182,7 @@ impl LauncherApp {
                         &power_hist,
                         tdp.max(15.0),
                         Some(0.75),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -11183,7 +11205,7 @@ impl LauncherApp {
                         &temp_hist,
                         tj_max,
                         Some(0.7),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -11199,20 +11221,20 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                            ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(accent));
                             ui.label(RichText::new("Utilization").size(12.5).strong().color(p.text_primary));
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 4.0;
                                     let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                    ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
+                                    ui.painter().circle_filled(d_rect.center(), 2.8, accent);
                                     ui.label(RichText::new("LIVE TELEMETRY").size(10.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                 });
                             });
                         });
                         ui.add_space(8.0);
-                        draw_waveform(ui, 140.0, &self.cpu_history, 100.0, Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 45));
+                        draw_waveform(ui, 140.0, &self.cpu_history, 100.0, accent, accent_with_alpha(accent, 45));
 
                         ui.add_space(4.0);
                         ui.columns(5, |cols| {
@@ -11242,7 +11264,7 @@ impl LauncherApp {
                             let dot_color = if core_idx % 2 == 0 {
                                 Color32::from_rgb(96, 165, 250) // Soft Blue
                             } else {
-                                Color32::from_rgb(56, 189, 248) // Cybernetic Cyan
+                                accent // Cybernetic Cyan
                             };
 
                             Frame::none()
@@ -11292,7 +11314,7 @@ impl LauncherApp {
                                     });
 
                                     let spark_w = ui.available_width();
-                                    draw_core_waveform(ui, spark_w, 28.0, &hist, Color32::from_rgb(56, 189, 248));
+                                    draw_core_waveform(ui, spark_w, 28.0, &hist, accent);
                                 });
                         }
                     });
@@ -11309,13 +11331,13 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.label(RichText::new(crate::lucide::SYSTEMD).size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                            ui.label(RichText::new(crate::lucide::SYSTEMD).size(11.0).color(accent));
                             ui.label(RichText::new("ARCHITECTURE & OS CONTEXT").size(10.5).monospace().strong().color(p.text_muted));
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 5.0;
-                                    ui.label(RichText::new(crate::lucide::SYSTEMD).size(10.5).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new(crate::lucide::SYSTEMD).size(10.5).color(accent));
                                     let gov_label = snap.cpu_governor.as_deref().unwrap_or(if host_id.is_some() { "Linux Scheduler Active" } else { "G-Helper Micro-Governor Active" });
                                     ui.label(RichText::new(gov_label).size(10.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                 });
@@ -11347,7 +11369,7 @@ impl LauncherApp {
                                 ui.add_space(2.0);
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 4.0;
-                                    ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new("●").size(8.0).color(accent));
                                     ui.label(RichText::new("Enabled").size(14.5).strong().color(Color32::from_rgb(241, 245, 249)));
                                 });
                                 ui.add_space(1.0);
@@ -11389,6 +11411,7 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_ram_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let accent = self.sensors_accent_color(&p);
         ScrollArea::vertical()
             .id_salt("sensors_ram_scroll")
             .auto_shrink([false, false])
@@ -11567,7 +11590,7 @@ impl LauncherApp {
                         &ram_slice,
                         100.0,
                         Some(0.85),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -11586,7 +11609,7 @@ impl LauncherApp {
                         &avail_slice,
                         100.0,
                         Some(0.5),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -11605,7 +11628,7 @@ impl LauncherApp {
                         &cache_slice,
                         (cached_gb_val as f32 * 1.5).max(4.0),
                         Some(0.6),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -11623,7 +11646,7 @@ impl LauncherApp {
                         &swap_slice,
                         100.0,
                         Some(0.08),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -11640,7 +11663,7 @@ impl LauncherApp {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                            ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
+                            ui.painter().circle_filled(d_rect.center(), 2.8, accent);
                             ui.label(RichText::new("Real-Time Memmory Allocation").size(12.5).strong().color(p.text_primary));
         
 
@@ -11648,7 +11671,7 @@ impl LauncherApp {
                         });
 
                         ui.add_space(8.0);
-                        draw_ram_waveform(ui, 120.0, &self.ram_history, &total_ram_str);
+                        draw_ram_waveform(ui, 120.0, &self.ram_history, &total_ram_str, accent);
 
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
@@ -11669,7 +11692,7 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.label(RichText::new(crate::lucide::LAYERS).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                            ui.label(RichText::new(crate::lucide::LAYERS).size(12.0).color(accent));
                             ui.label(RichText::new("Physical Memory Composition").size(12.5).strong().color(p.text_primary));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 let pool_mb = (snap.mem_total_bytes / (1024 * 1024)).max(8000);
@@ -11772,12 +11795,12 @@ impl LauncherApp {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::ZAP).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(crate::lucide::ZAP).size(12.0).color(accent));
                                 ui.label(RichText::new("Linux ZRAM Dynamic Swap").size(12.5).strong().color(p.text_primary));
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |_ui| {
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
+                                        .fill(accent_with_alpha(accent, 25))
                                         .rounding(Rounding::same(999.0))
                                         .inner_margin(egui::Margin::symmetric(7.0, 2.0))
                                      
@@ -11807,7 +11830,7 @@ impl LauncherApp {
                                         let (br, bp) = ui.allocate_painter(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
                                         bp.rect_filled(br.rect, Rounding::same(2.0), Color32::from_rgb(18, 28, 44));
                                         let fw = br.rect.width() * (sw_pct / 100.0).clamp(0.02, 1.0);
-                                        bp.rect_filled(egui::Rect::from_min_size(br.rect.min, egui::vec2(fw, 4.0)), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                                        bp.rect_filled(egui::Rect::from_min_size(br.rect.min, egui::vec2(fw, 4.0)), Rounding::same(2.0), accent);
 
                                         ui.add_space(5.0);
                                         let sw_used = if snap.swap_used_bytes > 0 { crate::sensors::format_bytes(snap.swap_used_bytes) } else { "4.4 GB".to_string() };
@@ -11829,7 +11852,7 @@ impl LauncherApp {
                                         ui.add_space(4.0);
 
                                         Frame::none()
-                                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 20))
+                                            .fill(accent_with_alpha(accent, 20))
                                             .rounding(Rounding::same(999.0))
                                             .inner_margin(egui::Margin::symmetric(6.0, 1.5))
                                             .show(ui, |ui| {
@@ -11864,7 +11887,7 @@ impl LauncherApp {
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 3.0;
                                                     let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
-                                                    ui.painter().circle_filled(dot_rect.center(), 2.0, Color32::from_rgb(56, 189, 248));
+                                                    ui.painter().circle_filled(dot_rect.center(), 2.0, accent);
                                                     ui.label(RichText::new("Zero Thrashing").size(8.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                                 });
                                             });
@@ -11883,7 +11906,7 @@ impl LauncherApp {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::LAYERS).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(crate::lucide::LAYERS).size(12.0).color(accent));
                                 ui.label(RichText::new("Top Memory Consumers").size(12.5).strong().color(p.text_primary));
                             });
 
@@ -11933,11 +11956,11 @@ impl LauncherApp {
                                         ui.set_width(ui.available_width());
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 6.0;
-                                            ui.label(RichText::new(ico).size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new(ico).size(11.0).color(accent));
                                             ui.label(RichText::new(&short_name).size(10.5).strong().color(p.text_primary));
 
                                             Frame::none()
-                                                .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
+                                                .fill(accent_with_alpha(accent, 18))
                                                 .rounding(Rounding::same(3.0))
                                                 .inner_margin(egui::Margin::symmetric(4.0, 1.0))
                                                 .show(ui, |ui| {
@@ -11959,12 +11982,12 @@ impl LauncherApp {
                                         let (mr, mp) = ui.allocate_painter(egui::vec2(ui.available_width(), 2.5), egui::Sense::hover());
                                         mp.rect_filled(mr.rect, Rounding::same(1.5), Color32::from_rgb(18, 26, 40));
                                         let mw = (mr.rect.width() * frac * 3.5).clamp(3.0, mr.rect.width());
-                                        mp.rect_filled(egui::Rect::from_min_size(mr.rect.min, egui::vec2(mw, 2.5)), Rounding::same(1.5), Color32::from_rgb(56, 189, 248));
+                                        mp.rect_filled(egui::Rect::from_min_size(mr.rect.min, egui::vec2(mw, 2.5)), Rounding::same(1.5), accent);
                                     })
                                     .response
                                     .on_hover_ui(|ui| {
                                         ui.horizontal(|ui| {
-                                            ui.label(RichText::new(ico).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new(ico).size(12.0).color(accent));
                                             ui.label(RichText::new(name).size(11.0).strong().color(Color32::WHITE));
                                         });
                                         ui.add_space(2.0);
@@ -11992,7 +12015,7 @@ impl LauncherApp {
                         
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     let btn = egui::Button::new(RichText::new("Full Process Tree →").size(9.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)))
-                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
+                                        .fill(accent_with_alpha(accent, 18))
                                         .rounding(Rounding::same(999.0))
                                         .min_size(egui::vec2(0.0, 18.0));
                                     if ui.add(btn).on_hover_text("Open Top Apps & Process Tree subtab").clicked() {
@@ -12013,6 +12036,7 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_gpu_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
         ScrollArea::vertical()
             .id_salt("sensors_gpu_scroll")
@@ -12064,12 +12088,12 @@ impl LauncherApp {
                         for (i, g) in snap.gpus.iter().enumerate() {
                             let is_active = i == active_gpu_idx;
                             let pill_bg = if is_active {
-                                Color32::from_rgba_unmultiplied(56, 189, 248, 35)
+                                accent_with_alpha(accent, 35)
                             } else {
                                 Color32::from_rgb(18, 28, 42)
                             };
                             let pill_stroke = if is_active {
-                                Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248))
+                                Stroke::new(1.0_f32, accent)
                             } else {
                                 Stroke::NONE
                             };
@@ -12098,7 +12122,7 @@ impl LauncherApp {
                             // Row 1: Overline
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("●").size(7.0).color(accent));
                                 let overline = if is_remote {
                                     format!("REMOTE GPU SUBSYSTEM • HOST '{}' • GPU {}", host_id.unwrap_or("Remote"), active_gpu_idx + 1)
                                 } else {
@@ -12119,7 +12143,7 @@ impl LauncherApp {
                                     ui.spacing_mut().item_spacing.x = 8.0;
                                     ui.label(RichText::new(format!("GPU {}: {}", active_gpu_idx + 1, gpu_name)).size(16.0).strong().color(p.text_primary));
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
+                                        .fill(accent_with_alpha(accent, 25))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                         .show(ui, |ui| {
@@ -12143,12 +12167,12 @@ impl LauncherApp {
                                         for (&m_idx, &m_name) in mode_indices.iter().zip(modes.iter()) {
                                             let is_selected = self.gpu_mode == m_idx;
                                             let btn_fill = if is_selected {
-                                                Color32::from_rgba_unmultiplied(56, 189, 248, 35)
+                                                accent_with_alpha(accent, 35)
                                             } else {
                                                 Color32::from_rgb(18, 28, 42)
                                             };
                                             let btn_stroke = if is_selected {
-                                                Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248))
+                                                Stroke::new(1.0_f32, accent)
                                             } else {
                                                 Stroke::NONE
                                             };
@@ -12307,7 +12331,7 @@ impl LauncherApp {
                         &gpu_slice,
                         100.0,
                         Some(if cur_gpu_load > 0.0 { cur_gpu_load / 100.0 } else { 0.05 }),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -12327,7 +12351,7 @@ impl LauncherApp {
                         &gpu_clock_slice,
                         max_clk as f32 * 1.05,
                         Some(if clock_val > 0 { (clock_val as f32 / max_clk as f32).clamp(0.1, 1.0) } else { 0.05 }),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -12345,7 +12369,7 @@ impl LauncherApp {
                         &gpu_3d_slice,
                         100.0,
                         Some(if cur_3d > 0.0 { cur_3d / 100.0 } else { 0.05 }),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -12366,7 +12390,7 @@ impl LauncherApp {
                         &gpu_vram_slice,
                         (total_vram_mb as f32 / 1024.0).max(4.0),
                         Some(if is_remote && gpu.is_none() { 0.02 } else { 0.1 }),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -12383,7 +12407,7 @@ impl LauncherApp {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::LAYERS).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(crate::lucide::LAYERS).size(12.0).color(accent));
                                 ui.label(RichText::new(format!("Multi-GPU Cluster Subsystem ({} Accelerators Online)", snap.gpus.len())).size(12.5).strong().color(p.text_primary));
                             });
                             ui.add_space(8.0);
@@ -12391,12 +12415,12 @@ impl LauncherApp {
                             for (i, g) in snap.gpus.iter().enumerate() {
                                 let is_sel = i == active_gpu_idx;
                                 let card_bg = if is_sel {
-                                    Color32::from_rgba_unmultiplied(56, 189, 248, 16)
+                                    accent_with_alpha(accent, 16)
                                 } else {
                                     Color32::from_rgb(10, 15, 29)
                                 };
                                 let border = if is_sel {
-                                    Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248))
+                                    Stroke::new(1.0_f32, accent)
                                 } else {
                                     Stroke::NONE
                                 };
@@ -12448,7 +12472,7 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                            ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(accent));
                             ui.label(RichText::new("ENGINE UTILIZATION TRACE (60S WINDOW)").size(12.5).strong().color(p.text_primary));
 
                       
@@ -12494,7 +12518,7 @@ impl LauncherApp {
                                     });
                                     ui.add_space(6.0);
                                     let spark_w = ui.available_width();
-                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, self.gpu_3d_history.make_contiguous(), Color32::from_rgb(56, 189, 248), false);
+                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, self.gpu_3d_history.make_contiguous(), accent, false);
                                 });
 
                             // Sub-card 2: Copy Engine (Blitter)
@@ -12522,7 +12546,7 @@ impl LauncherApp {
                                     });
                                     ui.add_space(6.0);
                                     let spark_w = ui.available_width();
-                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, self.gpu_copy_history.make_contiguous(), Color32::from_rgb(56, 189, 248), false);
+                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, self.gpu_copy_history.make_contiguous(), accent, false);
                                 });
                         });
 
@@ -12609,7 +12633,7 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.label(RichText::new(crate::lucide::LAYERS).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                            ui.label(RichText::new(crate::lucide::LAYERS).size(12.0).color(accent));
                             ui.label(RichText::new("Memory Subsystem Breakdown").size(12.5).strong().color(p.text_primary));
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -12633,7 +12657,7 @@ impl LauncherApp {
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 4.0;
                                             let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.5, 6.5), egui::Sense::hover());
-                                            ui.painter().rect_filled(d_rect, Rounding::same(1.5), Color32::from_rgb(56, 189, 248));
+                                            ui.painter().rect_filled(d_rect, Rounding::same(1.5), accent);
                                             ui.label(RichText::new(format!("VRAM: {} MB", ded_mb_val)).size(9.0).monospace().color(p.text_muted));
                                         });
                                     }
@@ -12660,7 +12684,7 @@ impl LauncherApp {
                                 (br.width() * 0.05, br.width() * 0.15, br.width() * 0.8)
                             };
 
-                            bar_p.rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(w_ded, br.height())), Rounding::same(3.0), Color32::from_rgb(56, 189, 248));
+                            bar_p.rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(w_ded, br.height())), Rounding::same(3.0), accent);
                             bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w_ded + 1.0, br.min.y), egui::vec2(w_dyn, br.height())), Rounding::ZERO, Color32::from_rgb(96, 165, 250));
                             bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w_ded + w_dyn + 2.0, br.min.y), egui::vec2(w_free, br.height())), Rounding::same(3.0), Color32::from_rgb(51, 65, 85));
                         }
@@ -12672,7 +12696,7 @@ impl LauncherApp {
                             cols[0].vertical(|ui| {
                                 ui.horizontal(|ui| {
                                     let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.5, 6.5), egui::Sense::hover());
-                                    ui.painter().rect_filled(d_rect, Rounding::same(1.5), Color32::from_rgb(56, 189, 248));
+                                    ui.painter().rect_filled(d_rect, Rounding::same(1.5), accent);
                                     ui.label(RichText::new("DEDICATED VIDEO").size(9.0).monospace().strong().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
@@ -12753,11 +12777,11 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 8.0;
                                 Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 20))
+                                    .fill(accent_with_alpha(accent, 20))
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(5.0, 4.0))
                                     .show(ui, |ui| {
-                                        ui.label(RichText::new(crate::lucide::MONITOR).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                        ui.label(RichText::new(crate::lucide::MONITOR).size(12.0).color(accent));
                                     });
 
                                 let disp_title = if is_remote && gpu.is_none() {
@@ -12771,14 +12795,14 @@ impl LauncherApp {
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                                        .fill(accent_with_alpha(accent, 22))
                                         .rounding(Rounding::same(999.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 3.0))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
-                                                ui.painter().circle_filled(d_rect.center(), 2.2, Color32::from_rgb(56, 189, 248));
+                                                ui.painter().circle_filled(d_rect.center(), 2.2, accent);
                                                 let disp_badge = if let Some(d) = active_disp {
                                                     format!("Active ({})", d.name)
                                                 } else if is_remote && gpu.is_none() {
@@ -12903,7 +12927,7 @@ impl LauncherApp {
                             // Top Header
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 8.0;
-                                ui.label(RichText::new(">_").size(12.0).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(">_").size(12.0).monospace().strong().color(accent));
                                 ui.label(RichText::new("HW Accel").size(13.0).strong().color(p.text_primary));
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -13040,6 +13064,7 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_storage_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
         ScrollArea::vertical()
             .id_salt("sensors_storage_scroll")
@@ -13092,7 +13117,7 @@ impl LauncherApp {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 5.0;
                                                 let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                                ui.painter().circle_filled(dot_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
+                                                ui.painter().circle_filled(dot_rect.center(), 2.8, accent);
                                                 ui.label(RichText::new(format!("{} Disks Active", drive_count)).size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
                                             });
                                         });
@@ -13101,7 +13126,7 @@ impl LauncherApp {
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
+                                    .fill(accent_with_alpha(accent, 25))
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                     .show(ui, |ui| {
@@ -13149,7 +13174,7 @@ impl LauncherApp {
                         &st_history,
                         100.0,
                         Some(if total_gb > 0.0 { st_pct / 100.0 } else { 0.05 }),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -13167,7 +13192,7 @@ impl LauncherApp {
                         &dr_history,
                         drive_count as f32 * 1.5,
                         Some(1.0),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -13185,7 +13210,7 @@ impl LauncherApp {
                         &rd_history,
                         150.0,
                         Some((read_mb as f32 / 100.0).clamp(0.05, 1.0)),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -13203,7 +13228,7 @@ impl LauncherApp {
                         &wr_history,
                         100.0,
                         Some((write_mb as f32 / 100.0).clamp(0.05, 1.0)),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -13303,7 +13328,7 @@ impl LauncherApp {
                         p.bg_card
                     };
                     let card_stroke = if is_selected {
-                        Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248))
+                        Stroke::new(1.0_f32, accent)
                     } else {
                         Stroke::NONE
                     };
@@ -13316,7 +13341,7 @@ impl LauncherApp {
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(if d_is_ssd { crate::lucide::STORAGE } else { crate::lucide::HARD_DRIVE }).size(15.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(if d_is_ssd { crate::lucide::STORAGE } else { crate::lucide::HARD_DRIVE }).size(15.0).color(accent));
                                 ui.add_space(4.0);
 
                                 ui.vertical(|ui| {
@@ -13324,7 +13349,7 @@ impl LauncherApp {
                                         ui.spacing_mut().item_spacing.x = 5.0;
                                         ui.label(RichText::new(format!("Storage {} (/dev/{})", idx + 1, d_name)).size(13.0).strong().color(p.text_primary));
                                         let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                        let dot_col = if is_selected { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(100, 116, 139) };
+                                        let dot_col = if is_selected { accent } else { Color32::from_rgb(100, 116, 139) };
                                         ui.painter().circle_filled(dot_rect.center(), 2.8, dot_col);
                                     });
                                     ui.add(egui::Label::new(RichText::new(format!("{} • {} {:.1} GB", if d_is_ssd { "NVMe SSD" } else { "Block Device" }, d_model, d_phys_gb)).size(9.5).monospace().color(p.text_muted)).truncate());
@@ -13334,9 +13359,9 @@ impl LauncherApp {
                                     ui.vertical(|ui| {
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             let (tag_lbl, tag_bg, tag_col) = if is_selected {
-                                                ("ACTIVE MONITOR", Color32::from_rgba_unmultiplied(56, 189, 248, 40), Color32::from_rgb(226, 232, 240))
+                                                ("ACTIVE MONITOR", accent_with_alpha(accent, 40), Color32::from_rgb(226, 232, 240))
                                             } else if idx == 0 {
-                                                ("PRIMARY OS", Color32::from_rgba_unmultiplied(56, 189, 248, 25), Color32::from_rgb(226, 232, 240))
+                                                ("PRIMARY OS", accent_with_alpha(accent, 25), Color32::from_rgb(226, 232, 240))
                                             } else {
                                                 ("DATA STORAGE", Color32::from_rgba_unmultiplied(148, 163, 184, 20), Color32::from_rgb(203, 213, 225))
                                             };
@@ -13405,7 +13430,7 @@ impl LauncherApp {
                             let (br, bp) = ui.allocate_painter(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
                             bp.rect_filled(br.rect, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
                             let fill_w = br.rect.width() * (d_pct / 100.0).clamp(0.02, 1.0);
-                            bp.rect_filled(egui::Rect::from_min_size(br.rect.min, egui::vec2(fill_w, 4.0)), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                            bp.rect_filled(egui::Rect::from_min_size(br.rect.min, egui::vec2(fill_w, 4.0)), Rounding::same(2.0), accent);
 
                             ui.add_space(8.0);
                             ui.columns(3, |scols| {
@@ -13542,12 +13567,12 @@ impl LauncherApp {
                                     let is_active = i == active_disk_idx;
                                     let pill_txt = format!("Disk {} • {}", i + 1, d.0);
                                     let pill_bg = if is_active {
-                                        Color32::from_rgba_unmultiplied(56, 189, 248, 35)
+                                        accent_with_alpha(accent, 35)
                                     } else {
                                         Color32::from_rgb(18, 28, 42)
                                     };
                                     let pill_stroke = if is_active {
-                                        Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248))
+                                        Stroke::new(1.0_f32, accent)
                                     } else {
                                         Stroke::NONE
                                     };
@@ -13584,7 +13609,7 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.0;
                                         let (sq_r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                                        ui.painter().rect_filled(sq_r, Rounding::same(1.5), Color32::from_rgb(56, 189, 248));
+                                        ui.painter().rect_filled(sq_r, Rounding::same(1.5), accent);
                                         ui.label(RichText::new(format!("Write: {:.1} MB/s", active_write_mb)).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                     });
                                 });
@@ -13600,13 +13625,13 @@ impl LauncherApp {
                         } else {
                             (&fallback_w, &fallback_r)
                         };
-                        draw_disk_waveform(ui, 130.0, w_hist, r_hist);
+                        draw_disk_waveform(ui, 130.0, w_hist, r_hist, accent);
 
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 5.0;
                             let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                            ui.painter().circle_filled(dot_rect.center(), 2.5, Color32::from_rgb(56, 189, 248));
+                            ui.painter().circle_filled(dot_rect.center(), 2.5, accent);
                             let buf_label = if is_remote {
                                 format!("Direct Kernel Sysfs I/O Pass-through • /dev/{}", active_disk_name)
                             } else {
@@ -13634,13 +13659,13 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("THERMAL CORE").size(9.5).monospace().strong().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::THERMOMETER).size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new(crate::lucide::THERMOMETER).size(11.0).color(accent));
                                 });
                             });
                             ui.add_space(4.0);
                             let t = snap.storage_temp.unwrap_or(if is_remote { 36.0 } else { 39.8 });
                             let (st_label, st_col) = if t < 55.0 {
-                                ("Optimal State", Color32::from_rgb(56, 189, 248))
+                                ("Optimal State", accent)
                             } else if t < 70.0 {
                                 ("Normal State", Color32::from_rgb(234, 179, 8))
                             } else {
@@ -13674,7 +13699,7 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("S.M.A.R.T. STATUS").size(9.5).monospace().strong().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::SHIELD).size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new(crate::lucide::SHIELD).size(11.0).color(accent));
                                 });
                             });
                             ui.add_space(4.0);
@@ -13729,7 +13754,7 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("TRIM / DISCARD").size(9.5).monospace().strong().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(crate::lucide::ACTIVITY).size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new(crate::lucide::ACTIVITY).size(11.0).color(accent));
                                 });
                             });
                             ui.add_space(4.0);
@@ -13757,7 +13782,7 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.label(RichText::new(crate::lucide::STORAGE).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                            ui.label(RichText::new(crate::lucide::STORAGE).size(12.0).color(accent));
                             ui.label(RichText::new("Physical Partition Map & Topologies").size(12.5).strong().color(p.text_primary));
                             ui.label(RichText::new(format!("Storage 1 • /dev/{} (GPT GUID Layout)", primary_drive_name)).size(9.5).monospace().color(p.text_muted));
 
@@ -13785,7 +13810,7 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.0;
                                         let (sq_r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                                        ui.painter().rect_filled(sq_r, Rounding::same(1.5), Color32::from_rgb(56, 189, 248));
+                                        ui.painter().rect_filled(sq_r, Rounding::same(1.5), accent);
                                         ui.label(RichText::new("Root System").size(9.0).monospace().color(p.text_muted));
                                     });
                                 });
@@ -13820,7 +13845,7 @@ impl LauncherApp {
 
                                     // Determine partition role styling
                                     let (fill_col, text_col, label) = if part.name.ends_with("p7") || part.partition_num == 7 || (!is_remote && part.partition_num == 7) {
-                                        (Color32::from_rgb(56, 189, 248), Color32::from_rgb(10, 15, 29), format!("/ (rootfs - {})", d1_fs))
+                                        (accent, Color32::from_rgb(10, 15, 29), format!("/ (rootfs - {})", d1_fs))
                                     } else if part.partition_num == 1 {
                                         (Color32::from_rgb(51, 65, 85), Color32::from_rgb(203, 213, 225), "EFI / BOOT".to_string())
                                     } else if part.name.contains("swap") || part.partition_num == 8 {
@@ -13857,7 +13882,7 @@ impl LauncherApp {
                             }
                         } else if is_remote {
                             // If remote sysfs hasn't populated partitions, render primary rootfs bar
-                            part_p.rect_filled(pr, Rounding::same(3.0), Color32::from_rgb(56, 189, 248));
+                            part_p.rect_filled(pr, Rounding::same(3.0), accent);
                             part_p.text(egui::pos2(pr.left() + 10.0, pr.center().y), egui::Align2::LEFT_CENTER, format!("/ (Primary Rootfs - {})", d1_fs), egui::FontId::monospace(9.0), Color32::from_rgb(10, 15, 29));
                             part_p.text(egui::pos2(pr.right() - 10.0, pr.center().y), egui::Align2::RIGHT_CENTER, format!("{:.1} GB USED / {:.1} GB", d1_used, d1_tot), egui::FontId::monospace(9.0), Color32::from_rgb(10, 15, 29));
                         }
@@ -13959,6 +13984,7 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_wifi_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
 
         // Only query local Wi-Fi telemetry when viewing the local PC (10s throttle prevents high CPU from external commands)
@@ -14001,7 +14027,7 @@ impl LauncherApp {
                             // Row 1: Overline / Subsystem Tag
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("●").size(7.0).color(accent));
                                 let overline = if is_remote {
                                     format!("WI-FI & NETWORK • HOST '{}'", host_id.unwrap_or("Remote").to_uppercase())
                                 } else {
@@ -14019,9 +14045,9 @@ impl LauncherApp {
                             let title = if is_remote && !is_wireless { "Network Subsystem & Host Interface" } else { "Wireless Network & Wi-Fi" };
                             let (status_text, dot_col) = if is_connected {
                                 if is_remote && !is_wireless {
-                                    ("CONNECTED (WIRED / SSH)", Color32::from_rgb(56, 189, 248))
+                                    ("CONNECTED (WIRED / SSH)", accent)
                                 } else {
-                                    ("CONNECTED", Color32::from_rgb(56, 189, 248))
+                                    ("CONNECTED", accent)
                                 }
                             } else {
                                 ("DISCONNECTED", Color32::from_rgb(148, 163, 184))
@@ -14055,9 +14081,9 @@ impl LauncherApp {
                                     if !is_remote {
                                         // Re-Scan Button (borderless tonal pill)
                                         let (rescan_rect, rescan_resp) = ui.allocate_exact_size(egui::vec2(86.0, 26.0), egui::Sense::click());
-                                        let bg = if rescan_resp.hovered() { Color32::from_rgba_unmultiplied(56, 189, 248, 32) } else { Color32::from_rgba_unmultiplied(56, 189, 248, 18) };
+                                        let bg = if rescan_resp.hovered() { accent_with_alpha(accent, 32) } else { accent_with_alpha(accent, 18) };
                                         ui.painter().rect_filled(rescan_rect, Rounding::same(6.0), bg);
-                                        ui.painter().rect_stroke(rescan_rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 40)));
+                                        ui.painter().rect_stroke(rescan_rect, Rounding::same(6.0), Stroke::new(1.0_f32, accent_with_alpha(accent, 40)));
                                         ui.painter().text(rescan_rect.center(), egui::Align2::CENTER_CENTER, format!("{} Re-Scan", crate::lucide::REFRESH_CW), egui::FontId::monospace(9.0), Color32::from_rgb(226, 232, 240));
                                         if rescan_resp.clicked() {
                                             self.wifi_rescan_anim = true;
@@ -14124,9 +14150,9 @@ impl LauncherApp {
                                         if !is_remote {
                                             // Re-Scan Button (borderless tonal pill)
                                             let (rescan_rect, rescan_resp) = ui.allocate_exact_size(egui::vec2(86.0, 26.0), egui::Sense::click());
-                                            let bg = if rescan_resp.hovered() { Color32::from_rgba_unmultiplied(56, 189, 248, 32) } else { Color32::from_rgba_unmultiplied(56, 189, 248, 18) };
+                                            let bg = if rescan_resp.hovered() { accent_with_alpha(accent, 32) } else { accent_with_alpha(accent, 18) };
                                             ui.painter().rect_filled(rescan_rect, Rounding::same(6.0), bg);
-                                            ui.painter().rect_stroke(rescan_rect, Rounding::same(6.0), Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 40)));
+                                            ui.painter().rect_stroke(rescan_rect, Rounding::same(6.0), Stroke::new(1.0_f32, accent_with_alpha(accent, 40)));
                                             ui.painter().text(rescan_rect.center(), egui::Align2::CENTER_CENTER, format!("{} Re-Scan", crate::lucide::REFRESH_CW), egui::FontId::monospace(9.0), Color32::from_rgb(226, 232, 240));
                                             if rescan_resp.clicked() {
                                                 self.wifi_rescan_anim = true;
@@ -14212,7 +14238,7 @@ impl LauncherApp {
                 if let Some((ref msg, is_err, time)) = self.wifi_status_msg {
                     if time.elapsed().as_secs() < 6 {
                         ui.add_space(6.0);
-                        let toast_col = if is_err { Color32::from_rgb(203, 213, 225) } else { Color32::from_rgb(56, 189, 248) };
+                        let toast_col = if is_err { Color32::from_rgb(203, 213, 225) } else { accent };
                         Frame::none()
                             .fill(toast_col.gamma_multiply(0.12))
                             .stroke(Stroke::new(1.0_f32, toast_col.gamma_multiply(0.35)))
@@ -14275,7 +14301,7 @@ impl LauncherApp {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                                ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
+                                                ui.painter().circle_filled(d_rect.center(), 2.8, accent);
                                                 ui.label(RichText::new(format!("RX: {}", crate::sensors::format_rate(disp_rx_bps))).size(9.5).monospace().color(Color32::from_rgb(226, 232, 240)));
                                             });
                                         });
@@ -14283,7 +14309,7 @@ impl LauncherApp {
                                 });
 
                                 ui.add_space(8.0);
-                                draw_wifi_realtime_waveform(ui, 115.0, &self.net_rx_history, &self.net_tx_history);
+                                draw_wifi_realtime_waveform(ui, 115.0, &self.net_rx_history, &self.net_tx_history, accent);
 
                                 ui.add_space(8.0);
                                 ui.horizontal(|ui| {
@@ -14337,7 +14363,7 @@ impl LauncherApp {
                                             format!("FAIR ({}%)", wifi_snap.signal_pct)
                                         };
                                         Frame::none()
-                                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 16))
+                                            .fill(accent_with_alpha(accent, 16))
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(6.0, 2.5))
                                             .show(ui, |ui| {
@@ -14355,7 +14381,7 @@ impl LauncherApp {
                                         ui.set_width(ui.available_width());
                                         ui.horizontal(|ui| {
                                             let icon = if is_remote && !is_wireless { crate::lucide::SERVER } else { crate::lucide::WIFI };
-                                            ui.label(RichText::new(icon).size(20.0).color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new(icon).size(20.0).color(accent));
                                             ui.add_space(6.0);
                                             ui.vertical(|ui| {
                                                 let main_lbl = if is_remote { format!("Interface /dev/{}", iface_name) } else { wifi_snap.ssid.clone() };
@@ -14373,7 +14399,7 @@ impl LauncherApp {
                                                     ui.spacing_mut().item_spacing.x = 6.0;
                                                     if is_remote {
                                                         let (d_rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                                                        ui.painter().circle_filled(d_rect.center(), 3.5, Color32::from_rgb(56, 189, 248));
+                                                        ui.painter().circle_filled(d_rect.center(), 3.5, accent);
                                                         ui.label(RichText::new("1 Gbps").size(12.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
                                                     } else {
                                                         // 5 Signal Bars
@@ -14386,7 +14412,7 @@ impl LauncherApp {
                                                             let x = rect.left() + i as f32 * (bar_w + gap);
                                                             let y = rect.bottom() - h;
                                                             let b_rect = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(bar_w, h));
-                                                            let col = if i < active_bars { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(30, 41, 59) };
+                                                            let col = if i < active_bars { accent } else { Color32::from_rgb(30, 41, 59) };
                                                             ui.painter().rect_filled(b_rect, Rounding::same(1.0), col);
                                                         }
                                                         ui.label(RichText::new(format!("{} dBm", wifi_snap.signal_dbm)).size(12.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
@@ -14455,7 +14481,7 @@ impl LauncherApp {
                         &tx_slice,
                         (tx_gb * 1.5).max(5.0),
                         Some(0.4),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -14474,7 +14500,7 @@ impl LauncherApp {
                         &rx_slice,
                         (rx_gb * 1.5).max(15.0),
                         Some(0.6),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -14530,7 +14556,7 @@ impl LauncherApp {
                         &loss_slice,
                         10.0,
                         Some(0.0),
-                        Color32::from_rgb(56, 189, 248),
+                        accent,
                         p.bg_card,
                         p.text_muted,
                     );
@@ -14552,7 +14578,7 @@ impl LauncherApp {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                    ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
+                    ui.painter().circle_filled(d_rect.center(), 2.8, accent);
                     ui.label(RichText::new("LINK: UP").size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                     ui.label(RichText::new("/").size(9.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                     ui.label(RichText::new(iface_display).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
@@ -14576,7 +14602,7 @@ impl LauncherApp {
                         // Throughput Rate
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 4.0;
-                            ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                            ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(accent));
                             ui.label(RichText::new(link_rate_str).size(9.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
                         });
                     });
@@ -14649,14 +14675,14 @@ impl LauncherApp {
                                         let (icon_rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
                                         ui.painter().rect_filled(icon_rect, Rounding::same(6.0), Color32::from_rgb(20, 28, 44));
                                         let icon_char = if is_remote && !is_wireless { crate::lucide::SERVER } else { crate::lucide::LAYERS };
-                                        ui.painter().text(icon_rect.center(), egui::Align2::CENTER_CENTER, icon_char, egui::FontId::proportional(14.0), Color32::from_rgb(56, 189, 248));
+                                        ui.painter().text(icon_rect.center(), egui::Align2::CENTER_CENTER, icon_char, egui::FontId::proportional(14.0), accent);
 
                                         ui.vertical(|ui| {
                                             ui.horizontal(|ui| {
                                                 ui.label(RichText::new("IP Config").size(13.5).strong().color(p.text_primary));
                                                 let badge_txt = if is_remote { "DHCP" } else { "DHCP" };
                                                 Frame::none()
-                                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 20))
+                                                    .fill(accent_with_alpha(accent, 20))
                                                     .rounding(Rounding::same(4.0))
                                                     .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                                     .show(ui, |ui| {
@@ -14690,9 +14716,9 @@ impl LauncherApp {
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         let (copy_rect, copy_resp) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::click());
-                                        let copy_col = if copy_resp.hovered() { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(148, 163, 184) };
+                                        let copy_col = if copy_resp.hovered() { accent } else { Color32::from_rgb(148, 163, 184) };
                                         if copy_resp.hovered() {
-                                            ui.painter().rect_filled(copy_rect, Rounding::same(4.0), Color32::from_rgba_unmultiplied(56, 189, 248, 20));
+                                            ui.painter().rect_filled(copy_rect, Rounding::same(4.0), accent_with_alpha(accent, 20));
                                         }
                                         ui.painter().text(copy_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::COPY, egui::FontId::proportional(12.5), copy_col);
                                         let copy_resp = copy_resp.on_hover_text("Copy IPv4 address to clipboard");
@@ -14774,9 +14800,9 @@ impl LauncherApp {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         let (copy_v6_rect, copy_v6_resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
-                                        let copy_v6_col = if copy_v6_resp.hovered() { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(148, 163, 184) };
+                                        let copy_v6_col = if copy_v6_resp.hovered() { accent } else { Color32::from_rgb(148, 163, 184) };
                                         if copy_v6_resp.hovered() {
-                                            ui.painter().rect_filled(copy_v6_rect, Rounding::same(3.0), Color32::from_rgba_unmultiplied(56, 189, 248, 20));
+                                            ui.painter().rect_filled(copy_v6_rect, Rounding::same(3.0), accent_with_alpha(accent, 20));
                                         }
                                         ui.painter().text(copy_v6_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::COPY, egui::FontId::proportional(11.0), copy_v6_col);
                                         let copy_v6_resp = copy_v6_resp.on_hover_text("Copy IPv6 address to clipboard");
@@ -14827,7 +14853,7 @@ impl LauncherApp {
                                         ui.horizontal(|ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                                ui.label(RichText::new(crate::lucide::SHIELD).size(10.5).color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new(crate::lucide::SHIELD).size(10.5).color(accent));
                                                 ui.label(RichText::new("DHCP Lease").size(9.0).monospace().color(Color32::from_rgb(203, 213, 225)));
                                             });
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -14885,7 +14911,7 @@ impl LauncherApp {
                                     ui.allocate_ui_with_layout(egui::vec2(left_w, 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                         let (icon_rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
                                         ui.painter().rect_filled(icon_rect, Rounding::same(6.0), Color32::from_rgb(20, 28, 44));
-                                        ui.painter().text(icon_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::RADIO, egui::FontId::monospace(14.0), Color32::from_rgb(56, 189, 248));
+                                        ui.painter().text(icon_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::RADIO, egui::FontId::monospace(14.0), accent);
 
                                         ui.vertical(|ui| {
                                             ui.horizontal(|ui| {
@@ -14905,7 +14931,7 @@ impl LauncherApp {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         // Socket Monitor button (solid electric cyan fill with dark text)
                                         let (mon_rect, mon_resp) = ui.allocate_exact_size(egui::vec2(right_btn_w, 22.0), egui::Sense::click());
-                                        let m_bg = if mon_resp.hovered() { Color32::from_rgb(125, 211, 252) } else { Color32::from_rgb(56, 189, 248) };
+                                        let m_bg = if mon_resp.hovered() { Color32::from_rgb(125, 211, 252) } else { accent };
                                         ui.painter().rect_filled(mon_rect, Rounding::same(5.0), m_bg);
                                         ui.painter().text(mon_rect.center(), egui::Align2::CENTER_CENTER, "Monitor", egui::FontId::monospace(8.5), Color32::from_rgb(10, 15, 29));
                                         if mon_resp.clicked() {
@@ -14948,7 +14974,7 @@ impl LauncherApp {
                                                 // Col 1: Cyan dot + Process name + muted (parenthesis)
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 4.0;
-                                                    ui.label(RichText::new("•").size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new("•").size(9.0).monospace().color(accent));
                                                     if let Some(idx) = proc_name.find('(') {
                                                         let main_part = proc_name[..idx].trim();
                                                         let rest_part = proc_name[idx..].trim();
@@ -14970,7 +14996,7 @@ impl LauncherApp {
                                                 // Col 4: STATUS (Pill badge)
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                     let (st_rect, _) = ui.allocate_exact_size(egui::vec2(44.0, 18.0), egui::Sense::hover());
-                                                    ui.painter().rect_filled(st_rect, Rounding::same(3.0), Color32::from_rgba_unmultiplied(56, 189, 248, 16));
+                                                    ui.painter().rect_filled(st_rect, Rounding::same(3.0), accent_with_alpha(accent, 16));
                                                     ui.painter().text(st_rect.center(), egui::Align2::CENTER_CENTER, status, egui::FontId::monospace(8.0), Color32::from_rgb(203, 213, 225));
                                                 });
 
@@ -14981,7 +15007,7 @@ impl LauncherApp {
                                                 // Col 1: Cyan dot + Process name + muted (parenthesis)
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 4.0;
-                                                    ui.label(RichText::new("•").size(9.0).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new("•").size(9.0).monospace().color(accent));
                                                     if let Some(idx) = sock.process.find('(') {
                                                         let main_part = sock.process[..idx].trim();
                                                         let rest_part = sock.process[idx..].trim();
@@ -15003,7 +15029,7 @@ impl LauncherApp {
                                                 // Col 4: STATUS (Pill badge)
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                     let (st_rect, _) = ui.allocate_exact_size(egui::vec2(44.0, 18.0), egui::Sense::hover());
-                                                    ui.painter().rect_filled(st_rect, Rounding::same(3.0), Color32::from_rgba_unmultiplied(56, 189, 248, 16));
+                                                    ui.painter().rect_filled(st_rect, Rounding::same(3.0), accent_with_alpha(accent, 16));
                                                     ui.painter().text(st_rect.center(), egui::Align2::CENTER_CENTER, &sock.status, egui::FontId::monospace(8.0), Color32::from_rgb(203, 213, 225));
                                                 });
 
@@ -15019,7 +15045,7 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 5.0;
                                         let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
-                                        ui.painter().circle_filled(d_rect.center(), 2.0, Color32::from_rgb(56, 189, 248));
+                                        ui.painter().circle_filled(d_rect.center(), 2.0, accent);
                                         ui.label(RichText::new("Filter: TCP Listen").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     });
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -15042,6 +15068,7 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_data_usage_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
 
         let wifi_snap = if !is_remote {
@@ -15072,7 +15099,7 @@ impl LauncherApp {
                             // Row 1: Overline / Subsystem Tag
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("●").size(7.0).color(accent));
                                 ui.label(RichText::new("NETWORK DATA USAGE & PROCESS TELEMETRY").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                             });
 
@@ -15093,14 +15120,14 @@ impl LauncherApp {
                                 });
                                 ui.add_space(4.0);
                                 Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                                    .fill(accent_with_alpha(accent, 22))
                                     .rounding(Rounding::same(4.0))
                                     .inner_margin(egui::Margin::symmetric(8.0, 3.5))
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 5.0;
                                             let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                            ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
+                                            ui.painter().circle_filled(d_rect.center(), 2.8, accent);
                                             ui.label(RichText::new("ACTIVE MONITORING").size(9.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                         });
                                     });
@@ -15114,14 +15141,14 @@ impl LauncherApp {
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         Frame::none()
-                                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                                            .fill(accent_with_alpha(accent, 22))
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(8.0, 3.5))
                                             .show(ui, |ui| {
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                                    ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
+                                                    ui.painter().circle_filled(d_rect.center(), 2.8, accent);
                                                     ui.label(RichText::new("ACTIVE MONITORING").size(9.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                                 });
                                             });
@@ -15454,7 +15481,7 @@ impl LauncherApp {
                                             .strong()
                                             .color(Color32::from_rgb(241, 245, 249))
                                     )
-                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
+                                    .fill(accent_with_alpha(accent, 25))
                                     .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(999.0))
                                     .min_size(egui::vec2(68.0, 22.0));
@@ -15468,10 +15495,10 @@ impl LauncherApp {
                                         RichText::new(format!("{} {} ▾", crate::lucide::CLOCK, p_label))
                                             .size(9.5)
                                             .monospace()
-                                            .color(if picker_open { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(226, 232, 240) })
+                                            .color(if picker_open { accent } else { Color32::from_rgb(226, 232, 240) })
                                     )
-                                    .fill(if picker_open { Color32::from_rgba_unmultiplied(56, 189, 248, 30) } else { Color32::from_rgb(10, 14, 22) })
-                                    .stroke(if picker_open { Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)) } else { Stroke::NONE })
+                                    .fill(if picker_open { accent_with_alpha(accent, 30) } else { Color32::from_rgb(10, 14, 22) })
+                                    .stroke(if picker_open { Stroke::new(1.0_f32, accent) } else { Stroke::NONE })
                                     .rounding(Rounding::same(999.0))
                                     .min_size(egui::vec2(90.0, 22.0));
 
@@ -15545,7 +15572,7 @@ impl LauncherApp {
                                 ui.add_space(6.0);
                                 Frame::none()
                                     .fill(Color32::from_rgb(12, 17, 26))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 60)))
+                                    .stroke(Stroke::new(1.0_f32, accent_with_alpha(accent, 60)))
                                     .rounding(Rounding::same(8.0))
                                     .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                                     .show(ui, |ui| {
@@ -15591,7 +15618,7 @@ impl LauncherApp {
                                                     };
 
                                                     let btn = egui::Button::new(RichText::new(name).size(10.0).color(if is_active { Color32::from_rgb(15, 23, 42) } else { Color32::from_rgb(226, 232, 240) }))
-                                                        .fill(if is_active { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgba_unmultiplied(255, 255, 255, 12) })
+                                                        .fill(if is_active { accent } else { Color32::from_rgba_unmultiplied(255, 255, 255, 12) })
                                                         .rounding(Rounding::same(4.0))
                                                         .min_size(egui::vec2(100.0, 22.0));
 
@@ -15673,7 +15700,7 @@ impl LauncherApp {
                                                 };
 
                                                 ui.horizontal(|ui| {
-                                                    ui.label(RichText::new(format!("Selected Duration: {} day{}", p_days, if p_days == 1 { "" } else { "s" })).size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new(format!("Selected Duration: {} day{}", p_days, if p_days == 1 { "" } else { "s" })).size(9.5).monospace().color(accent));
                                                     ui.label(RichText::new(format!("(Scale: {:.2}x of 30d)", p_days as f64 / 30.0)).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                                 });
 
@@ -15681,7 +15708,7 @@ impl LauncherApp {
 
                                                 ui.horizontal(|ui| {
                                                     let apply_btn = egui::Button::new(RichText::new("Apply Range").size(10.0).strong().color(Color32::from_rgb(15, 23, 42)))
-                                                        .fill(Color32::from_rgb(56, 189, 248))
+                                                        .fill(accent)
                                                         .rounding(Rounding::same(4.0));
                                                     if ui.add(apply_btn).clicked() {
                                                         self.wifi_app_period = WifiAppPeriod::Custom;
@@ -15718,7 +15745,7 @@ impl LauncherApp {
                                             if !self.wifi_app_search_query.is_empty() {
                                                 ui.add_space(6.0);
                                                 let clear_btn = egui::Button::new(RichText::new("Clear Filter").size(9.5).color(Color32::from_rgb(226, 232, 240)))
-                                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 20))
+                                                    .fill(accent_with_alpha(accent, 20))
                                                     .rounding(Rounding::same(4.0));
                                                 if ui.add(clear_btn).clicked() {
                                                     self.wifi_app_search_query.clear();
@@ -15895,7 +15922,7 @@ impl LauncherApp {
 
                                                         ui.spacing_mut().item_spacing.x = 6.0;
                                                         let dot_col = if app.rate_bps > 1024.0 || app.has_socket {
-                                                            Color32::from_rgb(56, 189, 248)
+                                                            accent
                                                         } else {
                                                             Color32::from_rgb(100, 116, 139)
                                                         };
@@ -15915,7 +15942,7 @@ impl LauncherApp {
 
                                                         if let Some(ref port) = app.socket_port {
                                                             let (chip_rect, _) = ui.allocate_exact_size(egui::vec2(44.0, 16.0), egui::Sense::hover());
-                                                            ui.painter().rect_filled(chip_rect, Rounding::same(3.0), Color32::from_rgba_unmultiplied(56, 189, 248, 20));
+                                                            ui.painter().rect_filled(chip_rect, Rounding::same(3.0), accent_with_alpha(accent, 20));
                                                             ui.painter().text(chip_rect.center(), egui::Align2::CENTER_CENTER, port, egui::FontId::monospace(8.0), Color32::from_rgb(203, 213, 225));
                                                         }
                                                     });
@@ -15964,7 +15991,7 @@ impl LauncherApp {
                                                     if frac > 0.001 {
                                                         let fill_w = (bar_w * frac).max(2.0);
                                                         let fill_rect = egui::Rect::from_min_size(bar_rect.min, egui::vec2(fill_w, bar_h));
-                                                        ui.painter().rect_filled(fill_rect, Rounding::same(1.5), Color32::from_rgb(56, 189, 248));
+                                                        ui.painter().rect_filled(fill_rect, Rounding::same(1.5), accent);
                                                     }
                                                     let tot_str = crate::sensors::format_bytes(disp_tot);
                                                     let tot_col = if tot_fill != Color32::TRANSPARENT { Color32::from_rgb(245, 245, 250) } else { Color32::from_rgb(226, 232, 240) };
@@ -16013,6 +16040,7 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_power_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
         let bat = snap.power.batteries.first();
         let has_battery = bat.is_some();
@@ -16050,10 +16078,10 @@ impl LauncherApp {
                     } else {
                         "AC MAINS • DIRECT FEED".to_string()
                     };
-                    ("AC Grid Connected".to_string(), "Mains".to_string(), st_str, Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                    ("AC Grid Connected".to_string(), "Mains".to_string(), st_str, accent, accent_with_alpha(accent, 22))
                 } else if ac_online {
                     if bat_pct >= 99.0 {
-                        ("Fully Charged".to_string(), "Full".to_string(), "AC ONLINE • 100% • FULLY CHARGED".to_string(), Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                        ("Fully Charged".to_string(), "Full".to_string(), "AC ONLINE • 100% • FULLY CHARGED".to_string(), accent, accent_with_alpha(accent, 22))
                     } else {
                         let needed_wh = (full_wh - remaining_wh).max(0.1_f32);
                         let hours_to_full = needed_wh / p_watts;
@@ -16069,8 +16097,8 @@ impl LauncherApp {
                             format!("{} to full", time_formatted),
                             time_formatted.clone(),
                             format!("CHARGING • {:.0}% • {} TO FULL", bat_pct, time_formatted),
-                            Color32::from_rgb(56, 189, 248),
-                            Color32::from_rgba_unmultiplied(56, 189, 248, 22),
+                            accent,
+                            accent_with_alpha(accent, 22),
                         )
                     }
                 } else {
@@ -16105,7 +16133,7 @@ impl LauncherApp {
                             // Row 1: Overline / Subsystem Tag
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("●").size(7.0).color(accent));
                                 ui.label(RichText::new("POWER & BATTERY").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                             });
 
@@ -16185,7 +16213,7 @@ impl LauncherApp {
                 if let Some((ref msg, is_err, time)) = self.power_status_msg {
                     if time.elapsed().as_secs() < 6 {
                         ui.add_space(6.0);
-                        let toast_col = if is_err { Color32::from_rgb(203, 213, 225) } else { Color32::from_rgb(56, 189, 248) };
+                        let toast_col = if is_err { Color32::from_rgb(203, 213, 225) } else { accent };
                         Frame::none()
                             .fill(toast_col.gamma_multiply(0.12))
                             .rounding(Rounding::same(6.0))
@@ -16244,7 +16272,7 @@ impl LauncherApp {
                                     ui.set_width(ui.available_width());
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
-                                        ui.label(RichText::new(crate::lucide::ZAP).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                        ui.label(RichText::new(crate::lucide::ZAP).size(12.0).color(accent));
                                         let psu_hdr = if is_remote {
                                             format!("POWER SUPPLY // DIRECT AC GRID FEED • HOST '{}'", host_id.unwrap_or("REMOTE"))
                                         } else {
@@ -16254,7 +16282,7 @@ impl LauncherApp {
 
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             Frame::none()
-                                                .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 20))
+                                                .fill(accent_with_alpha(accent, 20))
                                                 .rounding(Rounding::same(4.0))
                                                 .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                                 .show(ui, |ui| {
@@ -16305,7 +16333,7 @@ impl LauncherApp {
 
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
-                                                    ui.label(RichText::new(crate::lucide::PLUG).size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new(crate::lucide::PLUG).size(11.0).color(accent));
                                                     ui.label(RichText::new("Power Delivery Feed").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                                 });
                                                 ui.add_space(4.0);
@@ -16315,13 +16343,13 @@ impl LauncherApp {
                                                 });
                                                 ui.add_space(8.0);
                                                 let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), accent);
                                                 ui.add_space(8.0);
 
                                                 render_ac_meta_row(ui, "Feed", "AC Mains Feed", Color32::from_rgb(203, 213, 225));
                                                 ui.add_space(3.0);
                                                 let up_str = format_uptime(snap.uptime_secs);
-                                                render_ac_meta_row(ui, "Uptime", &up_str, Color32::from_rgb(56, 189, 248));
+                                                render_ac_meta_row(ui, "Uptime", &up_str, accent);
 
                                                 let inner_h = ui.cursor().min.y - content_start_y;
                                                 observed_ac_max_inner_h = observed_ac_max_inner_h.max(inner_h);
@@ -16342,7 +16370,7 @@ impl LauncherApp {
 
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
-                                                    ui.label(RichText::new(crate::lucide::ACTIVITY).size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new(crate::lucide::ACTIVITY).size(11.0).color(accent));
                                                     ui.label(RichText::new("Processor Package Draw").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                                 });
                                                 ui.add_space(4.0);
@@ -16355,14 +16383,14 @@ impl LauncherApp {
                                                 let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
                                                 ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
                                                 let fill_ratio = (raw_cpu / profile.turbo_pl2_watts.max(15.0)).clamp(0.05, 1.0);
-                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * fill_ratio, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * fill_ratio, bar_r.height())), Rounding::same(2.0), accent);
                                                 ui.add_space(8.0);
 
                                                 let pl1_s = format!("{:.0} W", profile.balanced_pl1_watts);
                                                 let pl2_s = format!("{:.0} W", profile.turbo_pl2_watts);
                                                 render_ac_meta_row(ui, "PL1 Cap", &pl1_s, Color32::from_rgb(203, 213, 225));
                                                 ui.add_space(3.0);
-                                                render_ac_meta_row(ui, "PL2 Peak", &pl2_s, Color32::from_rgb(56, 189, 248));
+                                                render_ac_meta_row(ui, "PL2 Peak", &pl2_s, accent);
 
                                                 let inner_h = ui.cursor().min.y - content_start_y;
                                                 observed_ac_max_inner_h = observed_ac_max_inner_h.max(inner_h);
@@ -16384,7 +16412,7 @@ impl LauncherApp {
                                                 let temp_c = snap.cpu_temp.unwrap_or(36.0);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
-                                                    ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(accent));
                                                     ui.label(RichText::new("Thermal Dissipation").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                                 });
                                                 ui.add_space(4.0);
@@ -16397,13 +16425,13 @@ impl LauncherApp {
                                                 let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
                                                 ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
                                                 let temp_ratio = (temp_c / 95.0).clamp(0.05, 1.0);
-                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * temp_ratio, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * temp_ratio, bar_r.height())), Rounding::same(2.0), accent);
                                                 ui.add_space(8.0);
 
                                                 let clk_s = format!("{} MHz", snap.cpu_frequency_mhz);
                                                 render_ac_meta_row(ui, "Gov", &active_gov, Color32::from_rgb(203, 213, 225));
                                                 ui.add_space(3.0);
-                                                render_ac_meta_row(ui, "Clock", &clk_s, Color32::from_rgb(56, 189, 248));
+                                                render_ac_meta_row(ui, "Clock", &clk_s, accent);
 
                                                 let inner_h = ui.cursor().min.y - content_start_y;
                                                 observed_ac_max_inner_h = observed_ac_max_inner_h.max(inner_h);
@@ -16462,7 +16490,7 @@ impl LauncherApp {
                                     ui.set_width(ui.available_width());
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
-                                        ui.label(RichText::new(crate::lucide::BATTERY).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                        ui.label(RichText::new(crate::lucide::BATTERY).size(12.0).color(accent));
                                         let bat_name = bat.map(|b| b.name.as_str()).unwrap_or("BAT1");
                                         let bat_mfg = bat.map(|b| b.manufacturer.trim()).filter(|s| !s.is_empty()).unwrap_or(if is_remote { "OEM Pack" } else { "COMPAL" });
                                         let bat_model = bat.map(|b| b.model_name.trim()).filter(|s| !s.is_empty()).unwrap_or(if is_remote { "Lithium-Ion Pack" } else { "PABAS0241231" });
@@ -16471,14 +16499,14 @@ impl LauncherApp {
 
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             Frame::none()
-                                                .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 20))
+                                                .fill(accent_with_alpha(accent, 20))
                                                 .rounding(Rounding::same(4.0))
                                                 .inner_margin(egui::Margin::symmetric(7.0, 2.5))
                                                 .show(ui, |ui| {
                                                     ui.horizontal(|ui| {
                                                         ui.spacing_mut().item_spacing.x = 4.0;
                                                         let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
-                                                        ui.painter().circle_filled(d_rect.center(), 2.5, Color32::from_rgb(56, 189, 248));
+                                                        ui.painter().circle_filled(d_rect.center(), 2.5, accent);
                                                         ui.label(RichText::new("HEALTHY").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                                     });
                                                 });
@@ -16520,7 +16548,7 @@ impl LauncherApp {
 
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
-                                                    ui.label(RichText::new(crate::lucide::BATTERY_CHARGING).size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new(crate::lucide::BATTERY_CHARGING).size(11.0).color(accent));
                                                     ui.label(RichText::new("State of Charge").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                                 });
                                                 ui.add_space(4.0);
@@ -16533,7 +16561,7 @@ impl LauncherApp {
                                                 let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
                                                 ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
                                                 let fill_w = bar_r.width() * (bat_pct / 100.0).clamp(0.05, 1.0);
-                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(2.0), accent);
                                                 ui.add_space(8.0);
 
                                                 let delivery_str = if ac_online {
@@ -16543,7 +16571,7 @@ impl LauncherApp {
                                                 };
                                                 render_card_meta_row(ui, "Mode", delivery_str, Color32::from_rgb(203, 213, 225));
                                                 ui.add_space(3.0);
-                                                render_card_meta_row(ui, "Time", &est_time_str, Color32::from_rgb(56, 189, 248));
+                                                render_card_meta_row(ui, "Time", &est_time_str, accent);
 
                                                 let inner_h = ui.cursor().min.y - content_start_y;
                                                 observed_max_inner_h = observed_max_inner_h.max(inner_h);
@@ -16564,7 +16592,7 @@ impl LauncherApp {
 
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
-                                                    ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(accent));
                                                     ui.label(RichText::new("Remaining vs Design").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                                 });
                                                 ui.add_space(4.0);
@@ -16577,7 +16605,7 @@ impl LauncherApp {
                                                 let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
                                                 ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
                                                 let cap_ratio = if full_wh > 0.0 { (remaining_wh / full_wh).clamp(0.05, 1.0) } else { 1.0 };
-                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * cap_ratio, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * cap_ratio, bar_r.height())), Rounding::same(2.0), accent);
                                                 ui.add_space(8.0);
 
                                                 let design_wh = bat.and_then(|b| b.energy_design_wh).unwrap_or(full_wh);
@@ -16605,7 +16633,7 @@ impl LauncherApp {
                                                 let cycles_val = bat.and_then(|b| b.cycle_count).unwrap_or(0);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
-                                                    ui.label(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(accent));
                                                     ui.label(RichText::new("Lifecycle Endurance").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                                 });
                                                 ui.add_space(4.0);
@@ -16623,7 +16651,7 @@ impl LauncherApp {
                                                 let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
                                                 ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
                                                 let cycle_ratio = ((cycles_val as f32) / 1000.0).clamp(0.04, 1.0);
-                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * cycle_ratio, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * cycle_ratio, bar_r.height())), Rounding::same(2.0), accent);
                                                 ui.add_space(8.0);
 
                                                 let life_label = if cycles_val == 0 { "1000 (New)" } else { "1000 Total" };
@@ -16687,7 +16715,7 @@ impl LauncherApp {
                                 ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 6.0;
-                                    ui.label(RichText::new(crate::lucide::GAUGE).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new(crate::lucide::GAUGE).size(12.0).color(accent));
                                     ui.label(RichText::new("THERMAL & POWER GOVERNOR PRESET").size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -16697,14 +16725,14 @@ impl LauncherApp {
                                             crate::power::query_current_governor()
                                         };
                                         Frame::none()
-                                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
+                                            .fill(accent_with_alpha(accent, 18))
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                             .show(ui, |ui| {
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 4.0;
                                                     let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
-                                                    ui.painter().circle_filled(d_rect.center(), 2.5, Color32::from_rgb(56, 189, 248));
+                                                    ui.painter().circle_filled(d_rect.center(), 2.5, accent);
                                                     ui.label(RichText::new(format!("ACTIVE: {}", active_gov)).size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                                 });
                                             });
@@ -16739,8 +16767,8 @@ impl LauncherApp {
                                     for (name, desc, gov_name, idx) in &presets {
                                         let idx = *idx;
                                         let is_sel = active_preset_idx == idx;
-                                        let border = if is_sel { Stroke::new(1.2_f32, Color32::from_rgb(56, 189, 248)) } else { Stroke::NONE };
-                                        let bg = if is_sel { Color32::from_rgba_unmultiplied(56, 189, 248, 18) } else { Color32::from_rgb(10, 15, 29) };
+                                        let border = if is_sel { Stroke::new(1.2_f32, accent) } else { Stroke::NONE };
+                                        let bg = if is_sel { accent_with_alpha(accent, 18) } else { Color32::from_rgb(10, 15, 29) };
 
                                         let frame_resp = Frame::none()
                                             .fill(bg)
@@ -16756,7 +16784,7 @@ impl LauncherApp {
                                                     if is_sel {
                                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                             Frame::none()
-                                                                 .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 30))
+                                                                 .fill(accent_with_alpha(accent, 30))
                                                                  .rounding(Rounding::same(3.0))
                                                                  .inner_margin(egui::Margin::symmetric(5.0, 1.5))
                                                                  .show(ui, |ui| {
@@ -16817,12 +16845,12 @@ impl LauncherApp {
                                 ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 6.0;
-                                    ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(accent));
                                     ui.label(RichText::new("LIVE TELEMETRY").size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                        ui.painter().circle_filled(d_rect.center(), 3.0, Color32::from_rgb(56, 189, 248));
+                                        ui.painter().circle_filled(d_rect.center(), 3.0, accent);
                                     });
                                 });
 
@@ -16837,13 +16865,13 @@ impl LauncherApp {
                                 let is_charging = ac_online && bat.map(|b| b.status.eq_ignore_ascii_case("charging")).unwrap_or(false);
 
                                 let (badge_str, badge_col) = if !has_battery {
-                                    ("Direct PSU Line".to_string(), Color32::from_rgb(56, 189, 248))
+                                    ("Direct PSU Line".to_string(), accent)
                                 } else if is_discharging {
                                     ("Battery active".to_string(), Color32::from_rgb(245, 158, 11))
                                 } else if is_charging {
                                     (format!("Charging ({:.0}%)", bat_pct), Color32::from_rgb(34, 197, 94))
                                 } else {
-                                    ("Bypass active".to_string(), Color32::from_rgb(56, 189, 248))
+                                    ("Bypass active".to_string(), accent)
                                 };
 
                                 // GPU telemetry
@@ -17001,7 +17029,7 @@ impl LauncherApp {
                                 ui.add_space(8.0);
 
                                 // Smooth realtime animated waveform canvas
-                                draw_power_realtime_waveform(ui, 68.0, watts_val, ac_online);
+                                draw_power_realtime_waveform(ui, 68.0, watts_val, ac_online, accent);
 
                                 ui.add_space(10.0);
 
@@ -17024,7 +17052,7 @@ impl LauncherApp {
                                     let (br, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
                                     ui.painter().rect_filled(br, Rounding::same(2.0), Color32::from_rgb(14, 20, 36));
                                     let fill_w = br.width() * (c_watts / c_max).clamp(0.04, 1.0);
-                                    ui.painter().rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(fill_w, br.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                                    ui.painter().rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(fill_w, br.height())), Rounding::same(2.0), accent);
                                     ui.add_space(3.0);
                                 }
                             });
@@ -17043,7 +17071,7 @@ impl LauncherApp {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::SLIDERS).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(crate::lucide::SLIDERS).size(12.0).color(accent));
                                 let card_title = if is_remote {
                                     format!("PLATFORM POWER & THERMAL GOVERNANCE • HOST '{}'", host_id.unwrap_or("REMOTE"))
                                 } else {
@@ -17053,14 +17081,14 @@ impl LauncherApp {
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
+                                        .fill(accent_with_alpha(accent, 18))
                                         .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 3.0))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                                ui.label(RichText::new(crate::lucide::SHIELD).size(10.0).color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new(crate::lucide::SHIELD).size(10.0).color(accent));
                                                 ui.label(RichText::new("CONTINUOUS AC OPERATION").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                             });
                                         });
@@ -17102,7 +17130,7 @@ impl LauncherApp {
                                         ui.add_space(8.0);
                                         render_gov_meta_row(ui, "Feed", "AC Grid Mains", Color32::from_rgb(241, 245, 249));
                                         ui.add_space(3.0);
-                                        render_gov_meta_row(ui, "Governor", &active_gov, Color32::from_rgb(56, 189, 248));
+                                        render_gov_meta_row(ui, "Governor", &active_gov, accent);
                                         ui.add_space(3.0);
                                         let clk_str = format!("{} MHz", snap.cpu_frequency_mhz);
                                         render_gov_meta_row(ui, "Clock", &clk_str, Color32::from_rgb(203, 213, 225));
@@ -17129,7 +17157,7 @@ impl LauncherApp {
                                         render_gov_meta_row(ui, "PL1 Limit", &pl1_str, Color32::from_rgb(203, 213, 225));
                                         ui.add_space(3.0);
                                         let pl2_str = format!("{:.0} W", profile.turbo_pl2_watts);
-                                        render_gov_meta_row(ui, "PL2 Burst", &pl2_str, Color32::from_rgb(56, 189, 248));
+                                        render_gov_meta_row(ui, "PL2 Burst", &pl2_str, accent);
                                         ui.add_space(3.0);
                                         let temp_c = snap.cpu_temp.unwrap_or(36.0);
                                         let hr_str = format!("{:.1} °C Headroom", (95.0 - temp_c).max(0.0));
@@ -17161,7 +17189,7 @@ impl LauncherApp {
                                         } else {
                                             "Integrated Logic".to_string()
                                         };
-                                        render_gov_meta_row(ui, "Graphics", &gpu_topo, Color32::from_rgb(56, 189, 248));
+                                        render_gov_meta_row(ui, "Graphics", &gpu_topo, accent);
                                         ui.add_space(3.0);
                                         let disk_cnt = snap.physical_disks.len().max(snap.disks.len()).max(1);
                                         let disk_topo = format!("{} Storage Drive(s)", disk_cnt);
@@ -17201,19 +17229,19 @@ impl LauncherApp {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::SLIDERS).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(crate::lucide::SLIDERS).size(12.0).color(accent));
                                 ui.label(RichText::new("BATTERY CONSERVATION & CHARGE GOVERNANCE").size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
+                                        .fill(accent_with_alpha(accent, 18))
                                         .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 3.0))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                                ui.label(RichText::new(crate::lucide::SHIELD).size(10.0).color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new(crate::lucide::SHIELD).size(10.0).color(accent));
                                                 ui.label(RichText::new("PROTECTION ACTIVE").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                             });
                                         });
@@ -17242,7 +17270,7 @@ impl LauncherApp {
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new("Conservation Threshold").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                if render_custom_toggle_switch(ui, &mut self.power_conservation) {
+                                                if render_custom_toggle_switch(ui, &mut self.power_conservation, accent) {
                                                     cons_changed = true;
                                                 }
                                             });
@@ -17288,7 +17316,7 @@ impl LauncherApp {
                                         }
                                         ui.painter().rect_filled(bar_r, Rounding::same(3.0), Color32::from_rgb(14, 20, 36));
                                         let fill_w = bar_r.width() * (self.power_ceiling / 100.0).clamp(0.1, 1.0);
-                                        ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(3.0), Color32::from_rgb(56, 189, 248));
+                                        ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(3.0), accent);
 
                                         let inner_h = ui.cursor().min.y - content_start_y;
                                         observed_max_inner_h = observed_max_inner_h.max(inner_h);
@@ -17310,7 +17338,7 @@ impl LauncherApp {
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new("Rapid Charge Rate").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                if render_custom_toggle_switch(ui, &mut self.power_rapid_charge) {
+                                                if render_custom_toggle_switch(ui, &mut self.power_rapid_charge, accent) {
                                                     rapid_changed = true;
                                                 }
                                             });
@@ -17352,7 +17380,7 @@ impl LauncherApp {
                                         let (fill_pct, bar_color) = if self.power_rapid_charge {
                                             (0.95_f32, Color32::from_rgb(251, 146, 60))
                                         } else {
-                                            (0.60_f32, Color32::from_rgb(56, 189, 248))
+                                            (0.60_f32, accent)
                                         };
                                         let fill_w = bar_r.width() * fill_pct;
                                         ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(3.0), bar_color);
@@ -17377,7 +17405,7 @@ impl LauncherApp {
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new("USB Always-On Standby").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                if render_custom_toggle_switch(ui, &mut self.power_usb_always_on) {
+                                                if render_custom_toggle_switch(ui, &mut self.power_usb_always_on, accent) {
                                                     usb_changed = true;
                                                 }
                                             });
@@ -17417,7 +17445,7 @@ impl LauncherApp {
                                         let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 6.0), egui::Sense::hover());
                                         ui.painter().rect_filled(bar_r, Rounding::same(3.0), Color32::from_rgb(14, 20, 36));
                                         let (fill_pct, bar_color) = if self.power_usb_always_on {
-                                            (0.75_f32, Color32::from_rgb(56, 189, 248))
+                                            (0.75_f32, accent)
                                         } else {
                                             (0.0_f32, Color32::from_rgb(100, 116, 139))
                                         };
@@ -17448,6 +17476,7 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_bluetooth_page(&mut self, ui: &mut Ui, _snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
 
         if is_remote {
@@ -17561,7 +17590,7 @@ impl LauncherApp {
                             .show(&mut cols[0], |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new(crate::lucide::SERVER).size(15.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new(crate::lucide::SERVER).size(15.0).color(accent));
                                     ui.label(RichText::new("Headless Server Topology").size(12.0).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         Frame::none()
@@ -17585,7 +17614,7 @@ impl LauncherApp {
                             .show(&mut cols[1], |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new(crate::lucide::SHIELD).size(15.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new(crate::lucide::SHIELD).size(15.0).color(accent));
                                     ui.label(RichText::new("SSH Protocol Isolation").size(12.0).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         Frame::none()
@@ -17613,7 +17642,7 @@ impl LauncherApp {
                             .show(&mut cols[0], |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new(crate::lucide::RADIO).size(15.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new(crate::lucide::RADIO).size(15.0).color(accent));
                                     ui.label(RichText::new("USB-IP HCI Passthrough").size(12.0).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         Frame::none()
@@ -17637,7 +17666,7 @@ impl LauncherApp {
                             .show(&mut cols[1], |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new(crate::lucide::HEADPHONES).size(15.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new(crate::lucide::HEADPHONES).size(15.0).color(accent));
                                     ui.label(RichText::new("Client Workstation Audio").size(12.0).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         Frame::none()
@@ -17693,7 +17722,7 @@ impl LauncherApp {
                             // Row 1: Overline / Subsystem Tag
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("●").size(7.0).color(accent));
                                 ui.label(RichText::new("BLUETOOTH").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                             });
 
@@ -17705,7 +17734,7 @@ impl LauncherApp {
                             let is_narrow = avail_w < 680.0;
 
                             let (status_text, status_col) = if self.bt_radio_on {
-                                ("ACTIVE LINK", Color32::from_rgb(56, 189, 248))
+                                ("ACTIVE LINK", accent)
                             } else {
                                 ("RADIO DISABLED", Color32::from_rgb(148, 163, 184))
                             };
@@ -17744,7 +17773,7 @@ impl LauncherApp {
                                             });
                                             ui.add_space(10.0);
                                             let mut power_toggle = self.bt_radio_on;
-                                            if render_custom_toggle_switch(ui, &mut power_toggle) {
+                                            if render_custom_toggle_switch(ui, &mut power_toggle, accent) {
                                                 self.bt_radio_on = power_toggle;
                                                 let snap_arc = Arc::clone(&self.bluetooth_snapshot);
                                                 let ctx_clone = ui.ctx().clone();
@@ -17794,7 +17823,7 @@ impl LauncherApp {
                                                     });
                                                     ui.add_space(10.0);
                                                     let mut power_toggle = self.bt_radio_on;
-                                                    if render_custom_toggle_switch(ui, &mut power_toggle) {
+                                                    if render_custom_toggle_switch(ui, &mut power_toggle, accent) {
                                                         self.bt_radio_on = power_toggle;
                                                         let snap_arc = Arc::clone(&self.bluetooth_snapshot);
                                                         let ctx_clone = ui.ctx().clone();
@@ -17849,11 +17878,11 @@ impl LauncherApp {
                             let btn_label = if is_scanning { "Scanning Nearby..." } else { "+ Scan for Devices" };
                             let (pair_rect, pair_resp) = ui.allocate_exact_size(egui::vec2(140.0, 28.0), egui::Sense::click());
                             let pair_bg = if is_scanning {
-                                Color32::from_rgba_unmultiplied(56, 189, 248, 28)
+                                accent_with_alpha(accent, 28)
                             } else if pair_resp.hovered() {
                                 Color32::from_rgb(14, 165, 233)
                             } else {
-                                Color32::from_rgb(56, 189, 248)
+                                accent
                             };
                             let pair_text_col = if is_scanning { Color32::from_rgb(226, 232, 240) } else { Color32::from_rgb(10, 14, 22) };
 
@@ -17871,7 +17900,7 @@ impl LauncherApp {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 ui.label(RichText::new("Discoverable to nearby devices").size(10.5).color(p.text_primary));
                                 let mut disc_toggle = self.bt_discoverable;
-                                if render_custom_toggle_switch(ui, &mut disc_toggle) {
+                                if render_custom_toggle_switch(ui, &mut disc_toggle, accent) {
                                     self.bt_discoverable = disc_toggle;
                                     let snap_arc = Arc::clone(&self.bluetooth_snapshot);
                                     let ctx_clone = ui.ctx().clone();
@@ -17890,7 +17919,7 @@ impl LauncherApp {
                             if let Some((ref msg, is_err, time)) = bt_snap.status_msg {
                                 if time.elapsed().as_secs() < 6 {
                                     ui.add_space(12.0);
-                                    let toast_col = if is_err { Color32::from_rgb(203, 213, 225) } else { Color32::from_rgb(56, 189, 248) };
+                                    let toast_col = if is_err { Color32::from_rgb(203, 213, 225) } else { accent };
                                     Frame::none()
                                         .fill(toast_col.gamma_multiply(0.12))
                                         .rounding(Rounding::same(4.0))
@@ -17936,7 +17965,7 @@ impl LauncherApp {
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.vertical_centered(|ui| {
-                                ui.label(RichText::new(crate::lucide::BLUETOOTH).size(28.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new(crate::lucide::BLUETOOTH).size(28.0).color(accent));
                                 ui.add_space(4.0);
                                 ui.label(RichText::new("No Paired Bluetooth Devices Found").size(13.0).strong().color(p.text_primary));
                                 ui.add_space(2.0);
@@ -17970,11 +17999,11 @@ impl LauncherApp {
                                     };
 
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new(icon).size(16.0).color(Color32::from_rgb(56, 189, 248)));
+                                        ui.label(RichText::new(icon).size(16.0).color(accent));
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             if let Some(batt) = dev.battery_pct {
                                                 Frame::none()
-                                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 20))
+                                                    .fill(accent_with_alpha(accent, 20))
                                                     .rounding(Rounding::same(4.0))
                                                     .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                                     .show(ui, |ui| {
@@ -17982,7 +18011,7 @@ impl LauncherApp {
                                                     });
                                             } else {
                                                 let (tag_txt, tag_col) = if dev.connected {
-                                                    ("CONNECTED", Color32::from_rgb(56, 189, 248))
+                                                    ("CONNECTED", accent)
                                                 } else {
                                                     ("PAIRED", Color32::from_rgb(148, 163, 184))
                                                 };
@@ -18054,7 +18083,7 @@ impl LauncherApp {
                                             }
                                         } else {
                                             let (conn_rect, conn_resp) = ui.allocate_exact_size(egui::vec2(btn_w, 26.0), egui::Sense::click());
-                                            let conn_bg = if conn_resp.hovered() { Color32::from_rgba_unmultiplied(56, 189, 248, 38) } else { Color32::from_rgba_unmultiplied(56, 189, 248, 18) };
+                                            let conn_bg = if conn_resp.hovered() { accent_with_alpha(accent, 38) } else { accent_with_alpha(accent, 18) };
                                             ui.painter().rect_filled(conn_rect, Rounding::same(6.0), conn_bg);
                                             ui.painter().text(conn_rect.center(), egui::Align2::CENTER_CENTER, "Connect", egui::FontId::monospace(9.5), Color32::from_rgb(226, 232, 240));
 
@@ -18120,7 +18149,7 @@ impl LauncherApp {
                             ui.set_width(ui.available_width());
                             for disc_dev in &bt_snap.discovered_devices {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new(crate::lucide::BLUETOOTH).size(12.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new(crate::lucide::BLUETOOTH).size(12.0).color(accent));
                                     ui.add_space(4.0);
                                     let clean_dname = crate::bluetooth::clean_device_name(&disc_dev.name);
                                     ui.label(RichText::new(&clean_dname).size(11.5).strong().color(p.text_primary));
@@ -18128,7 +18157,7 @@ impl LauncherApp {
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         let (p_rect, p_resp) = ui.allocate_exact_size(egui::vec2(96.0, 24.0), egui::Sense::click());
-                                        let bg = if p_resp.hovered() { Color32::from_rgb(14, 165, 233) } else { Color32::from_rgb(56, 189, 248) };
+                                        let bg = if p_resp.hovered() { Color32::from_rgb(14, 165, 233) } else { accent };
                                         ui.painter().rect_filled(p_rect, Rounding::same(6.0), bg);
                                         ui.painter().text(p_rect.center(), egui::Align2::CENTER_CENTER, "+ Pair & Trust", egui::FontId::monospace(8.5), Color32::from_rgb(10, 14, 22));
 
@@ -18176,7 +18205,7 @@ impl LauncherApp {
                                     ui.label(RichText::new("Radio Diagnostics & Channel Stability").size(12.5).strong().color(p.text_primary));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         Frame::none()
-                                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 16))
+                                            .fill(accent_with_alpha(accent, 16))
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(7.0, 3.0))
                                             .show(ui, |ui| {
@@ -18188,7 +18217,7 @@ impl LauncherApp {
                                 ui.label(RichText::new("AFH (Adaptive Frequency Hopping) spectrum analysis across 79 channels").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
 
                                 ui.add_space(8.0);
-                                draw_rf_frequency_waveform(ui, 100.0);
+                                draw_rf_frequency_waveform(ui, 100.0, accent);
 
                                 ui.add_space(10.0);
                                 ui.columns(3, |cols| {
@@ -18241,7 +18270,7 @@ impl LauncherApp {
                                     ];
                                     for (t_name, t_idx) in tabs {
                                         let is_sel = self.bt_audio_profile == t_idx;
-                                        let bg = if is_sel { Color32::from_rgba_unmultiplied(56, 189, 248, 26) } else { Color32::from_rgb(10, 14, 22) };
+                                        let bg = if is_sel { accent_with_alpha(accent, 26) } else { Color32::from_rgb(10, 14, 22) };
                                         let txt_col = if is_sel { Color32::from_rgb(241, 245, 249) } else { Color32::from_rgb(148, 163, 184) };
 
                                         let resp = Frame::none()
@@ -18271,7 +18300,7 @@ impl LauncherApp {
                                     let is_active = self.bt_codec == c_idx;
                                     let (row_rect, row_resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::click());
                                     let row_bg = if is_active {
-                                        Color32::from_rgba_unmultiplied(56, 189, 248, 16)
+                                        accent_with_alpha(accent, 16)
                                     } else if row_resp.hovered() {
                                         Color32::from_rgb(18, 28, 42)
                                     } else {
@@ -18279,7 +18308,7 @@ impl LauncherApp {
                                     };
 
                                     ui.painter().rect_filled(row_rect, Rounding::same(6.0), row_bg);
-                                    let dot_col = if is_active { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(100, 116, 139) };
+                                    let dot_col = if is_active { accent } else { Color32::from_rgb(100, 116, 139) };
                                     ui.painter().circle_filled(egui::pos2(row_rect.left() + 12.0, row_rect.center().y), 3.0, dot_col);
 
                                     let text_col = if is_active { Color32::from_rgb(241, 245, 249) } else { Color32::from_rgb(203, 213, 225) };
@@ -18310,7 +18339,7 @@ impl LauncherApp {
                                                 ui.label(RichText::new("Temporarily lowers fidelity to enable microphone bus").size(8.0).color(Color32::from_rgb(100, 116, 139)));
                                             });
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                render_custom_toggle_switch(ui, &mut self.bt_auto_switch);
+                                                render_custom_toggle_switch(ui, &mut self.bt_auto_switch, accent);
                                             });
                                         });
                                     });
@@ -18327,6 +18356,7 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_temperature_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
 
         // Check if fan full blast timer expired (10s) - only applies to local hardware
@@ -18394,7 +18424,7 @@ impl LauncherApp {
                             // Row 1: Overline / Subsystem Tag
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("●").size(7.0).color(accent));
                                 ui.label(RichText::new(tag_str).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                             });
 
@@ -18411,13 +18441,13 @@ impl LauncherApp {
                                     ui.spacing_mut().item_spacing.x = 8.0;
                                     ui.label(RichText::new(&title_str).size(16.5).strong().color(p.text_primary));
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
+                                        .fill(accent_with_alpha(accent, 25))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                                ui.label(RichText::new("●").size(6.0).color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new("●").size(6.0).color(accent));
                                                 let badge = if is_remote { "HWMON ACTIVE" } else { "EC-THERMAL OK" };
                                                 ui.label(RichText::new(badge).size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                             });
@@ -18438,12 +18468,12 @@ impl LauncherApp {
                                     for (mode_label, mode_idx, tooltip) in modes {
                                         let is_active = self.fan_mode == mode_idx;
                                         let bg = if is_active {
-                                            Color32::from_rgba_unmultiplied(56, 189, 248, 28)
+                                            accent_with_alpha(accent, 28)
                                         } else {
                                             Color32::from_rgb(18, 28, 42)
                                         };
                                         let border_stroke = if is_active {
-                                            Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248))
+                                            Stroke::new(1.0_f32, accent)
                                         } else {
                                             Stroke::NONE
                                         };
@@ -18470,7 +18500,7 @@ impl LauncherApp {
 
                                     // Settings button
                                     let (btn_rect, btn_resp) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
-                                    let btn_bg = if btn_resp.hovered() { Color32::from_rgba_unmultiplied(56, 189, 248, 30) } else { Color32::from_rgb(18, 28, 42) };
+                                    let btn_bg = if btn_resp.hovered() { accent_with_alpha(accent, 30) } else { Color32::from_rgb(18, 28, 42) };
                                     ui.painter().rect_filled(btn_rect, Rounding::same(6.0), btn_bg);
                                     ui.painter().text(btn_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::SLIDERS, egui::FontId::monospace(12.0), Color32::from_rgb(148, 163, 184));
                                     btn_resp.on_hover_text("Calibrate dynamic fan curve profiles");
@@ -18484,13 +18514,13 @@ impl LauncherApp {
                                         ui.spacing_mut().item_spacing.x = 8.0;
                                         ui.label(RichText::new(&title_str).size(16.5).strong().color(p.text_primary));
                                         Frame::none()
-                                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
+                                            .fill(accent_with_alpha(accent, 25))
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                             .show(ui, |ui| {
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 4.0;
-                                                    ui.label(RichText::new("●").size(6.0).color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new("●").size(6.0).color(accent));
                                                     let badge = if is_remote { "HWMON ACTIVE" } else { "EC-THERMAL OK" };
                                                     ui.label(RichText::new(badge).size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                                 });
@@ -18502,7 +18532,7 @@ impl LauncherApp {
 
                                         // Settings button (tonal borderless)
                                         let (btn_rect, btn_resp) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
-                                        let btn_bg = if btn_resp.hovered() { Color32::from_rgba_unmultiplied(56, 189, 248, 30) } else { Color32::from_rgb(18, 28, 42) };
+                                        let btn_bg = if btn_resp.hovered() { accent_with_alpha(accent, 30) } else { Color32::from_rgb(18, 28, 42) };
                                         ui.painter().rect_filled(btn_rect, Rounding::same(6.0), btn_bg);
                                         ui.painter().text(btn_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::SLIDERS, egui::FontId::monospace(12.0), Color32::from_rgb(148, 163, 184));
                                         btn_resp.on_hover_text("Calibrate dynamic fan curve profiles");
@@ -18517,12 +18547,12 @@ impl LauncherApp {
                                         for (mode_label, mode_idx, tooltip) in modes {
                                             let is_active = self.fan_mode == mode_idx;
                                             let bg = if is_active {
-                                                Color32::from_rgba_unmultiplied(56, 189, 248, 28)
+                                                accent_with_alpha(accent, 28)
                                             } else {
                                                 Color32::from_rgb(18, 28, 42)
                                             };
                                             let border_stroke = if is_active {
-                                                Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248))
+                                                Stroke::new(1.0_f32, accent)
                                             } else {
                                                 Stroke::NONE
                                             };
@@ -18571,9 +18601,9 @@ impl LauncherApp {
 
                 let cpu_tj = snap.cpu_tjunction_max.unwrap_or(95.0);
                 let sensor_cards = [
-                    ("CPU PACKAGE", cpu_temp, cpu_tj, "+1.8°C / min", Color32::from_rgb(56, 189, 248)),
+                    ("CPU PACKAGE", cpu_temp, cpu_tj, "+1.8°C / min", accent),
                     (second_card_name, second_card_temp, second_card_limit, "STEADY", Color32::from_rgb(96, 165, 250)),
-                    (ram_card_name, ram_temp, 75.0_f32, "STEADY", Color32::from_rgb(56, 189, 248)),
+                    (ram_card_name, ram_temp, 75.0_f32, "STEADY", accent),
                     (storage_card_name, nvme_temp, 75.0_f32, "STEADY", Color32::from_rgb(96, 165, 250)),
                     ("MOTHERBOARD VRM", vrm_temp, 105.0_f32, "+0.2°C / min", Color32::from_rgb(203, 213, 225)),
                 ];
@@ -18657,7 +18687,7 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.0;
                                         let (d_rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                                        ui.painter().circle_filled(d_rect.center(), 3.5, Color32::from_rgb(56, 189, 248));
+                                        ui.painter().circle_filled(d_rect.center(), 3.5, accent);
                                         ui.label(RichText::new(format!("CPU Package (Peak: {:.1}°C)", cpu_temp + 4.2)).size(10.0).monospace().color(Color32::from_rgb(203, 213, 225)));
                                     });
                                 });
@@ -18665,7 +18695,7 @@ impl LauncherApp {
                         });
 
                         ui.add_space(8.0);
-                        draw_thermal_dual_waveform(ui, 110.0, cpu_temp, second_card_temp);
+                        draw_thermal_dual_waveform(ui, 110.0, cpu_temp, second_card_temp, accent);
                     });
 
                 ui.add_space(8.0);
@@ -18731,21 +18761,21 @@ impl LauncherApp {
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 16))
+                                        .fill(accent_with_alpha(accent, 16))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(7.0, 3.0))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 if is_remote {
-                                                    ui.label(RichText::new("●").size(6.0).color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new("●").size(6.0).color(accent));
                                                     ui.label(RichText::new("BMC / ACPI ACTIVE").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                                 } else if !has_active_fans {
                                                     ui.label(RichText::new("●").size(6.0).color(Color32::from_rgb(52, 211, 153)));
                                                     ui.label(RichText::new("FANLESS • 0 dBA (SILENT)").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                                 } else {
                                                     let dba = 28.4_f32 + (cpu_fan_pct / 100.0 * 18.0);
-                                                    ui.label(RichText::new("●").size(6.0).color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new("●").size(6.0).color(accent));
                                                     ui.label(RichText::new(format!("ACOUSTICS: {:.1} dBA", dba)).size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                                 }
                                             });
@@ -18783,7 +18813,7 @@ impl LauncherApp {
                                         ui.set_width(ui.available_width());
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 8.0;
-                                            draw_circular_tachometer(ui, 48.0, cpu_fan_pct, Color32::from_rgb(56, 189, 248));
+                                            draw_circular_tachometer(ui, 48.0, cpu_fan_pct, accent);
                                             ui.vertical(|ui| {
                                                 ui.spacing_mut().item_spacing.y = 1.0;
                                                 ui.label(RichText::new(fan1_name).size(11.0).strong().color(p.text_primary));
@@ -18850,8 +18880,8 @@ impl LauncherApp {
                                     });
                             } else {
                                 let is_blasting = self.fan_full_blast;
-                                let blast_stroke = if is_blasting { Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)) } else { Stroke::NONE };
-                                let blast_bg = if is_blasting { Color32::from_rgba_unmultiplied(56, 189, 248, 22) } else { Color32::from_rgb(10, 14, 22) };
+                                let blast_stroke = if is_blasting { Stroke::new(1.0_f32, accent) } else { Stroke::NONE };
+                                let blast_bg = if is_blasting { accent_with_alpha(accent, 22) } else { Color32::from_rgb(10, 14, 22) };
 
                                 let blast_resp = Frame::none()
                                     .fill(blast_bg)
@@ -18862,7 +18892,7 @@ impl LauncherApp {
                                         ui.set_width(ui.available_width());
                                         ui.horizontal(|ui| {
                                             let icon = if is_blasting { crate::lucide::ALERT_TRIANGLE } else { crate::lucide::GAUGE };
-                                            let icon_col = Color32::from_rgb(56, 189, 248);
+                                            let icon_col = accent;
                                             ui.label(RichText::new(icon).size(13.0).color(icon_col));
                                             ui.add_space(4.0);
                                             ui.vertical(|ui| {
@@ -18903,13 +18933,13 @@ impl LauncherApp {
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.spacing_mut().item_spacing.x = 5.0;
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 16))
+                                        .fill(accent_with_alpha(accent, 16))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(6.0, 3.0))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                                ui.label(RichText::new("●").size(6.0).color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new("●").size(6.0).color(accent));
                                                 ui.label(RichText::new("HYST: 3°C").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                             });
                                         });
@@ -18941,7 +18971,7 @@ impl LauncherApp {
                             });
 
                             ui.add_space(8.0);
-                            draw_interactive_fan_curve(ui, 135.0, cpu_temp, cpu_fan_pct);
+                            draw_interactive_fan_curve(ui, 135.0, cpu_temp, cpu_fan_pct, accent);
 
                             ui.add_space(8.0);
                             ui.columns(4, |cols| {
@@ -18995,13 +19025,13 @@ impl LauncherApp {
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 16))
+                                    .fill(accent_with_alpha(accent, 16))
                                     .rounding(Rounding::same(4.0))
                                     .inner_margin(egui::Margin::symmetric(7.0, 3.0))
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 4.0;
-                                            ui.label(RichText::new("●").size(6.0).color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new("●").size(6.0).color(accent));
                                             ui.label(RichText::new("POLL RATE: 500MS").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                         });
                                     });
@@ -19014,7 +19044,7 @@ impl LauncherApp {
                             if !snap.temp_sensors.is_empty() {
                                 snap.temp_sensors.iter().map(|s| {
                                     let (stat, col) = if s.temp < 60.0 {
-                                        ("NOMINAL", Color32::from_rgb(56, 189, 248))
+                                        ("NOMINAL", accent)
                                     } else if s.temp < 80.0 {
                                         ("WARM", Color32::from_rgb(96, 165, 250))
                                     } else {
@@ -19024,7 +19054,7 @@ impl LauncherApp {
                                 }).collect()
                             } else {
                                 vec![
-                                    ("CPU Core Package (SoC)".to_string(), cpu_temp, 100.0_f32, "TjMax 100°C".to_string(), "NOMINAL", Color32::from_rgb(56, 189, 248)),
+                                    ("CPU Core Package (SoC)".to_string(), cpu_temp, 100.0_f32, "TjMax 100°C".to_string(), "NOMINAL", accent),
                                     ("System Board ACPI Zone".to_string(), vrm_temp, 105.0_f32, "ACPI Thermal Zone".to_string(), "NOMINAL", Color32::from_rgb(203, 213, 225)),
                                     ("PCIe Storage Thermal Zone".to_string(), nvme_temp, 75.0_f32, "Operating Limit: 75°C".to_string(), "OPTIMAL", Color32::from_rgb(96, 165, 250)),
                                     ("Chassis Ambient Airflow".to_string(), (cpu_temp - 12.0).max(28.0), 55.0_f32, "Rack Ambient 24°C".to_string(), "NORMAL", Color32::from_rgb(148, 163, 184)),
@@ -19032,14 +19062,14 @@ impl LauncherApp {
                             }
                         } else {
                             vec![
-                                ("CPU Core 0-3 (SoC)".to_string(), cpu_temp - 4.8, 100.0_f32, "TjMax 100°C".to_string(), "NOMINAL", Color32::from_rgb(56, 189, 248)),
+                                ("CPU Core 0-3 (SoC)".to_string(), cpu_temp - 4.8, 100.0_f32, "TjMax 100°C".to_string(), "NOMINAL", accent),
                                 ("GPU Edge Temp".to_string(), gpu_temp, 87.0_f32, "TjMax 87°C".to_string(), "NOMINAL", Color32::from_rgb(96, 165, 250)),
                                 ("GPU Hotspot (Junction)".to_string(), gpu_temp + 6.3, 105.0_f32, "Delta: +6.3°C".to_string(), "NOMINAL", Color32::from_rgb(96, 165, 250)),
-                                ("Memory SODIMM #1".to_string(), ram_temp, 70.0_f32, "Threshold 70°C".to_string(), "COOL", Color32::from_rgb(56, 189, 248)),
+                                ("Memory SODIMM #1".to_string(), ram_temp, 70.0_f32, "Threshold 70°C".to_string(), "COOL", accent),
                                 ("PCIe M.2 Slot 0 (SSD)".to_string(), nvme_temp, 75.0_f32, "Throttle: 75°C".to_string(), "OPTIMAL", Color32::from_rgb(96, 165, 250)),
                                 ("VRM Vcore Phase 1-6".to_string(), vrm_temp, 105.0_f32, "Max Rated: 105°C".to_string(), "PASS", Color32::from_rgb(203, 213, 225)),
                                 ("Ambient Chassis Exhaust".to_string(), 34.1_f32, 50.0_f32, "Room Amb: 24.0°C".to_string(), "NORMAL", Color32::from_rgb(148, 163, 184)),
-                                ("Chassis Palmrest".to_string(), 29.4_f32, 40.0_f32, "Ergonomic Cap: 38°C".to_string(), "EXCELLENT", Color32::from_rgb(56, 189, 248)),
+                                ("Chassis Palmrest".to_string(), 29.4_f32, 40.0_f32, "Ergonomic Cap: 38°C".to_string(), "EXCELLENT", accent),
                             ]
                         };
 
@@ -19130,6 +19160,7 @@ impl LauncherApp {
 
     fn render_sensors_top_apps_tab(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.theme.palette();
+        let accent = self.sensors_accent_color(&p);
 
         // Fixed column widths and compact spacing matching Windows 11 Task Manager
         const COL_CPU_W: f32 = 78.0;
@@ -19320,7 +19351,7 @@ impl LauncherApp {
                                     .strong()
                                     .color(Color32::from_rgb(15, 23, 42)),
                             )
-                            .fill(Color32::from_rgb(56, 189, 248))
+                            .fill(accent)
                             .rounding(Rounding::same(999.0))
                             .min_size(egui::vec2(0.0, 28.0))
                         } else {
@@ -19411,13 +19442,13 @@ impl LauncherApp {
                     if timestamp.elapsed() < Duration::from_secs(4) {
                         ui.add_space(6.0);
                         Frame::none()
-                            .fill(Color32::from_rgba_premultiplied(56, 189, 248, 25))
+                            .fill(accent_with_alpha(accent, 25))
                             .rounding(Rounding::same(999.0))
                             .inner_margin(egui::Margin::symmetric(12.0, 5.0))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     let icon = if is_err { crate::lucide::ALERT_TRIANGLE } else { crate::lucide::CHECK };
-                                    ui.label(RichText::new(icon).size(11.0).color(if is_err { Color32::from_rgb(148, 163, 184) } else { Color32::from_rgb(56, 189, 248) }));
+                                    ui.label(RichText::new(icon).size(11.0).color(if is_err { Color32::from_rgb(148, 163, 184) } else { accent }));
                                     ui.label(RichText::new(msg).size(11.0).strong().color(if is_err { p.text_primary } else { Color32::from_rgb(226, 232, 240) }));
                                 });
                             });
@@ -20616,13 +20647,13 @@ impl LauncherApp {
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.vertical_centered(|ui| {
-                                    // Icon circle with cyan accent glow
+                                    // Icon circle with theme accent glow
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                                        .fill(accent_with_alpha(p.accent, 22))
                                         .rounding(Rounding::same(999.0))
                                         .inner_margin(egui::Margin::same(14.0))
                                         .show(ui, |ui| {
-                                            ui.label(RichText::new(crate::lucide::SERVER).size(28.0).color(Color32::from_rgb(56, 189, 248)));
+                                            ui.label(RichText::new(crate::lucide::SERVER).size(28.0).color(p.accent));
                                         });
 
                                     ui.add_space(12.0);

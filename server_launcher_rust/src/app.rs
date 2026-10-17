@@ -6053,6 +6053,97 @@ fn read_backlight_brightness_ratio() -> Option<f32> {
     None
 }
 
+fn read_usb_power_watts() -> (f32, usize) {
+    #[cfg(target_os = "linux")]
+    {
+        let mut total_w = 0.35_f32; // Host controller / PHY idle baseline
+        let mut active_count = 0_usize;
+
+        if let Ok(entries) = std::fs::read_dir("/sys/bus/usb/devices") {
+            for entry in entries.flatten() {
+                let fname = entry.file_name().to_string_lossy().to_string();
+                // Exclude root hubs and interface endpoints (interfaces contain ':')
+                if fname.starts_with("usb") || fname.contains(':') {
+                    continue;
+                }
+                let path = entry.path();
+                let bmax_path = path.join("bMaxPower");
+                if !bmax_path.is_file() {
+                    continue;
+                }
+
+                let is_suspended = std::fs::read_to_string(path.join("power/runtime_status"))
+                    .map(|s| s.trim().eq_ignore_ascii_case("suspended"))
+                    .unwrap_or(false);
+
+                let ma = std::fs::read_to_string(&bmax_path)
+                    .ok()
+                    .and_then(|s| {
+                        let cleaned = s.trim().trim_end_matches("mA").trim_end_matches("ma").trim();
+                        cleaned.parse::<f32>().ok()
+                    })
+                    .unwrap_or(100.0);
+
+                if is_suspended {
+                    total_w += 0.04;
+                } else {
+                    active_count += 1;
+                    // Active USB devices draw nominal 40-55% of negotiated bMaxPower on 5V rail
+                    let nominal_w = (ma * 0.005 * 0.45).clamp(0.25, 4.5);
+                    total_w += nominal_w;
+                }
+            }
+        }
+
+        return (total_w.clamp(0.35, 25.0), active_count);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        (0.5, 1)
+    }
+}
+
+fn read_keyboard_and_lights_power_watts() -> f32 {
+    #[cfg(target_os = "linux")]
+    {
+        let mut total_w = 0.25_f32; // Keyboard microcontroller, matrix scanning & touchpad logic
+
+        if let Ok(entries) = std::fs::read_dir("/sys/class/leds") {
+            for entry in entries.flatten() {
+                let fname = entry.file_name().to_string_lossy().to_lowercase();
+                let path = entry.path();
+                let bright_val = std::fs::read_to_string(path.join("brightness"))
+                    .ok()
+                    .and_then(|s| s.trim().parse::<f32>().ok())
+                    .unwrap_or(0.0);
+                let max_val = std::fs::read_to_string(path.join("max_brightness"))
+                    .ok()
+                    .and_then(|s| s.trim().parse::<f32>().ok())
+                    .unwrap_or(1.0);
+
+                if fname.contains("kbd") || fname.contains("keyboard") || fname.contains("backlight") {
+                    if max_val > 0.0 && bright_val > 0.0 {
+                        let ratio = (bright_val / max_val).clamp(0.0, 1.0);
+                        // Backlit keyboard LED array draws 0.8W - 1.8W at 100%
+                        total_w += ratio * 1.5;
+                    }
+                } else if bright_val > 0.0 {
+                    // Status LEDs (mic mute, caps lock, lan leds, power button LED)
+                    total_w += 0.04;
+                }
+            }
+        }
+
+        return total_w.clamp(0.25, 5.0);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        0.3
+    }
+}
+
 fn draw_power_realtime_waveform(ui: &mut Ui, height: f32, watts: f32, _is_ac: bool) {
     ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
@@ -16725,23 +16816,41 @@ impl LauncherApp {
                                     ("Bypass active".to_string(), Color32::from_rgb(56, 189, 248))
                                 };
 
-                                let (watts_val, components): (f32, [(&'static str, f32, f32); 4]) = if is_remote {
+                                let (watts_val, components): (f32, Vec<(&'static str, f32, f32)>) = if is_remote {
                                     let raw_cpu = snap.cpu_power_watts.unwrap_or_else(|| {
                                         let tdp = snap.cpu_tdp_watts.unwrap_or(65.0);
                                         let idle = (tdp * 0.15).clamp(8.0, 25.0);
                                         idle + (tdp - idle) * (0.35 * cpu_load + 0.65 * cpu_load.powf(1.35))
                                     });
-                                    let raw_storage = (4.0 + (disk_mb_s * 0.12)).clamp(4.0, 35.0);
+
+                                    let (num_rotational, num_ssd) = {
+                                        let mut rot = 0;
+                                        let mut ssd = 0;
+                                        for d in &snap.physical_disks {
+                                            if d.is_ssd { ssd += 1; } else { rot += 1; }
+                                        }
+                                        if rot == 0 && ssd == 0 {
+                                            if snap.disks.is_empty() { (0, 1) } else { (0, snap.disks.len()) }
+                                        } else {
+                                            (rot, ssd)
+                                        }
+                                    };
+                                    let hdd_draw = (num_rotational as f32 * 4.5) + (disk_mb_s * 0.15).clamp(0.0, 15.0);
+                                    let ssd_draw = (num_ssd.max(1) as f32 * 1.2) + (disk_mb_s * 0.08).clamp(0.0, 10.0);
+                                    let raw_storage = (hdd_draw + ssd_draw).clamp(4.0, 45.0);
+
                                     let raw_net = (3.0 + (net_mb_s * 0.15)).clamp(3.0, 25.0);
+                                    let raw_usb = 1.2_f32; // Remote server USB/BMC bus draw
                                     let raw_mb = (10.0 + mem_ratio * 12.0).clamp(10.0, 40.0);
-                                    let total = raw_cpu + raw_storage + raw_net + raw_mb;
+                                    let total = raw_cpu + raw_storage + raw_net + raw_usb + raw_mb;
 
                                     (
                                         total,
-                                        [
+                                        vec![
                                             ("CPU Package & Cores", raw_cpu, snap.cpu_tdp_watts.unwrap_or(150.0).max(raw_cpu * 1.25)),
-                                            ("Storage Subsystem (NVMe/SAS)", raw_storage, 40.0),
+                                            ("Storage Subsystem (HDD/NVMe)", raw_storage, 45.0),
                                             ("Network PHY & Transceivers", raw_net, 30.0),
+                                            ("USB & Management Rails", raw_usb, 15.0),
                                             ("Motherboard Chipset & RAM", raw_mb, 45.0),
                                         ],
                                     )
@@ -16768,36 +16877,90 @@ impl LauncherApp {
                                         0.8 // External monitor HDMI/DP buffer
                                     };
 
-                                    let raw_mb = (1.2 + mem_ratio * 0.6 + (disk_mb_s * 0.05).clamp(0.0, 1.8)).clamp(1.0, 6.0);
+                                    // Storage Subsystem (Mechanical HDD spindle + NVMe/SSD)
+                                    let (num_rotational, num_ssd) = {
+                                        let mut rot = 0;
+                                        let mut ssd = 0;
+                                        for d in &snap.physical_disks {
+                                            if d.is_ssd { ssd += 1; } else { rot += 1; }
+                                        }
+                                        if rot == 0 && ssd == 0 {
+                                            if snap.disks.is_empty() { (0, 1) } else { (0, snap.disks.len()) }
+                                        } else {
+                                            (rot, ssd)
+                                        }
+                                    };
+                                    let hdd_watts = (num_rotational as f32 * 1.85) + (disk_mb_s * 0.12).clamp(0.0, 3.5);
+                                    let ssd_watts = (num_ssd.max(1) as f32 * 0.45) + (disk_mb_s * 0.05).clamp(0.0, 2.5);
+                                    let raw_storage = (hdd_watts + ssd_watts).clamp(0.6, 25.0);
+
+                                    // USB Ports & Peripherals power
+                                    let (base_usb_w, usb_device_count) = read_usb_power_watts();
+
+                                    // Keyboard controller & LED illumination / backlights
+                                    let raw_kbd_lights = read_keyboard_and_lights_power_watts();
+
+                                    // Motherboard chipset logic & RAM
+                                    let raw_mb = (1.2 + mem_ratio * 0.7).clamp(1.0, 5.0);
 
                                     let bat_power = snap.power.total_power_watts.filter(|&w| w > 0.1);
 
-                                    let (final_watts, c_cpu, c_gpu, c_disp, c_mb) = if is_discharging && bat_power.is_some() {
+                                    let (final_watts, c_cpu, c_gpu, c_disp, c_storage, c_usb, c_kbd_lights, c_mb) = if is_discharging && bat_power.is_some() {
                                         let total = bat_power.unwrap();
-                                        let sum_raw = (raw_cpu + raw_gpu + raw_display + raw_mb).max(0.1);
-                                        let scale = total / sum_raw;
-                                        (total, raw_cpu * scale, raw_gpu * scale, raw_display * scale, raw_mb * scale)
+                                        // Base internal consumption
+                                        let base_internal = raw_cpu + raw_gpu + raw_display + raw_storage + raw_kbd_lights + raw_mb;
+
+                                        // If total battery discharge exceeds the internal base components,
+                                        // the excess is power drawn by USB ports & external peripherals/accessories
+                                        let c_usb_raw = if total > base_internal {
+                                            base_usb_w.max(total - base_internal)
+                                        } else {
+                                            base_usb_w
+                                        };
+
+                                        // Crucially keep CPU package draw strictly untouched from sensor/load model:
+                                        // Drawing power from USB ports/accessories must NEVER inflate CPU power!
+                                        let non_cpu_sum = (raw_display + raw_storage + c_usb_raw + raw_kbd_lights + raw_mb).max(0.1);
+                                        let target_non_cpu = (total - raw_cpu - raw_gpu).max(0.1);
+                                        let scale = (target_non_cpu / non_cpu_sum).clamp(0.4, 1.8);
+
+                                        (
+                                            total,
+                                            raw_cpu,
+                                            raw_gpu,
+                                            raw_display * scale,
+                                            raw_storage * scale,
+                                            c_usb_raw * scale,
+                                            raw_kbd_lights * scale,
+                                            raw_mb * scale,
+                                        )
                                     } else if is_charging && bat_power.is_some() {
-                                        let sys_draw = raw_cpu + raw_gpu + raw_display + raw_mb;
+                                        let sys_draw = raw_cpu + raw_gpu + raw_display + raw_storage + base_usb_w + raw_kbd_lights + raw_mb;
                                         let total = sys_draw + bat_power.unwrap();
-                                        (total, raw_cpu, raw_gpu, raw_display, raw_mb)
+                                        (total, raw_cpu, raw_gpu, raw_display, raw_storage, base_usb_w, raw_kbd_lights, raw_mb)
                                     } else {
-                                        let total = (raw_cpu + raw_gpu + raw_display + raw_mb).max(2.5);
-                                        (total, raw_cpu, raw_gpu, raw_display, raw_mb)
+                                        let total = (raw_cpu + raw_gpu + raw_display + raw_storage + base_usb_w + raw_kbd_lights + raw_mb).max(2.5);
+                                        (total, raw_cpu, raw_gpu, raw_display, raw_storage, base_usb_w, raw_kbd_lights, raw_mb)
                                     };
 
                                     let cpu_cap = tdp.max(c_cpu * 1.25);
                                     let gpu_cap = (tdp * 0.6).max(c_gpu * 1.5).max(4.0);
                                     let disp_cap = 6.0_f32;
+                                    let storage_cap = (num_rotational as f32 * 5.0 + num_ssd as f32 * 3.0).clamp(6.0, 35.0);
+                                    let usb_cap = (usb_device_count as f32 * 4.5 + 5.0).clamp(10.0, 35.0);
+                                    let kbd_lights_cap = 4.0_f32;
                                     let mb_cap = 8.0_f32;
 
                                     (
                                         final_watts,
-                                        [
+                                        vec![
                                             ("CPU Package (PL0/1)", c_cpu, cpu_cap),
                                             ("Integrated GPU", c_gpu, gpu_cap),
                                             ("eDP Panel & Backlight", c_disp, disp_cap),
-                                            ("Motherboard Logic / NVMe", c_mb, mb_cap),
+                                            ("Drives & Storage (HDD/NVMe)", c_storage, storage_cap),
+                                            ("USB Ports & Peripherals", c_usb, usb_cap),
+                                            ("Keyboard & System Lights", c_kbd_lights, kbd_lights_cap),
+                                            ("Motherboard Logic & RAM", c_mb, mb_cap),
                                         ],
                                     )
                                 };
@@ -16849,7 +17012,7 @@ impl LauncherApp {
                                     ui.painter().rect_filled(br, Rounding::same(2.0), Color32::from_rgb(14, 20, 36));
                                     let fill_w = br.width() * (c_watts / c_max).clamp(0.04, 1.0);
                                     ui.painter().rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(fill_w, br.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
-                                    ui.add_space(5.0);
+                                    ui.add_space(3.0);
                                 }
                             });
                     });

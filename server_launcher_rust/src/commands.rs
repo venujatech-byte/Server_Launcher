@@ -659,7 +659,17 @@ pub fn open_system_terminal(cwd: &Path) -> Result<(), String> {
 
     #[cfg(not(target_os = "windows"))]
     {
-        let terms = ["x-terminal-emulator", "gnome-terminal", "konsole", "alacritty", "kitty", "terminator", "xfce4-terminal", "xterm"];
+        if let Some((term, args)) = crate::service::find_terminal() {
+            let mut cmd = Command::new(term);
+            for arg in args {
+                cmd.arg(arg);
+            }
+            cmd.current_dir(cwd);
+            if let Ok(_) = cmd.spawn() {
+                return Ok(());
+            }
+        }
+        let terms = ["ptyxis", "x-terminal-emulator", "gnome-terminal", "kgx", "konsole", "alacritty", "kitty", "terminator", "xfce4-terminal", "xterm"];
         for t in terms {
             if Command::new("which").arg(t).output().map(|o| o.status.success()).unwrap_or(false) {
                 let res = Command::new(t).current_dir(cwd).spawn();
@@ -668,7 +678,7 @@ pub fn open_system_terminal(cwd: &Path) -> Result<(), String> {
                 }
             }
         }
-        Err("No supported external terminal found (gnome-terminal, alacritty, kitty, xterm)".to_string())
+        Err("No supported external terminal found (ptyxis, gnome-terminal, alacritty, kitty, xterm)".to_string())
     }
 }
 

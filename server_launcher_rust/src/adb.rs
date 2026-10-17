@@ -720,25 +720,110 @@ pub fn fastboot_flash(partition: &str, img_path: &Path) -> Result<String, String
 
 /// Launches an external host terminal running an interactive `adb -s <serial> shell`.
 pub fn launch_external_adb_terminal(serial: &str) -> Result<(), String> {
-    let xfce_cmd = format!("adb -s {} shell", serial);
-    let terminal_runners = [
-        ("gnome-terminal", vec!["--", "adb", "-s", serial, "shell"]),
-        ("kgx", vec!["--", "adb", "-s", serial, "shell"]),
-        ("konsole", vec!["-e", "adb", "-s", serial, "shell"]),
-        ("xfce4-terminal", vec!["-e", xfce_cmd.as_str()]),
-        ("alacritty", vec!["-e", "adb", "-s", serial, "shell"]),
-        ("kitty", vec!["adb", "-s", serial, "shell"]),
-        ("xterm", vec!["-e", "adb", "-s", serial, "shell"]),
-    ];
+    let script_dir = std::env::temp_dir();
+    let safe_serial = if serial.trim().is_empty() {
+        "default".to_string()
+    } else {
+        serial.replace(['.', ':', '-'], "_")
+    };
+    let script_path = script_dir.join(format!("launcher_adb_shell_{}.sh", safe_serial));
 
-    for (term_bin, args) in terminal_runners {
-        if let Ok(mut child) = Command::new(term_bin).args(&args).spawn() {
-            std::thread::spawn(move || {
-                let _ = child.wait();
-            });
-            return Ok(());
+    let adb_target = if serial.trim().is_empty() {
+        "adb shell".to_string()
+    } else {
+        format!("adb -s \"{}\" shell", serial.trim())
+    };
+
+    let script_content = format!(
+r#"#!/usr/bin/env bash
+echo "=========================================================="
+echo " Server Launcher: Android ADB Interactive Shell"
+echo " Device : {display_serial}"
+echo "=========================================================="
+echo "Connecting to {display_serial}..."
+{adb_target}
+EXIT_CODE=$?
+echo ""
+echo "ADB shell session closed (exit code: $EXIT_CODE)."
+echo "Press Enter to exit."
+read -r
+"#,
+        display_serial = if serial.trim().is_empty() { "default device" } else { serial.trim() },
+        adb_target = adb_target,
+    );
+
+    let _ = std::fs::write(&script_path, script_content);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = std::fs::metadata(&script_path) {
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o755);
+            let _ = std::fs::set_permissions(&script_path, perms);
         }
     }
 
-    Err("No compatible terminal emulator (gnome-terminal, alacritty, kitty, xterm) found.".to_string())
+    #[cfg(not(target_os = "windows"))]
+    {
+        let script_str = script_path.to_string_lossy().to_string();
+        let chosen = crate::service::find_terminal();
+        let mut cmd;
+        if let Some((term, args)) = chosen {
+            cmd = Command::new(term);
+            for arg in args {
+                cmd.arg(arg);
+            }
+            cmd.arg(&script_str);
+        } else {
+            let fallbacks = [
+                ("ptyxis", vec!["--new-window", "--", script_str.as_str()]),
+                ("x-terminal-emulator", vec!["-e", script_str.as_str()]),
+                ("gnome-terminal", vec!["--", script_str.as_str()]),
+                ("kgx", vec!["-e", script_str.as_str()]),
+                ("konsole", vec!["-e", script_str.as_str()]),
+                ("xfce4-terminal", vec!["-e", script_str.as_str()]),
+                ("alacritty", vec!["-e", script_str.as_str()]),
+                ("kitty", vec![script_str.as_str()]),
+                ("xterm", vec!["-e", script_str.as_str()]),
+            ];
+
+            for (term_bin, args) in fallbacks {
+                let mut c = Command::new(term_bin);
+                c.args(&args);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::CommandExt;
+                    c.process_group(0);
+                }
+                if let Ok(mut child) = c.spawn() {
+                    std::thread::spawn(move || {
+                        let _ = child.wait();
+                    });
+                    return Ok(());
+                }
+            }
+
+            return Err("No compatible terminal emulator (ptyxis, gnome-terminal, konsole, xterm) found.".to_string());
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+        let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn terminal: {}", e))?;
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = Command::new("cmd.exe");
+        cmd.args(&["/K", &format!("adb -s {} shell", serial)]);
+        cmd.spawn().map_err(|e| format!("Failed to spawn cmd: {}", e))?;
+        Ok(())
+    }
 }

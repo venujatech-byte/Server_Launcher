@@ -2829,7 +2829,10 @@ impl LauncherApp {
                                     ui.close_menu();
                                 }
                                 if ui.button(format!("{} External Shell", crate::lucide::TERMINAL)).clicked() {
-                                    let _ = crate::adb::launch_external_adb_terminal(&adb_dev.serial);
+                                    match crate::adb::launch_external_adb_terminal(&adb_dev.serial) {
+                                        Ok(_) => self.adb_status_msg = Some(("External ADB terminal opened".to_string(), false, Instant::now())),
+                                        Err(e) => self.adb_status_msg = Some((format!("Terminal error: {}", e), true, Instant::now())),
+                                    }
                                     ui.close_menu();
                                 }
                                 ui.separator();

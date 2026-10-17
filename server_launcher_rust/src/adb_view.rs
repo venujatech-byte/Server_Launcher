@@ -823,7 +823,10 @@ impl LauncherApp {
                             .fill(p.bg_button)
                             .rounding(Rounding::same(6.0));
                         if ui.add(btn_term).on_hover_text("Launch interactive ADB terminal in system emulator").clicked() {
-                            let _ = crate::adb::launch_external_adb_terminal(&serial);
+                            match crate::adb::launch_external_adb_terminal(&serial) {
+                                Ok(_) => self.adb_status_msg = Some(("External ADB terminal opened".to_string(), false, Instant::now())),
+                                Err(e) => self.adb_status_msg = Some((format!("Terminal error: {}", e), true, Instant::now())),
+                            }
                         }
 
                         // Built-in Screen Mirroring Quick Toggle
@@ -1778,6 +1781,16 @@ impl LauncherApp {
                         .rounding(Rounding::same(4.0));
                     if ui.add(btn_clear).clicked() {
                         self.adb_shell_history.clear();
+                    }
+
+                    let btn_ext = egui::Button::new(RichText::new(format!("{} External Shell", crate::lucide::EXTERNAL_LINK)).size(10.0).color(Color32::from_rgb(56, 189, 248)))
+                        .fill(p.bg_button)
+                        .rounding(Rounding::same(4.0));
+                    if ui.add(btn_ext).on_hover_text("Open interactive ADB shell session in system terminal emulator").clicked() {
+                        match crate::adb::launch_external_adb_terminal(&serial) {
+                            Ok(_) => self.adb_status_msg = Some(("External ADB terminal opened".to_string(), false, Instant::now())),
+                            Err(e) => self.adb_status_msg = Some((format!("Terminal error: {}", e), true, Instant::now())),
+                        }
                     }
                 });
             });

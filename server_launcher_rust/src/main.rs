@@ -38,40 +38,137 @@ pub fn load_app_icon() -> Option<egui::IconData> {
 }
 
 #[cfg(target_os = "linux")]
-fn ensure_linux_desktop_integration() {
+pub fn ensure_linux_desktop_integration() {
     let home = match std::env::var("HOME") {
         Ok(h) => std::path::PathBuf::from(h),
         Err(_) => return,
     };
 
-    let icon_bytes = include_bytes!("../assets/icon.png");
+    let icon_512_bytes = include_bytes!("../assets/icon.png");
+    let icon_96_bytes = include_bytes!("../assets/icon_96.png");
 
-    // 1. Install icon into standard XDG icon directories
-    let icon_dir = home.join(".local/share/icons/hicolor/512x512/apps");
-    if std::fs::create_dir_all(&icon_dir).is_ok() {
-        let _ = std::fs::write(icon_dir.join("server_launcher.png"), icon_bytes);
+    // 1. Install icons into all standard XDG icon theme and pixmap locations.
+    // This ensures GNOME, KDE, XFCE, Cinnamon, and custom themes (such as MacTahoe)
+    // find the icon regardless of lookup method or icon size requested.
+    let icon_sizes = ["512x512", "256x256", "128x128", "64x64", "48x48", "32x32"];
+    for size in icon_sizes {
+        let size_dir = home.join(format!(".local/share/icons/hicolor/{}/apps", size));
+        if std::fs::create_dir_all(&size_dir).is_ok() {
+            let _ = std::fs::write(size_dir.join("server_launcher.png"), icon_512_bytes);
+        }
     }
 
+    // 96x96
+    let dir_96 = home.join(".local/share/icons/hicolor/96x96/apps");
+    if std::fs::create_dir_all(&dir_96).is_ok() {
+        let _ = std::fs::write(dir_96.join("server_launcher.png"), icon_96_bytes);
+    }
+
+    // Fallbacks: direct ~/.local/share/icons/ and ~/.local/share/pixmaps/
     let base_icon_dir = home.join(".local/share/icons");
     if std::fs::create_dir_all(&base_icon_dir).is_ok() {
-        let _ = std::fs::write(base_icon_dir.join("server_launcher.png"), icon_bytes);
+        let _ = std::fs::write(base_icon_dir.join("server_launcher.png"), icon_512_bytes);
     }
 
-    // 2. Install desktop entry matching app_id = "server_launcher"
+    let pixmaps_dir = home.join(".local/share/pixmaps");
+    if std::fs::create_dir_all(&pixmaps_dir).is_ok() {
+        let _ = std::fs::write(pixmaps_dir.join("server_launcher.png"), icon_512_bytes);
+    }
+
+    // Primary absolute icon path for guaranteed loading across all desktop environments
+    let primary_icon_path = home.join(".local/share/icons/hicolor/512x512/apps/server_launcher.png");
+
+    // Refresh icon cache
+    let _ = std::process::Command::new("gtk-update-icon-cache")
+        .args(["-f", "-t", &home.join(".local/share/icons/hicolor").to_string_lossy()])
+        .output();
+
+    // 2. Determine target binary path.
+    // When the user runs the downloaded GitHub release binary from Downloads or a temporary folder,
+    // copy it cleanly to ~/.local/bin/server_launcher so the desktop entry and desktop shortcut
+    // remain permanently valid even if the user deletes or moves their Downloads folder.
+    let current_exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("server_launcher"));
+    let local_bin_dir = home.join(".local/bin");
+    let target_bin = local_bin_dir.join("server_launcher");
+
+    let is_system_install = current_exe.starts_with("/usr") || current_exe.starts_with("/opt");
+    let is_local_bin = current_exe == target_bin;
+
+    let exec_path = if !is_system_install && !is_local_bin {
+        let _ = std::fs::create_dir_all(&local_bin_dir);
+        if std::fs::copy(&current_exe, &target_bin).is_ok() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&target_bin, std::fs::Permissions::from_mode(0o755));
+            }
+            target_bin
+        } else {
+            current_exe.clone()
+        }
+    } else {
+        current_exe.clone()
+    };
+
+    // 3. Desktop entry content
+    // Specifying the absolute icon path guarantees that GNOME Shell (including custom themes like MacTahoe),
+    // KDE, XFCE, and application launchers immediately render the icon.
+    let desktop_content = format!(
+        "[Desktop Entry]\n\
+Version=1.0\n\
+Type=Application\n\
+Name=Server Launcher\n\
+GenericName=Server Launcher & Android Cockpit\n\
+Comment=Development Server Launcher, ADB Android Cockpit & System Monitor\n\
+Exec=\"{}\" %u\n\
+Icon={}\n\
+Terminal=false\n\
+Categories=Development;Utility;System;\n\
+StartupWMClass=server_launcher\n\
+StartupNotify=true\n\
+Keywords=server;launcher;adb;android;scrcpy;terminal;ssh;docker;monitor;\n\
+X-GNOME-UsesNotifications=true\n",
+        exec_path.display(),
+        primary_icon_path.display()
+    );
+
+    // 4. Install desktop entry in ~/.local/share/applications/ (shows in "All Apps")
     let apps_dir = home.join(".local/share/applications");
     if std::fs::create_dir_all(&apps_dir).is_ok() {
-        let current_exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("server_launcher"));
-        let desktop_content = format!(
-            "[Desktop Entry]\nVersion=1.0\nType=Application\nName=Server Launcher\nComment=Development Server Launcher & Monitor\nExec=\"{}\"\nIcon=server_launcher\nTerminal=false\nCategories=Development;Utility;\nStartupWMClass=server_launcher\nStartupNotify=true\n",
-            current_exe.display()
-        );
-        let _ = std::fs::write(apps_dir.join("server_launcher.desktop"), desktop_content);
+        let app_desktop_file = apps_dir.join("server_launcher.desktop");
+        let _ = std::fs::write(&app_desktop_file, &desktop_content);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&app_desktop_file, std::fs::Permissions::from_mode(0o755));
+        }
 
         let _ = std::process::Command::new("update-desktop-database")
             .arg(&apps_dir)
             .output();
     }
+
+    // 5. Create Desktop shortcut on ~/Desktop (if Desktop directory exists)
+    let desktop_dir = home.join("Desktop");
+    if desktop_dir.is_dir() {
+        let desktop_file = desktop_dir.join("server_launcher.desktop");
+        let _ = std::fs::write(&desktop_file, &desktop_content);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&desktop_file, std::fs::Permissions::from_mode(0o755));
+        }
+
+        // On GNOME Shell, desktop entries require gio set metadata::trusted true
+        // so the launcher icon activates and can be opened without warning prompts.
+        let _ = std::process::Command::new("gio")
+            .args(["set", &desktop_file.to_string_lossy(), "metadata::trusted", "true"])
+            .output();
+    }
 }
+
+#[cfg(not(target_os = "linux"))]
+pub fn ensure_linux_desktop_integration() {}
 
 fn main() -> eframe::Result<()> {
     #[cfg(target_os = "linux")]

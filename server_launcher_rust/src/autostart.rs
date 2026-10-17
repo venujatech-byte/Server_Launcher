@@ -34,12 +34,24 @@ pub fn set_app_autostart(enable: bool) -> Result<(), String> {
             std::fs::create_dir_all(&autostart_dir)
                 .map_err(|e| format!("Failed to create autostart directory: {}", e))?;
 
-            let current_exe = std::env::current_exe()
-                .unwrap_or_else(|_| PathBuf::from("server_launcher"));
+            let target_bin = PathBuf::from(&home).join(".local/bin/server_launcher");
+            let current_exe = if target_bin.exists() {
+                target_bin
+            } else {
+                std::env::current_exe().unwrap_or_else(|_| PathBuf::from("server_launcher"))
+            };
+
+            let primary_icon = PathBuf::from(&home).join(".local/share/icons/hicolor/512x512/apps/server_launcher.png");
+            let icon_str = if primary_icon.exists() {
+                primary_icon.to_string_lossy().to_string()
+            } else {
+                "server_launcher".to_string()
+            };
 
             let content = format!(
-                "[Desktop Entry]\nVersion=1.0\nType=Application\nName=Server Launcher\nComment=Development Server Launcher & Monitor\nExec=\"{}\"\nIcon=server_launcher\nTerminal=false\nCategories=Development;Utility;\nStartupWMClass=server_launcher\nX-GNOME-Autostart-enabled=true\n",
-                current_exe.display()
+                "[Desktop Entry]\nVersion=1.0\nType=Application\nName=Server Launcher\nGenericName=Server Launcher & Android Cockpit\nComment=Development Server Launcher, ADB Android Cockpit & System Monitor\nExec=\"{}\"\nIcon={}\nTerminal=false\nCategories=Development;Utility;System;\nStartupWMClass=server_launcher\nX-GNOME-Autostart-enabled=true\n",
+                current_exe.display(),
+                icon_str
             );
 
             std::fs::write(&autostart_file, content)

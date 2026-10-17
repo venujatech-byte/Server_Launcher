@@ -15,6 +15,7 @@ pub const TERMINAL: &str = "\u{e181}"; // terminal
 pub const COMMAND: &str = "\u{e181}"; // terminal
 pub const SYSTEMD: &str = "\u{e245}"; // settings-2
 pub const SETTINGS: &str = "\u{e154}"; // settings
+pub const SLIDERS: &str = "\u{e245}"; // sliders
 pub const SENSORS: &str = "\u{e186}"; // thermometer
 pub const THERMOMETER: &str = "\u{e186}"; // thermometer
 
@@ -22,8 +23,8 @@ pub const THERMOMETER: &str = "\u{e186}"; // thermometer
 pub const CPU: &str = "\u{e0a9}"; // cpu
 pub const RAM: &str = "\u{e445}"; // memory-stick
 pub const GPU: &str = "\u{e0df}"; // gamepad-2
-pub const HARD_DRIVE: &str = "\u{e0ed}"; // hard-drive
-pub const STORAGE: &str = "\u{e0ed}"; // hard-drive
+pub const HARD_DRIVE: &str = "\u{e0c5}"; // hard-drive
+pub const STORAGE: &str = "\u{e0c5}"; // hard-drive
 pub const DATABASE: &str = "\u{e0ad}"; // database
 pub const NETWORK: &str = "\u{e125}"; // network
 pub const GLOBE: &str = "\u{e0e8}"; // globe
@@ -34,6 +35,10 @@ pub const ZAP: &str = "\u{e1b4}"; // zap
 pub const ACTIVITY: &str = "\u{e038}"; // activity
 pub const FLAME: &str = "\u{e0d2}"; // flame
 pub const GAUGE: &str = "\u{e1bf}"; // gauge
+pub const WIFI: &str = "\u{e15b}"; // wifi
+pub const BLUETOOTH: &str = "\u{e05c}"; // bluetooth
+pub const HEADPHONES: &str = "\u{e0f0}"; // headphones
+pub const LAYOUT_GRID: &str = "\u{e101}"; // layout-grid
 
 // Actions and UI Controls
 pub const SEARCH: &str = "\u{e151}"; // search
@@ -116,6 +121,13 @@ pub fn setup_lucide_font(ctx: &eframe::egui::Context) {
         .entry(eframe::egui::FontFamily::Proportional)
         .or_default()
         .push(FONT_NAME.to_owned());
+
+    // Also add Hack as fallback for Proportional font family so symbols (bullets, arrows) render reliably
+    fonts
+        .families
+        .entry(eframe::egui::FontFamily::Proportional)
+        .or_default()
+        .push("Hack".to_owned());
 
     // Add to Monospace font family as well
     fonts

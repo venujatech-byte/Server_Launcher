@@ -1823,7 +1823,7 @@ pub fn render_command_palette(
             ui.separator();
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new("Type to filter • ↑/↓ navigate • Enter select")
+                    RichText::new("Type to filter • Up/Down navigate • Enter select")
                         .size(10.0)
                         .color(palette.text_muted),
                 );
@@ -3178,7 +3178,7 @@ pub fn render_remote_start_server_modal(
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_start = egui::Button::new(
-                        RichText::new("▶ Start Server").size(12.0).strong().color(Color32::WHITE),
+                        RichText::new(format!("{} Start Server", crate::lucide::PLAY)).size(12.0).strong().color(Color32::WHITE),
                     )
                     .fill(Color32::from_rgb(0x05, 0x96, 0x69))
                     .rounding(Rounding::same(999.0))

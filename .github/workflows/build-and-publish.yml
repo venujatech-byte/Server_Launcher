@@ -1,0 +1,109 @@
+name: Build and Publish Release
+
+on:
+  push:
+    branches:
+      - main
+      - design
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (Linux x86_64)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libx11-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgtk-3-dev
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server_launcher_rust
+
+      - name: Build release binary
+        working-directory: server_launcher_rust
+        run: cargo build --release
+
+      - name: Package Linux binary
+        run: |
+          tar -czf server_launcher-linux-x86_64.tar.gz -C server_launcher_rust/target/release server_launcher
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: server_launcher-linux-x86_64.tar.gz
+          path: server_launcher-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Determine Release Tag & Metadata
+        id: release_info
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG_NAME="${{ github.ref_name }}"
+            IS_PRERELEASE=false
+            RELEASE_TITLE="Release ${TAG_NAME}"
+          else
+            TAG_NAME="continuous"
+            IS_PRERELEASE=true
+            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+            RELEASE_TITLE="Continuous Build (${SHORT_SHA})"
+          fi
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=${IS_PRERELEASE}" >> "$GITHUB_OUTPUT"
+          echo "release_title=${RELEASE_TITLE}" >> "$GITHUB_OUTPUT"
+
+      - name: Update Continuous Git Tag
+        if: steps.release_info.outputs.tag_name == 'continuous'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f continuous ${{ github.sha }}
+          git push -f origin continuous
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_info.outputs.tag_name }}
+          name: ${{ steps.release_info.outputs.release_title }}
+          prerelease: ${{ steps.release_info.outputs.is_prerelease == 'true' }}
+          files: release-assets/*
+          generate_release_notes: true
+          make_latest: ${{ steps.release_info.outputs.is_prerelease == 'false' }}
+          body: |
+            ### Automated Build
+            - **Commit**: [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+            - **Branch**: `${{ github.ref_name }}`
+            - **Artifact**: Linux (`server_launcher-linux-x86_64.tar.gz`)
+

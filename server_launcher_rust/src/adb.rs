@@ -176,6 +176,16 @@ pub fn enable_tcpip(serial: &str, port: u16) -> Result<String, String> {
     adb_cmd(Some(serial), &["tcpip", &port_str])
 }
 
+/// Reverts target device from TCP/IP mode back to USB debugging mode.
+pub fn reset_to_usb(serial: &str) -> Result<String, String> {
+    adb_cmd(Some(serial), &["usb"])
+}
+
+/// Pairs with an Android 11+ wireless debugging target using pairing code.
+pub fn pair_wireless(target: &str, pairing_code: &str) -> Result<String, String> {
+    adb_cmd(None, &["pair", target, pairing_code])
+}
+
 /// Queries comprehensive telemetry from an online Android device.
 pub fn query_telemetry(serial: &str) -> AdbDeviceTelemetry {
     let mut telem = AdbDeviceTelemetry::default();
@@ -447,26 +457,89 @@ pub fn install_apk(serial: &str, apk_path: &Path) -> Result<String, String> {
     adb_cmd(Some(serial), &["install", "-r", "-d", &path_str])
 }
 
+/// Captures the device screen and returns raw PNG bytes in memory.
+pub fn capture_screen_raw(serial: &str) -> Result<Vec<u8>, String> {
+    let mut cmd = Command::new("adb");
+    if !serial.is_empty() {
+        cmd.arg("-s").arg(serial);
+    }
+    cmd.args(["exec-out", "screencap", "-p"]);
+
+    match cmd.output() {
+        Ok(out) => {
+            if out.status.success() && !out.stdout.is_empty() {
+                Ok(out.stdout)
+            } else {
+                Err("Failed to capture screen: empty or error output".to_string())
+            }
+        }
+        Err(e) => Err(format!("Failed to execute screencap: {}", e)),
+    }
+}
+
+/// Sends a simulated tap at device coordinates (x, y).
+pub fn send_tap(serial: &str, x: i32, y: i32) -> Result<(), String> {
+    let xs = x.to_string();
+    let ys = y.to_string();
+    adb_cmd(Some(serial), &["shell", "input", "tap", &xs, &ys]).map(|_| ())
+}
+
+/// Sends a simulated swipe from (x1, y1) to (x2, y2) over duration_ms.
+pub fn send_swipe(serial: &str, x1: i32, y1: i32, x2: i32, y2: i32, duration_ms: u32) -> Result<(), String> {
+    let x1s = x1.to_string();
+    let y1s = y1.to_string();
+    let x2s = x2.to_string();
+    let y2s = y2.to_string();
+    let ds = duration_ms.to_string();
+    adb_cmd(Some(serial), &["shell", "input", "swipe", &x1s, &y1s, &x2s, &y2s, &ds]).map(|_| ())
+}
+
 /// Lists files in an Android directory.
 pub fn list_directory(serial: &str, remote_path: &str) -> Result<Vec<AdbFileEntry>, String> {
-    let out = adb_cmd(Some(serial), &["shell", "ls", "-la", remote_path])?;
+    let clean_path = if remote_path.is_empty() {
+        "/sdcard/".to_string()
+    } else if remote_path.ends_with('/') {
+        remote_path.to_string()
+    } else {
+        format!("{}/", remote_path)
+    };
+
+    let out = adb_cmd(Some(serial), &["shell", "ls", "-la", &clean_path])?;
     let mut entries = Vec::new();
 
     for line in out.lines() {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 7 || line.starts_with("total ") {
+        let trimmed = line.trim();
+        if trimmed.starts_with("total ") || trimmed.is_empty() {
+            continue;
+        }
+
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.len() < 7 {
             continue;
         }
 
         let perms = parts[0];
-        let is_dir = perms.starts_with('d');
+        let is_dir = perms.starts_with('d') || perms.starts_with('l');
         let size_bytes = parts.get(4).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
-        let name = parts[parts.len() - 1].to_string();
+
+        // Filename is from index 7 onwards (to preserve spaces in filenames)
+        // If there is a symlink "name -> target", extract the link's name
+        let raw_name = parts[7..].join(" ");
+        let name = if let Some((link_name, _)) = raw_name.split_once(" -> ") {
+            link_name.trim().to_string()
+        } else {
+            raw_name
+        };
+
         if name == "." || name == ".." {
             continue;
         }
 
-        let modified = parts[parts.len() - 3..parts.len() - 1].join(" ");
+        let modified = if parts.len() >= 7 {
+            format!("{} {}", parts[5], parts[6])
+        } else {
+            String::new()
+        };
 
         entries.push(AdbFileEntry {
             name,
@@ -477,8 +550,13 @@ pub fn list_directory(serial: &str, remote_path: &str) -> Result<Vec<AdbFileEntr
         });
     }
 
-    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
+    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
     Ok(entries)
+}
+
+/// Deletes a file or directory on the device.
+pub fn delete_file(serial: &str, remote_path: &str) -> Result<(), String> {
+    adb_cmd(Some(serial), &["shell", "rm", "-rf", remote_path]).map(|_| ())
 }
 
 /// Pushes a local file or directory to a remote path on the device.

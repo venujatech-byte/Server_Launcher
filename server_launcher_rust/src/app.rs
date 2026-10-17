@@ -364,12 +364,30 @@ pub struct LauncherApp {
     pub adb_package_filter: String,
     pub adb_package_is_system: bool,
     pub adb_packages_cache: Vec<crate::adb::AdbPackageInfo>,
+    #[allow(dead_code)]
     pub adb_scrcpy_max_fps: u32,
+    #[allow(dead_code)]
     pub adb_scrcpy_bitrate_mbps: u32,
+    #[allow(dead_code)]
     pub adb_scrcpy_stay_awake: bool,
+    #[allow(dead_code)]
     pub adb_scrcpy_screen_off: bool,
+    #[allow(dead_code)]
     pub adb_scrcpy_no_audio: bool,
+    #[allow(dead_code)]
     pub adb_scrcpy_pids: HashMap<String, u32>,
+
+    // Built-in Screen Mirroring State (Native in-app screen share, no scrcpy)
+    pub adb_mirror_active: bool,
+    pub adb_mirror_texture: Option<egui::TextureHandle>,
+    pub adb_mirror_frame_rx: Option<std::sync::mpsc::Receiver<(Vec<u8>, usize, usize)>>,
+    pub adb_mirror_stop_tx: Option<std::sync::mpsc::Sender<()>>,
+    pub adb_mirror_last_frame_time: Option<Instant>,
+    pub adb_mirror_fps: f32,
+    pub adb_mirror_device_res: (usize, usize),
+    pub adb_mirror_drag_start: Option<egui::Pos2>,
+    pub adb_screenshare_text_input: String,
+    pub adb_file_filter: String,
 
 
     // Scripts State
@@ -1166,6 +1184,16 @@ impl LauncherApp {
             adb_scrcpy_screen_off: false,
             adb_scrcpy_no_audio: false,
             adb_scrcpy_pids: HashMap::new(),
+            adb_mirror_active: false,
+            adb_mirror_texture: None,
+            adb_mirror_frame_rx: None,
+            adb_mirror_stop_tx: None,
+            adb_mirror_last_frame_time: None,
+            adb_mirror_fps: 0.0,
+            adb_mirror_device_res: (800, 1280),
+            adb_mirror_drag_start: None,
+            adb_screenshare_text_input: String::new(),
+            adb_file_filter: String::new(),
         }
     }
 
@@ -2621,6 +2649,7 @@ impl LauncherApp {
         let mut host_to_test: Option<SshRemoteHost> = None;
         let mut host_to_term: Option<SshRemoteHost> = None;
         let mut adb_to_delete: Option<String> = None;
+        let mut adb_to_mirror: Option<(String, String)> = None;
 
         ui.vertical_centered(|ui| {
             ui.add_space(4.0);
@@ -2799,10 +2828,8 @@ impl LauncherApp {
                             }
 
                             dev_resp.context_menu(|ui| {
-                                if ui.button(format!("{} Mirror Screen (scrcpy)", crate::lucide::SCREEN_SHARE)).clicked() {
-                                    let mut cmd = std::process::Command::new("scrcpy");
-                                    cmd.arg("-s").arg(&adb_dev.serial);
-                                    let _ = cmd.spawn();
+                                if ui.button(format!("{} Mirror Screen", crate::lucide::SCREEN_SHARE)).clicked() {
+                                    adb_to_mirror = Some((adb_dev.id.clone(), adb_dev.serial.clone()));
                                     ui.close_menu();
                                 }
                                 if ui.button(format!("{} External Shell", crate::lucide::TERMINAL)).clicked() {
@@ -2892,6 +2919,11 @@ impl LauncherApp {
                 }
                 self.persist_config();
             }
+        }
+        if let Some((id, serial)) = adb_to_mirror {
+            self.selected_machine = id;
+            self.adb_active_subtab = AdbSubTab::ScreenShare;
+            self.start_builtin_mirror(&serial);
         }
     }
 

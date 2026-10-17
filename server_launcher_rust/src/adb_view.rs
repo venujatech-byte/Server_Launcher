@@ -1,6 +1,4 @@
-// ADB (Android Debug Bridge) UI View & Cockpit implementation for LauncherApp.
-
-use egui::{Align, Align2, Layout, Vec2};
+use egui::{pos2, Align, Align2, Layout, Rect, Vec2};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AdbSubTab {
@@ -444,6 +442,52 @@ impl LauncherApp {
             });
     }
 
+    pub fn start_builtin_mirror(&mut self, serial: &str) {
+        if self.adb_mirror_active {
+            return;
+        }
+        self.adb_mirror_active = true;
+        let (frame_tx, frame_rx) = std::sync::mpsc::channel();
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+        self.adb_mirror_frame_rx = Some(frame_rx);
+        self.adb_mirror_stop_tx = Some(stop_tx);
+
+        let ser = serial.to_string();
+        std::thread::spawn(move || {
+            while stop_rx.try_recv().is_err() {
+                let frame_start = Instant::now();
+                match crate::adb::capture_screen_raw(&ser) {
+                    Ok(bytes) => {
+                        if let Ok(img) = image::load_from_memory(&bytes) {
+                            let rgba = img.to_rgba8();
+                            let (w, h) = (rgba.width() as usize, rgba.height() as usize);
+                            if frame_tx.send((rgba.into_raw(), w, h)).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        std::thread::sleep(std::time::Duration::from_millis(250));
+                    }
+                }
+                let elapsed = frame_start.elapsed();
+                let min_wait = std::time::Duration::from_millis(50);
+                if elapsed < min_wait {
+                    std::thread::sleep(min_wait - elapsed);
+                }
+            }
+        });
+    }
+
+    pub fn stop_builtin_mirror(&mut self) {
+        if let Some(stop_tx) = self.adb_mirror_stop_tx.take() {
+            let _ = stop_tx.send(());
+        }
+        self.adb_mirror_active = false;
+        self.adb_mirror_frame_rx = None;
+        self.adb_mirror_drag_start = None;
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // ADB DEVICE COCKPIT VIEW: Full Android Management Center
     // ═════════════════════════════════════════════════════════════════════════
@@ -463,7 +507,12 @@ impl LauncherApp {
                 Frame::none()
                     .fill(p.bg_main)
                     .stroke(Stroke::NONE)
-                    .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
+                    .inner_margin(egui::Margin {
+                        left: 12.0,
+                        right: 18.0,
+                        top: 4.0,
+                        bottom: 8.0,
+                    }),
             )
             .show(ctx, |ui| {
                 // Header Bar (Device metadata capsule & top quick actions)
@@ -602,40 +651,24 @@ impl LauncherApp {
                             let _ = crate::adb::launch_external_adb_terminal(&serial);
                         }
 
-                        // Screen Mirroring Quick Toggle
-                        let is_scrcpy_on = self.adb_scrcpy_pids.contains_key(&serial);
-                        let scrcpy_btn_text = if is_scrcpy_on {
-                            RichText::new(format!("{} Stop Mirror", crate::lucide::SQUARE)).size(10.5).strong().color(Color32::WHITE)
+                        // Built-in Screen Mirroring Quick Toggle (No scrcpy)
+                        let is_mirror_on = self.adb_mirror_active;
+                        let mirror_btn_text = if is_mirror_on {
+                            RichText::new(format!("{} Pause Mirror", crate::lucide::PAUSE)).size(10.5).strong().color(Color32::WHITE)
                         } else {
                             RichText::new(format!("{} Screen Share", crate::lucide::SCREEN_SHARE)).size(10.5).strong().color(Color32::WHITE)
                         };
-                        let scrcpy_btn_bg = if is_scrcpy_on { Color32::from_rgb(220, 38, 38) } else { Color32::from_rgb(2, 132, 199) };
+                        let mirror_btn_bg = if is_mirror_on { Color32::from_rgb(220, 38, 38) } else { Color32::from_rgb(2, 132, 199) };
 
-                        let btn_scrcpy = egui::Button::new(scrcpy_btn_text)
-                            .fill(scrcpy_btn_bg)
+                        let btn_mirror = egui::Button::new(mirror_btn_text)
+                            .fill(mirror_btn_bg)
                             .rounding(Rounding::same(6.0));
-                        if ui.add(btn_scrcpy).on_hover_text("Toggle scrcpy real-time screen mirror").clicked() {
-                            if is_scrcpy_on {
-                                if let Some(pid) = self.adb_scrcpy_pids.remove(&serial) {
-                                    crate::adb::stop_scrcpy(pid);
-                                }
+                        if ui.add(btn_mirror).on_hover_text("Open and toggle real-time built-in screen mirroring").clicked() {
+                            self.adb_active_subtab = AdbSubTab::ScreenShare;
+                            if is_mirror_on {
+                                self.stop_builtin_mirror();
                             } else {
-                                match crate::adb::launch_scrcpy(
-                                    &serial,
-                                    self.adb_scrcpy_stay_awake,
-                                    self.adb_scrcpy_screen_off,
-                                    self.adb_scrcpy_no_audio,
-                                    Some(self.adb_scrcpy_max_fps),
-                                    Some(self.adb_scrcpy_bitrate_mbps),
-                                ) {
-                                    Ok(pid) => {
-                                        self.adb_scrcpy_pids.insert(serial.clone(), pid);
-                                        self.adb_status_msg = Some(("Screen share started (scrcpy)".to_string(), false, Instant::now()));
-                                    }
-                                    Err(e) => {
-                                        self.adb_status_msg = Some((format!("Failed to start scrcpy: {}", e), true, Instant::now()));
-                                    }
-                                }
+                                self.start_builtin_mirror(&serial);
                             }
                         }
                     });
@@ -899,111 +932,285 @@ impl LauncherApp {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // TAB 2: SCREEN SHARE & SCRCPY
+    // TAB 2: BUILT-IN REAL-TIME SCREEN MIRRORING (NO SCRCPY)
     // ─────────────────────────────────────────────────────────────────────────
     fn render_adb_screenshare_tab(&mut self, ui: &mut Ui, adb_dev: &crate::config::AdbDeviceConfig) {
         let p = self.palette();
         let serial = adb_dev.serial.clone();
-        let is_running = self.adb_scrcpy_pids.contains_key(&serial);
 
-        ScrollArea::vertical()
-            .id_salt("adb_scrcpy_scroll")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
+        // 1. Repaint trigger for real-time video stream
+        if self.adb_mirror_active {
+            ui.ctx().request_repaint();
+        }
 
-                // Banner
-                Frame::none()
-                    .fill(p.bg_card)
-                    .rounding(Rounding::same(12.0))
-                    .inner_margin(egui::Margin::symmetric(18.0, 16.0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            Frame::none()
-                                .fill(Color32::from_rgb(14, 40, 58))
-                                .rounding(Rounding::same(10.0))
-                                .inner_margin(egui::Margin::symmetric(14.0, 14.0))
-                                .show(ui, |ui| {
-                                    ui.label(RichText::new(crate::lucide::SCREEN_SHARE).size(26.0).color(Color32::from_rgb(56, 189, 248)));
-                                });
+        // 2. Poll incoming frames from background screencap worker
+        if let Some(ref rx) = self.adb_mirror_frame_rx {
+            let mut latest_frame = None;
+            while let Ok(frame) = rx.try_recv() {
+                latest_frame = Some(frame);
+            }
+            if let Some((raw_bytes, w, h)) = latest_frame {
+                self.adb_mirror_device_res = (w, h);
+                let color_img = egui::ColorImage::from_rgba_unmultiplied([w, h], &raw_bytes);
+                if let Some(ref mut tex) = self.adb_mirror_texture {
+                    tex.set(color_img, egui::TextureOptions::LINEAR);
+                } else {
+                    self.adb_mirror_texture = Some(ui.ctx().load_texture("adb_mirror_screen", color_img, egui::TextureOptions::LINEAR));
+                }
+                let now = Instant::now();
+                if let Some(last) = self.adb_mirror_last_frame_time {
+                    let delta = (now - last).as_secs_f32();
+                    if delta > 0.001 {
+                        let cur_fps = 1.0 / delta;
+                        self.adb_mirror_fps = self.adb_mirror_fps * 0.7 + cur_fps * 0.3;
+                    }
+                }
+                self.adb_mirror_last_frame_time = Some(now);
+            }
+        }
 
-                            ui.add_space(8.0);
-                            ui.vertical(|ui| {
-                                ui.label(RichText::new("Real-time Screen Mirroring & Control (scrcpy)").size(15.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("High-performance, ultra-low latency (<35ms) interactive display mirroring with keyboard and mouse forwarding.")
-                                    .size(11.0).color(p.text_muted));
+        // 3. Auto-start mirror on first tab entry if not active
+        if !self.adb_mirror_active && self.adb_mirror_texture.is_none() {
+            self.start_builtin_mirror(&serial);
+        }
+
+        ui.vertical(|ui| {
+            // Control Toolbar Bar
+            Frame::none()
+                .fill(p.bg_card)
+                .stroke(Stroke::NONE)
+                .rounding(Rounding::same(10.0))
+                .inner_margin(egui::Margin::symmetric(14.0, 8.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        // Status indicator
+                        if self.adb_mirror_active {
+                            ui.label(RichText::new("● LIVE").size(11.0).strong().color(Color32::from_rgb(34, 197, 94)));
+                            ui.label(RichText::new(format!("{:.1} FPS", self.adb_mirror_fps)).size(10.0).monospace().color(p.text_secondary));
+                            ui.label(RichText::new(format!("{}×{}", self.adb_mirror_device_res.0, self.adb_mirror_device_res.1)).size(10.0).monospace().color(p.text_muted));
+                        } else {
+                            ui.label(RichText::new("○ PAUSED").size(11.0).color(p.text_muted));
+                        }
+
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+
+                        // Quick text injection
+                        ui.label(RichText::new(crate::lucide::KEYBOARD).size(12.0).color(p.text_muted));
+                        let text_edit = ui.add(
+                            egui::TextEdit::singleline(&mut self.adb_screenshare_text_input)
+                                .hint_text("Type on device (press Enter)...")
+                                .desired_width(170.0)
+                        );
+                        let enter_hit = text_edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        let btn_send = egui::Button::new(RichText::new("Send").size(10.5).color(p.text_primary))
+                            .fill(p.bg_button)
+                            .rounding(Rounding::same(4.0));
+                        if (enter_hit || ui.add(btn_send).clicked()) && !self.adb_screenshare_text_input.trim().is_empty() {
+                            let text = self.adb_screenshare_text_input.clone();
+                            self.adb_screenshare_text_input.clear();
+                            let ser = serial.clone();
+                            std::thread::spawn(move || {
+                                let _ = crate::adb::send_text(&ser, &text);
                             });
+                        }
 
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if is_running {
-                                    let btn_stop = egui::Button::new(RichText::new(format!("{} Stop Mirroring", crate::lucide::SQUARE)).size(12.0).strong().color(Color32::WHITE))
-                                        .fill(Color32::from_rgb(220, 38, 38))
-                                        .rounding(Rounding::same(8.0))
-                                        .min_size(Vec2::new(140.0, 34.0));
-                                    if ui.add(btn_stop).clicked() {
-                                        if let Some(pid) = self.adb_scrcpy_pids.remove(&serial) {
-                                            crate::adb::stop_scrcpy(pid);
-                                        }
+                        // Right-aligned toolbar actions
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            // Wake / Screen Lock toggle
+                            let btn_wake = egui::Button::new(RichText::new(format!("{} Power / Wake", crate::lucide::POWER)).size(10.5).color(p.text_primary))
+                                .fill(p.bg_button)
+                                .rounding(Rounding::same(6.0));
+                            if ui.add(btn_wake).on_hover_text("Send Power keyevent to wake or sleep device").clicked() {
+                                let ser = serial.clone();
+                                std::thread::spawn(move || {
+                                    let _ = crate::adb::send_keyevent(&ser, 26);
+                                });
+                            }
+
+                            // Screenshot button
+                            let btn_shot = egui::Button::new(RichText::new(format!("{} Screenshot", crate::lucide::SAVE)).size(10.5).color(p.text_primary))
+                                .fill(p.bg_button)
+                                .rounding(Rounding::same(6.0));
+                            if ui.add(btn_shot).on_hover_text("Capture device screenshot and save to ~/Downloads").clicked() {
+                                let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+                                let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                                let dest = std::path::PathBuf::from(home).join("Downloads").join(format!("screenshot_{}.png", ts));
+                                match crate::adb::take_screenshot(&serial, &dest) {
+                                    Ok(_) => self.adb_status_msg = Some((format!("Screenshot saved to {}", dest.display()), false, Instant::now())),
+                                    Err(e) => self.adb_status_msg = Some((format!("Screenshot failed: {}", e), true, Instant::now())),
+                                }
+                            }
+
+                            // Pause / Resume toggle button
+                            if self.adb_mirror_active {
+                                let btn_pause = egui::Button::new(RichText::new(format!("{} Pause Stream", crate::lucide::PAUSE)).size(10.5).strong().color(Color32::WHITE))
+                                    .fill(Color32::from_rgb(220, 38, 38))
+                                    .rounding(Rounding::same(6.0));
+                                if ui.add(btn_pause).clicked() {
+                                    self.stop_builtin_mirror();
+                                }
+                            } else {
+                                let btn_resume = egui::Button::new(RichText::new(format!("{} Resume Stream", crate::lucide::PLAY)).size(10.5).strong().color(Color32::WHITE))
+                                    .fill(Color32::from_rgb(2, 132, 199))
+                                    .rounding(Rounding::same(6.0));
+                                if ui.add(btn_resume).clicked() {
+                                    self.start_builtin_mirror(&serial);
+                                }
+                            }
+                        });
+                    });
+                });
+
+            ui.add_space(6.0);
+
+            // Centered Phone Display Mockup Bezel
+            let (dw, dh) = self.adb_mirror_device_res;
+            let aspect = if dh > 0 { (dw as f32) / (dh as f32) } else { 0.625 };
+            let avail_h = (ui.available_height() - 54.0).clamp(240.0, 680.0);
+            let screen_h = avail_h;
+            let screen_w = screen_h * aspect;
+            let bezel_pad_x = 10.0_f32;
+            let bezel_pad_y = 10.0_f32;
+            let total_bezel_w = screen_w + bezel_pad_x * 2.0;
+            let total_bezel_h = screen_h + bezel_pad_y * 2.0 + 20.0;
+
+            ui.horizontal(|ui| {
+                let margin_x = (ui.available_width() - total_bezel_w).max(0.0) / 2.0;
+                ui.add_space(margin_x);
+
+                ui.vertical(|ui| {
+                    // Outer phone chassis
+                    let (bezel_rect, _) = ui.allocate_exact_size(Vec2::new(total_bezel_w, total_bezel_h), egui::Sense::hover());
+                    ui.painter().rect(
+                        bezel_rect,
+                        Rounding::same(24.0),
+                        Color32::from_rgb(14, 16, 23),
+                        Stroke::new(1.5_f32, Color32::from_rgb(38, 44, 62)),
+                    );
+
+                    // Top phone speaker slit / camera punch hole
+                    let speaker_w = 40.0_f32.min(screen_w * 0.25);
+                    let speaker_rect = Rect::from_center_size(
+                        pos2(bezel_rect.center().x, bezel_rect.min.y + 10.0),
+                        Vec2::new(speaker_w, 4.0),
+                    );
+                    ui.painter().rect_filled(speaker_rect, Rounding::same(2.0), Color32::from_rgb(30, 34, 48));
+
+                    // Screen area
+                    let screen_rect = Rect::from_min_size(
+                        pos2(bezel_rect.min.x + bezel_pad_x, bezel_rect.min.y + bezel_pad_y + 10.0),
+                        Vec2::new(screen_w, screen_h),
+                    );
+                    ui.painter().rect_filled(screen_rect, Rounding::same(10.0), Color32::BLACK);
+
+                    if let Some(ref tex) = self.adb_mirror_texture {
+                        // Render texture directly inside screen_rect
+                        ui.painter().image(
+                            tex.id(),
+                            screen_rect,
+                            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                            Color32::WHITE,
+                        );
+
+                        // Touch / tap & drag interactive handler
+                        let screen_resp = ui.allocate_rect(screen_rect, egui::Sense::click_and_drag());
+                        if screen_resp.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+
+                        if screen_resp.drag_started() {
+                            self.adb_mirror_drag_start = screen_resp.interact_pointer_pos();
+                        }
+
+                        if screen_resp.drag_stopped() {
+                            if let Some(start_p) = self.adb_mirror_drag_start.take() {
+                                if let Some(end_p) = screen_resp.interact_pointer_pos() {
+                                    let delta = end_p - start_p;
+                                    let (dev_w, dev_h) = (self.adb_mirror_device_res.0 as f32, self.adb_mirror_device_res.1 as f32);
+                                    let x1 = (((start_p.x - screen_rect.min.x) / screen_rect.width()) * dev_w).clamp(0.0, dev_w) as i32;
+                                    let y1 = (((start_p.y - screen_rect.min.y) / screen_rect.height()) * dev_h).clamp(0.0, dev_h) as i32;
+                                    let x2 = (((end_p.x - screen_rect.min.x) / screen_rect.width()) * dev_w).clamp(0.0, dev_w) as i32;
+                                    let y2 = (((end_p.y - screen_rect.min.y) / screen_rect.height()) * dev_h).clamp(0.0, dev_h) as i32;
+                                    let ser = serial.clone();
+                                    if delta.length() > 8.0 {
+                                        std::thread::spawn(move || {
+                                            let _ = crate::adb::send_swipe(&ser, x1, y1, x2, y2, 220);
+                                        });
+                                    } else {
+                                        std::thread::spawn(move || {
+                                            let _ = crate::adb::send_tap(&ser, x1, y1);
+                                        });
                                     }
-                                } else {
-                                    let btn_start = egui::Button::new(RichText::new(format!("{} Launch Screen Mirror", crate::lucide::PLAY)).size(12.0).strong().color(Color32::WHITE))
-                                        .fill(Color32::from_rgb(2, 132, 199))
-                                        .rounding(Rounding::same(8.0))
-                                        .min_size(Vec2::new(170.0, 34.0));
-                                    if ui.add(btn_start).clicked() {
-                                        match crate::adb::launch_scrcpy(
-                                            &serial,
-                                            self.adb_scrcpy_stay_awake,
-                                            self.adb_scrcpy_screen_off,
-                                            self.adb_scrcpy_no_audio,
-                                            Some(self.adb_scrcpy_max_fps),
-                                            Some(self.adb_scrcpy_bitrate_mbps),
-                                        ) {
-                                            Ok(pid) => {
-                                                self.adb_scrcpy_pids.insert(serial.clone(), pid);
-                                            }
-                                            Err(e) => {
-                                                self.adb_status_msg = Some((format!("scrcpy error: {}", e), true, Instant::now()));
-                                            }
-                                        }
-                                    }
+                                }
+                            }
+                        } else if screen_resp.clicked() {
+                            if let Some(pos) = screen_resp.interact_pointer_pos() {
+                                let (dev_w, dev_h) = (self.adb_mirror_device_res.0 as f32, self.adb_mirror_device_res.1 as f32);
+                                let x = (((pos.x - screen_rect.min.x) / screen_rect.width()) * dev_w).clamp(0.0, dev_w) as i32;
+                                let y = (((pos.y - screen_rect.min.y) / screen_rect.height()) * dev_h).clamp(0.0, dev_h) as i32;
+                                let ser = serial.clone();
+                                std::thread::spawn(move || {
+                                    let _ = crate::adb::send_tap(&ser, x, y);
+                                });
+                            }
+                        }
+                    } else {
+                        // Connecting placeholder
+                        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(screen_rect), |ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.add_space(screen_h * 0.4);
+                                ui.label(RichText::new(crate::lucide::SCREEN_SHARE).size(36.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.add_space(10.0);
+                                ui.label(RichText::new("Connecting to Android Display...").size(12.5).strong().color(Color32::WHITE));
+                                ui.label(RichText::new("Built-in native frame grabber").size(10.0).color(p.text_muted));
+                                ui.add_space(12.0);
+                                let btn_start = egui::Button::new(RichText::new("Start Streaming").size(11.0).color(Color32::WHITE))
+                                    .fill(p.accent)
+                                    .rounding(Rounding::same(6.0));
+                                if ui.add(btn_start).clicked() {
+                                    self.start_builtin_mirror(&serial);
                                 }
                             });
                         });
-                    });
+                    }
 
-                ui.add_space(12.0);
+                    ui.add_space(8.0);
 
-                // Settings Cards
-                Frame::none()
-                    .fill(p.bg_card)
-                    .rounding(Rounding::same(12.0))
-                    .inner_margin(egui::Margin::symmetric(16.0, 14.0))
-                    .show(ui, |ui| {
-                        ui.label(RichText::new("STREAM & DISPLAY PARAMETERS").size(10.5).monospace().strong().color(p.text_secondary));
-                        ui.add_space(10.0);
-
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut self.adb_scrcpy_stay_awake, "Stay Awake on Host Power");
-                            ui.add_space(16.0);
-                            ui.checkbox(&mut self.adb_scrcpy_screen_off, "Turn Off Physical Device Screen (Save Power/Heat)");
-                            ui.add_space(16.0);
-                            ui.checkbox(&mut self.adb_scrcpy_no_audio, "Mute Audio Forwarding");
+                    // Android Hardware Navigation Pill Bar
+                    Frame::none()
+                        .fill(Color32::from_rgb(18, 20, 28))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(32, 36, 50)))
+                        .rounding(Rounding::same(999.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 5.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let nav_btns = [
+                                    ("◀ Back", 4u32),
+                                    ("● Home", 3u32),
+                                    ("■ Recents", 187u32),
+                                    ("🔈 Vol-", 25u32),
+                                    ("🔊 Vol+", 24u32),
+                                    ("⏻ Power", 26u32),
+                                ];
+                                for (label, keycode) in nav_btns {
+                                    let btn = egui::Button::new(RichText::new(label).size(10.5).color(p.text_secondary))
+                                        .fill(Color32::TRANSPARENT)
+                                        .rounding(Rounding::same(999.0));
+                                    if ui.add(btn).clicked() {
+                                        let ser = serial.clone();
+                                        std::thread::spawn(move || {
+                                            let _ = crate::adb::send_keyevent(&ser, keycode);
+                                        });
+                                    }
+                                    ui.add_space(4.0);
+                                }
+                            });
                         });
-
-                        ui.add_space(12.0);
-
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("Target Bitrate:").size(11.0).color(p.text_secondary));
-                            ui.add(egui::Slider::new(&mut self.adb_scrcpy_bitrate_mbps, 2..=32).text("Mbps").step_by(2.0));
-
-                            ui.add_space(20.0);
-
-                            ui.label(RichText::new("Max Framerate:").size(11.0).color(p.text_secondary));
-                            ui.add(egui::Slider::new(&mut self.adb_scrcpy_max_fps, 30..=120).text("FPS").step_by(10.0));
-                        });
-                    });
+                });
             });
+        });
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1202,77 +1409,117 @@ impl LauncherApp {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
     // TAB 5: STORAGE SHARE & FILE EXPLORER
     // ─────────────────────────────────────────────────────────────────────────
     fn render_adb_storage_tab(&mut self, ui: &mut Ui, adb_dev: &crate::config::AdbDeviceConfig) {
         let p = self.palette();
         let serial = adb_dev.serial.clone();
 
+        let mut nav_into: Option<String> = None;
+        let mut nav_to_exact_path: Option<String> = None;
+        let mut pull_target: Option<String> = None;
+        let mut delete_target: Option<String> = None;
+
         ui.vertical(|ui| {
-            // Path Navigation and Action Bar
-            ui.horizontal(|ui| {
-                let btn_up = egui::Button::new(RichText::new("⬆ Up").size(10.5).color(p.text_primary))
-                    .fill(p.bg_button)
-                    .rounding(Rounding::same(6.0));
-                if ui.add(btn_up).clicked() {
-                    let mut parts: Vec<&str> = self.adb_file_current_path.split('/').filter(|s| !s.is_empty()).collect();
-                    if !parts.is_empty() {
-                        parts.pop();
-                        self.adb_file_current_path = format!("/{}", parts.join("/"));
-                        if let Ok(entries) = crate::adb::list_directory(&serial, &self.adb_file_current_path) {
-                            self.adb_file_entries = entries;
-                        }
-                    }
-                }
-
-                ui.label(RichText::new(&self.adb_file_current_path).size(11.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    // Refresh
-                    let btn_ref = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(10.5).color(p.text_secondary))
-                        .fill(p.bg_button)
-                        .rounding(Rounding::same(6.0));
-                    if ui.add(btn_ref).clicked() {
-                        if let Ok(entries) = crate::adb::list_directory(&serial, &self.adb_file_current_path) {
-                            self.adb_file_entries = entries;
-                        }
-                    }
-
-                    // Install APK button
-                    let btn_apk = egui::Button::new(RichText::new("📦 Install APK").size(11.0).strong().color(Color32::WHITE))
-                        .fill(p.accent)
-                        .rounding(Rounding::same(6.0));
-                    if ui.add(btn_apk).on_hover_text("Select .apk from host PC and install to device").clicked() {
-                        if let Some(path) = rfd::FileDialog::new().add_filter("Android APK (*.apk)", &["apk"]).pick_file() {
-                            match crate::adb::install_apk(&serial, &path) {
-                                Ok(_) => self.adb_status_msg = Some(("APK installed successfully".to_string(), false, Instant::now())),
-                                Err(e) => self.adb_status_msg = Some((format!("APK install error: {}", e), true, Instant::now())),
+            // Path Navigation and Action Bar Card
+            Frame::none()
+                .fill(p.bg_card)
+                .rounding(Rounding::same(10.0))
+                .inner_margin(egui::Margin::symmetric(14.0, 8.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        // Up Button
+                        let btn_up = egui::Button::new(RichText::new("⬆ Up").size(11.0).color(p.text_primary))
+                            .fill(p.bg_button)
+                            .rounding(Rounding::same(6.0));
+                        if ui.add(btn_up).clicked() {
+                            let mut parts: Vec<&str> = self.adb_file_current_path.split('/').filter(|s| !s.is_empty()).collect();
+                            if !parts.is_empty() {
+                                parts.pop();
+                                nav_to_exact_path = Some(if parts.is_empty() { "/".to_string() } else { format!("/{}", parts.join("/")) });
                             }
                         }
-                    }
 
-                    // Push File button
-                    let btn_push = egui::Button::new(RichText::new("⬆ Push File").size(11.0).color(p.text_primary))
-                        .fill(p.bg_button)
-                        .rounding(Rounding::same(6.0));
-                    if ui.add(btn_push).on_hover_text("Select local file and push to current folder on device").clicked() {
-                        if let Some(path) = rfd::FileDialog::new().pick_file() {
-                            let dest = format!("{}/{}", self.adb_file_current_path.trim_end_matches('/'), path.file_name().unwrap_or_default().to_string_lossy());
-                            match crate::adb::push_file(&serial, &path, &dest) {
-                                Ok(_) => {
-                                    self.adb_status_msg = Some(("File pushed to device".to_string(), false, Instant::now()));
-                                    if let Ok(entries) = crate::adb::list_directory(&serial, &self.adb_file_current_path) {
-                                        self.adb_file_entries = entries;
+                        ui.add_space(6.0);
+
+                        // Clickable Breadcrumbs
+                        ui.horizontal(|ui| {
+                            let segments: Vec<String> = self.adb_file_current_path.trim_matches('/').split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
+
+                            if ui.link(RichText::new("/").size(12.0).monospace().color(p.text_secondary)).clicked() {
+                                nav_to_exact_path = Some("/".to_string());
+                            }
+
+                            let mut accumulated = String::new();
+                            for (idx, seg) in segments.iter().enumerate() {
+                                ui.label(RichText::new("/").size(11.0).monospace().color(p.text_muted));
+                                accumulated.push('/');
+                                accumulated.push_str(seg);
+                                let is_last = idx == segments.len() - 1;
+                                let col = if is_last { Color32::from_rgb(56, 189, 248) } else { p.text_secondary };
+                                let link = ui.link(RichText::new(seg).size(11.5).monospace().strong().color(col));
+                                if link.clicked() && !is_last {
+                                    nav_to_exact_path = Some(accumulated.clone());
+                                }
+                            }
+                        });
+
+                        ui.add_space(8.0);
+                        // Filter input
+                        ui.label(RichText::new(crate::lucide::SEARCH).size(11.0).color(p.text_muted));
+                        ui.add(egui::TextEdit::singleline(&mut self.adb_file_filter).hint_text("Filter files...").desired_width(120.0));
+
+                        // Action Buttons on Right with proper spacing
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.add_space(4.0);
+
+                            // Refresh
+                            let btn_ref = egui::Button::new(RichText::new(format!("{} Refresh", crate::lucide::REFRESH_CW)).size(10.5).color(p.text_secondary))
+                                .fill(p.bg_button)
+                                .rounding(Rounding::same(6.0));
+                            if ui.add(btn_ref).clicked() {
+                                if let Ok(entries) = crate::adb::list_directory(&serial, &self.adb_file_current_path) {
+                                    self.adb_file_entries = entries;
+                                }
+                            }
+
+                            // Install APK button
+                            let btn_apk = egui::Button::new(RichText::new(format!("{} Install APK", crate::lucide::PACKAGE)).size(11.0).strong().color(Color32::WHITE))
+                                .fill(p.accent)
+                                .rounding(Rounding::same(6.0));
+                            if ui.add(btn_apk).on_hover_text("Select .apk from host PC and install to device").clicked() {
+                                if let Some(path) = rfd::FileDialog::new().add_filter("Android APK (*.apk)", &["apk"]).pick_file() {
+                                    match crate::adb::install_apk(&serial, &path) {
+                                        Ok(_) => self.adb_status_msg = Some(("APK installed successfully".to_string(), false, Instant::now())),
+                                        Err(e) => self.adb_status_msg = Some((format!("APK install error: {}", e), true, Instant::now())),
                                     }
                                 }
-                                Err(e) => self.adb_status_msg = Some((format!("Push failed: {}", e), true, Instant::now())),
                             }
-                        }
-                    }
-                });
-            });
 
-            ui.add_space(8.0);
+                            // Push File button
+                            let btn_push = egui::Button::new(RichText::new(format!("{} Push File", crate::lucide::UPLOAD)).size(11.0).color(p.text_primary))
+                                .fill(p.bg_button)
+                                .rounding(Rounding::same(6.0));
+                            if ui.add(btn_push).on_hover_text("Select local file and push to current folder on device").clicked() {
+                                if let Some(path) = rfd::FileDialog::new().pick_file() {
+                                    let dest = format!("{}/{}", self.adb_file_current_path.trim_end_matches('/'), path.file_name().unwrap_or_default().to_string_lossy());
+                                    match crate::adb::push_file(&serial, &path, &dest) {
+                                        Ok(_) => {
+                                            self.adb_status_msg = Some(("File pushed to device".to_string(), false, Instant::now()));
+                                            if let Ok(entries) = crate::adb::list_directory(&serial, &self.adb_file_current_path) {
+                                                self.adb_file_entries = entries;
+                                            }
+                                        }
+                                        Err(e) => self.adb_status_msg = Some((format!("Push failed: {}", e), true, Instant::now())),
+                                    }
+                                }
+                            }
+                        });
+                    });
+                });
+
+            ui.add_space(6.0);
 
             // Initial load if empty
             if self.adb_file_entries.is_empty() {
@@ -1281,28 +1528,54 @@ impl LauncherApp {
                 }
             }
 
-            // File Listing Table
-            let mut nav_into: Option<String> = None;
-            let mut pull_target: Option<String> = None;
-
+            // File Listing Table with Auto-Shrink False to fill available space
             Frame::none()
                 .fill(p.bg_card)
                 .rounding(Rounding::same(10.0))
-                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                 .show(ui, |ui| {
+                    // Header row
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("NAME").size(9.5).monospace().strong().color(p.text_muted));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.add_space(8.0);
+                            ui.label(RichText::new("ACTIONS").size(9.5).monospace().strong().color(p.text_muted));
+                            ui.add_space(50.0);
+                            ui.label(RichText::new("SIZE").size(9.5).monospace().strong().color(p.text_muted));
+                            ui.add_space(45.0);
+                            ui.label(RichText::new("PERMISSIONS").size(9.5).monospace().strong().color(p.text_muted));
+                        });
+                    });
+                    ui.add_space(4.0);
+                    ui.separator();
+                    ui.add_space(4.0);
+
                     ScrollArea::vertical()
                         .id_salt("adb_files_scroll")
+                        .auto_shrink([false, false])
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
 
-                            for entry in &self.adb_file_entries {
+                            let filter = self.adb_file_filter.to_lowercase();
+                            let mut sorted_entries = self.adb_file_entries.clone();
+                            sorted_entries.sort_by(|a, b| {
+                                b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                            });
+
+                            let mut visible_count = 0;
+                            for entry in &sorted_entries {
+                                if !filter.is_empty() && !entry.name.to_lowercase().contains(&filter) {
+                                    continue;
+                                }
+                                visible_count += 1;
+
                                 ui.horizontal(|ui| {
                                     let icon = if entry.is_dir { crate::lucide::FOLDER } else { crate::lucide::FILE_TEXT };
                                     let icon_col = if entry.is_dir { Color32::from_rgb(56, 189, 248) } else { p.text_secondary };
                                     ui.label(RichText::new(icon).size(13.0).color(icon_col));
 
                                     if entry.is_dir {
-                                        if ui.link(RichText::new(&entry.name).size(11.5).strong().color(p.text_primary)).clicked() {
+                                        if ui.link(RichText::new(&entry.name).size(11.5).strong().color(Color32::from_rgb(224, 242, 254))).clicked() {
                                             nav_into = Some(entry.name.clone());
                                         }
                                     } else {
@@ -1310,25 +1583,51 @@ impl LauncherApp {
                                     }
 
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        ui.add_space(4.0);
                                         if !entry.is_dir {
-                                            let btn_dl = egui::Button::new(RichText::new("⬇ Pull").size(9.5).color(p.text_secondary))
+                                            let btn_del = egui::Button::new(RichText::new(format!("{} Delete", crate::lucide::TRASH)).size(9.5).color(Color32::from_rgb(239, 68, 68)))
                                                 .fill(p.bg_button)
                                                 .rounding(Rounding::same(4.0));
-                                            if ui.add(btn_dl).clicked() {
+                                            if ui.add(btn_del).on_hover_text("Delete file from Android device").clicked() {
+                                                delete_target = Some(entry.name.clone());
+                                            }
+
+                                            let btn_dl = egui::Button::new(RichText::new(format!("{} Pull", crate::lucide::DOWNLOAD)).size(9.5).color(p.text_primary))
+                                                .fill(p.bg_button)
+                                                .rounding(Rounding::same(4.0));
+                                            if ui.add(btn_dl).on_hover_text("Download to host PC ~/Downloads").clicked() {
                                                 pull_target = Some(entry.name.clone());
                                             }
+
                                             let sz_kb = entry.size_bytes as f64 / 1024.0;
                                             let sz_str = if sz_kb >= 1024.0 { format!("{:.1} MB", sz_kb / 1024.0) } else { format!("{:.0} KB", sz_kb) };
                                             ui.label(RichText::new(sz_str).size(9.5).monospace().color(p.text_muted));
+                                        } else {
+                                            ui.label(RichText::new("<DIR>").size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
                                         }
                                         ui.label(RichText::new(&entry.permissions).size(9.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                                     });
                                 });
                                 ui.separator();
                             }
+
+                            if visible_count == 0 {
+                                ui.vertical_centered(|ui| {
+                                    ui.add_space(40.0);
+                                    ui.label(RichText::new(crate::lucide::FOLDER_OPEN).size(28.0).color(p.text_muted));
+                                    ui.add_space(6.0);
+                                    ui.label(RichText::new("Folder is empty or no files match search").size(11.0).color(p.text_muted));
+                                });
+                            }
                         });
                 });
 
+            if let Some(target) = nav_to_exact_path {
+                self.adb_file_current_path = target;
+                if let Ok(entries) = crate::adb::list_directory(&serial, &self.adb_file_current_path) {
+                    self.adb_file_entries = entries;
+                }
+            }
             if let Some(folder) = nav_into {
                 self.adb_file_current_path = format!("{}/{}", self.adb_file_current_path.trim_end_matches('/'), folder);
                 if let Ok(entries) = crate::adb::list_directory(&serial, &self.adb_file_current_path) {
@@ -1342,6 +1641,18 @@ impl LauncherApp {
                 match crate::adb::pull_file(&serial, &remote, &dest) {
                     Ok(_) => self.adb_status_msg = Some((format!("Pulled to {}", dest.display()), false, Instant::now())),
                     Err(e) => self.adb_status_msg = Some((format!("Pull failed: {}", e), true, Instant::now())),
+                }
+            }
+            if let Some(filename) = delete_target {
+                let remote = format!("{}/{}", self.adb_file_current_path.trim_end_matches('/'), filename);
+                match crate::adb::delete_file(&serial, &remote) {
+                    Ok(_) => {
+                        self.adb_status_msg = Some((format!("Deleted {}", filename), false, Instant::now()));
+                        if let Ok(entries) = crate::adb::list_directory(&serial, &self.adb_file_current_path) {
+                            self.adb_file_entries = entries;
+                        }
+                    }
+                    Err(e) => self.adb_status_msg = Some((format!("Delete failed: {}", e), true, Instant::now())),
                 }
             }
         });
@@ -1464,6 +1775,7 @@ impl LauncherApp {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
     // TAB 7: APPS & PACKAGE MANAGER
     // ─────────────────────────────────────────────────────────────────────────
     fn render_adb_apps_tab(&mut self, ui: &mut Ui, adb_dev: &crate::config::AdbDeviceConfig) {
@@ -1471,66 +1783,94 @@ impl LauncherApp {
         let serial = adb_dev.serial.clone();
 
         ui.vertical(|ui| {
-            // Controls row
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Search:").size(11.0).color(p.text_secondary));
-                ui.add(egui::TextEdit::singleline(&mut self.adb_package_filter).hint_text("Filter packages...").desired_width(180.0));
+            // Controls Card
+            Frame::none()
+                .fill(p.bg_card)
+                .rounding(Rounding::same(10.0))
+                .inner_margin(egui::Margin::symmetric(14.0, 8.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(crate::lucide::SEARCH).size(12.0).color(p.text_muted));
+                        ui.add(egui::TextEdit::singleline(&mut self.adb_package_filter).hint_text("Filter packages...").desired_width(170.0));
 
-                ui.add_space(10.0);
-                if ui.selectable_label(!self.adb_package_is_system, "Third-Party Apps").clicked() {
-                    self.adb_package_is_system = false;
-                    self.adb_packages_cache = crate::adb::list_packages(&serial, true);
-                }
-                if ui.selectable_label(self.adb_package_is_system, "System Apps").clicked() {
-                    self.adb_package_is_system = true;
-                    self.adb_packages_cache = crate::adb::list_packages(&serial, false);
-                }
+                        ui.add_space(8.0);
+                        if ui.selectable_label(!self.adb_package_is_system, "Third-Party Apps").clicked() {
+                            self.adb_package_is_system = false;
+                            self.adb_packages_cache = crate::adb::list_packages(&serial, true);
+                        }
+                        if ui.selectable_label(self.adb_package_is_system, "System Apps").clicked() {
+                            self.adb_package_is_system = true;
+                            self.adb_packages_cache = crate::adb::list_packages(&serial, false);
+                        }
 
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let btn_ref = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(10.5).color(p.text_secondary))
-                        .fill(p.bg_button)
-                        .rounding(Rounding::same(6.0));
-                    if ui.add(btn_ref).clicked() {
-                        self.adb_packages_cache = crate::adb::list_packages(&serial, !self.adb_package_is_system);
-                    }
+                        // App count pill
+                        let count = self.adb_packages_cache.len();
+                        ui.add_space(4.0);
+                        Frame::none()
+                            .fill(Color32::from_rgb(18, 22, 32))
+                            .rounding(Rounding::same(999.0))
+                            .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+                            .show(ui, |ui| {
+                                ui.label(RichText::new(format!("{} Packages", count)).size(10.0).monospace().color(p.text_secondary));
+                            });
+
+                        // Refresh button on right with clean padding
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.add_space(4.0);
+                            let btn_ref = egui::Button::new(RichText::new(format!("{} Refresh", crate::lucide::REFRESH_CW)).size(10.5).color(p.text_secondary))
+                                .fill(p.bg_button)
+                                .rounding(Rounding::same(6.0));
+                            if ui.add(btn_ref).clicked() {
+                                self.adb_packages_cache = crate::adb::list_packages(&serial, !self.adb_package_is_system);
+                            }
+                        });
+                    });
                 });
-            });
 
-            ui.add_space(8.0);
+            ui.add_space(6.0);
 
             if self.adb_packages_cache.is_empty() {
                 self.adb_packages_cache = crate::adb::list_packages(&serial, !self.adb_package_is_system);
             }
 
-            // Package listing
+            // Package listing with auto_shrink false
             Frame::none()
                 .fill(p.bg_card)
                 .rounding(Rounding::same(10.0))
-                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                 .show(ui, |ui| {
                     ScrollArea::vertical()
                         .id_salt("adb_apps_scroll")
+                        .auto_shrink([false, false])
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             let filter = self.adb_package_filter.to_lowercase();
+                            let mut visible_count = 0;
+                            let mut uninstall_target: Option<String> = None;
+                            let mut clear_target: Option<String> = None;
+                            let mut stop_target: Option<String> = None;
+                            let mut launch_target: Option<String> = None;
 
                             for pkg in &self.adb_packages_cache {
                                 if !filter.is_empty() && !pkg.name.to_lowercase().contains(&filter) {
                                     continue;
                                 }
+                                visible_count += 1;
 
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new(crate::lucide::PACKAGE).size(13.0).color(p.accent));
-                                    ui.label(RichText::new(&pkg.name).size(11.0).monospace().color(p.text_primary));
+                                    ui.label(RichText::new(crate::lucide::PACKAGE).size(13.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new(&pkg.name).size(11.0).monospace().strong().color(p.text_primary));
 
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        ui.add_space(4.0);
+
                                         // Uninstall (3rd party only)
                                         if !pkg.is_system {
                                             let btn_un = egui::Button::new(RichText::new("Uninstall").size(9.5).color(Color32::from_rgb(239, 68, 68)))
                                                 .fill(p.bg_button)
                                                 .rounding(Rounding::same(4.0));
-                                            if ui.add(btn_un).clicked() {
-                                                let _ = crate::adb::uninstall_app(&serial, &pkg.name);
+                                            if ui.add(btn_un).on_hover_text("Uninstall application from device").clicked() {
+                                                uninstall_target = Some(pkg.name.clone());
                                             }
                                         }
 
@@ -1538,28 +1878,61 @@ impl LauncherApp {
                                         let btn_clr = egui::Button::new(RichText::new("Clear").size(9.5).color(p.text_muted))
                                             .fill(p.bg_button)
                                             .rounding(Rounding::same(4.0));
-                                        if ui.add(btn_clr).clicked() {
-                                            let _ = crate::adb::clear_app_data(&serial, &pkg.name);
+                                        if ui.add(btn_clr).on_hover_text("Clear all app cache & user data").clicked() {
+                                            clear_target = Some(pkg.name.clone());
                                         }
 
                                         // Force Stop
                                         let btn_stp = egui::Button::new(RichText::new("Stop").size(9.5).color(p.text_secondary))
                                             .fill(p.bg_button)
                                             .rounding(Rounding::same(4.0));
-                                        if ui.add(btn_stp).clicked() {
-                                            let _ = crate::adb::force_stop_app(&serial, &pkg.name);
+                                        if ui.add(btn_stp).on_hover_text("Force stop running process").clicked() {
+                                            stop_target = Some(pkg.name.clone());
                                         }
 
                                         // Launch
-                                        let btn_run = egui::Button::new(RichText::new("Launch").size(9.5).color(p.accent))
+                                        let btn_run = egui::Button::new(RichText::new("Launch").size(9.5).color(Color32::from_rgb(56, 189, 248)))
                                             .fill(p.bg_button)
                                             .rounding(Rounding::same(4.0));
-                                        if ui.add(btn_run).clicked() {
-                                            let _ = crate::adb::launch_app(&serial, &pkg.name);
+                                        if ui.add(btn_run).on_hover_text("Launch main activity on device").clicked() {
+                                            launch_target = Some(pkg.name.clone());
                                         }
                                     });
                                 });
                                 ui.separator();
+                            }
+
+                            if visible_count == 0 {
+                                ui.vertical_centered(|ui| {
+                                    ui.add_space(40.0);
+                                    ui.label(RichText::new(crate::lucide::PACKAGE).size(28.0).color(p.text_muted));
+                                    ui.add_space(6.0);
+                                    ui.label(RichText::new("No packages match current search or category").size(11.0).color(p.text_muted));
+                                });
+                            }
+
+                            if let Some(pkg_name) = uninstall_target {
+                                match crate::adb::uninstall_app(&serial, &pkg_name) {
+                                    Ok(_) => {
+                                        self.adb_status_msg = Some((format!("Uninstalled {}", pkg_name), false, Instant::now()));
+                                        self.adb_packages_cache = crate::adb::list_packages(&serial, !self.adb_package_is_system);
+                                    }
+                                    Err(e) => self.adb_status_msg = Some((format!("Uninstall failed: {}", e), true, Instant::now())),
+                                }
+                            }
+                            if let Some(pkg_name) = clear_target {
+                                match crate::adb::clear_app_data(&serial, &pkg_name) {
+                                    Ok(_) => self.adb_status_msg = Some((format!("Cleared data for {}", pkg_name), false, Instant::now())),
+                                    Err(e) => self.adb_status_msg = Some((format!("Clear data failed: {}", e), true, Instant::now())),
+                                }
+                            }
+                            if let Some(pkg_name) = stop_target {
+                                let _ = crate::adb::force_stop_app(&serial, &pkg_name);
+                                self.adb_status_msg = Some((format!("Stopped {}", pkg_name), false, Instant::now()));
+                            }
+                            if let Some(pkg_name) = launch_target {
+                                let _ = crate::adb::launch_app(&serial, &pkg_name);
+                                self.adb_status_msg = Some((format!("Launched {}", pkg_name), false, Instant::now()));
                             }
                         });
                 });
@@ -1579,54 +1952,256 @@ impl LauncherApp {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
 
-                Frame::none().fill(p.bg_card).rounding(Rounding::same(12.0)).inner_margin(egui::Margin::symmetric(16.0, 14.0)).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(crate::lucide::WIFI).size(15.0).color(Color32::from_rgb(56, 189, 248)));
-                        ui.label(RichText::new("WIRELESS ADB (TCP/IP MODE) CONTROLLER").size(11.0).monospace().strong().color(p.text_primary));
+                // 1. Controller Header Banner & Mode Quick Switcher
+                Frame::none()
+                    .fill(p.bg_card)
+                    .rounding(Rounding::same(12.0))
+                    .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            Frame::none()
+                                .fill(Color32::from_rgb(14, 40, 58))
+                                .rounding(Rounding::same(10.0))
+                                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new(crate::lucide::WIFI).size(22.0).color(Color32::from_rgb(56, 189, 248)));
+                                });
+
+                            ui.add_space(8.0);
+                            ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("Wireless ADB & TCP/IP Controller").size(14.0).strong().color(p.text_primary));
+                                    let status_text = if adb_dev.is_wireless { "Wireless Connected" } else { "USB Debug Attached" };
+                                    let status_col = if adb_dev.is_wireless { Color32::from_rgb(34, 197, 94) } else { Color32::from_rgb(56, 189, 248) };
+                                    Frame::none()
+                                        .fill(Color32::from_rgb(18, 22, 32))
+                                        .rounding(Rounding::same(999.0))
+                                        .inner_margin(egui::Margin::symmetric(8.0, 2.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new(status_text).size(9.5).monospace().color(status_col));
+                                        });
+                                });
+                                ui.add_space(2.0);
+                                ui.label(RichText::new("Untether your Android device from USB cables and manage via Wi-Fi network.")
+                                    .size(10.5).color(p.text_muted));
+                            });
+
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ui.add_space(4.0);
+                                let btn_usb = egui::Button::new(RichText::new(format!("{} Revert to USB Mode", crate::lucide::USB)).size(11.0).color(p.text_primary))
+                                    .fill(p.bg_button)
+                                    .rounding(Rounding::same(6.0));
+                                if ui.add(btn_usb).on_hover_text("Switch Android ADB back to USB mode (adb usb)").clicked() {
+                                    match crate::adb::reset_to_usb(&serial) {
+                                        Ok(res) => self.adb_status_msg = Some((format!("Reverted to USB: {}", res), false, Instant::now())),
+                                        Err(e) => self.adb_status_msg = Some((format!("USB revert error: {}", e), true, Instant::now())),
+                                    }
+                                }
+
+                                let btn_tcpip = egui::Button::new(RichText::new(format!("{} Enable TCP/IP (Port 5555)", crate::lucide::WIFI)).size(11.0).strong().color(Color32::WHITE))
+                                    .fill(Color32::from_rgb(2, 132, 199))
+                                    .rounding(Rounding::same(6.0));
+                                if ui.add(btn_tcpip).on_hover_text("Start ADB TCP/IP server on device port 5555 (adb tcpip 5555)").clicked() {
+                                    match crate::adb::enable_tcpip(&serial, 5555) {
+                                        Ok(res) => self.adb_status_msg = Some((format!("TCP/IP 5555 enabled: {}", res), false, Instant::now())),
+                                        Err(e) => self.adb_status_msg = Some((format!("TCP/IP error: {}", e), true, Instant::now())),
+                                    }
+                                }
+                            });
+                        });
                     });
 
-                    ui.add_space(8.0);
-                    ui.label(RichText::new("Enable wireless debugging on your Android device to untether from USB cables. Device must be on the same local Wi-Fi network.")
-                        .size(10.5).color(p.text_muted));
+                ui.add_space(10.0);
 
-                    ui.add_space(12.0);
-
-                    // Step 1: Switch device to TCP/IP mode on port 5555
-                    ui.horizontal(|ui| {
-                        let btn_tcpip = egui::Button::new(RichText::new("📶 Enable TCP/IP on Port 5555").size(11.5).strong().color(Color32::WHITE))
-                            .fill(Color32::from_rgb(2, 132, 199))
-                            .rounding(Rounding::same(6.0))
-                            .min_size(Vec2::new(200.0, 30.0));
-                        if ui.add(btn_tcpip).clicked() {
-                            match crate::adb::enable_tcpip(&serial, 5555) {
-                                Ok(res) => self.adb_status_msg = Some((format!("TCP/IP 5555 enabled: {}", res), false, Instant::now())),
-                                Err(e) => self.adb_status_msg = Some((format!("TCP/IP error: {}", e), true, Instant::now())),
-                            }
-                        }
-                    });
-
-                    ui.add_space(10.0);
-
-                    // Step 2: Auto-discover IP
-                    if let Ok(ip_out) = crate::adb::adb_cmd(Some(&serial), &["shell", "ip", "route"]) {
-                        for line in ip_out.lines() {
-                            if line.contains("src ") {
-                                if let Some(ip) = line.split("src ").nth(1).and_then(|s| s.split_whitespace().next()) {
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new(format!("Discovered Device Wi-Fi IP: {}:5555", ip)).size(11.0).monospace().color(p.success));
-
-                                        let btn_c = egui::Button::new(RichText::new("Connect This IP").size(10.5).color(p.text_primary))
-                                            .fill(p.bg_button)
-                                            .rounding(Rounding::same(6.0));
-                                        if ui.add(btn_c).clicked() {
-                                            let target = format!("{}:5555", ip);
-                                            let _ = crate::adb::connect_wireless(&target);
-                                        }
-                                    });
+                // Discover unique device IPs from adb shell ip route
+                let mut discovered_ips: Vec<String> = Vec::new();
+                if let Ok(ip_out) = crate::adb::adb_cmd(Some(&serial), &["shell", "ip", "route"]) {
+                    for line in ip_out.lines() {
+                        if line.contains("src ") {
+                            if let Some(ip) = line.split("src ").nth(1).and_then(|s| s.split_whitespace().next()) {
+                                let ip_str = ip.to_string();
+                                if !discovered_ips.contains(&ip_str) && ip_str != "127.0.0.1" {
+                                    discovered_ips.push(ip_str);
                                 }
                             }
                         }
                     }
+                }
+                // Sort local Wi-Fi / private subnet IPs first (e.g. 10.111.*, 192.168.*)
+                discovered_ips.sort_by_key(|ip| {
+                    if ip.starts_with("10.111.") || ip.starts_with("192.168.") {
+                        0
+                    } else if ip.starts_with("10.") {
+                        1
+                    } else if ip.starts_with("172.") {
+                        2
+                    } else {
+                        3
+                    }
+                });
+
+                // Auto-fill manual IP if empty
+                if self.adb_wireless_ip_input.is_empty() {
+                    if let Some(first) = discovered_ips.first() {
+                        self.adb_wireless_ip_input = first.clone();
+                    }
+                }
+
+                // 2-Column Grid: Discovered Endpoints (Left) vs Manual Connect (Right)
+                ui.columns(2, |cols| {
+                    // Left Column: Discovered Endpoints
+                    cols[0].vertical(|ui| {
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .rounding(Rounding::same(12.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(crate::lucide::RADIO).size(13.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new("DISCOVERED LOCAL ENDPOINTS").size(10.5).monospace().strong().color(p.text_secondary));
+                                });
+                                ui.add_space(4.0);
+                                ui.label(RichText::new("Detected network interfaces on this Android device.").size(10.0).color(p.text_muted));
+                                ui.add_space(10.0);
+
+                                if discovered_ips.is_empty() {
+                                    ui.vertical_centered(|ui| {
+                                        ui.add_space(20.0);
+                                        ui.label(RichText::new("No local network IP addresses discovered.").size(10.5).color(p.text_muted));
+                                        ui.add_space(10.0);
+                                    });
+                                } else {
+                                    for ip in &discovered_ips {
+                                        let target = format!("{}:5555", ip);
+                                        let is_lan = ip.starts_with("10.") || ip.starts_with("192.168.");
+
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(18, 20, 28))
+                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 34, 48)))
+                                            .rounding(Rounding::same(8.0))
+                                            .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new(crate::lucide::WIFI).size(14.0).color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.vertical(|ui| {
+                                                        ui.horizontal(|ui| {
+                                                            ui.label(RichText::new(&target).size(12.0).monospace().strong().color(p.text_primary));
+                                                            if is_lan {
+                                                                Frame::none()
+                                                                    .fill(Color32::from_rgb(14, 34, 28))
+                                                                    .rounding(Rounding::same(4.0))
+                                                                    .inner_margin(egui::Margin::symmetric(5.0, 1.5))
+                                                                    .show(ui, |ui| {
+                                                                        ui.label(RichText::new("Wi-Fi LAN").size(8.5).monospace().color(Color32::from_rgb(74, 222, 128)));
+                                                                    });
+                                                            }
+                                                        });
+                                                    });
+
+                                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                        let btn_c = egui::Button::new(RichText::new("Connect").size(10.0).strong().color(Color32::WHITE))
+                                                            .fill(Color32::from_rgb(2, 132, 199))
+                                                            .rounding(Rounding::same(4.0));
+                                                        if ui.add(btn_c).clicked() {
+                                                            match crate::adb::connect_wireless(&target) {
+                                                                Ok(res) => self.adb_status_msg = Some((format!("Connected: {}", res), false, Instant::now())),
+                                                                Err(e) => self.adb_status_msg = Some((format!("Connect failed: {}", e), true, Instant::now())),
+                                                            }
+                                                        }
+
+                                                        let btn_d = egui::Button::new(RichText::new("Disconnect").size(10.0).color(p.text_muted))
+                                                            .fill(p.bg_button)
+                                                            .rounding(Rounding::same(4.0));
+                                                        if ui.add(btn_d).clicked() {
+                                                            match crate::adb::disconnect_wireless(&target) {
+                                                                Ok(res) => self.adb_status_msg = Some((format!("Disconnected: {}", res), false, Instant::now())),
+                                                                Err(e) => self.adb_status_msg = Some((format!("Disconnect failed: {}", e), true, Instant::now())),
+                                                            }
+                                                        }
+                                                    });
+                                                });
+                                            });
+                                        ui.add_space(6.0);
+                                    }
+                                }
+                            });
+                    });
+
+                    // Right Column: Manual Connect & Android 11+ Pairing
+                    cols[1].vertical(|ui| {
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .rounding(Rounding::same(12.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(crate::lucide::LINK).size(13.0).color(Color32::from_rgb(56, 189, 248)));
+                                    ui.label(RichText::new("MANUAL DIRECT CONNECT").size(10.5).monospace().strong().color(p.text_secondary));
+                                });
+                                ui.add_space(4.0);
+                                ui.label(RichText::new("Connect to any Android device using its IP address and TCP port.").size(10.0).color(p.text_muted));
+                                ui.add_space(10.0);
+
+                                ui.horizontal(|ui| {
+                                    ui.vertical(|ui| {
+                                        ui.label(RichText::new("Device IP Address:").size(10.5).color(p.text_secondary));
+                                        ui.add(egui::TextEdit::singleline(&mut self.adb_wireless_ip_input).hint_text("e.g. 192.168.1.100").desired_width(180.0));
+                                    });
+
+                                    ui.add_space(10.0);
+                                    ui.vertical(|ui| {
+                                        ui.label(RichText::new("Port:").size(10.5).color(p.text_secondary));
+                                        ui.add(egui::TextEdit::singleline(&mut self.adb_wireless_port_input).hint_text("5555").desired_width(70.0));
+                                    });
+                                });
+
+                                ui.add_space(10.0);
+                                ui.horizontal(|ui| {
+                                    let btn_manual_connect = egui::Button::new(RichText::new("⚡ Connect").size(11.0).strong().color(Color32::WHITE))
+                                        .fill(Color32::from_rgb(2, 132, 199))
+                                        .rounding(Rounding::same(6.0))
+                                        .min_size(Vec2::new(100.0, 28.0));
+                                    if ui.add(btn_manual_connect).clicked() {
+                                        let ip = self.adb_wireless_ip_input.trim();
+                                        let port = self.adb_wireless_port_input.trim();
+                                        if !ip.is_empty() {
+                                            let target = format!("{}:{}", ip, if port.is_empty() { "5555" } else { port });
+                                            match crate::adb::connect_wireless(&target) {
+                                                Ok(res) => self.adb_status_msg = Some((format!("Connected: {}", res), false, Instant::now())),
+                                                Err(e) => self.adb_status_msg = Some((format!("Connect failed: {}", e), true, Instant::now())),
+                                            }
+                                        }
+                                    }
+
+                                    let btn_manual_disc = egui::Button::new(RichText::new("✕ Disconnect").size(11.0).color(p.text_secondary))
+                                        .fill(p.bg_button)
+                                        .rounding(Rounding::same(6.0))
+                                        .min_size(Vec2::new(100.0, 28.0));
+                                    if ui.add(btn_manual_disc).clicked() {
+                                        let ip = self.adb_wireless_ip_input.trim();
+                                        let port = self.adb_wireless_port_input.trim();
+                                        if !ip.is_empty() {
+                                            let target = format!("{}:{}", ip, if port.is_empty() { "5555" } else { port });
+                                            match crate::adb::disconnect_wireless(&target) {
+                                                Ok(res) => self.adb_status_msg = Some((format!("Disconnected: {}", res), false, Instant::now())),
+                                                Err(e) => self.adb_status_msg = Some((format!("Disconnect failed: {}", e), true, Instant::now())),
+                                            }
+                                        }
+                                    }
+                                });
+
+                                ui.add_space(16.0);
+                                ui.separator();
+                                ui.add_space(10.0);
+
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(crate::lucide::SHIELD).size(13.0).color(Color32::from_rgb(245, 158, 11)));
+                                    ui.label(RichText::new("WIRELESS DEBUGGING INSTRUCTIONS").size(10.0).monospace().strong().color(p.text_primary));
+                                });
+                                ui.add_space(6.0);
+                                ui.label(RichText::new("1. Ensure device and host PC are on the same Wi-Fi network.\n2. While connected via USB, click 'Enable TCP/IP (Port 5555)'.\n3. Click 'Connect' on the discovered IP address.\n4. You can now unplug the USB cable!").size(9.5).color(p.text_muted));
+                            });
+                    });
                 });
             });
     }

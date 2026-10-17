@@ -677,9 +677,9 @@ impl SystemSensorsCollector {
                 let (proc_net_rx, proc_net_tx) = {
                     #[cfg(target_os = "linux")]
                     {
-                        // Optimization: Only query /proc/<pid>/io for active processes with CPU, memory, or disk usage
-                        // Skips dormant threads to prevent high CPU usage from hundreds of file opens every second
-                        if cpu_usage > 0.05 || memory_bytes > 20 * 1024 * 1024 || read_b > 0 || written_b > 0 {
+                        // Optimization: Only query /proc/<pid>/io for active processes with CPU or disk activity
+                        // Skips dormant processes resting in memory to prevent CPU usage spikes from hundreds of file opens
+                        if cpu_usage > 0.2 || read_b > 0 || written_b > 0 {
                             if let Ok(content) = fs::read_to_string(format!("/proc/{}/io", pid_u32)) {
                                 let mut rchar = 0u64;
                                 let mut wchar = 0u64;

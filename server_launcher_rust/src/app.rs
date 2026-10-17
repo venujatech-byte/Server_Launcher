@@ -442,6 +442,8 @@ pub struct LauncherApp {
     pub wifi_cached_sort_desc: bool,
     pub wifi_cached_max_data: u64,
     pub wifi_cached_total_data: u64,
+    pub wifi_cached_total_rx: u64,
+    pub wifi_cached_total_tx: u64,
     pub wifi_cached_total_rate: f64,
 
     // Power Subsystem Status Toast
@@ -961,6 +963,8 @@ impl LauncherApp {
             wifi_cached_sort_desc: true,
             wifi_cached_max_data: 1,
             wifi_cached_total_data: 0,
+            wifi_cached_total_rx: 0,
+            wifi_cached_total_tx: 0,
             wifi_cached_total_rate: 0.0,
             power_status_msg: None,
             sensors_cached_apps_groups: Vec::new(),
@@ -13880,8 +13884,8 @@ impl LauncherApp {
         let p = self.theme.palette();
         let is_remote = host_id.is_some();
 
-        // Only query local Wi-Fi telemetry when viewing the local PC
-        if !is_remote && self.wifi_last_query.elapsed().as_secs() >= 3 {
+        // Only query local Wi-Fi telemetry when viewing the local PC (10s throttle prevents high CPU from external commands)
+        if !is_remote && self.wifi_last_query.elapsed().as_secs() >= 10 {
             self.trigger_wifi_query(Some(ui.ctx().clone()));
         }
 
@@ -14960,32 +14964,6 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
 
-                        let mut app_map: std::collections::BTreeMap<String, WifiAppNetItem> = std::collections::BTreeMap::new();
-
-                        for proc in &snap.top_apps {
-                            let key = proc.name.trim().to_lowercase();
-                            if key.is_empty() {
-                                continue;
-                            }
-                            let entry = app_map.entry(key.clone()).or_insert_with(|| WifiAppNetItem {
-                                name: proc.name.clone(),
-                                pids: Vec::new(),
-                                rx_bytes: 0,
-                                tx_bytes: 0,
-                                total_bytes: 0,
-                                rate_bps: 0.0,
-                                has_socket: false,
-                                socket_port: None,
-                            });
-                            if !entry.pids.contains(&proc.pid) {
-                                entry.pids.push(proc.pid);
-                            }
-                            entry.rx_bytes = entry.rx_bytes.saturating_add(proc.net_rx_bytes);
-                            entry.tx_bytes = entry.tx_bytes.saturating_add(proc.net_tx_bytes);
-                            entry.total_bytes = entry.rx_bytes.saturating_add(entry.tx_bytes);
-                            entry.rate_bps += proc.net_rate_bps;
-                        }
-
                         // Process and cache application network data usage telemetry
                         let need_recalc = self.wifi_cached_snap_timestamp != snap.timestamp
                             || self.wifi_cached_period != self.wifi_app_period
@@ -15095,13 +15073,34 @@ impl LauncherApp {
                                 });
                             }
 
-                            // Sort according to active timeframe's calculated total bytes
+                            // Sort according to active timeframe's calculated metrics
                             match self.wifi_app_sort.as_str() {
                                 "name" => {
                                     if self.wifi_app_sort_desc {
                                         app_list.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase()));
                                     } else {
                                         app_list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                                    }
+                                }
+                                "rx" => {
+                                    if self.wifi_app_sort_desc {
+                                        app_list.sort_by(|a, b| b.rx_bytes.cmp(&a.rx_bytes).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+                                    } else {
+                                        app_list.sort_by(|a, b| a.rx_bytes.cmp(&b.rx_bytes).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+                                    }
+                                }
+                                "tx" => {
+                                    if self.wifi_app_sort_desc {
+                                        app_list.sort_by(|a, b| b.tx_bytes.cmp(&a.tx_bytes).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+                                    } else {
+                                        app_list.sort_by(|a, b| a.tx_bytes.cmp(&b.tx_bytes).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+                                    }
+                                }
+                                "rate" => {
+                                    if self.wifi_app_sort_desc {
+                                        app_list.sort_by(|a, b| b.rate_bps.partial_cmp(&a.rate_bps).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+                                    } else {
+                                        app_list.sort_by(|a, b| a.rate_bps.partial_cmp(&b.rate_bps).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
                                     }
                                 }
                                 _ => { // "data"
@@ -15127,6 +15126,8 @@ impl LauncherApp {
 
                             let max_data = app_list.iter().map(|a| ((a.total_bytes as f64) * period_mult).round() as u64).max().unwrap_or(1).max(1);
                             let total_visible_data: u64 = app_list.iter().map(|a| ((a.total_bytes as f64) * period_mult).round() as u64).sum();
+                            let total_visible_rx: u64 = app_list.iter().map(|a| ((a.rx_bytes as f64) * period_mult).round() as u64).sum();
+                            let total_visible_tx: u64 = app_list.iter().map(|a| ((a.tx_bytes as f64) * period_mult).round() as u64).sum();
                             let total_visible_rate: f64 = app_list.iter().map(|a| a.rate_bps).sum();
 
                             self.wifi_cached_app_list = app_list;
@@ -15137,14 +15138,45 @@ impl LauncherApp {
                             self.wifi_cached_sort_desc = self.wifi_app_sort_desc;
                             self.wifi_cached_max_data = max_data;
                             self.wifi_cached_total_data = total_visible_data;
+                            self.wifi_cached_total_rx = total_visible_rx;
+                            self.wifi_cached_total_tx = total_visible_tx;
                             self.wifi_cached_total_rate = total_visible_rate;
                         }
 
                         let app_list = &self.wifi_cached_app_list;
                         let max_data = self.wifi_cached_max_data;
                         let total_visible_data = self.wifi_cached_total_data;
+                        let total_visible_rx = self.wifi_cached_total_rx;
+                        let total_visible_tx = self.wifi_cached_total_tx;
                         let total_visible_rate = self.wifi_cached_total_rate;
                         let period_mult = self.wifi_app_period.multiplier();
+
+                        // Heatmap tint color helper matching Windows 11 Task Manager / Top Apps
+                        let get_tm_data_bg = |bytes: u64| -> Color32 {
+                            if bytes < 50 * 1024 * 1024 {
+                                Color32::TRANSPARENT
+                            } else if bytes < 250 * 1024 * 1024 {
+                                Color32::from_rgba_unmultiplied(0, 120, 215, 35)
+                            } else if bytes < 1024 * 1024 * 1024 {
+                                Color32::from_rgba_unmultiplied(0, 120, 215, 65)
+                            } else if bytes < 5 * 1024 * 1024 * 1024 {
+                                Color32::from_rgba_unmultiplied(0, 120, 215, 110)
+                            } else {
+                                Color32::from_rgba_unmultiplied(0, 120, 215, 160)
+                            }
+                        };
+
+                        let get_tm_rate_bg = |rate: f64| -> Color32 {
+                            if rate < 10_000.0 {
+                                Color32::TRANSPARENT
+                            } else if rate < 200_000.0 {
+                                Color32::from_rgba_unmultiplied(0, 120, 215, 40)
+                            } else if rate < 2_000_000.0 {
+                                Color32::from_rgba_unmultiplied(0, 120, 215, 85)
+                            } else {
+                                Color32::from_rgba_unmultiplied(0, 120, 215, 140)
+                            }
+                        };
 
                         ui.vertical(|ui| {
                             // Row 1: Overline
@@ -15176,10 +15208,8 @@ impl LauncherApp {
                             };
 
                             let mut clear_search = false;
-                            let mut toggle_sort_data = false;
-                            let mut toggle_sort_name = false;
 
-                            let render_toolbar = |ui: &mut Ui, clear_s: &mut bool, tog_data: &mut bool, tog_name: &mut bool, cur_sort: &str, cur_desc: bool, search_str: &mut String, period: &mut WifiAppPeriod| {
+                            let render_toolbar = |ui: &mut Ui, clear_s: &mut bool, search_str: &mut String, period: &mut WifiAppPeriod| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 6.0;
 
@@ -15197,55 +15227,23 @@ impl LauncherApp {
                                             });
                                     });
 
-                                    // Sort by Data Used Button
-                                    let is_data_sel = cur_sort == "data";
-                                    let data_arrow = if is_data_sel { if cur_desc { "↓" } else { "↑" } } else { "" };
-                                    let data_lbl = if data_arrow.is_empty() { "Data Used".to_string() } else { format!("Data Used {}", data_arrow) };
-                                    let data_bg = if is_data_sel { Color32::from_rgba_unmultiplied(56, 189, 248, 22) } else { Color32::from_rgb(10, 14, 22) };
-                                    let data_stroke = if is_data_sel { Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 48)) } else { Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 12)) };
-                                    let data_txt_col = if is_data_sel { Color32::from_rgb(241, 245, 249) } else { Color32::from_rgb(203, 213, 225) };
-
-                                    let data_btn = egui::Button::new(RichText::new(data_lbl).size(9.5).monospace().color(data_txt_col))
-                                        .fill(data_bg)
-                                        .stroke(data_stroke)
-                                        .rounding(Rounding::same(5.0));
-                                    if ui.add(data_btn).on_hover_text("Sort by data transferred (highest / lowest)").clicked() {
-                                        *tog_data = true;
-                                    }
-
-                                    // Sort by Name Button
-                                    let is_name_sel = cur_sort == "name";
-                                    let name_arrow = if is_name_sel { if cur_desc { "Z-A" } else { "A-Z" } } else { "" };
-                                    let name_lbl = if name_arrow.is_empty() { "Name".to_string() } else { format!("Name {}", name_arrow) };
-                                    let name_bg = if is_name_sel { Color32::from_rgba_unmultiplied(56, 189, 248, 22) } else { Color32::from_rgb(10, 14, 22) };
-                                    let name_stroke = if is_name_sel { Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 48)) } else { Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 12)) };
-                                    let name_txt_col = if is_name_sel { Color32::from_rgb(241, 245, 249) } else { Color32::from_rgb(203, 213, 225) };
-
-                                    let name_btn = egui::Button::new(RichText::new(name_lbl).size(9.5).monospace().color(name_txt_col))
-                                        .fill(name_bg)
-                                        .stroke(name_stroke)
-                                        .rounding(Rounding::same(5.0));
-                                    if ui.add(name_btn).on_hover_text("Sort alphabetically by application name").clicked() {
-                                        *tog_name = true;
-                                    }
-
-                                    // Search Input Box
+                                    // Search Input Box (styled pill matching Top Apps)
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 14, 22))
                                         .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 14)))
-                                        .rounding(Rounding::same(5.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                                        .rounding(Rounding::same(999.0))
+                                        .inner_margin(egui::Margin::symmetric(10.0, 4.0))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
-                                                ui.spacing_mut().item_spacing.x = 4.0;
-                                                ui.label(RichText::new(crate::lucide::SEARCH).size(10.0).color(Color32::from_rgb(148, 163, 184)));
+                                                ui.spacing_mut().item_spacing.x = 5.0;
+                                                ui.label(RichText::new(crate::lucide::SEARCH).size(11.0).color(Color32::from_rgb(148, 163, 184)));
                                                 let edit = egui::TextEdit::singleline(search_str)
                                                     .hint_text("Search apps or PID...")
-                                                    .desired_width(125.0)
+                                                    .desired_width(145.0)
                                                     .frame(false);
                                                 ui.add(edit);
                                                 if !search_str.is_empty() {
-                                                    let clear_btn = ui.add(egui::Button::new(RichText::new("✕").size(9.0).color(Color32::from_rgb(148, 163, 184))).frame(false));
+                                                    let clear_btn = ui.add(egui::Button::new(RichText::new(crate::lucide::X).size(10.0).color(Color32::from_rgb(148, 163, 184))).frame(false));
                                                     if clear_btn.clicked() {
                                                         *clear_s = true;
                                                     }
@@ -15258,34 +15256,18 @@ impl LauncherApp {
                             if is_narrow {
                                 render_header_left(ui);
                                 ui.add_space(6.0);
-                                render_toolbar(ui, &mut clear_search, &mut toggle_sort_data, &mut toggle_sort_name, &self.wifi_app_sort, self.wifi_app_sort_desc, &mut self.wifi_app_search_query, &mut self.wifi_app_period);
+                                render_toolbar(ui, &mut clear_search, &mut self.wifi_app_search_query, &mut self.wifi_app_period);
                             } else {
                                 ui.horizontal(|ui| {
                                     render_header_left(ui);
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        render_toolbar(ui, &mut clear_search, &mut toggle_sort_data, &mut toggle_sort_name, &self.wifi_app_sort, self.wifi_app_sort_desc, &mut self.wifi_app_search_query, &mut self.wifi_app_period);
+                                        render_toolbar(ui, &mut clear_search, &mut self.wifi_app_search_query, &mut self.wifi_app_period);
                                     });
                                 });
                             }
 
                             if clear_search {
                                 self.wifi_app_search_query.clear();
-                            }
-                            if toggle_sort_data {
-                                if self.wifi_app_sort == "data" {
-                                    self.wifi_app_sort_desc = !self.wifi_app_sort_desc;
-                                } else {
-                                    self.wifi_app_sort = "data".to_string();
-                                    self.wifi_app_sort_desc = true;
-                                }
-                            }
-                            if toggle_sort_name {
-                                if self.wifi_app_sort == "name" {
-                                    self.wifi_app_sort_desc = !self.wifi_app_sort_desc;
-                                } else {
-                                    self.wifi_app_sort = "name".to_string();
-                                    self.wifi_app_sort_desc = false;
-                                }
                             }
 
                             ui.add_space(8.0);
@@ -15315,20 +15297,33 @@ impl LauncherApp {
                                         });
                                     });
                             } else {
-                                const COL_RX_W: f32 = 90.0;
-                                const COL_TX_W: f32 = 90.0;
-                                const COL_TOT_W: f32 = 145.0;
-                                const COL_RATE_W: f32 = 75.0;
-                                const COL_SPACING: f32 = 12.0;
+                                const COL_RX_W: f32 = 94.0;
+                                const COL_TX_W: f32 = 94.0;
+                                const COL_TOT_W: f32 = 148.0;
+                                const COL_RATE_W: f32 = 82.0;
+                                const COL_SPACING: f32 = 14.0;
 
                                 let total_fixed_w = COL_RX_W + COL_TX_W + COL_TOT_W + COL_RATE_W + 4.0 * COL_SPACING + 24.0;
-                                let col_app_w = (avail_w - total_fixed_w).max(200.0);
-                                let total_row_w = col_app_w + total_fixed_w - 24.0;
+                                let col_app_w = (avail_w - total_fixed_w).max(180.0);
+
+                                let cur_sort = self.wifi_app_sort.clone();
+                                let cur_desc = self.wifi_app_sort_desc;
+                                let get_sort_arrow = move |col: &str| -> &str {
+                                    if cur_sort == col {
+                                        if cur_desc {
+                                            crate::lucide::ARROW_DOWN
+                                        } else {
+                                            crate::lucide::ARROW_UP
+                                        }
+                                    } else {
+                                        ""
+                                    }
+                                };
 
                                 let total_col_label = match self.wifi_app_period {
-                                    WifiAppPeriod::Daily => "DAILY DATA",
-                                    WifiAppPeriod::Monthly => "TOTAL DATA",
-                                    WifiAppPeriod::Yearly => "YEARLY DATA",
+                                    WifiAppPeriod::Daily => "Daily Data",
+                                    WifiAppPeriod::Monthly => "Total Data",
+                                    WifiAppPeriod::Yearly => "Yearly Data",
                                 };
 
                                 // Dedicated non-collapsing scroll area ensuring full process list is scrollable
@@ -15345,69 +15340,139 @@ impl LauncherApp {
                                             .num_columns(5)
                                             .spacing(egui::vec2(COL_SPACING, 4.0))
                                             .show(ui, |ui| {
-                                                // ─── Header Row ───
-                                                // 1. APPLICATION
-                                                ui.allocate_ui_with_layout(egui::vec2(col_app_w, 24.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                // ═════════════════════════════════════════════════
+                                                // STACKED TWO-TIER COLUMN HEADERS (Matching Top Apps)
+                                                // ═════════════════════════════════════════════════
+                                                let mut new_sort = None;
+
+                                                // 1. APPLICATION (Stacked: Process count top, Application title bottom)
+                                                ui.allocate_ui_with_layout(egui::vec2(col_app_w, 36.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                                     let is_sel = self.wifi_app_sort == "name";
-                                                    let arr = if is_sel { if self.wifi_app_sort_desc { " ↓" } else { " ↑" } } else { "" };
-                                                    let btn = ui.add(egui::Button::new(RichText::new(format!("APPLICATION{}", arr)).size(9.0).monospace().strong().color(if is_sel { Color32::from_rgb(241, 245, 249) } else { Color32::from_rgb(100, 116, 139) })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
-                                                    if btn.clicked() {
-                                                        toggle_sort_name = true;
+                                                    let arr = get_sort_arrow("name");
+                                                    let title = if arr.is_empty() { "Name".to_string() } else { format!("Name {}", arr) };
+                                                    ui.vertical(|ui| {
+                                                        ui.label(RichText::new(format!("{} processes", app_list.len())).size(11.5).strong().color(Color32::from_rgb(241, 245, 249)));
+                                                        let btn = egui::Button::new(RichText::new(title).size(10.0).color(if is_sel { Color32::from_rgb(226, 232, 240) } else { p.text_secondary }))
+                                                            .fill(Color32::TRANSPARENT)
+                                                            .stroke(Stroke::NONE);
+                                                        if ui.add(btn).clicked() {
+                                                            new_sort = Some("name");
+                                                        }
+                                                    });
+                                                });
+
+                                                // 2. DOWNLOAD (RX) (Stacked: Total Download top, Download bottom)
+                                                ui.allocate_ui_with_layout(egui::vec2(COL_RX_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
+                                                    let is_sel = self.wifi_app_sort == "rx";
+                                                    let arr = get_sort_arrow("rx");
+                                                    let title = if arr.is_empty() { "Download".to_string() } else { format!("Download {}", arr) };
+                                                    let tot_rx_disp = crate::sensors::format_bytes(total_visible_rx);
+                                                    let btn1 = ui.add(egui::Button::new(RichText::new(tot_rx_disp).size(11.5).strong().color(Color32::from_rgb(241, 245, 249))).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                                    let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(if is_sel { Color32::from_rgb(226, 232, 240) } else { p.text_secondary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                                    if btn1.clicked() || btn2.clicked() {
+                                                        new_sort = Some("rx");
                                                     }
                                                 });
 
-                                                // 2. DOWNLOAD (RX)
-                                                ui.allocate_ui_with_layout(egui::vec2(COL_RX_W, 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new("DOWNLOAD (RX)").size(9.0).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                                // 3. UPLOAD (TX) (Stacked: Total Upload top, Upload bottom)
+                                                ui.allocate_ui_with_layout(egui::vec2(COL_TX_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
+                                                    let is_sel = self.wifi_app_sort == "tx";
+                                                    let arr = get_sort_arrow("tx");
+                                                    let title = if arr.is_empty() { "Upload".to_string() } else { format!("Upload {}", arr) };
+                                                    let tot_tx_disp = crate::sensors::format_bytes(total_visible_tx);
+                                                    let btn1 = ui.add(egui::Button::new(RichText::new(tot_tx_disp).size(11.5).strong().color(Color32::from_rgb(241, 245, 249))).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                                    let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(if is_sel { Color32::from_rgb(226, 232, 240) } else { p.text_secondary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                                    if btn1.clicked() || btn2.clicked() {
+                                                        new_sort = Some("tx");
+                                                    }
                                                 });
 
-                                                // 3. UPLOAD (TX)
-                                                ui.allocate_ui_with_layout(egui::vec2(COL_TX_W, 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new("UPLOAD (TX)").size(9.0).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
-                                                });
-
-                                                // 4. TOTAL DATA USED
-                                                ui.allocate_ui_with_layout(egui::vec2(COL_TOT_W, 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                // 4. TOTAL DATA USED (Stacked: Total Data top, Total Data bottom)
+                                                ui.allocate_ui_with_layout(egui::vec2(COL_TOT_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
                                                     let is_sel = self.wifi_app_sort == "data";
-                                                    let arr = if is_sel { if self.wifi_app_sort_desc { " ↓" } else { " ↑" } } else { "" };
-                                                    let btn = ui.add(egui::Button::new(RichText::new(format!("{}{}", total_col_label, arr)).size(9.0).monospace().strong().color(if is_sel { Color32::from_rgb(241, 245, 249) } else { Color32::from_rgb(100, 116, 139) })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
-                                                    if btn.clicked() {
-                                                        toggle_sort_data = true;
+                                                    let arr = get_sort_arrow("data");
+                                                    let title = if arr.is_empty() { total_col_label.to_string() } else { format!("{} {}", total_col_label, arr) };
+                                                    let tot_all_disp = crate::sensors::format_bytes(total_visible_data);
+                                                    let btn1 = ui.add(egui::Button::new(RichText::new(tot_all_disp).size(11.5).strong().color(Color32::from_rgb(241, 245, 249))).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                                    let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(if is_sel { Color32::from_rgb(226, 232, 240) } else { p.text_secondary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                                    if btn1.clicked() || btn2.clicked() {
+                                                        new_sort = Some("data");
                                                     }
                                                 });
 
-                                                // 5. LIVE RATE
-                                                ui.allocate_ui_with_layout(egui::vec2(COL_RATE_W, 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new("LIVE RATE").size(9.0).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                                // 5. LIVE RATE (Stacked: Total Live Rate top, Live Rate bottom)
+                                                ui.allocate_ui_with_layout(egui::vec2(COL_RATE_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
+                                                    let is_sel = self.wifi_app_sort == "rate";
+                                                    let arr = get_sort_arrow("rate");
+                                                    let title = if arr.is_empty() { "Live Rate".to_string() } else { format!("Live Rate {}", arr) };
+                                                    let tot_rate_disp = if total_visible_rate > 0.0 { crate::sensors::format_rate(total_visible_rate) } else { "0 B/s".to_string() };
+                                                    let btn1 = ui.add(egui::Button::new(RichText::new(tot_rate_disp).size(11.5).strong().color(Color32::from_rgb(241, 245, 249))).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                                    let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(if is_sel { Color32::from_rgb(226, 232, 240) } else { p.text_secondary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
+                                                    if btn1.clicked() || btn2.clicked() {
+                                                        new_sort = Some("rate");
+                                                    }
                                                 });
                                                 ui.end_row();
 
-                                                // ─── Table Rows ───
-                                                for app in app_list {
-                                                    let row_start = ui.cursor().min;
-                                                    let row_rect = egui::Rect::from_min_size(row_start, egui::vec2(total_row_w, 24.0));
-                                                    let is_hovered = ui.rect_contains_pointer(row_rect);
-                                                    if is_hovered {
-                                                        ui.painter().rect_filled(row_rect, Rounding::same(4.0), Color32::from_rgba_unmultiplied(255, 255, 255, 8));
-                                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                                if let Some(col) = new_sort {
+                                                    if self.wifi_app_sort == col {
+                                                        self.wifi_app_sort_desc = !self.wifi_app_sort_desc;
+                                                    } else {
+                                                        self.wifi_app_sort = col.to_string();
+                                                        self.wifi_app_sort_desc = col != "name";
                                                     }
+                                                }
 
+                                                // ═════════════════════════════════════════════════
+                                                // TABLE ROWS (Heatmap Tinted Cells matching Top Apps)
+                                                // ═════════════════════════════════════════════════
+                                                for app in app_list {
                                                     let disp_rx = ((app.rx_bytes as f64) * period_mult).round() as u64;
                                                     let disp_tx = ((app.tx_bytes as f64) * period_mult).round() as u64;
                                                     let disp_tot = disp_rx.saturating_add(disp_tx);
 
-                                                    // Col 1: APPLICATION
-                                                    ui.allocate_ui_with_layout(egui::vec2(col_app_w, 24.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                    let rx_fill = get_tm_data_bg(disp_rx);
+                                                    let tx_fill = get_tm_data_bg(disp_tx);
+                                                    let tot_fill = get_tm_data_bg(disp_tot);
+                                                    let rate_fill = get_tm_rate_bg(app.rate_bps);
+
+                                                    let row_w = col_app_w + COL_RX_W + COL_TX_W + COL_TOT_W + COL_RATE_W + 4.0 * COL_SPACING;
+                                                    let row_start_pos = ui.cursor().min;
+                                                    let row_rect = egui::Rect::from_min_size(row_start_pos, egui::vec2(row_w, 22.0));
+                                                    let is_row_hovered = ui.rect_contains_pointer(row_rect);
+
+                                                    if is_row_hovered {
+                                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                                    }
+
+                                                    let row_bg = if is_row_hovered {
+                                                        Color32::from_rgba_unmultiplied(255, 255, 255, 8)
+                                                    } else {
+                                                        Color32::TRANSPARENT
+                                                    };
+
+                                                    // 1. APPLICATION & Badges
+                                                    ui.allocate_ui_with_layout(egui::vec2(col_app_w, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                        let cell_rect = ui.max_rect();
+                                                        if row_bg != Color32::TRANSPARENT {
+                                                            let bg_rect = egui::Rect::from_min_max(cell_rect.min, egui::pos2(cell_rect.max.x + COL_SPACING, cell_rect.max.y));
+                                                            ui.painter().rect_filled(
+                                                                bg_rect,
+                                                                Rounding { nw: 4.0, sw: 4.0, ne: 0.0, se: 0.0 },
+                                                                row_bg,
+                                                            );
+                                                        }
+
                                                         ui.spacing_mut().item_spacing.x = 6.0;
                                                         let dot_col = if app.rate_bps > 1024.0 || app.has_socket {
                                                             Color32::from_rgb(56, 189, 248)
                                                         } else {
                                                             Color32::from_rgb(100, 116, 139)
                                                         };
-                                                        let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
-                                                        ui.painter().circle_filled(d_rect.center(), 2.2, dot_col);
+                                                        let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                                        ui.painter().circle_filled(d_rect.center(), 2.5, dot_col);
 
-                                                        ui.label(RichText::new(&app.name).size(10.5).monospace().strong().color(p.text_primary));
+                                                        ui.label(RichText::new(&app.name).size(11.5).strong().color(p.text_primary));
 
                                                         if !app.pids.is_empty() {
                                                             let pid_lbl = if app.pids.len() == 1 {
@@ -15420,54 +15485,83 @@ impl LauncherApp {
 
                                                         if let Some(ref port) = app.socket_port {
                                                             let (chip_rect, _) = ui.allocate_exact_size(egui::vec2(44.0, 16.0), egui::Sense::hover());
-                                                            ui.painter().rect_filled(chip_rect, Rounding::same(3.0), Color32::from_rgba_unmultiplied(56, 189, 248, 16));
+                                                            ui.painter().rect_filled(chip_rect, Rounding::same(3.0), Color32::from_rgba_unmultiplied(56, 189, 248, 20));
                                                             ui.painter().text(chip_rect.center(), egui::Align2::CENTER_CENTER, port, egui::FontId::monospace(8.0), Color32::from_rgb(203, 213, 225));
                                                         }
                                                     });
 
-                                                    // Col 2: DOWNLOAD (RX)
-                                                    ui.allocate_ui_with_layout(egui::vec2(COL_RX_W, 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        let rx_str = crate::sensors::format_bytes(disp_rx);
-                                                        ui.label(RichText::new(rx_str).size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
-                                                    });
+                                                    // 2. DOWNLOAD (RX) (Heatmap tinted cell, strictly bounded, right aligned)
+                                                    let (rx_rect, _rx_resp) = ui.allocate_exact_size(egui::vec2(COL_RX_W, 22.0), egui::Sense::hover());
+                                                    if row_bg != Color32::TRANSPARENT {
+                                                        let bg_rect = egui::Rect::from_min_max(rx_rect.min, egui::pos2(rx_rect.max.x + COL_SPACING, rx_rect.max.y));
+                                                        ui.painter().rect_filled(bg_rect, Rounding::ZERO, row_bg);
+                                                    }
+                                                    if rx_fill != Color32::TRANSPARENT {
+                                                        ui.painter().rect_filled(rx_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, rx_fill);
+                                                    }
+                                                    let rx_str = crate::sensors::format_bytes(disp_rx);
+                                                    let rx_col = if rx_fill != Color32::TRANSPARENT { Color32::from_rgb(245, 245, 250) } else { Color32::from_rgb(170, 175, 185) };
+                                                    ui.painter().text(egui::pos2(rx_rect.right() - 8.0, rx_rect.center().y), egui::Align2::RIGHT_CENTER, &rx_str, egui::FontId::monospace(11.0), rx_col);
 
-                                                    // Col 3: UPLOAD (TX)
-                                                    ui.allocate_ui_with_layout(egui::vec2(COL_TX_W, 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        let tx_str = crate::sensors::format_bytes(disp_tx);
-                                                        ui.label(RichText::new(tx_str).size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
-                                                    });
+                                                    // 3. UPLOAD (TX) (Heatmap tinted cell, strictly bounded, right aligned)
+                                                    let (tx_rect, _tx_resp) = ui.allocate_exact_size(egui::vec2(COL_TX_W, 22.0), egui::Sense::hover());
+                                                    if row_bg != Color32::TRANSPARENT {
+                                                        let bg_rect = egui::Rect::from_min_max(tx_rect.min, egui::pos2(tx_rect.max.x + COL_SPACING, tx_rect.max.y));
+                                                        ui.painter().rect_filled(bg_rect, Rounding::ZERO, row_bg);
+                                                    }
+                                                    if tx_fill != Color32::TRANSPARENT {
+                                                        ui.painter().rect_filled(tx_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, tx_fill);
+                                                    }
+                                                    let tx_str = crate::sensors::format_bytes(disp_tx);
+                                                    let tx_col = if tx_fill != Color32::TRANSPARENT { Color32::from_rgb(245, 245, 250) } else { Color32::from_rgb(170, 175, 185) };
+                                                    ui.painter().text(egui::pos2(tx_rect.right() - 8.0, tx_rect.center().y), egui::Align2::RIGHT_CENTER, &tx_str, egui::FontId::monospace(11.0), tx_col);
 
-                                                    // Col 4: TOTAL DATA USED + Cyan Bar
-                                                    ui.allocate_ui_with_layout(egui::vec2(COL_TOT_W, 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        let tot_str = crate::sensors::format_bytes(disp_tot);
-                                                        ui.label(RichText::new(tot_str).size(10.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
-                                                        ui.add_space(6.0);
-                                                        let frac = if max_data > 0 { ((disp_tot as f32) / (max_data as f32)).clamp(0.0, 1.0) } else { 0.0 };
-                                                        let bar_w = 46.0_f32;
-                                                        let bar_h = 4.0_f32;
-                                                        let (bar_rect, _) = ui.allocate_exact_size(egui::vec2(bar_w, bar_h), egui::Sense::hover());
-                                                        ui.painter().rect_filled(bar_rect, Rounding::same(2.0), Color32::from_rgba_unmultiplied(255, 255, 255, 12));
-                                                        if frac > 0.001 {
-                                                            let fill_w = (bar_w * frac).max(2.0);
-                                                            let fill_rect = egui::Rect::from_min_size(bar_rect.min, egui::vec2(fill_w, bar_h));
-                                                            ui.painter().rect_filled(fill_rect, Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
-                                                        }
-                                                    });
+                                                    // 4. TOTAL DATA USED + Cyan Bar (Heatmap tinted cell, strictly bounded, right aligned)
+                                                    let (tot_rect, _tot_resp) = ui.allocate_exact_size(egui::vec2(COL_TOT_W, 22.0), egui::Sense::hover());
+                                                    if row_bg != Color32::TRANSPARENT {
+                                                        let bg_rect = egui::Rect::from_min_max(tot_rect.min, egui::pos2(tot_rect.max.x + COL_SPACING, tot_rect.max.y));
+                                                        ui.painter().rect_filled(bg_rect, Rounding::ZERO, row_bg);
+                                                    }
+                                                    if tot_fill != Color32::TRANSPARENT {
+                                                        ui.painter().rect_filled(tot_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, tot_fill);
+                                                    }
+                                                    let frac = if max_data > 0 { ((disp_tot as f32) / (max_data as f32)).clamp(0.0, 1.0) } else { 0.0 };
+                                                    let bar_w = 42.0_f32;
+                                                    let bar_h = 3.5_f32;
+                                                    let bar_start = egui::pos2(tot_rect.left() + 6.0, tot_rect.center().y - bar_h * 0.5);
+                                                    let bar_rect = egui::Rect::from_min_size(bar_start, egui::vec2(bar_w, bar_h));
+                                                    ui.painter().rect_filled(bar_rect, Rounding::same(1.5), Color32::from_rgba_unmultiplied(255, 255, 255, 14));
+                                                    if frac > 0.001 {
+                                                        let fill_w = (bar_w * frac).max(2.0);
+                                                        let fill_rect = egui::Rect::from_min_size(bar_rect.min, egui::vec2(fill_w, bar_h));
+                                                        ui.painter().rect_filled(fill_rect, Rounding::same(1.5), Color32::from_rgb(56, 189, 248));
+                                                    }
+                                                    let tot_str = crate::sensors::format_bytes(disp_tot);
+                                                    let tot_col = if tot_fill != Color32::TRANSPARENT { Color32::from_rgb(245, 245, 250) } else { Color32::from_rgb(226, 232, 240) };
+                                                    ui.painter().text(egui::pos2(tot_rect.right() - 8.0, tot_rect.center().y), egui::Align2::RIGHT_CENTER, &tot_str, egui::FontId::monospace(11.0), tot_col);
 
-                                                    // Col 5: LIVE RATE
-                                                    ui.allocate_ui_with_layout(egui::vec2(COL_RATE_W, 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        let rate_str = if app.rate_bps > 0.0 {
-                                                            crate::sensors::format_rate(app.rate_bps)
-                                                        } else {
-                                                            "—".to_string()
-                                                        };
-                                                        let rate_color = if app.rate_bps > 1024.0 {
-                                                            Color32::from_rgb(226, 232, 240)
-                                                        } else {
-                                                            Color32::from_rgb(148, 163, 184)
-                                                        };
-                                                        ui.label(RichText::new(rate_str).size(9.5).monospace().color(rate_color));
-                                                    });
+                                                    // 5. LIVE RATE (Heatmap tinted cell, strictly bounded, right aligned)
+                                                    let (rate_rect, _rate_resp) = ui.allocate_exact_size(egui::vec2(COL_RATE_W, 22.0), egui::Sense::hover());
+                                                    if row_bg != Color32::TRANSPARENT {
+                                                        let bg_rect = rate_rect;
+                                                        ui.painter().rect_filled(
+                                                            bg_rect,
+                                                            Rounding { nw: 0.0, sw: 0.0, ne: 4.0, se: 4.0 },
+                                                            row_bg,
+                                                        );
+                                                    }
+                                                    if rate_fill != Color32::TRANSPARENT {
+                                                        ui.painter().rect_filled(rate_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, rate_fill);
+                                                    }
+                                                    let rate_str = if app.rate_bps > 0.0 { crate::sensors::format_rate(app.rate_bps) } else { "—".to_string() };
+                                                    let rate_col = if rate_fill != Color32::TRANSPARENT {
+                                                        Color32::from_rgb(245, 245, 250)
+                                                    } else if app.rate_bps > 1024.0 {
+                                                        Color32::from_rgb(203, 213, 225)
+                                                    } else {
+                                                        Color32::from_rgb(148, 163, 184)
+                                                    };
+                                                    ui.painter().text(egui::pos2(rate_rect.right() - 8.0, rate_rect.center().y), egui::Align2::RIGHT_CENTER, &rate_str, egui::FontId::monospace(11.0), rate_col);
 
                                                     ui.end_row();
                                                 }

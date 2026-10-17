@@ -144,30 +144,72 @@ impl Default for WifiSnapshot {
     }
 }
 
+use std::sync::OnceLock;
+
+static CACHED_IFACE_HW: OnceLock<(String, String, String, String, String)> = OnceLock::new();
+static CACHED_KVER: OnceLock<String> = OnceLock::new();
+
 /// Query real Wi-Fi status from nmcli, ip, sysfs, and ss.
 pub fn query_wifi_status() -> WifiSnapshot {
     let mut snap = WifiSnapshot::default();
     snap.last_updated = Instant::now();
 
-    // 1. Detect wireless interface name from /sys/class/net
-    if let Ok(entries) = fs::read_dir("/sys/class/net") {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with("wl") {
-                snap.interface = name;
-                break;
+    // 1-4 & 6. Detect and cache static interface hardware details once
+    let (iface, mac, drv, slot, prod) = CACHED_IFACE_HW.get_or_init(|| {
+        let mut iface = "wlan0".to_string();
+        if let Ok(entries) = fs::read_dir("/sys/class/net") {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("wl") {
+                    iface = name;
+                    break;
+                }
             }
         }
-    }
+        let mac_path = format!("/sys/class/net/{}/address", iface);
+        let mac = fs::read_to_string(&mac_path)
+            .map(|s| s.trim().to_uppercase())
+            .unwrap_or_else(|_| "Unknown".to_string());
 
-    // 2. Read MAC address from sysfs
-    let mac_path = format!("/sys/class/net/{}/address", snap.interface);
-    if let Ok(mac) = fs::read_to_string(&mac_path) {
-        let trimmed = mac.trim().to_uppercase();
-        if !trimmed.is_empty() {
-            snap.mac_address = trimmed;
+        let uevent_path = format!("/sys/class/net/{}/device/uevent", iface);
+        let mut drv = "Unknown".to_string();
+        let mut slot = "Unknown".to_string();
+        if let Ok(uevent) = fs::read_to_string(&uevent_path) {
+            for line in uevent.lines() {
+                if let Some(d) = line.strip_prefix("DRIVER=") {
+                    drv = d.trim().to_string();
+                } else if let Some(s) = line.strip_prefix("PCI_SLOT_NAME=") {
+                    slot = s.trim().to_string();
+                }
+            }
         }
-    }
+
+        let mut prod = "Wi-Fi Adapter".to_string();
+        let prod_out = Command::new("nmcli")
+            .args(["-t", "-f", "GENERAL.PRODUCT", "dev", "show", &iface])
+            .output();
+        if let Ok(out) = prod_out {
+            if out.status.success() {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                for line in stdout.lines() {
+                    if let Some(p) = line.strip_prefix("GENERAL.PRODUCT:") {
+                        let trimmed = p.trim();
+                        if !trimmed.is_empty() {
+                            prod = trimmed.to_string();
+                        }
+                    }
+                }
+            }
+        }
+
+        (iface, mac, drv, slot, prod)
+    }).clone();
+
+    snap.interface = iface;
+    snap.mac_address = mac;
+    snap.driver = drv;
+    snap.pci_slot = slot;
+    snap.product = prod;
 
     // 3. Read operstate
     let state_path = format!("/sys/class/net/{}/operstate", snap.interface);
@@ -179,18 +221,6 @@ pub fn query_wifi_status() -> WifiSnapshot {
         } else if trimmed == "DOWN" {
             snap.state = "DISCONNECTED".to_string();
             snap.is_connected = false;
-        }
-    }
-
-    // 4. Read driver & PCI slot info from sysfs
-    let uevent_path = format!("/sys/class/net/{}/device/uevent", snap.interface);
-    if let Ok(uevent) = fs::read_to_string(&uevent_path) {
-        for line in uevent.lines() {
-            if let Some(drv) = line.strip_prefix("DRIVER=") {
-                snap.driver = drv.trim().to_string();
-            } else if let Some(slot) = line.strip_prefix("PCI_SLOT_NAME=") {
-                snap.pci_slot = slot.trim().to_string();
-            }
         }
     }
 
@@ -238,24 +268,6 @@ pub fn query_wifi_status() -> WifiSnapshot {
                         snap.is_connected = true;
                         snap.state = "CONNECTED".to_string();
                         break;
-                    }
-                }
-            }
-        }
-    }
-
-    // 6. Query network interface product string
-    let prod_out = Command::new("nmcli")
-        .args(["-t", "-f", "GENERAL.PRODUCT", "dev", "show", &snap.interface])
-        .output();
-    if let Ok(out) = prod_out {
-        if out.status.success() {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            for line in stdout.lines() {
-                if let Some(prod) = line.strip_prefix("GENERAL.PRODUCT:") {
-                    let trimmed = prod.trim();
-                    if !trimmed.is_empty() {
-                        snap.product = trimmed.to_string();
                     }
                 }
             }
@@ -337,13 +349,12 @@ pub fn query_wifi_status() -> WifiSnapshot {
         }
     }
 
-    // 11. Read kernel version from /proc/sys/kernel/osrelease
-    if let Ok(kver) = fs::read_to_string("/proc/sys/kernel/osrelease") {
-        let trimmed = kver.trim();
-        if !trimmed.is_empty() {
-            snap.kernel_version = trimmed.to_string();
-        }
-    }
+    // 11. Read and cache kernel version from /proc/sys/kernel/osrelease
+    snap.kernel_version = CACHED_KVER.get_or_init(|| {
+        fs::read_to_string("/proc/sys/kernel/osrelease")
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|_| "Linux".to_string())
+    }).clone();
 
     // 12. Query real active listening sockets via `ss -tlpn`
     let ss_out = Command::new("ss")

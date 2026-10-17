@@ -43,6 +43,15 @@ pub const WIFI_OFF: &str = "\u{e1af}"; // wifi-off
 pub const BLUETOOTH: &str = "\u{e05c}"; // bluetooth
 pub const HEADPHONES: &str = "\u{e0f0}"; // headphones
 pub const LAYOUT_GRID: &str = "\u{e101}"; // layout-grid
+pub const SMARTPHONE: &str = "\u{e163}"; // smartphone
+pub const SMARTPHONE_CHARGING: &str = "\u{e22e}"; // smartphone-charging
+pub const TABLET: &str = "\u{e17e}"; // tablet
+pub const SCREEN_SHARE: &str = "\u{e14f}"; // screen-share
+pub const CLIPBOARD: &str = "\u{e085}"; // clipboard
+pub const CLIPBOARD_COPY: &str = "\u{e225}"; // clipboard-copy
+pub const CLIPBOARD_CHECK: &str = "\u{e219}"; // clipboard-check
+pub const USB: &str = "\u{e356}"; // usb
+pub const CAST: &str = "\u{e066}"; // cast
 
 // Actions and UI Controls
 pub const SEARCH: &str = "\u{e151}"; // search

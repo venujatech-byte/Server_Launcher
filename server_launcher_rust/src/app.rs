@@ -342,6 +342,36 @@ pub struct LauncherApp {
     close_confirm_open: bool,
     close_confirmed: bool,
 
+    // ADB / Android Device Cockpit State
+    pub adb_devices: Vec<crate::config::AdbDeviceConfig>,
+    pub add_device_selector_modal_open: bool,
+    pub adb_add_modal_open: bool,
+    pub adb_detected_devices: Vec<crate::adb::AdbDeviceInfo>,
+    pub adb_wireless_ip_input: String,
+    pub adb_wireless_port_input: String,
+    pub adb_device_name_input: String,
+    pub adb_active_subtab: AdbSubTab,
+    pub adb_telemetry_cache: HashMap<String, crate::adb::AdbDeviceTelemetry>,
+    pub adb_status_msg: Option<(String, bool, Instant)>,
+    pub adb_input_text_field: String,
+    pub adb_clipboard_cache: HashMap<String, String>,
+    pub adb_clipboard_send_text: String,
+    pub adb_shell_cmd_input: String,
+    pub adb_shell_history: Vec<(String, String, bool)>,
+    pub adb_file_current_path: String,
+    pub adb_file_entries: Vec<crate::adb::AdbFileEntry>,
+    pub adb_fastboot_partition: String,
+    pub adb_package_filter: String,
+    pub adb_package_is_system: bool,
+    pub adb_packages_cache: Vec<crate::adb::AdbPackageInfo>,
+    pub adb_scrcpy_max_fps: u32,
+    pub adb_scrcpy_bitrate_mbps: u32,
+    pub adb_scrcpy_stay_awake: bool,
+    pub adb_scrcpy_screen_off: bool,
+    pub adb_scrcpy_no_audio: bool,
+    pub adb_scrcpy_pids: HashMap<String, u32>,
+
+
     // Scripts State
     pub script_executions: HashMap<String, ScriptExecution>,
     pub script_modal: ScriptModalState,
@@ -766,6 +796,7 @@ impl LauncherApp {
 
         let selected_machine = "local".to_string();
         let ssh_hosts = config_file.ssh_hosts;
+        let adb_devices = config_file.adb_devices;
         let scripts = config_file.scripts;
         let saved_commands = config_file.saved_commands;
         let ssh_host_modal = SshHostModalState::default();
@@ -1106,6 +1137,35 @@ impl LauncherApp {
             proc_affinity_error: None,
             proc_affinity_loading: false,
             proc_affinity_receiver: Arc::new(Mutex::new(None)),
+
+            // ADB / Android Device Cockpit State
+            adb_devices,
+            add_device_selector_modal_open: false,
+            adb_add_modal_open: false,
+            adb_detected_devices: Vec::new(),
+            adb_wireless_ip_input: String::new(),
+            adb_wireless_port_input: "5555".to_string(),
+            adb_device_name_input: String::new(),
+            adb_active_subtab: AdbSubTab::Overview,
+            adb_telemetry_cache: HashMap::new(),
+            adb_status_msg: None,
+            adb_input_text_field: String::new(),
+            adb_clipboard_cache: HashMap::new(),
+            adb_clipboard_send_text: String::new(),
+            adb_shell_cmd_input: String::new(),
+            adb_shell_history: Vec::new(),
+            adb_file_current_path: "/sdcard".to_string(),
+            adb_file_entries: Vec::new(),
+            adb_fastboot_partition: "boot".to_string(),
+            adb_package_filter: String::new(),
+            adb_package_is_system: false,
+            adb_packages_cache: Vec::new(),
+            adb_scrcpy_max_fps: 60,
+            adb_scrcpy_bitrate_mbps: 8,
+            adb_scrcpy_stay_awake: true,
+            adb_scrcpy_screen_off: false,
+            adb_scrcpy_no_audio: false,
+            adb_scrcpy_pids: HashMap::new(),
         }
     }
 
@@ -1216,6 +1276,7 @@ impl LauncherApp {
         let cfg = ConfigFile {
             servers: self.services.iter().map(|s| s.config.clone()).collect(),
             ssh_hosts: self.ssh_hosts.clone(),
+            adb_devices: self.adb_devices.clone(),
             scripts: self.scripts.clone(),
             saved_commands: self.saved_commands.clone(),
             theme: Some(self.theme.id_str().to_string()),
@@ -2559,6 +2620,7 @@ impl LauncherApp {
         let mut host_to_delete: Option<String> = None;
         let mut host_to_test: Option<SshRemoteHost> = None;
         let mut host_to_term: Option<SshRemoteHost> = None;
+        let mut adb_to_delete: Option<String> = None;
 
         ui.vertical_centered(|ui| {
             ui.add_space(4.0);
@@ -2695,7 +2757,69 @@ impl LauncherApp {
                             ui.add_space(6.0);
                         }
 
-                        // Add SSH Host button tile
+                        for adb_dev in &self.adb_devices {
+                            let is_selected = self.selected_machine == adb_dev.id;
+                            let adb_tooltip = format!(
+                                "{} {}\nSerial: {}\nMode: {}\nRight-click for options",
+                                crate::lucide::SMARTPHONE,
+                                adb_dev.name,
+                                adb_dev.serial,
+                                if adb_dev.is_wireless { "Wireless (TCP/IP)" } else { "USB / Direct" }
+                            );
+
+                            let (dev_rect, dev_resp) = ui.allocate_exact_size(egui::vec2(38.0, 38.0), egui::Sense::click());
+                            let dev_bg = if is_selected {
+                                p.accent
+                            } else if dev_resp.hovered() {
+                                p.bg_card_active
+                            } else {
+                                p.bg_card
+                            };
+                            let dev_stroke = Stroke::NONE;
+
+                            ui.painter().rect(dev_rect, Rounding::same(8.0), dev_bg, dev_stroke);
+                            let dev_icon_col = if is_selected { Color32::WHITE } else { p.accent_light };
+                            ui.painter().text(
+                                dev_rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                crate::lucide::SMARTPHONE,
+                                egui::FontId::proportional(15.0),
+                                dev_icon_col,
+                            );
+
+                            // Status indicator dot at bottom-right (cyan for wireless, emerald for USB)
+                            let dot_center = egui::pos2(dev_rect.right() - 6.0, dev_rect.bottom() - 6.0);
+                            ui.painter().circle_filled(dot_center, 4.0, p.bg_machines_nav);
+                            let dot_col = if adb_dev.is_wireless { p.accent_light } else { p.success };
+                            ui.painter().circle_filled(dot_center, 2.5, dot_col);
+
+                            let dev_resp = dev_resp.on_hover_text(adb_tooltip);
+                            if dev_resp.clicked() {
+                                self.selected_machine = adb_dev.id.clone();
+                            }
+
+                            dev_resp.context_menu(|ui| {
+                                if ui.button(format!("{} Mirror Screen (scrcpy)", crate::lucide::SCREEN_SHARE)).clicked() {
+                                    let mut cmd = std::process::Command::new("scrcpy");
+                                    cmd.arg("-s").arg(&adb_dev.serial);
+                                    let _ = cmd.spawn();
+                                    ui.close_menu();
+                                }
+                                if ui.button(format!("{} External Shell", crate::lucide::TERMINAL)).clicked() {
+                                    let _ = crate::adb::launch_external_adb_terminal(&adb_dev.serial);
+                                    ui.close_menu();
+                                }
+                                ui.separator();
+                                if ui.button(RichText::new(format!("{} Remove Device", crate::lucide::TRASH)).color(Color32::from_rgb(239, 68, 68))).clicked() {
+                                    adb_to_delete = Some(adb_dev.id.clone());
+                                    ui.close_menu();
+                                }
+                            });
+
+                            ui.add_space(6.0);
+                        }
+
+                        // Add SSH Host or ADB Device button tile
                         let (add_rect, add_resp) = ui.allocate_exact_size(egui::vec2(34.0, 34.0), egui::Sense::click());
                         let add_bg = if add_resp.hovered() { p.bg_card_active } else { Color32::TRANSPARENT };
                         let add_stroke = Stroke::NONE;
@@ -2707,8 +2831,8 @@ impl LauncherApp {
                             egui::FontId::proportional(17.0),
                             if add_resp.hovered() { p.accent } else { p.text_muted },
                         );
-                        if add_resp.on_hover_text("Add new SSH Remote PC").clicked() {
-                            self.ssh_host_modal.open_add();
+                        if add_resp.on_hover_text("Add Device (SSH Remote PC or Android ADB)").clicked() {
+                            self.add_device_selector_modal_open = true;
                         }
 
                         ui.add_space(6.0);
@@ -2754,6 +2878,15 @@ impl LauncherApp {
         if let Some(id) = host_to_delete {
             if let Some(pos) = self.ssh_hosts.iter().position(|h| h.id == id) {
                 self.ssh_hosts.remove(pos);
+                if self.selected_machine == id {
+                    self.selected_machine = "local".to_string();
+                }
+                self.persist_config();
+            }
+        }
+        if let Some(id) = adb_to_delete {
+            if let Some(pos) = self.adb_devices.iter().position(|d| d.id == id) {
+                self.adb_devices.remove(pos);
                 if self.selected_machine == id {
                     self.selected_machine = "local".to_string();
                 }
@@ -4363,6 +4496,11 @@ impl eframe::App for LauncherApp {
                         });
                     }
                 });
+        } else if let Some(adb_dev) = self.adb_devices.iter().find(|d| d.id == self.selected_machine).cloned() {
+            // ═════════════════════════════════════════════════════════════════
+            // ADB ANDROID DEVICE COCKPIT
+            // ═════════════════════════════════════════════════════════════════
+            self.render_adb_cockpit_view(ctx, &adb_dev);
         } else {
             // ═════════════════════════════════════════════════════════════════
             // SSH REMOTE PC DASHBOARD
@@ -4688,6 +4826,8 @@ impl eframe::App for LauncherApp {
         self.render_proc_memory_maps_modal(ctx, &p);
         self.render_proc_open_files_modal(ctx, &p);
         self.render_proc_affinity_modal(ctx, &p);
+        self.render_add_device_selector_modal(ctx);
+        self.render_adb_add_modal(ctx);
 
         let is_scanning = self.scanner.is_scanning.lock().map(|s| *s).unwrap_or(false);
         let has_remote_bg_work = {
@@ -23857,3 +23997,6 @@ impl LauncherApp {
         self.input_texts.insert(key.to_string(), input_val);
     }
 }
+
+include!("adb_view.rs");
+

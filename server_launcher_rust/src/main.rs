@@ -4,6 +4,7 @@ mod modals;
 mod remote;
 mod scanner;
 mod service;
+pub mod adb;
 pub mod autostart;
 pub mod bluetooth;
 pub mod commands;

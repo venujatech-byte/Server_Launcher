@@ -142,11 +142,34 @@ fn default_command_category() -> String {
     "General".to_string()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AdbDeviceConfig {
+    pub id: String,
+    pub name: String,
+    pub serial: String,
+    #[serde(default)]
+    pub is_wireless: bool,
+    #[serde(default)]
+    pub ip_port: Option<String>,
+    #[serde(default)]
+    pub scrcpy_max_fps: Option<u32>,
+    #[serde(default)]
+    pub scrcpy_bitrate_mbps: Option<u32>,
+    #[serde(default)]
+    pub scrcpy_stay_awake: bool,
+    #[serde(default)]
+    pub scrcpy_turn_screen_off: bool,
+    #[serde(default)]
+    pub scrcpy_no_audio: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConfigFile {
     pub servers: Vec<ServerConfig>,
     #[serde(default)]
     pub ssh_hosts: Vec<SshRemoteHost>,
+    #[serde(default)]
+    pub adb_devices: Vec<AdbDeviceConfig>,
     #[serde(default)]
     pub scripts: Vec<CustomScript>,
     #[serde(default)]

@@ -187,6 +187,7 @@ pub struct SystemSensorsSnapshot {
     pub cpu_power_watts: Option<f32>,
     pub cpu_tdp_watts: Option<f32>,
     pub cpu_temp: Option<f32>,
+    pub cpu_tjunction_max: Option<f32>,
 
     // Memory (RAM & Swap)
     pub mem_total_bytes: u64,
@@ -798,6 +799,8 @@ impl SystemSensorsCollector {
             (total.max(tcp + udp), tcp, udp)
         };
 
+        let cpu_tjunction_max = detect_hardware_cpu_tjunction_max(&temp_sensors);
+
         SystemSensorsSnapshot {
             cpu_brand,
             cpu_cores_physical,
@@ -809,6 +812,7 @@ impl SystemSensorsCollector {
             cpu_power_watts,
             cpu_tdp_watts,
             cpu_temp,
+            cpu_tjunction_max,
             mem_total_bytes,
             mem_used_bytes,
             mem_free_bytes,
@@ -1116,6 +1120,128 @@ pub fn collect_hwmon_sensors() -> Vec<TempSensor> {
     }
 
     result
+}
+
+/// Dynamically detects the CPU Tjunction Max / critical thermal limit for the specific PC hardware.
+/// Reads from hwmon critical limit sensors (coretemp, k10temp, zenpower, cpu_thermal), thermal zone trip points,
+/// or detected CPU temp sensor metadata.
+pub fn detect_hardware_cpu_tjunction_max(temp_sensors: &[TempSensor]) -> Option<f32> {
+    // 1. First inspect identified CPU sensors (prioritize Package / CPU / coretemp)
+    for s in temp_sensors {
+        if s.category == SensorCategory::Cpu && (s.name.contains("Package") || s.name == "CPU" || s.chip.contains("coretemp")) {
+            if let Some(c) = s.crit.or(s.max) {
+                if c >= 60.0 && c <= 125.0 {
+                    return Some(c);
+                }
+            }
+        }
+    }
+    // 2. Check any CPU sensor with a valid critical or max threshold
+    for s in temp_sensors {
+        if s.category == SensorCategory::Cpu {
+            if let Some(c) = s.crit.or(s.max) {
+                if c >= 60.0 && c <= 125.0 {
+                    return Some(c);
+                }
+            }
+        }
+    }
+
+    // 3. Directly query Linux hwmon sysfs for CPU drivers
+    #[cfg(target_os = "linux")]
+    {
+        let hwmon_dir = Path::new("/sys/class/hwmon");
+        if hwmon_dir.exists() {
+            if let Ok(entries) = fs::read_dir(hwmon_dir) {
+                let mut paths: Vec<_> = entries.flatten().map(|e| e.path()).collect();
+                paths.sort();
+
+                for p in paths {
+                    let chip_name = fs::read_to_string(p.join("name"))
+                        .map(|s| s.trim().to_lowercase())
+                        .unwrap_or_default();
+
+                    let is_cpu_chip = chip_name.contains("coretemp")
+                        || chip_name.contains("k10temp")
+                        || chip_name.contains("zenpower")
+                        || chip_name.contains("cpu")
+                        || chip_name.contains("soc")
+                        || chip_name.contains("fam15h");
+
+                    if is_cpu_chip {
+                        if let Ok(files) = fs::read_dir(&p) {
+                            let mut flist: Vec<_> = files.flatten().map(|e| e.path()).collect();
+                            flist.sort();
+
+                            // Prioritize temp1_crit then any temp*_crit, then temp*_max
+                            let mut crit_files: Vec<_> = flist.iter()
+                                .filter(|f| {
+                                    let name = f.file_name().unwrap_or_default().to_string_lossy();
+                                    name.starts_with("temp") && (name.ends_with("_crit") || name.ends_with("_max"))
+                                })
+                                .collect();
+
+                            crit_files.sort_by_key(|f| {
+                                let name = f.file_name().unwrap_or_default().to_string_lossy();
+                                if name.contains("temp1_crit") {
+                                    0
+                                } else if name.ends_with("_crit") {
+                                    1
+                                } else {
+                                    2
+                                }
+                            });
+
+                            for cf in crit_files {
+                                if let Ok(content) = fs::read_to_string(cf) {
+                                    if let Ok(raw) = content.trim().parse::<f32>() {
+                                        let val = if raw.abs() > 200.0 { raw / 1000.0 } else { raw };
+                                        if val >= 60.0 && val <= 125.0 {
+                                            return Some(val);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Check Linux thermal zones for critical trip points
+        let thermal_dir = Path::new("/sys/class/thermal");
+        if thermal_dir.exists() {
+            if let Ok(entries) = fs::read_dir(thermal_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    if name.starts_with("thermal_zone") {
+                        let type_str = fs::read_to_string(path.join("type")).unwrap_or_default().to_lowercase();
+                        if type_str.contains("cpu") || type_str.contains("x86_pkg") || type_str.contains("soc") {
+                            for trip in 0..8 {
+                                let trip_type_path = path.join(format!("trip_point_{}_type", trip));
+                                let trip_temp_path = path.join(format!("trip_point_{}_temp", trip));
+                                if let Ok(ttype) = fs::read_to_string(trip_type_path) {
+                                    if ttype.trim().eq_ignore_ascii_case("critical") {
+                                        if let Ok(tstr) = fs::read_to_string(trip_temp_path) {
+                                            if let Ok(raw) = tstr.trim().parse::<f32>() {
+                                                let val = if raw.abs() > 200.0 { raw / 1000.0 } else { raw };
+                                                if val >= 60.0 && val <= 125.0 {
+                                                    return Some(val);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }
 
 /// Detects if the current system has any active physical fan controllers in hwmon.
@@ -2040,11 +2166,27 @@ for hw in glob.glob("/sys/class/hwmon/hwmon*"):
     for inp in glob.glob(hw + "/temp*_input"):
         lbl_p = inp.replace("_input", "_label")
         lbl = open(lbl_p).read().strip() if os.path.exists(lbl_p) else os.path.basename(inp)
+        crit_p = inp.replace("_input", "_crit")
+        crit = None
+        if os.path.exists(crit_p):
+            try:
+                rc = float(open(crit_p).read().strip())
+                crit = rc / 1000.0 if abs(rc) > 200.0 else rc
+            except:
+                pass
+        max_p = inp.replace("_input", "_max")
+        tmax = None
+        if os.path.exists(max_p):
+            try:
+                rm = float(open(max_p).read().strip())
+                tmax = rm / 1000.0 if abs(rm) > 200.0 else rm
+            except:
+                pass
         try:
             raw_t = float(open(inp).read().strip())
             t = raw_t / 1000.0 if abs(raw_t) > 200.0 else raw_t
             if -40 <= t <= 150:
-                temps.append({"chip": name, "label": lbl, "temp": round(t, 1)})
+                temps.append({"chip": name, "label": lbl, "temp": round(t, 1), "crit": crit, "max": tmax})
         except:
             pass
 if len(temps) < 3:
@@ -2703,12 +2845,15 @@ print(json.dumps(data))
                 _ => {}
             }
 
+            let crit = t.get("crit").and_then(|v| v.as_f64()).map(|v| v as f32);
+            let max = t.get("max").and_then(|v| v.as_f64()).map(|v| v as f32);
+
             temp_sensors.push(TempSensor {
                 name: label,
                 chip,
                 temp,
-                max: None,
-                crit: None,
+                max,
+                crit,
                 category: cat,
             });
         }
@@ -2834,6 +2979,8 @@ print(json.dumps(data))
         }
     }
 
+    let cpu_tjunction_max = detect_hardware_cpu_tjunction_max(&temp_sensors);
+
     Ok(SystemSensorsSnapshot {
         cpu_brand,
         cpu_cores_physical: cpu_cores,
@@ -2845,6 +2992,7 @@ print(json.dumps(data))
         cpu_power_watts,
         cpu_tdp_watts,
         cpu_temp,
+        cpu_tjunction_max,
         mem_total_bytes,
         mem_used_bytes,
         mem_free_bytes: mem_avail,

@@ -11049,12 +11049,13 @@ impl LauncherApp {
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     // Tjunction Max badge
+                                    let tj_max = snap.cpu_tjunction_max.unwrap_or(100.0);
                                     Frame::none()
                                         .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 8))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 3.5))
                                         .show(ui, |ui| {
-                                            ui.label(RichText::new("Tjunction Max: 105°C").size(9.5).monospace().color(p.text_muted));
+                                            ui.label(RichText::new(format!("Tjunction Max: {:.0}°C", tj_max)).size(9.5).monospace().color(p.text_muted));
                                         });
 
                                     ui.add_space(6.0);
@@ -11103,6 +11104,7 @@ impl LauncherApp {
                 let watts = snap.cpu_power_watts.unwrap_or(8.5);
                 let tdp = snap.cpu_tdp_watts.unwrap_or(12.0);
                 let temp_val = snap.cpu_temp.unwrap_or(42.0);
+                let tj_max = snap.cpu_tjunction_max.unwrap_or(100.0);
 
                 ui.columns(4, |cols| {
                     // Card 1: CPU LOAD
@@ -11188,11 +11190,11 @@ impl LauncherApp {
                         "CORE TEMPERATURE",
                         &format!("{:.1}", temp_val),
                         "°C",
-                        "Tjunction Max: 105°C",
+                        &format!("Tjunction Max: {:.0}°C", tj_max),
                         "MIN 38.0°C",
                         "MAX 72.0°C",
                         &temp_hist,
-                        105.0,
+                        tj_max,
                         Some(0.7),
                         Color32::from_rgb(56, 189, 248),
                         p.bg_card,
@@ -11735,7 +11737,7 @@ impl LauncherApp {
                                 ui.label(RichText::new(crate::lucide::ZAP).size(12.0).color(Color32::from_rgb(56, 189, 248)));
                                 ui.label(RichText::new("Linux ZRAM Dynamic Swap").size(12.5).strong().color(p.text_primary));
 
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |_ui| {
                                     Frame::none()
                                         .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
                                         .rounding(Rounding::same(999.0))
@@ -11860,7 +11862,7 @@ impl LauncherApp {
                                 ui.label(RichText::new(crate::lucide::LAYERS).size(12.0).color(Color32::from_rgb(56, 189, 248)));
                                 ui.label(RichText::new("Top Memory Consumers").size(12.5).strong().color(p.text_primary));
 
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |_ui| {
                                     Frame::none()
                                         .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 8))
                                         .rounding(Rounding::same(4.0))
@@ -14481,7 +14483,7 @@ impl LauncherApp {
                 let mtu_val = if is_remote { 1500 } else { wifi_snap.mtu };
                 let tx_bytes_val = if is_remote { snap.total_tx_bytes } else { wifi_snap.tx_bytes };
                 let lease_time_str = if is_remote { "Permanent / Static" } else { wifi_snap.lease_time_remaining.as_str() };
-                let kernel_str = if is_remote { snap.os_version.as_str() } else { wifi_snap.kernel_version.as_str() };
+                let _kernel_str = if is_remote { snap.os_version.as_str() } else { wifi_snap.kernel_version.as_str() };
 
                 ui.horizontal(|ui| {
                     // LEFT COLUMN: IP Configuration
@@ -18003,8 +18005,9 @@ impl LauncherApp {
                 let ram_card_name = if is_remote { "SYSTEM RAM" } else { "SODIMM RAM" };
                 let storage_card_name = if is_remote { "STORAGE DRIVE" } else { "NVME M.2 SSD" };
 
+                let cpu_tj = snap.cpu_tjunction_max.unwrap_or(95.0);
                 let sensor_cards = [
-                    ("CPU PACKAGE", cpu_temp, 95.0_f32, "+1.8°C / min", Color32::from_rgb(56, 189, 248)),
+                    ("CPU PACKAGE", cpu_temp, cpu_tj, "+1.8°C / min", Color32::from_rgb(56, 189, 248)),
                     (second_card_name, second_card_temp, second_card_limit, "STEADY", Color32::from_rgb(96, 165, 250)),
                     (ram_card_name, ram_temp, 75.0_f32, "STEADY", Color32::from_rgb(56, 189, 248)),
                     (storage_card_name, nvme_temp, 75.0_f32, "STEADY", Color32::from_rgb(96, 165, 250)),

@@ -154,7 +154,70 @@ pub fn list_devices() -> Vec<AdbDeviceInfo> {
     devices
 }
 
-/// Connects to a wireless ADB target (IP:Port).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdbNetworkEndpoint {
+    pub interface: String,
+    pub ip: String,
+    pub is_wifi: bool,
+    pub label: String,
+}
+
+/// Discovers valid, routable network endpoints on an Android device (filtering dummy interfaces like ds-br, p2p, dummy).
+pub fn discover_device_endpoints(serial: &str) -> Vec<AdbNetworkEndpoint> {
+    let mut endpoints = Vec::new();
+    let out = match adb_cmd(Some(serial), &["shell", "ip -f inet addr"]) {
+        Ok(s) => s,
+        Err(_) => return endpoints,
+    };
+
+    let mut current_iface = String::new();
+    for line in out.lines() {
+        let trimmed = line.trim();
+        if !line.starts_with(' ') && !line.starts_with('\t') && line.contains(':') {
+            if let Some(iface) = line.split(':').nth(1) {
+                current_iface = iface.trim().to_string();
+            }
+        } else if trimmed.starts_with("inet ") {
+            if let Some(cidr) = trimmed.split_whitespace().nth(1) {
+                let ip = cidr.split('/').next().unwrap_or("").to_string();
+                if ip.is_empty() || ip == "127.0.0.1" {
+                    continue;
+                }
+                let iface_lower = current_iface.to_lowercase();
+                if iface_lower.starts_with("dummy")
+                    || iface_lower.starts_with("ds-br")
+                    || iface_lower.starts_with("p2p")
+                    || iface_lower.starts_with("lo")
+                {
+                    continue;
+                }
+
+                let is_wifi = iface_lower.starts_with("wlan") || iface_lower.starts_with("wifi");
+                let label = if is_wifi {
+                    format!("Wi-Fi ({})", current_iface)
+                } else if iface_lower.starts_with("eth") {
+                    format!("Ethernet ({})", current_iface)
+                } else {
+                    current_iface.clone()
+                };
+
+                if !endpoints.iter().any(|e: &AdbNetworkEndpoint| e.ip == ip) {
+                    endpoints.push(AdbNetworkEndpoint {
+                        interface: current_iface.clone(),
+                        ip,
+                        is_wifi,
+                        label,
+                    });
+                }
+            }
+        }
+    }
+
+    endpoints.sort_by(|a, b| b.is_wifi.cmp(&a.is_wifi));
+    endpoints
+}
+
+/// Connects to a wireless ADB target (IP:Port) with robust output verification.
 pub fn connect_wireless(target: &str) -> Result<String, String> {
     let target = target.trim();
     let formatted = if !target.contains(':') {
@@ -162,7 +225,21 @@ pub fn connect_wireless(target: &str) -> Result<String, String> {
     } else {
         target.to_string()
     };
-    adb_cmd(None, &["connect", &formatted])
+    match adb_cmd(None, &["connect", &formatted]) {
+        Ok(out) => {
+            let lower = out.to_lowercase();
+            if lower.contains("failed")
+                || lower.contains("cannot connect")
+                || lower.contains("unable to connect")
+                || lower.contains("connection refused")
+            {
+                Err(out)
+            } else {
+                Ok(out)
+            }
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Disconnects a wireless ADB target (IP:Port).

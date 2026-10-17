@@ -488,6 +488,94 @@ impl LauncherApp {
         self.adb_mirror_drag_start = None;
     }
 
+    pub fn connect_wireless_device(&mut self, current_serial: &str, target: &str, fallback_name: &str) -> Result<String, String> {
+        let target = target.trim();
+        let formatted = if !target.contains(':') {
+            format!("{}:5555", target)
+        } else {
+            target.to_string()
+        };
+
+        // If a USB device is attached, ensure its TCP mode is enabled first
+        let usb_serial = if !current_serial.contains(':') && !current_serial.is_empty() {
+            Some(current_serial.to_string())
+        } else {
+            crate::adb::list_devices().into_iter().find(|d| !d.serial.contains(':')).map(|d| d.serial)
+        };
+
+        if let Some(usb_s) = usb_serial {
+            let _ = crate::adb::enable_tcpip(&usb_s, 5555);
+            std::thread::sleep(std::time::Duration::from_millis(800));
+        }
+
+        let msg = crate::adb::connect_wireless(&formatted)?;
+
+        // Query device model name from newly connected wireless target
+        let model = crate::adb::adb_cmd(Some(&formatted), &["shell", "getprop", "ro.product.model"])
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+
+        let device_name = if !model.is_empty() {
+            format!("{} (Wireless)", model)
+        } else if !fallback_name.is_empty() {
+            format!("{} (Wireless)", fallback_name.trim_end_matches(" (Wireless)"))
+        } else {
+            format!("Android ({})", formatted)
+        };
+
+        let dev_id = format!("adb_{}", formatted.replace(['.', ':', '-'], "_"));
+        let cfg = crate::config::AdbDeviceConfig {
+            id: dev_id.clone(),
+            name: device_name.clone(),
+            serial: formatted.clone(),
+            is_wireless: true,
+            ip_port: Some(formatted.clone()),
+            scrcpy_max_fps: Some(60),
+            scrcpy_bitrate_mbps: Some(8),
+            scrcpy_stay_awake: true,
+            scrcpy_turn_screen_off: false,
+            scrcpy_no_audio: false,
+        };
+
+        if let Some(pos) = self.adb_devices.iter().position(|d| d.serial == formatted) {
+            self.adb_devices[pos] = cfg;
+        } else {
+            self.adb_devices.push(cfg);
+        }
+
+        self.persist_config();
+        self.selected_machine = dev_id;
+        self.adb_active_subtab = AdbSubTab::Overview;
+
+        Ok(format!("Connected to {} ({})", device_name, msg))
+    }
+
+    pub fn disconnect_wireless_device(&mut self, target: &str) -> Result<String, String> {
+        let target = target.trim();
+        let formatted = if !target.contains(':') {
+            format!("{}:5555", target)
+        } else {
+            target.to_string()
+        };
+
+        let msg = crate::adb::disconnect_wireless(&formatted)?;
+
+        if let Some(pos) = self.adb_devices.iter().position(|d| d.serial == formatted) {
+            let removed = self.adb_devices.remove(pos);
+            if self.selected_machine == removed.id {
+                if let Some(usb) = self.adb_devices.iter().find(|d| !d.is_wireless) {
+                    self.selected_machine = usb.id.clone();
+                } else {
+                    self.selected_machine = "local".to_string();
+                }
+            }
+            self.persist_config();
+        }
+
+        Ok(msg)
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // ADB DEVICE COCKPIT VIEW: Full Android Management Center
     // ═════════════════════════════════════════════════════════════════════════
@@ -2013,39 +2101,19 @@ impl LauncherApp {
 
                 ui.add_space(10.0);
 
-                // Discover unique device IPs from adb shell ip route
-                let mut discovered_ips: Vec<String> = Vec::new();
-                if let Ok(ip_out) = crate::adb::adb_cmd(Some(&serial), &["shell", "ip", "route"]) {
-                    for line in ip_out.lines() {
-                        if line.contains("src ") {
-                            if let Some(ip) = line.split("src ").nth(1).and_then(|s| s.split_whitespace().next()) {
-                                let ip_str = ip.to_string();
-                                if !discovered_ips.contains(&ip_str) && ip_str != "127.0.0.1" {
-                                    discovered_ips.push(ip_str);
-                                }
-                            }
-                        }
-                    }
-                }
-                // Sort local Wi-Fi / private subnet IPs first (e.g. 10.111.*, 192.168.*)
-                discovered_ips.sort_by_key(|ip| {
-                    if ip.starts_with("10.111.") || ip.starts_with("192.168.") {
-                        0
-                    } else if ip.starts_with("10.") {
-                        1
-                    } else if ip.starts_with("172.") {
-                        2
-                    } else {
-                        3
-                    }
-                });
+                // Discover valid network endpoints on device (filtering dummy interfaces like ds-br0, p2p, dummy)
+                let endpoints = crate::adb::discover_device_endpoints(&serial);
 
                 // Auto-fill manual IP if empty
                 if self.adb_wireless_ip_input.is_empty() {
-                    if let Some(first) = discovered_ips.first() {
-                        self.adb_wireless_ip_input = first.clone();
+                    if let Some(first) = endpoints.first() {
+                        self.adb_wireless_ip_input = first.ip.clone();
                     }
                 }
+
+                let mut action_connect: Option<String> = None;
+                let mut action_disconnect: Option<String> = None;
+                let mut action_switch: Option<String> = None;
 
                 // 2-Column Grid: Discovered Endpoints (Left) vs Manual Connect (Right)
                 ui.columns(2, |cols| {
@@ -2061,23 +2129,23 @@ impl LauncherApp {
                                     ui.label(RichText::new("DISCOVERED LOCAL ENDPOINTS").size(10.5).monospace().strong().color(p.text_secondary));
                                 });
                                 ui.add_space(4.0);
-                                ui.label(RichText::new("Detected network interfaces on this Android device.").size(10.0).color(p.text_muted));
+                                ui.label(RichText::new("Detected valid network interfaces on this Android device.").size(10.0).color(p.text_muted));
                                 ui.add_space(10.0);
 
-                                if discovered_ips.is_empty() {
+                                if endpoints.is_empty() {
                                     ui.vertical_centered(|ui| {
                                         ui.add_space(20.0);
-                                        ui.label(RichText::new("No local network IP addresses discovered.").size(10.5).color(p.text_muted));
+                                        ui.label(RichText::new("No Wi-Fi or Ethernet IP addresses discovered on device.").size(10.5).color(p.text_muted));
                                         ui.add_space(10.0);
                                     });
                                 } else {
-                                    for ip in &discovered_ips {
-                                        let target = format!("{}:5555", ip);
-                                        let is_lan = ip.starts_with("10.") || ip.starts_with("192.168.");
+                                    for ep in &endpoints {
+                                        let target = format!("{}:5555", ep.ip);
+                                        let is_active = self.adb_devices.iter().any(|d| d.serial == target);
 
                                         Frame::none()
                                             .fill(Color32::from_rgb(18, 20, 28))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 34, 48)))
+                                            .stroke(Stroke::new(1.0_f32, if is_active { Color32::from_rgb(34, 197, 94) } else { Color32::from_rgb(30, 34, 48) }))
                                             .rounding(Rounding::same(8.0))
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(ui, |ui| {
@@ -2086,36 +2154,50 @@ impl LauncherApp {
                                                     ui.vertical(|ui| {
                                                         ui.horizontal(|ui| {
                                                             ui.label(RichText::new(&target).size(12.0).monospace().strong().color(p.text_primary));
-                                                            if is_lan {
+                                                            Frame::none()
+                                                                .fill(if ep.is_wifi { Color32::from_rgb(14, 34, 28) } else { Color32::from_rgb(22, 28, 42) })
+                                                                .rounding(Rounding::same(4.0))
+                                                                .inner_margin(egui::Margin::symmetric(5.0, 1.5))
+                                                                .show(ui, |ui| {
+                                                                    ui.label(RichText::new(&ep.label).size(8.5).monospace().color(if ep.is_wifi { Color32::from_rgb(74, 222, 128) } else { Color32::from_rgb(148, 163, 184) }));
+                                                                });
+
+                                                            if is_active {
                                                                 Frame::none()
-                                                                    .fill(Color32::from_rgb(14, 34, 28))
+                                                                    .fill(Color32::from_rgb(20, 44, 30))
                                                                     .rounding(Rounding::same(4.0))
                                                                     .inner_margin(egui::Margin::symmetric(5.0, 1.5))
                                                                     .show(ui, |ui| {
-                                                                        ui.label(RichText::new("Wi-Fi LAN").size(8.5).monospace().color(Color32::from_rgb(74, 222, 128)));
+                                                                        ui.label(RichText::new("● ACTIVE").size(8.5).monospace().color(Color32::from_rgb(34, 197, 94)));
                                                                     });
                                                             }
                                                         });
                                                     });
 
                                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                                        let btn_c = egui::Button::new(RichText::new("Connect").size(10.0).strong().color(Color32::WHITE))
-                                                            .fill(Color32::from_rgb(2, 132, 199))
-                                                            .rounding(Rounding::same(4.0));
-                                                        if ui.add(btn_c).clicked() {
-                                                            match crate::adb::connect_wireless(&target) {
-                                                                Ok(res) => self.adb_status_msg = Some((format!("Connected: {}", res), false, Instant::now())),
-                                                                Err(e) => self.adb_status_msg = Some((format!("Connect failed: {}", e), true, Instant::now())),
+                                                        if is_active {
+                                                            let btn_d = egui::Button::new(RichText::new("Disconnect").size(10.0).color(Color32::from_rgb(239, 68, 68)))
+                                                                .fill(p.bg_button)
+                                                                .rounding(Rounding::same(4.0));
+                                                            if ui.add(btn_d).clicked() {
+                                                                action_disconnect = Some(target.clone());
                                                             }
-                                                        }
 
-                                                        let btn_d = egui::Button::new(RichText::new("Disconnect").size(10.0).color(p.text_muted))
-                                                            .fill(p.bg_button)
-                                                            .rounding(Rounding::same(4.0));
-                                                        if ui.add(btn_d).clicked() {
-                                                            match crate::adb::disconnect_wireless(&target) {
-                                                                Ok(res) => self.adb_status_msg = Some((format!("Disconnected: {}", res), false, Instant::now())),
-                                                                Err(e) => self.adb_status_msg = Some((format!("Disconnect failed: {}", e), true, Instant::now())),
+                                                            let target_id = format!("adb_{}", target.replace(['.', ':', '-'], "_"));
+                                                            if self.selected_machine != target_id {
+                                                                let btn_s = egui::Button::new(RichText::new("Switch To").size(10.0).strong().color(Color32::WHITE))
+                                                                    .fill(p.accent)
+                                                                    .rounding(Rounding::same(4.0));
+                                                                if ui.add(btn_s).clicked() {
+                                                                    action_switch = Some(target_id);
+                                                                }
+                                                            }
+                                                        } else {
+                                                            let btn_c = egui::Button::new(RichText::new("⚡ Connect").size(10.0).strong().color(Color32::WHITE))
+                                                                .fill(Color32::from_rgb(2, 132, 199))
+                                                                .rounding(Rounding::same(4.0));
+                                                            if ui.add(btn_c).clicked() {
+                                                                action_connect = Some(target.clone());
                                                             }
                                                         }
                                                     });
@@ -2166,10 +2248,7 @@ impl LauncherApp {
                                         let port = self.adb_wireless_port_input.trim();
                                         if !ip.is_empty() {
                                             let target = format!("{}:{}", ip, if port.is_empty() { "5555" } else { port });
-                                            match crate::adb::connect_wireless(&target) {
-                                                Ok(res) => self.adb_status_msg = Some((format!("Connected: {}", res), false, Instant::now())),
-                                                Err(e) => self.adb_status_msg = Some((format!("Connect failed: {}", e), true, Instant::now())),
-                                            }
+                                            action_connect = Some(target);
                                         }
                                     }
 
@@ -2182,10 +2261,7 @@ impl LauncherApp {
                                         let port = self.adb_wireless_port_input.trim();
                                         if !ip.is_empty() {
                                             let target = format!("{}:{}", ip, if port.is_empty() { "5555" } else { port });
-                                            match crate::adb::disconnect_wireless(&target) {
-                                                Ok(res) => self.adb_status_msg = Some((format!("Disconnected: {}", res), false, Instant::now())),
-                                                Err(e) => self.adb_status_msg = Some((format!("Disconnect failed: {}", e), true, Instant::now())),
-                                            }
+                                            action_disconnect = Some(target);
                                         }
                                     }
                                 });
@@ -2199,10 +2275,28 @@ impl LauncherApp {
                                     ui.label(RichText::new("WIRELESS DEBUGGING INSTRUCTIONS").size(10.0).monospace().strong().color(p.text_primary));
                                 });
                                 ui.add_space(6.0);
-                                ui.label(RichText::new("1. Ensure device and host PC are on the same Wi-Fi network.\n2. While connected via USB, click 'Enable TCP/IP (Port 5555)'.\n3. Click 'Connect' on the discovered IP address.\n4. You can now unplug the USB cable!").size(9.5).color(p.text_muted));
+                                ui.label(RichText::new("1. Ensure device and host PC are on the same Wi-Fi network.\n2. Click '⚡ Connect' on the discovered Wi-Fi address (TCP mode is auto-configured).\n3. The wireless device is added to your cockpit dock immediately.\n4. You can now safely unplug the USB cable!").size(9.5).color(p.text_muted));
                             });
                     });
                 });
+
+                // Execute actions outside UI closures to maintain borrow integrity
+                if let Some(target) = action_connect {
+                    match self.connect_wireless_device(&serial, &target, &adb_dev.name) {
+                        Ok(msg) => self.adb_status_msg = Some((msg, false, Instant::now())),
+                        Err(e) => self.adb_status_msg = Some((format!("Connect failed: {}", e), true, Instant::now())),
+                    }
+                }
+                if let Some(target) = action_disconnect {
+                    match self.disconnect_wireless_device(&target) {
+                        Ok(msg) => self.adb_status_msg = Some((msg, false, Instant::now())),
+                        Err(e) => self.adb_status_msg = Some((format!("Disconnect failed: {}", e), true, Instant::now())),
+                    }
+                }
+                if let Some(id) = action_switch {
+                    self.selected_machine = id;
+                    self.adb_active_subtab = AdbSubTab::Overview;
+                }
             });
     }
 }

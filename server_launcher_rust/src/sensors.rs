@@ -253,6 +253,7 @@ pub struct SystemSensorsSnapshot {
     pub socket_total: usize,
     pub socket_tcp: usize,
     pub socket_udp: usize,
+    pub active_sockets: Vec<crate::wifi::WifiActiveSocket>,
 
     pub timestamp: Option<Instant>,
 }
@@ -887,6 +888,7 @@ impl SystemSensorsCollector {
             socket_total,
             socket_tcp,
             socket_udp,
+            active_sockets: Vec::new(),
             timestamp: Some(now),
         }
     }
@@ -2346,9 +2348,52 @@ def read_disk_stats():
         pass
     return d
 
+def read_net_dev():
+    nets = {}
+    try:
+        with open("/proc/net/dev") as f:
+            for line in f:
+                if ":" in line:
+                    p = line.split(":")
+                    ifname = p[0].strip()
+                    fields = p[1].split()
+                    if len(fields) >= 9:
+                        rx = int(fields[0])
+                        tx = int(fields[8])
+                        nets[ifname] = (rx, tx)
+    except:
+        pass
+    return nets
+
+def read_proc_io_map(pids):
+    pio = {}
+    for pid in pids:
+        try:
+            with open("/proc/" + str(pid) + "/io") as f:
+                rc = 0; wc = 0; dr = 0; dw = 0
+                for l in f:
+                    if l.startswith("rchar:"): rc = int(l.split()[1])
+                    elif l.startswith("wchar:"): wc = int(l.split()[1])
+                    elif l.startswith("read_bytes:"): dr = int(l.split()[1])
+                    elif l.startswith("write_bytes:"): dw = int(l.split()[1])
+                pio[pid] = (max(0, rc - dr), max(0, wc - dw), dr, dw)
+        except:
+            pass
+    return pio
+
 t_start = time.time()
 c1 = read_cpu_stats()
 d1 = read_disk_stats()
+n1 = read_net_dev()
+init_pids = []
+try:
+    for line in os.popen("ps -eo pid --sort=-pcpu 2>/dev/null").read().strip().split("\n")[1:81]:
+        p = line.strip()
+        if p.isdigit():
+            init_pids.append(int(p))
+except:
+    pass
+p1_io = read_proc_io_map(init_pids)
 rapl_e1 = {}
 for p in glob.glob("/sys/class/powercap/intel-rapl*/energy_uj") + glob.glob("/sys/class/powercap/intel-rapl*/*/energy_uj"):
     try:
@@ -2701,30 +2746,35 @@ if ac_online is None:
         if ac_online is None:
             ac_online = True
 
-networks = []
-try:
-    with open("/proc/net/dev") as f:
-        for line in f:
-            if ":" in line:
-                p = line.split(":")
-                ifname = p[0].strip()
-                if ifname == "lo":
-                    continue
-                fields = p[1].split()
-                if len(fields) >= 9:
-                    rx = int(fields[0])
-                    tx = int(fields[8])
-                    is_wl = os.path.exists("/sys/class/net/" + ifname + "/wireless") or os.path.exists("/sys/class/net/" + ifname + "/phy80211") or ifname.startswith(("wl", "wifi"))
-                    networks.append({"name": ifname, "rx_bytes": rx, "tx_bytes": tx, "is_wireless": is_wl})
-except:
-    pass
-
 t_elapsed = time.time() - t_start
 if t_elapsed < 0.12:
     time.sleep(0.12 - t_elapsed)
 c2 = read_cpu_stats()
 d2 = read_disk_stats()
+n2 = read_net_dev()
 t_disk_elapsed = max(time.time() - t_start, 0.05)
+
+networks = []
+total_rx_rate = 0.0
+total_tx_rate = 0.0
+for ifname, (rx2, tx2) in n2.items():
+    if ifname == "lo":
+        continue
+    rx1, tx1 = n1.get(ifname, (rx2, tx2))
+    rx_rate = max(0.0, (rx2 - rx1) / t_disk_elapsed)
+    tx_rate = max(0.0, (tx2 - tx1) / t_disk_elapsed)
+    if not (ifname.startswith("docker") or ifname.startswith("veth") or ifname.startswith("br-")):
+        total_rx_rate += rx_rate
+        total_tx_rate += tx_rate
+    is_wl = os.path.exists("/sys/class/net/" + ifname + "/wireless") or os.path.exists("/sys/class/net/" + ifname + "/phy80211") or ifname.startswith(("wl", "wifi"))
+    networks.append({
+        "name": ifname,
+        "rx_bytes": rx2,
+        "tx_bytes": tx2,
+        "rx_rate": rx_rate,
+        "tx_rate": tx_rate,
+        "is_wireless": is_wl
+    })
 
 if rapl_e1:
     for p, e1 in rapl_e1.items():
@@ -2821,18 +2871,98 @@ if cpu_usage == 0.0 and os.path.exists("/proc/loadavg"):
     except:
         pass
 
+active_sockets = []
+proc_ports = {}
+try:
+    for line in os.popen("ss -tulpn 2>/dev/null || ss -tunaep 2>/dev/null").read().strip().split("\n")[1:40]:
+        parts = line.split()
+        if len(parts) >= 5:
+            proto = parts[0].upper()
+            laddr = parts[4]
+            port = ":" + laddr.rsplit(":", 1)[-1] if ":" in laddr else laddr
+            status = parts[1] if len(parts) > 1 and parts[1].isupper() else "LISTEN"
+            pname = "service"
+            p_id = None
+            if "users:((\"" in line:
+                try:
+                    pname = line.split("users:((\"")[1].split("\"")[0]
+                except:
+                    pass
+            elif "users:((" in line:
+                try:
+                    pname = line.split("users:((")[1].split(",")[0].strip("\"").strip()
+                except:
+                    pass
+            if "pid=" in line:
+                try:
+                    p_id = int(line.split("pid=")[1].split(",")[0].split(")")[0])
+                    if p_id not in proc_ports and port:
+                        proc_ports[p_id] = port
+                except:
+                    pass
+            active_sockets.append({"process": pname, "proto": proto, "port": port, "status": status})
+except:
+    pass
+
 top_apps = []
 try:
-    for line in os.popen("ps -eo pid,pcpu,pmem,rss,comm --sort=-pcpu 2>/dev/null").read().strip().split("\n")[1:31]:
+    for line in os.popen("ps -eo pid,pcpu,pmem,rss,comm --sort=-pcpu 2>/dev/null").read().strip().split("\n")[1:81]:
         p = line.split()
         if len(p) >= 5:
-            top_apps.append({
-                "pid": int(p[0]),
-                "cpu": float(p[1]),
-                "mem_bytes": int(p[3]) * 1024,
-                "name": " ".join(p[4:]),
-                "status": "Running",
-            })
+            try:
+                pid = int(p[0])
+                cpu = float(p[1])
+                rss_bytes = int(p[3]) * 1024
+                comm = " ".join(p[4:])
+
+                rx2 = 0
+                tx2 = 0
+                dr2 = 0
+                dw2 = 0
+                try:
+                    with open("/proc/" + str(pid) + "/io") as fio:
+                        rchar = 0
+                        wchar = 0
+                        for ioline in fio:
+                            if ioline.startswith("rchar:"): rchar = int(ioline.split()[1])
+                            elif ioline.startswith("wchar:"): wchar = int(ioline.split()[1])
+                            elif ioline.startswith("read_bytes:"): dr2 = int(ioline.split()[1])
+                            elif ioline.startswith("write_bytes:"): dw2 = int(ioline.split()[1])
+                        rx2 = max(0, rchar - dr2)
+                        tx2 = max(0, wchar - dw2)
+                except:
+                    pass
+
+                net_rate = 0.0
+                dr_rate = 0.0
+                dw_rate = 0.0
+                disk_rate = 0.0
+                if pid in p1_io:
+                    rx1, tx1, dr1, dw1 = p1_io[pid]
+                    net_rate = max(0.0, (rx2 - rx1) / t_disk_elapsed + (tx2 - tx1) / t_disk_elapsed)
+                    dr_rate = max(0.0, (dr2 - dr1) / t_disk_elapsed)
+                    dw_rate = max(0.0, (dw2 - dw1) / t_disk_elapsed)
+                    disk_rate = dr_rate + dw_rate
+
+                port = proc_ports.get(pid)
+                top_apps.append({
+                    "pid": pid,
+                    "cpu": cpu,
+                    "mem_bytes": rss_bytes,
+                    "name": comm,
+                    "status": "Running",
+                    "net_rx_bytes": rx2,
+                    "net_tx_bytes": tx2,
+                    "net_rate": net_rate,
+                    "disk_read_bytes": dr2,
+                    "disk_write_bytes": dw2,
+                    "disk_read_rate": dr_rate,
+                    "disk_write_rate": dw_rate,
+                    "disk_rate": disk_rate,
+                    "port": port
+                })
+            except:
+                pass
 except:
     pass
 
@@ -2983,6 +3113,9 @@ data = {
     "temps": temps,
     "gpus": gpus,
     "networks": networks,
+    "total_rx_rate": total_rx_rate,
+    "total_tx_rate": total_tx_rate,
+    "active_sockets": active_sockets,
     "power": {
         "ac_online": ac_online,
         "batteries": batteries,
@@ -3215,6 +3348,9 @@ print(json.dumps(data))
         }
     }
 
+    let total_rx_rate_bps = parsed["total_rx_rate"].as_f64().unwrap_or(0.0);
+    let total_tx_rate_bps = parsed["total_tx_rate"].as_f64().unwrap_or(0.0);
+
     let mut networks = Vec::new();
     let mut total_rx_bytes = 0u64;
     let mut total_tx_bytes = 0u64;
@@ -3223,6 +3359,8 @@ print(json.dumps(data))
             let name = n["name"].as_str().unwrap_or("").to_string();
             let rx = n["rx_bytes"].as_u64().unwrap_or(0);
             let tx = n["tx_bytes"].as_u64().unwrap_or(0);
+            let rx_rate = n["rx_rate"].as_f64().unwrap_or(0.0);
+            let tx_rate = n["tx_rate"].as_f64().unwrap_or(0.0);
             total_rx_bytes += rx;
             total_tx_bytes += tx;
             let is_wireless = n["is_wireless"].as_bool().unwrap_or(false);
@@ -3230,8 +3368,8 @@ print(json.dumps(data))
                 name,
                 rx_bytes: rx,
                 tx_bytes: tx,
-                rx_rate_bps: 0.0,
-                tx_rate_bps: 0.0,
+                rx_rate_bps: rx_rate,
+                tx_rate_bps: tx_rate,
                 is_wireless,
             });
         }
@@ -3248,20 +3386,37 @@ print(json.dumps(data))
             let net_rx_bytes = a["net_rx_bytes"].as_u64().unwrap_or(0);
             let net_tx_bytes = a["net_tx_bytes"].as_u64().unwrap_or(0);
             let net_rate_bps = a["net_rate"].as_f64().unwrap_or(0.0);
+            let disk_read_bytes = a["disk_read_bytes"].as_u64().unwrap_or(0);
+            let disk_written_bytes = a["disk_write_bytes"].as_u64().unwrap_or(0);
+            let disk_read_rate_bps = a["disk_read_rate"].as_f64().unwrap_or(0.0);
+            let disk_write_rate_bps = a["disk_write_rate"].as_f64().unwrap_or(0.0);
+            let disk_rate_bps = a["disk_rate"].as_f64().unwrap_or(0.0);
             top_apps.push(ProcessSensorInfo {
                 pid,
                 name,
                 cpu_usage,
                 memory_bytes,
-                disk_read_bytes: 0,
-                disk_written_bytes: 0,
-                disk_read_rate_bps: 0.0,
-                disk_write_rate_bps: 0.0,
-                disk_rate_bps: 0.0,
+                disk_read_bytes,
+                disk_written_bytes,
+                disk_read_rate_bps,
+                disk_write_rate_bps,
+                disk_rate_bps,
                 net_rx_bytes,
                 net_tx_bytes,
                 net_rate_bps,
                 status,
+            });
+        }
+    }
+
+    let mut active_sockets = Vec::new();
+    if let Some(arr) = parsed.get("active_sockets").and_then(|v| v.as_array()) {
+        for s in arr {
+            active_sockets.push(crate::wifi::WifiActiveSocket {
+                process: s["process"].as_str().unwrap_or("").to_string(),
+                proto: s["proto"].as_str().unwrap_or("").to_string(),
+                port: s["port"].as_str().unwrap_or("").to_string(),
+                status: s["status"].as_str().unwrap_or("").to_string(),
             });
         }
     }
@@ -3368,8 +3523,8 @@ print(json.dumps(data))
         total_disk_read_rate_bps,
         total_disk_write_rate_bps,
         networks,
-        total_rx_rate_bps: 0.0,
-        total_tx_rate_bps: 0.0,
+        total_rx_rate_bps,
+        total_tx_rate_bps,
         total_rx_bytes,
         total_tx_bytes,
         temp_sensors,
@@ -3381,6 +3536,7 @@ print(json.dumps(data))
         socket_total,
         socket_tcp,
         socket_udp,
+        active_sockets,
         timestamp: Some(Instant::now()),
     })
 }

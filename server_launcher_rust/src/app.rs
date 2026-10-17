@@ -453,7 +453,7 @@ pub struct LauncherApp {
 
     // Cached telemetry for Wi-Fi Application Network Data Usage (prevents high CPU usage from running every frame)
     pub wifi_cached_app_list: Vec<WifiAppNetItem>,
-    #[allow(dead_code)]
+    pub wifi_cached_host_id: Option<String>,
     pub wifi_cached_snap_timestamp: Option<Instant>,
     pub wifi_cached_period: WifiAppPeriod,
     pub wifi_cached_search: String,
@@ -998,6 +998,7 @@ impl LauncherApp {
             wifi_cached_raw_apps: Vec::new(),
             wifi_cached_custom_dates: ((0, 0, 0), (0, 0, 0)),
             wifi_cached_app_list: Vec::new(),
+            wifi_cached_host_id: None,
             wifi_cached_snap_timestamp: None,
             wifi_cached_period: WifiAppPeriod::Monthly,
             wifi_cached_search: String::new(),
@@ -10454,6 +10455,12 @@ impl LauncherApp {
                                         self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
                                         self.last_sensors_refresh = Instant::now();
                                         self.wifi_app_force_refresh = false;
+                                    } else if let Some(hid) = host_id {
+                                        if self.wifi_cached_raw_apps.is_empty() {
+                                            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                                self.trigger_remote_sensors_query(host);
+                                            }
+                                        }
                                     }
                                 } else if tab == SensorsSubTab::Wifi {
                                     // Wi-Fi hardware interface view
@@ -10509,7 +10516,11 @@ impl LauncherApp {
         // Reset telemetry histories when switching between local host and remote SSH targets
         let cur_host_str = host_id.map(|s| s.to_string());
         if self.current_sensors_host != cur_host_str {
-            self.current_sensors_host = cur_host_str;
+            self.current_sensors_host = cur_host_str.clone();
+            self.wifi_cached_host_id = cur_host_str;
+            self.wifi_cached_raw_apps.clear();
+            self.wifi_cached_app_list.clear();
+            self.wifi_cached_snap_timestamp = None;
             self.cpu_history = VecDeque::from(vec![snap.cpu_global_usage; 60]);
             self.cpu_peak_usage = snap.cpu_global_usage;
             self.ram_history = VecDeque::from(vec![(snap.mem_usage_pct, snap.swap_usage_pct); 60]);
@@ -14852,7 +14863,15 @@ impl LauncherApp {
                                     ("kernel (sockstat)", "RAW", ":icmp", "LISTEN"),
                                 ];
 
-                                let endpoint_count = if is_remote { default_remote_socks.len() } else { wifi_snap.active_sockets.len() };
+                                let endpoint_count = if is_remote {
+                                    if !snap.active_sockets.is_empty() {
+                                        snap.active_sockets.len()
+                                    } else {
+                                        default_remote_socks.len()
+                                    }
+                                } else {
+                                    wifi_snap.active_sockets.len()
+                                };
                                 let ep_badge_str = format!("{} Endpoints", endpoint_count);
 
                                 // Card Header
@@ -14920,7 +14939,12 @@ impl LauncherApp {
                                         ui.end_row();
 
                                         if is_remote {
-                                            for (proc_name, proto, port, status) in default_remote_socks {
+                                            let remote_socks: Vec<(&str, &str, &str, &str)> = if !snap.active_sockets.is_empty() {
+                                                snap.active_sockets.iter().map(|s| (s.process.as_str(), s.proto.as_str(), s.port.as_str(), s.status.as_str())).collect()
+                                            } else {
+                                                default_remote_socks.to_vec()
+                                            };
+                                            for (proc_name, proto, port, status) in remote_socks {
                                                 // Col 1: Cyan dot + Process name + muted (parenthesis)
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 4.0;
@@ -15121,18 +15145,37 @@ impl LauncherApp {
                         ui.set_width(ui.available_width());
 
                         // Determine if raw application network data should be refreshed
-                        // ONLY refreshed on initial load (if empty) or when user explicitly clicked Update!
-                        let need_raw_update = self.wifi_app_requested_update
-                            || (self.wifi_cached_raw_apps.is_empty() && !snap.top_apps.is_empty());
+                        let cur_host_str = host_id.map(|s| s.to_string());
+                        let host_changed = self.wifi_cached_host_id != cur_host_str;
+                        if host_changed {
+                            self.wifi_cached_host_id = cur_host_str;
+                            self.wifi_cached_raw_apps.clear();
+                            self.wifi_cached_app_list.clear();
+                            self.wifi_cached_snap_timestamp = None;
+                        }
 
-                        // If user opened Wi-Fi tab and top_apps is empty, trigger an initial fetch once
-                        if self.wifi_cached_raw_apps.is_empty() && snap.top_apps.is_empty() && self.selected_machine == "local" && !self.wifi_app_force_refresh {
+                        // Proactively query sensors if visiting data usage page and top_apps is empty
+                        if is_remote && self.wifi_cached_raw_apps.is_empty() && snap.top_apps.is_empty() {
+                            if let Some(hid) = host_id {
+                                if !self.remote_sensors_in_flight.lock().unwrap().contains(hid) {
+                                    if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                        self.trigger_remote_sensors_query(host);
+                                    }
+                                }
+                            }
+                        } else if self.wifi_cached_raw_apps.is_empty() && snap.top_apps.is_empty() && self.selected_machine == "local" && !self.wifi_app_force_refresh {
                             self.wifi_app_force_refresh = true;
                             self.wifi_app_requested_update = true;
                             self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
                             self.last_sensors_refresh = Instant::now();
                             self.wifi_app_force_refresh = false;
                         }
+
+                        let snap_updated = snap.timestamp.is_some() && snap.timestamp != self.wifi_cached_snap_timestamp && !snap.top_apps.is_empty();
+                        let need_raw_update = host_changed
+                            || self.wifi_app_requested_update
+                            || snap_updated
+                            || (self.wifi_cached_raw_apps.is_empty() && !snap.top_apps.is_empty());
 
                         if need_raw_update {
                             let mut app_map: std::collections::BTreeMap<String, WifiAppNetItem> = std::collections::BTreeMap::new();
@@ -15161,10 +15204,16 @@ impl LauncherApp {
                                 entry.rate_bps += proc.net_rate_bps;
                             }
 
-                            // Correlate with active listening sockets from wifi_snap
-                            for sock in &wifi_snap.active_sockets {
+                            // Correlate with active listening sockets (snap.active_sockets on remote host, or wifi_snap on local)
+                            let sock_list: &[crate::wifi::WifiActiveSocket] = if is_remote {
+                                &snap.active_sockets
+                            } else {
+                                &wifi_snap.active_sockets
+                            };
+
+                            for sock in sock_list {
                                 let sock_name = sock.process.trim().to_lowercase();
-                                if sock_name.is_empty() || sock_name == "system" || sock_name == "kernel" || sock_name == "unknown" {
+                                if sock_name.is_empty() || sock_name == "system" || sock_name == "kernel" || sock_name == "unknown" || sock_name == "service" {
                                     continue;
                                 }
                                 let mut matched = false;
@@ -15194,35 +15243,8 @@ impl LauncherApp {
                                 }
                             }
 
-                            // Baseline network estimation for processes that don't report I/O via /proc/<pid>/io
-                            for entry in app_map.values_mut() {
-                                if entry.rx_bytes == 0 && entry.tx_bytes == 0 {
-                                    let s = entry.name.to_lowercase();
-                                    let pid = entry.pids.first().copied().unwrap_or(1);
-                                    let (rx, tx) = if s.contains("chrome") || s.contains("chromium") || s.contains("firefox")
-                                        || s.contains("brave") || s.contains("edge") || s.contains("opera")
-                                        || s.contains("vivaldi") || s.contains("zen") {
-                                        (12_400_000_000u64 + ((pid as u64 % 300) * 12_500_000), 820_000_000u64 + ((pid as u64 % 100) * 2_500_000))
-                                    } else if s.contains("spotify") || s.contains("vlc") || s.contains("steam") || s.contains("mpv") {
-                                        (4_600_000_000u64 + ((pid as u64 % 200) * 6_000_000), 110_000_000u64 + ((pid as u64 % 30) * 500_000))
-                                    } else if s.contains("discord") || s.contains("slack") || s.contains("telegram") || s.contains("teams") {
-                                        (3_200_000_000u64 + ((pid as u64 % 200) * 5_000_000), 340_000_000u64 + ((pid as u64 % 50) * 1_000_000))
-                                    } else if s.contains("docker") || s.contains("containerd") || s.contains("node") || s.contains("python")
-                                        || s.contains("git") || s.contains("server_launcher") {
-                                        (1_450_000_000u64 + ((pid as u64 % 150) * 3_000_000), 290_000_000u64 + ((pid as u64 % 50) * 800_000))
-                                    } else if s.contains("systemd-resolve") || s.contains("networkmanager") || s.contains("avahi")
-                                        || s.contains("sshd") || s.contains("cupsd") || entry.has_socket {
-                                        (320_000_000u64 + ((pid as u64 % 100) * 1_000_000), 68_000_000u64 + ((pid as u64 % 30) * 500_000))
-                                    } else {
-                                        (24_000_000u64 + ((pid as u64 % 80) * 300_000), 6_000_000u64 + ((pid as u64 % 20) * 100_000))
-                                    };
-                                    entry.rx_bytes = rx;
-                                    entry.tx_bytes = tx;
-                                    entry.total_bytes = rx + tx;
-                                }
-                            }
-
                             self.wifi_cached_raw_apps = app_map.into_values().collect();
+                            self.wifi_cached_snap_timestamp = snap.timestamp;
                             self.wifi_app_requested_update = false;
                             self.wifi_last_update_time = Some(Instant::now());
                         }

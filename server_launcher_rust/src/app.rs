@@ -35,6 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use sysinfo::System;
+use chrono::Datelike;
 
 #[derive(Clone, Debug)]
 pub enum SlashAction {
@@ -96,6 +97,7 @@ pub enum SensorsSubTab {
     Gpu,
     Storage,
     Wifi,
+    DataUsage,
     Power,
     Bluetooth,
     Temperature,
@@ -107,6 +109,7 @@ pub enum WifiAppPeriod {
     Daily,
     Monthly,
     Yearly,
+    Custom,
 }
 
 impl Default for WifiAppPeriod {
@@ -116,27 +119,32 @@ impl Default for WifiAppPeriod {
 }
 
 impl WifiAppPeriod {
+    #[allow(dead_code)]
     pub fn label(&self) -> &'static str {
         match self {
             Self::Daily => "Daily (24h)",
             Self::Monthly => "Monthly (30d)",
             Self::Yearly => "Yearly (365d)",
+            Self::Custom => "Custom Range",
         }
     }
 
+    #[allow(dead_code)]
     pub fn short_label(&self) -> &'static str {
         match self {
             Self::Daily => "Daily",
             Self::Monthly => "Monthly",
             Self::Yearly => "Yearly",
+            Self::Custom => "Custom",
         }
     }
 
-    pub fn multiplier(&self) -> f64 {
+    pub fn multiplier(&self, custom_days: u32) -> f64 {
         match self {
             Self::Daily => 1.0 / 30.0,
             Self::Monthly => 1.0,
             Self::Yearly => 12.0,
+            Self::Custom => (custom_days.max(1) as f64) / 30.0,
         }
     }
 }
@@ -372,6 +380,7 @@ pub struct LauncherApp {
     #[allow(dead_code)]
     pub sensors_top_apps_normalize_cpu: bool,
     pub sensors_top_apps_status_msg: Option<(String, bool, Instant)>,
+    pub ram_status_msg: Option<(String, bool, Instant)>,
     pub sensors_subtab: SensorsSubTab,
     pub sensors_top_apps_visited: bool,
     pub sensors_top_apps_section_apps_expanded: bool,
@@ -399,11 +408,12 @@ pub struct LauncherApp {
     pub last_telemetry_sample: Instant,
 
     // Power & Battery State (matching Image 1)
-    pub power_preset: usize, // 0: Eco 6W, 1: Balanced 12W, 2: Turbo 18W
+    pub power_preset: usize, // 0: Eco, 1: Balanced, 2: Turbo
     pub power_conservation: bool, // 80% ceiling
     pub power_rapid_charge: bool,
     pub power_usb_always_on: bool,
     pub power_ceiling: f32,
+    pub cpu_tdp_profile: crate::power::CpuTdpProfile,
 
     // Thermal & Fan Control State (matching Image 2)
     pub fan_mode: usize, // 0: Silent, 1: Balanced, 2: Turbo Max
@@ -432,9 +442,18 @@ pub struct LauncherApp {
     pub wifi_app_sort: String,
     pub wifi_app_sort_desc: bool,
     pub wifi_app_period: WifiAppPeriod,
+    pub wifi_custom_start_date: (i32, u32, u32),
+    pub wifi_custom_end_date: (i32, u32, u32),
+    pub wifi_date_picker_open: bool,
+    pub wifi_app_requested_update: bool,
+    pub wifi_app_force_refresh: bool,
+    pub wifi_last_update_time: Option<Instant>,
+    pub wifi_cached_raw_apps: Vec<WifiAppNetItem>,
+    pub wifi_cached_custom_dates: ((i32, u32, u32), (i32, u32, u32)),
 
     // Cached telemetry for Wi-Fi Application Network Data Usage (prevents high CPU usage from running every frame)
     pub wifi_cached_app_list: Vec<WifiAppNetItem>,
+    pub wifi_cached_host_id: Option<String>,
     pub wifi_cached_snap_timestamp: Option<Instant>,
     pub wifi_cached_period: WifiAppPeriod,
     pub wifi_cached_search: String,
@@ -448,6 +467,7 @@ pub struct LauncherApp {
 
     // Power Subsystem Status Toast
     pub power_status_msg: Option<(String, bool, Instant)>,
+    pub last_conservation_warn: Option<Instant>,
 
     // Cached grouped processes for Top Apps tab (prevents re-filtering and sorting every frame)
     pub sensors_cached_apps_groups: Vec<ProcessGroupSummary>,
@@ -725,6 +745,11 @@ impl LauncherApp {
             }
         }
 
+        let (init_cons_on, init_cons_ceil) = crate::power::query_charge_conservation();
+        let init_rapid = crate::power::query_rapid_charge();
+        let init_usb_on = crate::power::query_usb_always_on();
+        let cpu_tdp_profile = crate::power::detect_cpu_tdp_capability();
+
         Self {
             active_sidebar_tab: SidebarTab::Servers,
             scripts,
@@ -853,6 +878,7 @@ impl LauncherApp {
             sensors_top_apps_selected_pid: None,
             sensors_top_apps_normalize_cpu: true,
             sensors_top_apps_status_msg: None,
+            ram_status_msg: None,
             sensors_subtab: SensorsSubTab::Overview,
             sensors_top_apps_visited: false,
             sensors_top_apps_section_apps_expanded: true,
@@ -928,11 +954,12 @@ impl LauncherApp {
             per_disk_write_history: std::collections::HashMap::new(),
             per_disk_read_history: std::collections::HashMap::new(),
             last_telemetry_sample: Instant::now(),
-            power_preset: crate::power::governor_to_preset_index(&crate::power::query_current_governor()),
-            power_conservation: true,
-            power_rapid_charge: false,
-            power_usb_always_on: true,
-            power_ceiling: 80.0,
+            power_preset: crate::power::query_current_preset(),
+            power_conservation: init_cons_on,
+            power_rapid_charge: init_rapid,
+            power_usb_always_on: init_usb_on,
+            power_ceiling: init_cons_ceil as f32,
+            cpu_tdp_profile,
             fan_mode: 0, // Silent
             fan_full_blast: false,
             fan_test_start: None,
@@ -955,7 +982,23 @@ impl LauncherApp {
             wifi_app_sort: "data".to_string(),
             wifi_app_sort_desc: true,
             wifi_app_period: WifiAppPeriod::Monthly,
+            wifi_custom_start_date: {
+                let today = chrono::Local::now().date_naive();
+                let start = today.checked_sub_signed(chrono::Duration::days(29)).unwrap_or(today);
+                (start.year(), start.month(), start.day())
+            },
+            wifi_custom_end_date: {
+                let today = chrono::Local::now().date_naive();
+                (today.year(), today.month(), today.day())
+            },
+            wifi_date_picker_open: false,
+            wifi_app_requested_update: false,
+            wifi_app_force_refresh: false,
+            wifi_last_update_time: None,
+            wifi_cached_raw_apps: Vec::new(),
+            wifi_cached_custom_dates: ((0, 0, 0), (0, 0, 0)),
             wifi_cached_app_list: Vec::new(),
+            wifi_cached_host_id: None,
             wifi_cached_snap_timestamp: None,
             wifi_cached_period: WifiAppPeriod::Monthly,
             wifi_cached_search: String::new(),
@@ -967,6 +1010,7 @@ impl LauncherApp {
             wifi_cached_total_tx: 0,
             wifi_cached_total_rate: 0.0,
             power_status_msg: None,
+            last_conservation_warn: None,
             sensors_cached_apps_groups: Vec::new(),
             sensors_cached_bg_groups: Vec::new(),
             sensors_cached_snap_timestamp: None,
@@ -5157,32 +5201,6 @@ fn draw_disk_waveform(
     }
 }
 
-fn get_socket_stats() -> (usize, usize, usize) {
-    if let Ok(content) = std::fs::read_to_string("/proc/net/sockstat") {
-        let mut total = 0;
-        let mut tcp = 0;
-        let mut udp = 0;
-        for line in content.lines() {
-            if line.starts_with("sockets: used") {
-                if let Some(val) = line.split_whitespace().nth(2) {
-                    total = val.parse::<usize>().unwrap_or(0);
-                }
-            } else if line.starts_with("TCP: inuse") {
-                if let Some(val) = line.split_whitespace().nth(2) {
-                    tcp = val.parse::<usize>().unwrap_or(0);
-                }
-            } else if line.starts_with("UDP: inuse") {
-                if let Some(val) = line.split_whitespace().nth(2) {
-                    udp = val.parse::<usize>().unwrap_or(0);
-                }
-            }
-        }
-        if total > 0 || tcp > 0 || udp > 0 {
-            return (total.max(tcp + udp), tcp, udp);
-        }
-    }
-    (223, 174, 49)
-}
 
 fn draw_dotted_hline(
     painter: &egui::Painter,
@@ -5997,30 +6015,7 @@ fn draw_thermal_dual_waveform(ui: &mut Ui, height: f32, cpu_temp: f32, gpu_temp:
     }
 }
 
-fn read_backlight_brightness_ratio() -> Option<f32> {
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(entries) = std::fs::read_dir("/sys/class/backlight") {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let actual = std::fs::read_to_string(path.join("actual_brightness"))
-                    .or_else(|_| std::fs::read_to_string(path.join("brightness")));
-                let max = std::fs::read_to_string(path.join("max_brightness"));
-                if let (Ok(a_str), Ok(m_str)) = (actual, max) {
-                    if let (Ok(a_val), Ok(m_val)) = (a_str.trim().parse::<f32>(), m_str.trim().parse::<f32>()) {
-                        if m_val > 0.0 {
-                            return Some((a_val / m_val).clamp(0.0, 1.0));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
 fn draw_power_realtime_waveform(ui: &mut Ui, height: f32, watts: f32, _is_ac: bool) {
-    ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let rect = response.rect;
 
@@ -10346,9 +10341,12 @@ impl LauncherApp {
                 self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_else(|| Arc::new(crate::sensors::SystemSensorsSnapshot::default()))
             } else {
                 if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
-                    let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited) || self.sensors_subtab == SensorsSubTab::Wifi;
+                    let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited)
+                        || self.sensors_subtab == SensorsSubTab::DataUsage
+                        || self.wifi_app_force_refresh;
                     self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
                     self.last_sensors_refresh = Instant::now();
+                    self.wifi_app_force_refresh = false;
                 }
                 Arc::clone(&self.sensors_snapshot)
             };
@@ -10373,9 +10371,12 @@ impl LauncherApp {
                                             self.trigger_remote_sensors_query(host);
                                         }
                                     } else {
-                                        let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited) || self.sensors_subtab == SensorsSubTab::Wifi;
+                                        let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited)
+                                            || self.sensors_subtab == SensorsSubTab::DataUsage
+                                            || self.wifi_app_force_refresh;
                                         self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
                                         self.last_sensors_refresh = Instant::now();
+                                        self.wifi_app_force_refresh = false;
                                     }
                                 }
 
@@ -10399,8 +10400,8 @@ impl LauncherApp {
 
                         ui.add_space(6.0);
 
-                        // Left Navigation Menu: 10 Subtabs
-                        let items: [(SensorsSubTab, &str, &str); 10] = [
+                        // Left Navigation Menu: 11 Subtabs
+                        let items: [(SensorsSubTab, &str, &str); 11] = [
                             (SensorsSubTab::Overview, "Overview", crate::lucide::ACTIVITY),
                             (SensorsSubTab::TopApps, "Top Apps", crate::lucide::LAYOUT_GRID),
                             (SensorsSubTab::Cpu, "CPU", crate::lucide::CPU),
@@ -10408,6 +10409,7 @@ impl LauncherApp {
                             (SensorsSubTab::Gpu, "GPU", crate::lucide::GPU),
                             (SensorsSubTab::Storage, "Storage", crate::lucide::STORAGE),
                             (SensorsSubTab::Wifi, "Wi-Fi", crate::lucide::WIFI),
+                            (SensorsSubTab::DataUsage, "Data Usage", crate::lucide::NETWORK),
                             (SensorsSubTab::Power, "Power", crate::lucide::ZAP),
                             (SensorsSubTab::Bluetooth, "Bluetooth", crate::lucide::BLUETOOTH),
                             (SensorsSubTab::Temperature, "Temperature", crate::lucide::THERMOMETER),
@@ -10440,14 +10442,28 @@ impl LauncherApp {
 
                             if ui.add(btn).clicked() {
                                 self.sensors_subtab = tab;
-                                if tab == SensorsSubTab::TopApps || tab == SensorsSubTab::Wifi {
-                                    if tab == SensorsSubTab::TopApps {
-                                        self.sensors_top_apps_visited = true;
-                                    }
+                                if tab == SensorsSubTab::TopApps {
+                                    self.sensors_top_apps_visited = true;
                                     if self.selected_machine == "local" && self.sensors_snapshot.top_apps.is_empty() {
                                         self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
                                         self.last_sensors_refresh = Instant::now();
                                     }
+                                } else if tab == SensorsSubTab::DataUsage {
+                                    if self.selected_machine == "local" && (self.sensors_snapshot.top_apps.is_empty() || self.wifi_cached_raw_apps.is_empty()) {
+                                        self.wifi_app_force_refresh = true;
+                                        self.wifi_app_requested_update = true;
+                                        self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
+                                        self.last_sensors_refresh = Instant::now();
+                                        self.wifi_app_force_refresh = false;
+                                    } else if let Some(hid) = host_id {
+                                        if self.wifi_cached_raw_apps.is_empty() {
+                                            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                                self.trigger_remote_sensors_query(host);
+                                            }
+                                        }
+                                    }
+                                } else if tab == SensorsSubTab::Wifi {
+                                    // Wi-Fi hardware interface view
                                 }
                             }
                             ui.add_space(2.0);
@@ -10488,16 +10504,23 @@ impl LauncherApp {
             self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_else(|| Arc::new(crate::sensors::SystemSensorsSnapshot::default()))
         } else {
             if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
-                let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited) || self.sensors_subtab == SensorsSubTab::Wifi;
+                let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited)
+                    || self.sensors_subtab == SensorsSubTab::DataUsage
+                    || self.wifi_app_force_refresh;
                 self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
                 self.last_sensors_refresh = Instant::now();
+                self.wifi_app_force_refresh = false;
             }
             Arc::clone(&self.sensors_snapshot)
         };
         // Reset telemetry histories when switching between local host and remote SSH targets
         let cur_host_str = host_id.map(|s| s.to_string());
         if self.current_sensors_host != cur_host_str {
-            self.current_sensors_host = cur_host_str;
+            self.current_sensors_host = cur_host_str.clone();
+            self.wifi_cached_host_id = cur_host_str;
+            self.wifi_cached_raw_apps.clear();
+            self.wifi_cached_app_list.clear();
+            self.wifi_cached_snap_timestamp = None;
             self.cpu_history = VecDeque::from(vec![snap.cpu_global_usage; 60]);
             self.cpu_peak_usage = snap.cpu_global_usage;
             self.ram_history = VecDeque::from(vec![(snap.mem_usage_pct, snap.swap_usage_pct); 60]);
@@ -10516,12 +10539,7 @@ impl LauncherApp {
             self.net_tx_history = VecDeque::from(vec![init_tx; 60]);
             self.net_rx_history = VecDeque::from(vec![init_rx; 60]);
             self.net_peak_mb = init_tx.max(init_rx);
-            let (init_tcp, init_udp) = if host_id.is_some() {
-                (snap.socket_tcp as f32, snap.socket_udp as f32)
-            } else {
-                let (_, t, u) = get_socket_stats();
-                (t as f32, u as f32)
-            };
+            let (init_tcp, init_udp) = (snap.socket_tcp as f32, snap.socket_udp as f32);
             self.socket_tcp_history = VecDeque::from(vec![init_tcp; 60]);
             self.socket_udp_history = VecDeque::from(vec![init_udp; 60]);
             let init_gpu = snap.gpus.first().and_then(|g| g.load_pct).unwrap_or(0.0);
@@ -10580,12 +10598,7 @@ impl LauncherApp {
                 self.net_peak_mb = max_cur;
             }
 
-            let (cur_tcp, cur_udp) = if host_id.is_some() {
-                (snap.socket_tcp as f32, snap.socket_udp as f32)
-            } else {
-                let (_, t, u) = get_socket_stats();
-                (t as f32, u as f32)
-            };
+            let (cur_tcp, cur_udp) = (snap.socket_tcp as f32, snap.socket_udp as f32);
             self.socket_tcp_history.pop_front();
             self.socket_tcp_history.push_back(cur_tcp);
             self.socket_udp_history.pop_front();
@@ -10620,6 +10633,31 @@ impl LauncherApp {
                     q.pop_front();
                     let val = snap.cpu_core_usages.get(idx).copied().unwrap_or(0.0);
                     q.push_back(val);
+                }
+            }
+
+            // Universal Software Battery Longevity Guard Check
+            if self.power_conservation && host_id.is_none() {
+                if let Some(true) = snap.power.ac_online {
+                    if let Some(bat_pct) = snap.power.total_battery_pct {
+                        if bat_pct >= self.power_ceiling {
+                            let should_warn = self.last_conservation_warn.map_or(true, |t| t.elapsed() >= Duration::from_secs(300));
+                            if should_warn {
+                                self.last_conservation_warn = Some(Instant::now());
+                                let ceil = self.power_ceiling;
+                                std::thread::spawn(move || {
+                                    let _ = std::process::Command::new("notify-send")
+                                        .args([
+                                            "-u", "normal",
+                                            "-i", "battery-full",
+                                            "Battery Conservation Alert",
+                                            &format!("Battery reached {:.0}% ceiling. Unplug AC to preserve cell longevity.", ceil)
+                                        ])
+                                        .output();
+                                });
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -10660,6 +10698,7 @@ impl LauncherApp {
                 SensorsSubTab::Gpu => self.render_sensors_gpu_page(ui, &snap, host_id),
                 SensorsSubTab::Storage => self.render_sensors_storage_page(ui, &snap, host_id),
                 SensorsSubTab::Wifi => self.render_sensors_wifi_page(ui, &snap, host_id),
+                SensorsSubTab::DataUsage => self.render_sensors_data_usage_page(ui, &snap, host_id),
                 SensorsSubTab::Power => self.render_sensors_power_page(ui, &snap, host_id),
                 SensorsSubTab::Bluetooth => self.render_sensors_bluetooth_page(ui, &snap, host_id),
                 SensorsSubTab::Temperature => self.render_sensors_temperature_page(ui, &snap, host_id),
@@ -10670,7 +10709,7 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     // SENSORS PAGE: Overview Dashboard (Matching media_1792121759405_52cfc968.png)
     // ─────────────────────────────────────────────────────────────────────────
-    fn render_sensors_overview_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
+    fn render_sensors_overview_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, _host_id: Option<&str>) {
         let p = self.theme.palette();
         ScrollArea::vertical()
             .id_salt("sensors_overview_scroll")
@@ -10924,13 +10963,7 @@ impl LauncherApp {
                                 ui.label(RichText::new("CONNECTION STATS").size(11.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                                 ui.add_space(4.0);
 
-                                let (tot_sock, tcp_c, udp_c) = if snap.socket_total > 0 || snap.socket_tcp > 0 || snap.socket_udp > 0 {
-                                    (snap.socket_total, snap.socket_tcp, snap.socket_udp)
-                                } else if host_id.is_none() {
-                                    get_socket_stats()
-                                } else {
-                                    (0, 0, 0)
-                                };
+                                let (tot_sock, tcp_c, udp_c) = (snap.socket_total, snap.socket_tcp, snap.socket_udp);
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new(format!("{}", tot_sock)).size(22.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                     ui.label(RichText::new("open sockets").size(10.5).color(p.text_muted));
@@ -10998,23 +11031,18 @@ impl LauncherApp {
 
                                 ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
-                                    ui.label(RichText::new("Central Processing Unit (CPU)").size(15.0).strong().color(p.text_primary));
-
-                                    Frame::none()
-                                        .fill(Color32::from_rgb(18, 38, 58))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                       
+                                    ui.label(RichText::new("CPU").size(15.0).strong().color(p.text_primary));
                                 });
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     // Tjunction Max badge
+                                    let tj_max = snap.cpu_tjunction_max.unwrap_or(100.0);
                                     Frame::none()
                                         .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 8))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 3.5))
                                         .show(ui, |ui| {
-                                            ui.label(RichText::new("Tjunction Max: 105°C").size(9.5).monospace().color(p.text_muted));
+                                            ui.label(RichText::new(format!("Tjunction Max: {:.0}°C", tj_max)).size(9.5).monospace().color(p.text_muted));
                                         });
 
                                     ui.add_space(6.0);
@@ -11063,6 +11091,7 @@ impl LauncherApp {
                 let watts = snap.cpu_power_watts.unwrap_or(8.5);
                 let tdp = snap.cpu_tdp_watts.unwrap_or(12.0);
                 let temp_val = snap.cpu_temp.unwrap_or(42.0);
+                let tj_max = snap.cpu_tjunction_max.unwrap_or(100.0);
 
                 ui.columns(4, |cols| {
                     // Card 1: CPU LOAD
@@ -11148,11 +11177,11 @@ impl LauncherApp {
                         "CORE TEMPERATURE",
                         &format!("{:.1}", temp_val),
                         "°C",
-                        "Tjunction Max: 105°C",
+                        &format!("Tjunction Max: {:.0}°C", tj_max),
                         "MIN 38.0°C",
                         "MAX 72.0°C",
                         &temp_hist,
-                        105.0,
+                        tj_max,
                         Some(0.7),
                         Color32::from_rgb(56, 189, 248),
                         p.bg_card,
@@ -11380,6 +11409,20 @@ impl LauncherApp {
                 let used_pct = snap.mem_usage_pct.clamp(5.0, 99.0);
                 let avail_pct = (100.0 - used_pct).clamp(1.0, 95.0);
 
+                let (slot_label, topol_label, mem_type_str, ram_mod_str) = if let Some(ref hw) = snap.memory_hw {
+                    let slot = if host_id.is_some() { "REMOTE : ACTIVE".to_string() } else { hw.slot_summary.clone() };
+                    let topol = if host_id.is_some() { "HOST MEMORY POOL".to_string() } else { hw.topology.clone() };
+                    let mtype = format!("{} {}", total_ram_str, hw.memory_type);
+                    let mspec = hw.module_spec.clone();
+                    (slot, topol, mtype, mspec)
+                } else {
+                    let slot = if host_id.is_some() { "REMOTE : ACTIVE".to_string() } else { "SLOT 1 : ACTIVE".to_string() };
+                    let topol = if host_id.is_some() { "HOST MEMORY POOL".to_string() } else { "SINGLE-CHANNEL".to_string() };
+                    let mtype = format!("{} DDR4-2400", total_ram_str);
+                    let mspec = if host_id.is_some() { "ECC/Non-ECC Managed Pool".to_string() } else { format!("{} SODIMM", total_ram_str) };
+                    (slot, topol, mtype, mspec)
+                };
+
                 // 1. Top Header Card
                 Frame::none()
                     .fill(p.bg_card)
@@ -11396,11 +11439,9 @@ impl LauncherApp {
                                     .rounding(Rounding::same(4.0))
                                     .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                     .show(ui, |ui| {
-                                        let slot_label = if host_id.is_some() { "REMOTE : ACTIVE" } else { "SLOT 1 : ACTIVE" };
-                                        ui.label(RichText::new(slot_label).size(9.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                        ui.label(RichText::new(&slot_label).size(9.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                     });
-                                let topol_label = if host_id.is_some() { "HOST MEMORY POOL" } else { "SINGLE-CHANNEL" };
-                                ui.label(RichText::new(topol_label).size(9.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new(&topol_label).size(9.0).monospace().color(p.text_muted));
                             });
 
                             ui.add_space(3.0);
@@ -11420,16 +11461,20 @@ impl LauncherApp {
                                     let btn_drop = egui::Button::new(RichText::new(format!("{} Drop Caches", crate::lucide::TRASH)).size(10.5).strong().color(Color32::from_rgb(10, 15, 29)))
                                         .fill(Color32::from_rgb(112, 213, 228))
                                         .rounding(Rounding::same(999.0));
-                                    if ui.add(btn_drop).on_hover_text("Flush kernel page cache and dentries/inodes").clicked() {
+                                    if ui.add(btn_drop).on_hover_text("Flush kernel page cache, dentries, and compact memory").clicked() {
                                         if let Some(hid) = host_id {
                                             if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
                                                 std::thread::spawn(move || {
                                                     let mut cmd = crate::remote::build_ssh_command(&host, "sync; echo 3 | sudo tee /proc/sys/vm/drop_caches 2>/dev/null || true");
                                                     let _ = cmd.output();
                                                 });
+                                                self.ram_status_msg = Some(("Flushing remote caches via SSH...".to_string(), false, Instant::now()));
                                             }
                                         } else {
-                                            let _ = std::process::Command::new("sh").arg("-c").arg("sync; echo 3 > /proc/sys/vm/drop_caches").spawn();
+                                            match crate::sensors::flush_system_memory() {
+                                                Ok(msg) => self.ram_status_msg = Some((msg, false, Instant::now())),
+                                                Err(err) => self.ram_status_msg = Some((err, true, Instant::now())),
+                                            }
                                         }
                                     }
 
@@ -11439,16 +11484,20 @@ impl LauncherApp {
                                     let btn_flush = egui::Button::new(RichText::new(format!("{} Flush Standby List", crate::lucide::REFRESH_CW)).size(10.5).color(p.text_secondary))
                                         .fill(Color32::from_rgb(26, 34, 48))
                                         .rounding(Rounding::same(999.0));
-                                    if ui.add(btn_flush).on_hover_text("Flush reclaimable standby memory lists").clicked() {
+                                    if ui.add(btn_flush).on_hover_text("Flush reclaimable standby memory lists and dentries").clicked() {
                                         if let Some(hid) = host_id {
                                             if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
                                                 std::thread::spawn(move || {
-                                                    let mut cmd = crate::remote::build_ssh_command(&host, "sync");
+                                                    let mut cmd = crate::remote::build_ssh_command(&host, "sync; echo 3 | sudo tee /proc/sys/vm/drop_caches 2>/dev/null || true");
                                                     let _ = cmd.output();
                                                 });
+                                                self.ram_status_msg = Some(("Flushing remote standby list via SSH...".to_string(), false, Instant::now()));
                                             }
                                         } else {
-                                            let _ = std::process::Command::new("sh").arg("-c").arg("sync").spawn();
+                                            match crate::sensors::flush_system_memory() {
+                                                Ok(msg) => self.ram_status_msg = Some((msg, false, Instant::now())),
+                                                Err(err) => self.ram_status_msg = Some((err, true, Instant::now())),
+                                            }
                                         }
                                     }
                                 });
@@ -11459,11 +11508,9 @@ impl LauncherApp {
                             // Row 3: Subtitle spanning the full card width underneath Row 2
                             ui.horizontal_wrapped(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
-                                let mem_type_str = if host_id.is_some() { format!("{} System Memory Pool", total_ram_str) } else { format!("{} DDR4-2400", total_ram_str) };
-                                ui.label(RichText::new(mem_type_str).size(10.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new(&mem_type_str).size(10.0).monospace().color(p.text_muted));
                                 ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
-                                let ram_mod_str = if host_id.is_some() { "ECC/Non-ECC Managed Pool".to_string() } else { "1x 8GB SODIMM Micron MT40A".to_string() };
-                                ui.label(RichText::new(ram_mod_str).size(10.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new(&ram_mod_str).size(10.0).monospace().color(p.text_muted));
                                 ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
                                 ui.label(RichText::new("Hardware Reserved Pool").size(10.0).monospace().color(p.text_muted));
                                 ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
@@ -11471,6 +11518,30 @@ impl LauncherApp {
                             });
                         });
                     });
+
+                // Status message toast banner
+                if let Some((ref msg, is_err, time)) = self.ram_status_msg {
+                    if time.elapsed().as_secs() < 6 {
+                        ui.add_space(6.0);
+                        let (bg, border, text_color) = if is_err {
+                            (Color32::from_rgb(45, 20, 20), Color32::from_rgb(239, 68, 68), Color32::from_rgb(252, 165, 165))
+                        } else {
+                            (Color32::from_rgb(15, 35, 25), Color32::from_rgb(34, 197, 94), Color32::from_rgb(134, 239, 172))
+                        };
+                        Frame::none()
+                            .fill(bg)
+                            .stroke(egui::Stroke::new(1.0_f32, border))
+                            .rounding(Rounding::same(6.0))
+                            .inner_margin(egui::Margin::symmetric(12.0, 6.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    let icon = if is_err { crate::lucide::ALERT_TRIANGLE } else { crate::lucide::CHECK };
+                                    ui.label(RichText::new(icon).size(12.0).color(text_color));
+                                    ui.label(RichText::new(msg).size(11.0).color(text_color));
+                                });
+                            });
+                    }
+                }
 
                 ui.add_space(8.0);
 
@@ -11610,7 +11681,11 @@ impl LauncherApp {
 
                         // Segmented Bar (In Use: cyan, Modified: coral, Standby: soft blue, Free: dark slate)
                         let in_use_frac = (used_pct / 100.0).clamp(0.05, 0.85);
-                        let mod_frac = 0.02_f32;
+                        let mod_frac = if let Some(dirty) = snap.mem_dirty_bytes {
+                            (dirty as f32 / snap.mem_total_bytes.max(1) as f32).clamp(0.005, 0.20)
+                        } else {
+                            0.02_f32
+                        };
                         let standby_frac = (cache_bytes as f32 / snap.mem_total_bytes.max(1) as f32).clamp(0.05, 0.35);
                         let free_frac = (1.0 - in_use_frac - mod_frac - standby_frac).max(0.04);
 
@@ -11650,7 +11725,12 @@ impl LauncherApp {
                                     ui.label(RichText::new("MODIFIED").size(9.5).monospace().strong().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
-                                ui.label(RichText::new("70 MB").size(14.0).strong().color(p.text_primary));
+                                let dirty_str = if let Some(dirty) = snap.mem_dirty_bytes {
+                                    crate::sensors::format_bytes(dirty)
+                                } else {
+                                    "48 MB".to_string()
+                                };
+                                ui.label(RichText::new(&dirty_str).size(14.0).strong().color(p.text_primary));
                                 ui.label(RichText::new("Dirty pages").size(9.0).monospace().color(p.text_muted));
                             });
 
@@ -11695,7 +11775,7 @@ impl LauncherApp {
                                 ui.label(RichText::new(crate::lucide::ZAP).size(12.0).color(Color32::from_rgb(56, 189, 248)));
                                 ui.label(RichText::new("Linux ZRAM Dynamic Swap").size(12.5).strong().color(p.text_primary));
 
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |_ui| {
                                     Frame::none()
                                         .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
                                         .rounding(Rounding::same(999.0))
@@ -11712,7 +11792,8 @@ impl LauncherApp {
                             ui.columns(3, |zcols| {
                                 // Sub-col 1: SWAP SPACE ALLOCATED
                                 Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 4))
+                                    .fill(Color32::from_rgb(10, 15, 26))
+                                    .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(9.0, 7.0))
                                     .show(&mut zcols[0], |ui| {
@@ -11736,7 +11817,8 @@ impl LauncherApp {
 
                                 // Sub-col 2: COMPRESSION RATIO
                                 Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 4))
+                                    .fill(Color32::from_rgb(10, 15, 26))
+                                    .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(9.0, 7.0))
                                     .show(&mut zcols[1], |ui| {
@@ -11755,11 +11837,12 @@ impl LauncherApp {
                                             });
 
                                         ui.add_space(4.0);
-                                                                            });
+                                    });
 
                                 // Sub-col 3: PAGE I/O TRANSFER
                                 Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 4))
+                                    .fill(Color32::from_rgb(10, 15, 26))
+                                    .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(9.0, 7.0))
                                     .show(&mut zcols[2], |ui| {
@@ -11787,25 +11870,8 @@ impl LauncherApp {
                                             });
 
                                         ui.add_space(4.0);
-                                                                            });
-                            });
-
-                            ui.add_space(8.0);
-                            Frame::none()
-                                .fill(Color32::from_rgb(10, 15, 26))
-                                .rounding(Rounding::same(6.0))
-                                .inner_margin(egui::Margin::symmetric(10.0, 6.0))
-                                .show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);
-                                        Frame::none()
-                                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 22))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(5.0, 1.5))
-                             
                                     });
-                                });
+                            });
                         });
 
                     // Right Column: Top Memory Consumers
@@ -11819,14 +11885,6 @@ impl LauncherApp {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 ui.label(RichText::new(crate::lucide::LAYERS).size(12.0).color(Color32::from_rgb(56, 189, 248)));
                                 ui.label(RichText::new("Top Memory Consumers").size(12.5).strong().color(p.text_primary));
-
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 8))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                   
-                                });
                             });
 
                             ui.add_space(2.0);
@@ -11867,7 +11925,8 @@ impl LauncherApp {
                                 let short_name = if name.chars().count() > 22 { format!("{}…", name.chars().take(20).collect::<String>()) } else { name.to_string() };
 
                                 Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 4))
+                                    .fill(Color32::from_rgb(10, 15, 26))
+                                    .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(5.0))
                                     .inner_margin(egui::Margin::symmetric(8.0, 4.5))
                                     .show(ui, |ui| {
@@ -11878,11 +11937,11 @@ impl LauncherApp {
                                             ui.label(RichText::new(&short_name).size(10.5).strong().color(p.text_primary));
 
                                             Frame::none()
-                                                .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 7))
+                                                .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
                                                 .rounding(Rounding::same(3.0))
                                                 .inner_margin(egui::Margin::symmetric(4.0, 1.0))
                                                 .show(ui, |ui| {
-                                                    ui.label(RichText::new(format!("PID {}", pid)).size(8.0).monospace().color(p.text_muted));
+                                                    ui.label(RichText::new(format!("PID {}", pid)).size(8.0).monospace().color(Color32::from_rgb(203, 213, 225)));
                                                 });
 
                                             ui.label(RichText::new(desc).size(8.5).monospace().color(p.text_muted));
@@ -11966,18 +12025,35 @@ impl LauncherApp {
                 let gpu_name = gpu
                     .map(|g| g.name.as_str())
                     .filter(|n| !n.trim().is_empty() && *n != "Unknown GPU")
-                    .unwrap_or(if is_remote { "Headless Server / Kernel Framebuffer" } else { "Intel(R) UHD Graphics 605" });
+                    .unwrap_or(if is_remote { "Headless Server / Kernel Framebuffer" } else { "Hardware Accelerated Graphics" });
+
+                let gpu_name_lower = gpu_name.to_lowercase();
+                let is_intel = gpu_name_lower.contains("intel") || gpu_name_lower.contains("uhd") || gpu_name_lower.contains("iris") || gpu_name_lower.contains("arc") || gpu_name_lower.contains("hd graphics");
+                let is_amd = gpu_name_lower.contains("amd") || gpu_name_lower.contains("radeon");
+                let is_nvidia = gpu_name_lower.contains("nvidia") || gpu_name_lower.contains("geforce") || gpu_name_lower.contains("rtx") || gpu_name_lower.contains("gtx");
 
                 let gpu_spec_label = if let Some(g) = gpu {
                     if !g.driver.trim().is_empty() {
                         g.driver.as_str()
+                    } else if is_nvidia {
+                        "NVIDIA NVDEC / CUDA"
+                    } else if is_amd {
+                        "AMD RDNA / RADV"
+                    } else if is_intel {
+                        "Intel QuickSync / DRM"
                     } else {
-                        "PCIe Graphics Accelerator"
+                        "Direct Rendering Infrastructure"
                     }
                 } else if is_remote {
                     "Virtual Display / Kernel Framebuffer"
+                } else if is_nvidia {
+                    "NVIDIA Unified Architecture"
+                } else if is_amd {
+                    "AMD Radeon Unified Architecture"
+                } else if is_intel {
+                    "Intel Gen Graphics EUs"
                 } else {
-                    "Gen9.5 LP • 18 EUs"
+                    "Direct Rendering Infrastructure"
                 };
 
                 // Multi-GPU Dispatch Switcher Pills (when host has 2+ GPUs)
@@ -12095,13 +12171,25 @@ impl LauncherApp {
                             ui.add_space(3.0);
 
                             // Row 3: Subtitle spanning the full card width underneath Row 2
-                            let driver_str = gpu.map(|g| g.driver.as_str()).filter(|s| !s.trim().is_empty()).unwrap_or(if is_remote { "Kernel Direct Rendering Manager (DRM / KMS)" } else { "Mesa 24.1.2 (Direct Rendering DRM)" });
+                            let driver_str = gpu.map(|g| g.driver.as_str()).filter(|s| !s.trim().is_empty()).unwrap_or_else(|| {
+                                if is_remote {
+                                    "Kernel Direct Rendering Manager (DRM / KMS)"
+                                } else if is_nvidia {
+                                    "NVIDIA Proprietary / Nouveau DRM"
+                                } else if is_amd {
+                                    "AMDGPU / Mesa RADV"
+                                } else if is_intel {
+                                    "i915 / Xe (Mesa Direct Rendering)"
+                                } else {
+                                    "Direct Rendering Manager (DRM)"
+                                }
+                            });
                             let topo_str = if is_remote {
                                 if gpu.is_some() { format!("Topology: PCIe Bus GPU {}", active_gpu_idx + 1) } else { "Topology: Headless Server / Hypervisor".to_string() }
                             } else {
                                 format!("Topology: PCI bus 0, device {}, func 0", 2 + active_gpu_idx)
                             };
-                            let date_or_link = if is_remote { "Telemetry: Streaming via SSH" } else { "Driver Date: 8/28/2025" };
+                            let date_or_link = if is_remote { "Telemetry: Streaming via SSH" } else { "Kernel Direct Rendering Online" };
 
                             ui.horizontal_wrapped(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
@@ -12120,30 +12208,102 @@ impl LauncherApp {
                 let cur_gpu_load = gpu.and_then(|g| g.load_pct).unwrap_or_else(|| self.gpu_load_history.back().copied().unwrap_or(0.0));
                 let cur_3d = if is_remote && gpu.is_none() { 0.0 } else { self.gpu_3d_history.back().copied().unwrap_or(3.0) };
                 let cur_copy = if is_remote && gpu.is_none() { 0.0 } else { self.gpu_copy_history.back().copied().unwrap_or(1.1) };
-                let clock_val = gpu.and_then(|g| g.clock_mhz).unwrap_or(if is_remote { 0 } else { 750 });
                 let power_val = gpu.and_then(|g| g.power_watts).unwrap_or(if is_remote { 0.0 } else { 2.9 });
+
+                let (min_clk, max_clk) = if is_nvidia {
+                    (300, 2600)
+                } else if is_amd {
+                    (300, 2400)
+                } else if is_intel {
+                    (200, 1150)
+                } else {
+                    (200, 1000)
+                };
+                let clock_val = gpu.and_then(|g| g.clock_mhz).unwrap_or(if is_remote { 0 } else { (min_clk + max_clk) / 2 });
 
                 let gpu_slice: Vec<f32> = self.gpu_load_history.iter().copied().collect();
                 let gpu_3d_slice: Vec<f32> = self.gpu_3d_history.iter().copied().collect();
                 let gpu_clock_slice: Vec<f32> = if !gpu_slice.is_empty() {
-                    gpu_slice.iter().map(|&u| if is_remote && gpu.is_none() { 0.0 } else { 250.0 + (u / 100.0) * 550.0 }).collect()
+                    gpu_slice.iter().map(|&u| if is_remote && gpu.is_none() { 0.0 } else { min_clk as f32 + (u / 100.0) * (max_clk - min_clk) as f32 }).collect()
                 } else {
                     vec![clock_val as f32; 5]
                 };
-                let gpu_vram_slice: Vec<f32> = vec![if is_remote && gpu.is_none() { 0.0 } else { 0.3 }; 5];
+
+                let sys_total_ram_mb = snap.mem_total_bytes / (1024 * 1024);
+                let default_shared_vram_mb = (sys_total_ram_mb / 2).max(1024);
+                let (vram_val, vram_sub, vram_peak, vram_pwr, has_dedicated, total_vram_mb, used_vram_mb) = if let Some(g) = gpu {
+                    if let (Some(used), Some(total)) = (g.mem_used_mb, g.mem_total_mb) {
+                        let u_gb = used as f64 / 1024.0;
+                        let t_gb = total as f64 / 1024.0;
+                        let pct = if total > 0 { (used as f64 / total as f64 * 100.0) as f32 } else { 0.0 };
+                        (
+                            format!("{:.1}", u_gb),
+                            format!("/ {:.1} GB", t_gb),
+                            format!("VRAM {:.0}%", pct),
+                            format!("POWER {:.1}W", power_val),
+                            true,
+                            total,
+                            used,
+                        )
+                    } else if is_remote {
+                        ("0.0".to_string(), "/ N/A".to_string(), "HEADLESS SYSTEM".to_string(), format!("POWER {:.1}W", power_val), false, 0, 0)
+                    } else {
+                        let u_mb = ((default_shared_vram_mb as f64 * 0.08) + (cur_gpu_load as f64 * 4.0)).min(default_shared_vram_mb as f64 * 0.9) as u64;
+                        let u_gb = u_mb as f64 / 1024.0;
+                        let t_gb = default_shared_vram_mb as f64 / 1024.0;
+                        let pct = (u_mb as f64 / default_shared_vram_mb as f64 * 100.0) as f32;
+                        (
+                            format!("{:.1}", u_gb),
+                            format!("/ {:.1} GB", t_gb),
+                            format!("UTILIZATION {:.0}%", pct),
+                            format!("POWER {:.1}W", power_val),
+                            false,
+                            default_shared_vram_mb,
+                            u_mb,
+                        )
+                    }
+                } else if is_remote {
+                    ("0.0".to_string(), "/ N/A".to_string(), "HEADLESS SYSTEM".to_string(), "POWER 0.0W".to_string(), false, 0, 0)
+                } else {
+                    let u_mb = ((default_shared_vram_mb as f64 * 0.08) + (cur_gpu_load as f64 * 4.0)).min(default_shared_vram_mb as f64 * 0.9) as u64;
+                    let u_gb = u_mb as f64 / 1024.0;
+                    let t_gb = default_shared_vram_mb as f64 / 1024.0;
+                    let pct = (u_mb as f64 / default_shared_vram_mb as f64 * 100.0) as f32;
+                    (
+                        format!("{:.1}", u_gb),
+                        format!("/ {:.1} GB", t_gb),
+                        format!("UTILIZATION {:.0}%", pct),
+                        format!("POWER {:.1}W", power_val),
+                        false,
+                        default_shared_vram_mb,
+                        u_mb,
+                    )
+                };
+                let gpu_vram_slice: Vec<f32> = vec![if is_remote && gpu.is_none() { 0.0 } else { (used_vram_mb as f32 / 1024.0).max(0.1) }; 5];
 
                 ui.columns(4, |cols| {
                     // Card 1: GPU CORE LOAD
                     let mode_lbl = match self.gpu_mode { 2 => "MODE: TURBO", 0 => "MODE: ECO", _ => "MODE: BALANCED" };
+                    let compute_array_lbl = if is_remote && gpu.is_none() {
+                        "Headless / Kernel SimpleDRM"
+                    } else if is_nvidia {
+                        "CUDA & Tensor Cores"
+                    } else if is_amd {
+                        "RDNA Compute Units"
+                    } else if is_intel {
+                        "EU Shading Compute Array"
+                    } else {
+                        "Hardware Shader Pipeline"
+                    };
                     render_big_stat_card(
                         &mut cols[0],
                         crate::lucide::GAUGE,
                         "GPU CORE LOAD",
                         &format!("{:.1}", cur_gpu_load),
                         "%",
-                        if is_remote && gpu.is_none() { "Headless / Kernel SimpleDRM" } else { "EU Shading Compute Array" },
+                        compute_array_lbl,
                         mode_lbl,
-                        if is_remote && gpu.is_none() { "STANDBY" } else { "PEAK 95%" },
+                        if is_remote && gpu.is_none() { "STANDBY" } else { "DYNAMIC" },
                         &gpu_slice,
                         100.0,
                         Some(if cur_gpu_load > 0.0 { cur_gpu_load / 100.0 } else { 0.05 }),
@@ -12153,18 +12313,20 @@ impl LauncherApp {
                     );
 
                     // Card 2: CORE CLOCK
+                    let min_clk_str = if is_remote && gpu.is_none() { "HEADLESS".to_string() } else { format!("MIN {} MHz", min_clk) };
+                    let max_clk_str = if is_remote && gpu.is_none() { "N/A".to_string() } else { format!("MAX {} MHz", max_clk) };
                     render_big_stat_card(
                         &mut cols[1],
                         crate::lucide::ZAP,
                         "CORE CLOCK",
                         &format!("{}", clock_val),
                         "MHz",
-                        if is_remote && gpu.is_none() { "Direct Kernel Display Clock" } else { "Dynamic RC6 Frequency" },
-                        if is_remote && gpu.is_none() { "HEADLESS" } else { "MIN 250 MHz" },
-                        if is_remote && gpu.is_none() { "N/A" } else { "MAX 800 MHz" },
+                        if is_remote && gpu.is_none() { "Direct Kernel Display Clock" } else { "Dynamic Frequency Scaling" },
+                        &min_clk_str,
+                        &max_clk_str,
                         &gpu_clock_slice,
-                        850.0,
-                        Some(if clock_val > 0 { (clock_val as f32 / 850.0).clamp(0.1, 1.0) } else { 0.05 }),
+                        max_clk as f32 * 1.05,
+                        Some(if clock_val > 0 { (clock_val as f32 / max_clk as f32).clamp(0.1, 1.0) } else { 0.05 }),
                         Color32::from_rgb(56, 189, 248),
                         p.bg_card,
                         p.text_muted,
@@ -12178,7 +12340,7 @@ impl LauncherApp {
                         &format!("{:.1}", cur_3d),
                         "%",
                         if is_remote && gpu.is_none() { "Software / Headless Pipeline" } else { "Direct3D & Vulkan Pipeline" },
-                        "V-DECODE 0.0%",
+                        "ACTIVE ENGINE",
                         if is_remote && gpu.is_none() { "TTY 0 FPS" } else { "60 FPS" },
                         &gpu_3d_slice,
                         100.0,
@@ -12189,29 +12351,6 @@ impl LauncherApp {
                     );
 
                     // Card 4: SHARED / DEDICATED VRAM
-                    let (vram_val, vram_sub, vram_peak, vram_pwr, has_dedicated) = if let Some(g) = gpu {
-                        if let (Some(used), Some(total)) = (g.mem_used_mb, g.mem_total_mb) {
-                            let u_gb = used as f64 / 1024.0;
-                            let t_gb = total as f64 / 1024.0;
-                            let pct = if total > 0 { (used as f64 / total as f64 * 100.0) as f32 } else { 0.0 };
-                            (
-                                format!("{:.1}", u_gb),
-                                format!("/ {:.1} GB", t_gb),
-                                format!("VRAM {:.0}%", pct),
-                                format!("POWER {:.1}W", power_val),
-                                true
-                            )
-                        } else if is_remote {
-                            ("0.0".to_string(), "/ N/A".to_string(), "HEADLESS SYSTEM".to_string(), format!("POWER {:.1}W", power_val), false)
-                        } else {
-                            ("0.3".to_string(), "/ 3.9 GB".to_string(), "UTILIZATION 8%".to_string(), format!("POWER {:.1}W", power_val), false)
-                        }
-                    } else if is_remote {
-                        ("0.0".to_string(), "/ N/A".to_string(), "HEADLESS SYSTEM".to_string(), "POWER 0.0W".to_string(), false)
-                    } else {
-                        ("0.3".to_string(), "/ 3.9 GB".to_string(), "UTILIZATION 8%".to_string(), format!("POWER {:.1}W", power_val), false)
-                    };
-
                     let card_title = if has_dedicated { "DEDICATED VRAM" } else { "SHARED VRAM" };
                     let card_subtitle = if has_dedicated { "High-Bandwidth GDDR VRAM Pool" } else { "Dynamic Unified Memory Pool" };
 
@@ -12225,7 +12364,7 @@ impl LauncherApp {
                         &vram_peak,
                         &vram_pwr,
                         &gpu_vram_slice,
-                        4.0,
+                        (total_vram_mb as f32 / 1024.0).max(4.0),
                         Some(if is_remote && gpu.is_none() { 0.02 } else { 0.1 }),
                         Color32::from_rgb(56, 189, 248),
                         p.bg_card,
@@ -12329,7 +12468,18 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         ui.vertical(|ui| {
                                             ui.label(RichText::new("3D Engine / Render").size(11.0).strong().color(p.text_primary));
-                                            ui.label(RichText::new(if is_remote && gpu.is_none() { "Headless TTY • Framebuffer" } else { "Direct3D 12 • Vulkan 1.3 • OpenGL 4.6" }).size(8.5).monospace().color(p.text_muted));
+                                            let engine_api_desc = if is_remote && gpu.is_none() {
+                                                "Headless TTY • Framebuffer"
+                                            } else if is_nvidia {
+                                                "Direct3D 12 • Vulkan 1.3 • CUDA"
+                                            } else if is_amd {
+                                                "Direct3D 12 • Vulkan 1.3 • ROCm"
+                                            } else if is_intel {
+                                                "Direct3D 12 • Vulkan 1.3 • oneAPI"
+                                            } else {
+                                                "Vulkan 1.3 • OpenGL 4.6"
+                                            };
+                                            ui.label(RichText::new(engine_api_desc).size(8.5).monospace().color(p.text_muted));
                                         });
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             ui.vertical(|ui| {
@@ -12389,7 +12539,18 @@ impl LauncherApp {
                                     ui.set_width(ui.available_width());
                                     ui.horizontal(|ui| {
                                         ui.vertical(|ui| {
-                                            ui.label(RichText::new(if is_remote && gpu.is_none() { "Video Codec Subsystem" } else { "Video Decode (Intel QuickSync)" }).size(11.0).strong().color(p.text_primary));
+                                            let vdec_hdr = if is_remote && gpu.is_none() {
+                                                "Video Codec Subsystem"
+                                            } else if is_nvidia {
+                                                "Video Decode (NVIDIA NVDEC)"
+                                            } else if is_amd {
+                                                "Video Decode (AMD VCN)"
+                                            } else if is_intel {
+                                                "Video Decode (Intel QuickSync)"
+                                            } else {
+                                                "Video Decode (VA-API)"
+                                            };
+                                            ui.label(RichText::new(vdec_hdr).size(11.0).strong().color(p.text_primary));
                                             ui.label(RichText::new("H.264 • HEVC 10-bit • VP9 Profile 2").size(8.5).monospace().color(p.text_muted));
                                         });
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -12423,7 +12584,7 @@ impl LauncherApp {
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                     ui.label(RichText::new(if is_remote && gpu.is_none() { "0.0 %" } else { "0.8 %" }).size(15.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
                                                 });
-                                              
+                                               
                                             });
                                         });
                                     });
@@ -12439,6 +12600,8 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 4. Memory Subsystem Breakdown Card
+                let free_vram_mb = total_vram_mb.saturating_sub(used_vram_mb);
+                let ded_mb_val = if has_dedicated { total_vram_mb } else { 128 };
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(8.0))
@@ -12459,19 +12622,19 @@ impl LauncherApp {
                                             ui.spacing_mut().item_spacing.x = 4.0;
                                             let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.5, 6.5), egui::Sense::hover());
                                             ui.painter().rect_filled(d_rect, Rounding::same(1.5), Color32::from_rgb(71, 85, 105));
-                                            ui.label(RichText::new("Free: 3,556 MB").size(9.0).monospace().color(p.text_muted));
+                                            ui.label(RichText::new(format!("Free: {} MB", free_vram_mb)).size(9.0).monospace().color(p.text_muted));
                                         });
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 4.0;
                                             let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.5, 6.5), egui::Sense::hover());
                                             ui.painter().rect_filled(d_rect, Rounding::same(1.5), Color32::from_rgb(96, 165, 250));
-                                            ui.label(RichText::new("Dynamic: 312 MB").size(9.0).monospace().color(p.text_muted));
+                                            ui.label(RichText::new(format!("Dynamic: {} MB", used_vram_mb)).size(9.0).monospace().color(p.text_muted));
                                         });
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 4.0;
                                             let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.5, 6.5), egui::Sense::hover());
                                             ui.painter().rect_filled(d_rect, Rounding::same(1.5), Color32::from_rgb(56, 189, 248));
-                                            ui.label(RichText::new("VRAM: 128 MB").size(9.0).monospace().color(p.text_muted));
+                                            ui.label(RichText::new(format!("VRAM: {} MB", ded_mb_val)).size(9.0).monospace().color(p.text_muted));
                                         });
                                     }
                                 });
@@ -12488,9 +12651,14 @@ impl LauncherApp {
                         if is_remote && gpu.is_none() {
                             bar_p.rect_filled(br, Rounding::same(3.0), Color32::from_rgb(30, 41, 59));
                         } else {
-                            let w_ded = br.width() * 0.032;
-                            let w_dyn = br.width() * 0.078;
-                            let w_free = (br.width() - w_ded - w_dyn - 2.0).max(10.0);
+                            let (w_ded, w_dyn, w_free) = if total_vram_mb > 0 {
+                                let r_ded = (ded_mb_val as f32 / total_vram_mb as f32).clamp(0.02, 0.40);
+                                let r_dyn = (used_vram_mb as f32 / total_vram_mb as f32).clamp(0.04, 0.70);
+                                let r_free = (1.0 - r_ded - r_dyn).max(0.05);
+                                (br.width() * r_ded, br.width() * r_dyn, br.width() * r_free)
+                            } else {
+                                (br.width() * 0.05, br.width() * 0.15, br.width() * 0.8)
+                            };
 
                             bar_p.rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(w_ded, br.height())), Rounding::same(3.0), Color32::from_rgb(56, 189, 248));
                             bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w_ded + 1.0, br.min.y), egui::vec2(w_dyn, br.height())), Rounding::ZERO, Color32::from_rgb(96, 165, 250));
@@ -12511,8 +12679,11 @@ impl LauncherApp {
                                 if is_remote && gpu.is_none() {
                                     ui.label(RichText::new("0 MB (Headless)").size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                     ui.label(RichText::new("Shared Framebuffer").size(8.5).monospace().color(p.text_muted));
+                                } else if has_dedicated {
+                                    ui.label(RichText::new(format!("{} MB", total_vram_mb)).size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                    ui.label(RichText::new("Dedicated VRAM").size(8.5).monospace().color(p.text_muted));
                                 } else {
-                                    ui.label(RichText::new("128.0 MB").size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                    ui.label(RichText::new(format!("{:.1} MB", ded_mb_val as f32)).size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                     ui.label(RichText::new("BIOS Allocated").size(8.5).monospace().color(p.text_muted));
                                 }
                             });
@@ -12529,7 +12700,7 @@ impl LauncherApp {
                                     ui.label(RichText::new(format!("{:.1} GB System RAM", host_ram_gb)).size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                     ui.label(RichText::new("Host Managed").size(8.5).monospace().color(p.text_muted));
                                 } else {
-                                    ui.label(RichText::new("312.4 MB / 3.9 GB").size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                    ui.label(RichText::new(format!("{:.1} MB / {:.1} GB", used_vram_mb as f64, total_vram_mb as f64 / 1024.0)).size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                     ui.label(RichText::new("OS Managed").size(8.5).monospace().color(p.text_muted));
                                 }
                             });
@@ -12545,8 +12716,20 @@ impl LauncherApp {
                                     ui.label(RichText::new("System Bus Direct").size(14.0).strong().color(p.text_primary));
                                     ui.label(RichText::new("Interconnect").size(8.5).monospace().color(p.text_muted));
                                 } else {
-                                    ui.label(RichText::new("2.4 GB/s").size(14.0).strong().color(p.text_primary));
-                                    ui.label(RichText::new("Dual Channel").size(8.5).monospace().color(p.text_muted));
+                                    let (bw_rate, ch_desc) = if has_dedicated {
+                                        ("448.0 GB/s".to_string(), "Dedicated GDDR".to_string())
+                                    } else if let Some(ref hw) = snap.memory_hw {
+                                        let bw = if hw.topology.contains("DUAL") {
+                                            if hw.memory_type.contains("DDR5") { "89.6 GB/s" } else { "38.4 GB/s" }
+                                        } else {
+                                            if hw.memory_type.contains("DDR5") { "44.8 GB/s" } else { "19.2 GB/s" }
+                                        };
+                                        (bw.to_string(), hw.topology.clone())
+                                    } else {
+                                        ("25.6 GB/s".to_string(), "System Bus".to_string())
+                                    };
+                                    ui.label(RichText::new(bw_rate).size(14.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new(ch_desc).size(8.5).monospace().color(p.text_muted));
                                 }
                             });
                         });
@@ -13887,7 +14070,7 @@ impl LauncherApp {
                                         if !wifi_snap.security.is_empty() {
                                             Frame::none()
                                                 .fill(Color32::from_rgb(10, 14, 22))
-                                                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                                .stroke(Stroke::NONE)
                                                 .rounding(Rounding::same(4.0))
                                                 .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                                 .show(ui, |ui| {
@@ -13902,7 +14085,7 @@ impl LauncherApp {
                                         };
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 14, 22))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                            .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                             .show(ui, |ui| {
@@ -13911,7 +14094,7 @@ impl LauncherApp {
                                     } else {
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 14, 22))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                            .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                             .show(ui, |ui| {
@@ -13920,7 +14103,7 @@ impl LauncherApp {
 
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 14, 22))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                            .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                             .show(ui, |ui| {
@@ -13956,7 +14139,7 @@ impl LauncherApp {
                                             if !wifi_snap.security.is_empty() {
                                                 Frame::none()
                                                     .fill(Color32::from_rgb(10, 14, 22))
-                                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                                    .stroke(Stroke::NONE)
                                                     .rounding(Rounding::same(4.0))
                                                     .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                                     .show(ui, |ui| {
@@ -13972,7 +14155,7 @@ impl LauncherApp {
                                             };
                                             Frame::none()
                                                 .fill(Color32::from_rgb(10, 14, 22))
-                                                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                                .stroke(Stroke::NONE)
                                                 .rounding(Rounding::same(4.0))
                                                 .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                                 .show(ui, |ui| {
@@ -13981,7 +14164,7 @@ impl LauncherApp {
                                         } else {
                                             Frame::none()
                                                 .fill(Color32::from_rgb(10, 14, 22))
-                                                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                                .stroke(Stroke::NONE)
                                                 .rounding(Rounding::same(4.0))
                                                 .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                                 .show(ui, |ui| {
@@ -13990,7 +14173,7 @@ impl LauncherApp {
 
                                             Frame::none()
                                                 .fill(Color32::from_rgb(10, 14, 22))
-                                                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                                .stroke(Stroke::NONE)
                                                 .rounding(Rounding::same(4.0))
                                                 .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                                 .show(ui, |ui| {
@@ -14380,7 +14563,7 @@ impl LauncherApp {
                         // Tunnel ID pill
                         Frame::none()
                             .fill(Color32::from_rgb(15, 23, 42))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(30, 41, 59)))
+                            .stroke(Stroke::NONE)
                             .rounding(Rounding::same(4.0))
                             .inner_margin(egui::Margin::symmetric(8.0, 3.0))
                             .show(ui, |ui| {
@@ -14441,14 +14624,14 @@ impl LauncherApp {
                 let mtu_val = if is_remote { 1500 } else { wifi_snap.mtu };
                 let tx_bytes_val = if is_remote { snap.total_tx_bytes } else { wifi_snap.tx_bytes };
                 let lease_time_str = if is_remote { "Permanent / Static" } else { wifi_snap.lease_time_remaining.as_str() };
-                let kernel_str = if is_remote { snap.os_version.as_str() } else { wifi_snap.kernel_version.as_str() };
+                let _kernel_str = if is_remote { snap.os_version.as_str() } else { wifi_snap.kernel_version.as_str() };
 
                 ui.horizontal(|ui| {
                     // LEFT COLUMN: IP Configuration
                     ui.allocate_ui_with_layout(egui::vec2(half_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(24, 34, 53)))
+                            .stroke(Stroke::NONE)
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
@@ -14664,7 +14847,7 @@ impl LauncherApp {
                     ui.allocate_ui_with_layout(egui::vec2(half_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
                         Frame::none()
                             .fill(p.bg_card)
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(24, 34, 53)))
+                            .stroke(Stroke::NONE)
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
@@ -14680,7 +14863,15 @@ impl LauncherApp {
                                     ("kernel (sockstat)", "RAW", ":icmp", "LISTEN"),
                                 ];
 
-                                let endpoint_count = if is_remote { default_remote_socks.len() } else { wifi_snap.active_sockets.len() };
+                                let endpoint_count = if is_remote {
+                                    if !snap.active_sockets.is_empty() {
+                                        snap.active_sockets.len()
+                                    } else {
+                                        default_remote_socks.len()
+                                    }
+                                } else {
+                                    wifi_snap.active_sockets.len()
+                                };
                                 let ep_badge_str = format!("{} Endpoints", endpoint_count);
 
                                 // Card Header
@@ -14748,7 +14939,12 @@ impl LauncherApp {
                                         ui.end_row();
 
                                         if is_remote {
-                                            for (proc_name, proto, port, status) in default_remote_socks {
+                                            let remote_socks: Vec<(&str, &str, &str, &str)> = if !snap.active_sockets.is_empty() {
+                                                snap.active_sockets.iter().map(|s| (s.process.as_str(), s.proto.as_str(), s.port.as_str(), s.status.as_str())).collect()
+                                            } else {
+                                                default_remote_socks.to_vec()
+                                            };
+                                            for (proc_name, proto, port, status) in remote_socks {
                                                 // Col 1: Cyan dot + Process name + muted (parenthesis)
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 4.0;
@@ -14838,7 +15034,33 @@ impl LauncherApp {
 
                 ui.add_space(10.0);
 
-                // 6. Application Network Data Usage
+            });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SENSORS PAGE: Application Data Usage Dashboard
+    // ─────────────────────────────────────────────────────────────────────────
+    fn render_sensors_data_usage_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
+        let p = self.theme.palette();
+        let is_remote = host_id.is_some();
+
+        let wifi_snap = if !is_remote {
+            if let Ok(lock) = self.wifi_snapshot.try_lock() {
+                lock.clone()
+            } else {
+                crate::wifi::WifiSnapshot::default()
+            }
+        } else {
+            crate::wifi::WifiSnapshot::default()
+        };
+
+        ScrollArea::vertical()
+            .id_salt("sensors_data_usage_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+
+                // 1. Top Header Banner
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(8.0))
@@ -14846,14 +15068,116 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
 
-                        // Process and cache application network data usage telemetry
-                        let need_recalc = self.wifi_cached_snap_timestamp != snap.timestamp
-                            || self.wifi_cached_period != self.wifi_app_period
-                            || self.wifi_cached_search != self.wifi_app_search_query
-                            || self.wifi_cached_sort != self.wifi_app_sort
-                            || self.wifi_cached_sort_desc != self.wifi_app_sort_desc;
+                        ui.vertical(|ui| {
+                            // Row 1: Overline / Subsystem Tag
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                ui.label(RichText::new("●").size(7.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("NETWORK DATA USAGE & PROCESS TELEMETRY").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                            });
 
-                        if need_recalc {
+                            ui.add_space(2.0);
+
+                            // Row 2: Title and Status Badge
+                            let avail_w = ui.available_width();
+                            let is_narrow = avail_w < 680.0;
+                            let title_str = if is_remote {
+                                format!("Data Usage • Host '{}'", host_id.unwrap_or("Remote"))
+                            } else {
+                                "Application Data Usage".to_string()
+                            };
+
+                            if is_narrow {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(title_str).size(16.5).strong().color(p.text_primary));
+                                });
+                                ui.add_space(4.0);
+                                Frame::none()
+                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                                    .rounding(Rounding::same(4.0))
+                                    .inner_margin(egui::Margin::symmetric(8.0, 3.5))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 5.0;
+                                            let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                            ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
+                                            ui.label(RichText::new("ACTIVE MONITORING").size(9.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                        });
+                                    });
+                            } else {
+                                ui.horizontal(|ui| {
+                                    let right_pill_est = 220.0_f32;
+                                    let left_w = (avail_w - right_pill_est - 16.0).max(100.0);
+                                    ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                        ui.label(RichText::new(title_str).size(16.5).strong().color(p.text_primary));
+                                    });
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        Frame::none()
+                                            .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(8.0, 3.5))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 5.0;
+                                                    let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                                    ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(56, 189, 248));
+                                                    ui.label(RichText::new("ACTIVE MONITORING").size(9.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                                });
+                                            });
+                                    });
+                                });
+                            }
+
+                            ui.add_space(2.0);
+                            ui.label(RichText::new("Per-process cumulative network telemetry & accumulated socket bandwidth across time periods.").size(10.5).color(p.text_muted));
+                        });
+                    });
+
+                ui.add_space(10.0);
+
+                // 2. Application Network Data Usage Table Card
+                Frame::none()
+                    .fill(p.bg_card)
+                    .rounding(Rounding::same(8.0))
+                    .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+
+                        // Determine if raw application network data should be refreshed
+                        let cur_host_str = host_id.map(|s| s.to_string());
+                        let host_changed = self.wifi_cached_host_id != cur_host_str;
+                        if host_changed {
+                            self.wifi_cached_host_id = cur_host_str;
+                            self.wifi_cached_raw_apps.clear();
+                            self.wifi_cached_app_list.clear();
+                            self.wifi_cached_snap_timestamp = None;
+                        }
+
+                        // Proactively query sensors if visiting data usage page and top_apps is empty
+                        if is_remote && self.wifi_cached_raw_apps.is_empty() && snap.top_apps.is_empty() {
+                            if let Some(hid) = host_id {
+                                if !self.remote_sensors_in_flight.lock().unwrap().contains(hid) {
+                                    if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                        self.trigger_remote_sensors_query(host);
+                                    }
+                                }
+                            }
+                        } else if self.wifi_cached_raw_apps.is_empty() && snap.top_apps.is_empty() && self.selected_machine == "local" && !self.wifi_app_force_refresh {
+                            self.wifi_app_force_refresh = true;
+                            self.wifi_app_requested_update = true;
+                            self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
+                            self.last_sensors_refresh = Instant::now();
+                            self.wifi_app_force_refresh = false;
+                        }
+
+                        let snap_updated = snap.timestamp.is_some() && snap.timestamp != self.wifi_cached_snap_timestamp && !snap.top_apps.is_empty();
+                        let need_raw_update = host_changed
+                            || self.wifi_app_requested_update
+                            || snap_updated
+                            || (self.wifi_cached_raw_apps.is_empty() && !snap.top_apps.is_empty());
+
+                        if need_raw_update {
                             let mut app_map: std::collections::BTreeMap<String, WifiAppNetItem> = std::collections::BTreeMap::new();
 
                             for proc in &snap.top_apps {
@@ -14880,11 +15204,16 @@ impl LauncherApp {
                                 entry.rate_bps += proc.net_rate_bps;
                             }
 
-                            // Correlate with active listening sockets from wifi_snap
-                            // Exact binary/process match prevents port cross-contamination (e.g. avahi-daemon getting sshd's port :22)
-                            for sock in &wifi_snap.active_sockets {
+                            // Correlate with active listening sockets (snap.active_sockets on remote host, or wifi_snap on local)
+                            let sock_list: &[crate::wifi::WifiActiveSocket] = if is_remote {
+                                &snap.active_sockets
+                            } else {
+                                &wifi_snap.active_sockets
+                            };
+
+                            for sock in sock_list {
                                 let sock_name = sock.process.trim().to_lowercase();
-                                if sock_name.is_empty() || sock_name == "system" || sock_name == "kernel" || sock_name == "unknown" {
+                                if sock_name.is_empty() || sock_name == "system" || sock_name == "kernel" || sock_name == "unknown" || sock_name == "service" {
                                     continue;
                                 }
                                 let mut matched = false;
@@ -14914,36 +15243,33 @@ impl LauncherApp {
                                 }
                             }
 
-                            // Baseline network estimation for processes that don't report I/O via /proc/<pid>/io
-                            for entry in app_map.values_mut() {
-                                if entry.rx_bytes == 0 && entry.tx_bytes == 0 {
-                                    let s = entry.name.to_lowercase();
-                                    let pid = entry.pids.first().copied().unwrap_or(1);
-                                    let (rx, tx) = if s.contains("chrome") || s.contains("chromium") || s.contains("firefox")
-                                        || s.contains("brave") || s.contains("edge") || s.contains("opera")
-                                        || s.contains("vivaldi") || s.contains("zen") {
-                                        (12_400_000_000u64 + ((pid as u64 % 300) * 12_500_000), 820_000_000u64 + ((pid as u64 % 100) * 2_500_000))
-                                    } else if s.contains("spotify") || s.contains("vlc") || s.contains("steam") || s.contains("mpv") {
-                                        (4_600_000_000u64 + ((pid as u64 % 200) * 6_000_000), 110_000_000u64 + ((pid as u64 % 30) * 500_000))
-                                    } else if s.contains("discord") || s.contains("slack") || s.contains("telegram") || s.contains("teams") {
-                                        (3_200_000_000u64 + ((pid as u64 % 200) * 5_000_000), 340_000_000u64 + ((pid as u64 % 50) * 1_000_000))
-                                    } else if s.contains("docker") || s.contains("containerd") || s.contains("node") || s.contains("python")
-                                        || s.contains("git") || s.contains("server_launcher") {
-                                        (1_450_000_000u64 + ((pid as u64 % 150) * 3_000_000), 290_000_000u64 + ((pid as u64 % 50) * 800_000))
-                                    } else if s.contains("systemd-resolve") || s.contains("networkmanager") || s.contains("avahi")
-                                        || s.contains("sshd") || s.contains("cupsd") || entry.has_socket {
-                                        (320_000_000u64 + ((pid as u64 % 100) * 1_000_000), 68_000_000u64 + ((pid as u64 % 30) * 500_000))
-                                    } else {
-                                        (24_000_000u64 + ((pid as u64 % 80) * 300_000), 6_000_000u64 + ((pid as u64 % 20) * 100_000))
-                                    };
-                                    entry.rx_bytes = rx;
-                                    entry.tx_bytes = tx;
-                                    entry.total_bytes = rx + tx;
-                                }
-                            }
+                            self.wifi_cached_raw_apps = app_map.into_values().collect();
+                            self.wifi_cached_snap_timestamp = snap.timestamp;
+                            self.wifi_app_requested_update = false;
+                            self.wifi_last_update_time = Some(Instant::now());
+                        }
 
-                            let period_mult = self.wifi_app_period.multiplier();
-                            let mut app_list: Vec<WifiAppNetItem> = app_map.into_values().collect();
+                        let (cur_s_date, cur_e_date) = (self.wifi_custom_start_date, self.wifi_custom_end_date);
+                        let cur_custom_dates = (cur_s_date, cur_e_date);
+
+                        let s_opt = chrono::NaiveDate::from_ymd_opt(cur_s_date.0, cur_s_date.1, cur_s_date.2);
+                        let e_opt = chrono::NaiveDate::from_ymd_opt(cur_e_date.0, cur_e_date.1, cur_e_date.2);
+                        let custom_days = match (s_opt, e_opt) {
+                            (Some(s), Some(e)) => (e - s).num_days().max(1) as u32,
+                            _ => 30,
+                        };
+                        let period_mult = self.wifi_app_period.multiplier(custom_days);
+
+                        let need_view_update = need_raw_update
+                            || (self.wifi_cached_app_list.is_empty() && !self.wifi_cached_raw_apps.is_empty())
+                            || self.wifi_cached_period != self.wifi_app_period
+                            || self.wifi_cached_search != self.wifi_app_search_query
+                            || self.wifi_cached_sort != self.wifi_app_sort
+                            || self.wifi_cached_sort_desc != self.wifi_app_sort_desc
+                            || (self.wifi_app_period == WifiAppPeriod::Custom && self.wifi_cached_custom_dates != cur_custom_dates);
+
+                        if need_view_update {
+                            let mut app_list: Vec<WifiAppNetItem> = self.wifi_cached_raw_apps.clone();
 
                             // Filter by search query
                             let search_q = self.wifi_app_search_query.trim().to_lowercase();
@@ -15013,11 +15339,11 @@ impl LauncherApp {
                             let total_visible_rate: f64 = app_list.iter().map(|a| a.rate_bps).sum();
 
                             self.wifi_cached_app_list = app_list;
-                            self.wifi_cached_snap_timestamp = snap.timestamp;
                             self.wifi_cached_period = self.wifi_app_period;
                             self.wifi_cached_search = self.wifi_app_search_query.clone();
                             self.wifi_cached_sort = self.wifi_app_sort.clone();
                             self.wifi_cached_sort_desc = self.wifi_app_sort_desc;
+                            self.wifi_cached_custom_dates = cur_custom_dates;
                             self.wifi_cached_max_data = max_data;
                             self.wifi_cached_total_data = total_visible_data;
                             self.wifi_cached_total_rx = total_visible_rx;
@@ -15025,13 +15351,12 @@ impl LauncherApp {
                             self.wifi_cached_total_rate = total_visible_rate;
                         }
 
-                        let app_list = &self.wifi_cached_app_list;
+                        let app_list = self.wifi_cached_app_list.clone();
                         let max_data = self.wifi_cached_max_data;
                         let total_visible_data = self.wifi_cached_total_data;
                         let total_visible_rx = self.wifi_cached_total_rx;
                         let total_visible_tx = self.wifi_cached_total_tx;
                         let total_visible_rate = self.wifi_cached_total_rate;
-                        let period_mult = self.wifi_app_period.multiplier();
 
                         // Heatmap tint color helper matching Windows 11 Task Manager / Top Apps
                         let get_tm_data_bg = |bytes: u64| -> Color32 {
@@ -15068,45 +15393,96 @@ impl LauncherApp {
                             let avail_w = ui.available_width();
                             let is_narrow = avail_w < 780.0;
 
-                            let render_header_left = |ui: &mut Ui| {
+                            let mut clicked_refresh = false;
+                            let mut toggle_date_picker = false;
+                            let mut clear_search = false;
+
+                            let period_disp = match self.wifi_app_period {
+                                WifiAppPeriod::Daily => "Daily (24h)".to_string(),
+                                WifiAppPeriod::Monthly => "Monthly (30d)".to_string(),
+                                WifiAppPeriod::Yearly => "Yearly (365d)".to_string(),
+                                WifiAppPeriod::Custom => format!("Custom ({}d)", custom_days),
+                            };
+
+                            let date_picker_open = self.wifi_date_picker_open;
+
+                            let render_header_left = |ui: &mut Ui, last_update: Option<Instant>, apps_count: usize| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
                                     ui.label(RichText::new("Application Network Data Usage").size(15.0).strong().color(p.text_primary));
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 14, 22))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 12)))
+                                        .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(6.0, 2.5))
                                         .show(ui, |ui| {
-                                            ui.label(RichText::new(format!("{} APPS", app_list.len())).size(8.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
+                                            ui.label(RichText::new(format!("{} APPS", apps_count)).size(8.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
                                         });
+
+                                    // Last updated badge
+                                    let update_str = if let Some(last_t) = last_update {
+                                        let el = last_t.elapsed().as_secs();
+                                        if el < 5 {
+                                            "Updated just now".to_string()
+                                        } else if el < 60 {
+                                            format!("Updated {}s ago", el)
+                                        } else {
+                                            format!("Updated {}m ago", el / 60)
+                                        }
+                                    } else {
+                                        "Click Update to refresh".to_string()
+                                    };
+                                    ui.label(RichText::new(update_str).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                 });
                             };
 
-                            let mut clear_search = false;
-
-                            let render_toolbar = |ui: &mut Ui, clear_s: &mut bool, search_str: &mut String, period: &mut WifiAppPeriod| {
+                            let render_toolbar = |ui: &mut Ui,
+                                                  do_refresh: &mut bool,
+                                                  toggle_picker: &mut bool,
+                                                  clear_s: &mut bool,
+                                                  search_str: &mut String,
+                                                  p_label: &str,
+                                                  picker_open: bool| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 6.0;
 
-                                    // Timeframe Dropdown (Daily, Monthly, Yearly)
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 4.0;
-                                        ui.label(RichText::new(crate::lucide::CLOCK).size(10.0).color(Color32::from_rgb(56, 189, 248)));
-                                        egui::ComboBox::from_id_salt("wifi_app_period_combo")
-                                            .selected_text(RichText::new(period.short_label()).size(9.5).monospace().color(Color32::from_rgb(241, 245, 249)))
-                                            .width(76.0)
-                                            .show_ui(ui, |ui| {
-                                                ui.selectable_value(period, WifiAppPeriod::Daily, RichText::new(WifiAppPeriod::Daily.label()).size(9.5).monospace());
-                                                ui.selectable_value(period, WifiAppPeriod::Monthly, RichText::new(WifiAppPeriod::Monthly.label()).size(9.5).monospace());
-                                                ui.selectable_value(period, WifiAppPeriod::Yearly, RichText::new(WifiAppPeriod::Yearly.label()).size(9.5).monospace());
-                                            });
-                                    });
+                                    // Dedicated Update Button
+                                    let update_btn = egui::Button::new(
+                                        RichText::new(format!("{} Update", crate::lucide::REFRESH_CW))
+                                            .size(9.5)
+                                            .monospace()
+                                            .strong()
+                                            .color(Color32::from_rgb(241, 245, 249))
+                                    )
+                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
+                                    .stroke(Stroke::NONE)
+                                    .rounding(Rounding::same(999.0))
+                                    .min_size(egui::vec2(68.0, 22.0));
+
+                                    if ui.add(update_btn).on_hover_text("Refresh application network telemetry now").clicked() {
+                                        *do_refresh = true;
+                                    }
+
+                                    // Date Picker Button
+                                    let picker_btn = egui::Button::new(
+                                        RichText::new(format!("{} {} ▾", crate::lucide::CLOCK, p_label))
+                                            .size(9.5)
+                                            .monospace()
+                                            .color(if picker_open { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(226, 232, 240) })
+                                    )
+                                    .fill(if picker_open { Color32::from_rgba_unmultiplied(56, 189, 248, 30) } else { Color32::from_rgb(10, 14, 22) })
+                                    .stroke(if picker_open { Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248)) } else { Stroke::NONE })
+                                    .rounding(Rounding::same(999.0))
+                                    .min_size(egui::vec2(90.0, 22.0));
+
+                                    if ui.add(picker_btn).on_hover_text("Select date range or timeframe preset").clicked() {
+                                        *toggle_picker = true;
+                                    }
 
                                     // Search Input Box (styled pill matching Top Apps)
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 14, 22))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 14)))
+                                        .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(999.0))
                                         .inner_margin(egui::Margin::symmetric(10.0, 4.0))
                                         .show(ui, |ui| {
@@ -15115,7 +15491,7 @@ impl LauncherApp {
                                                 ui.label(RichText::new(crate::lucide::SEARCH).size(11.0).color(Color32::from_rgb(148, 163, 184)));
                                                 let edit = egui::TextEdit::singleline(search_str)
                                                     .hint_text("Search apps or PID...")
-                                                    .desired_width(145.0)
+                                                    .desired_width(135.0)
                                                     .frame(false);
                                                 ui.add(edit);
                                                 if !search_str.is_empty() {
@@ -15130,20 +15506,198 @@ impl LauncherApp {
                             };
 
                             if is_narrow {
-                                render_header_left(ui);
+                                render_header_left(ui, self.wifi_last_update_time, app_list.len());
                                 ui.add_space(6.0);
-                                render_toolbar(ui, &mut clear_search, &mut self.wifi_app_search_query, &mut self.wifi_app_period);
+                                render_toolbar(ui, &mut clicked_refresh, &mut toggle_date_picker, &mut clear_search, &mut self.wifi_app_search_query, &period_disp, date_picker_open);
                             } else {
                                 ui.horizontal(|ui| {
-                                    render_header_left(ui);
+                                    render_header_left(ui, self.wifi_last_update_time, app_list.len());
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        render_toolbar(ui, &mut clear_search, &mut self.wifi_app_search_query, &mut self.wifi_app_period);
+                                        render_toolbar(ui, &mut clicked_refresh, &mut toggle_date_picker, &mut clear_search, &mut self.wifi_app_search_query, &period_disp, date_picker_open);
                                     });
                                 });
                             }
 
                             if clear_search {
                                 self.wifi_app_search_query.clear();
+                            }
+
+                            if toggle_date_picker {
+                                self.wifi_date_picker_open = !self.wifi_date_picker_open;
+                            }
+
+                            if clicked_refresh {
+                                self.wifi_app_requested_update = true;
+                                self.wifi_app_force_refresh = true;
+                                if let Some(hid) = host_id {
+                                    if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                        self.trigger_remote_sensors_query(host);
+                                    }
+                                } else {
+                                    self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
+                                    self.last_sensors_refresh = Instant::now();
+                                    self.wifi_app_force_refresh = false;
+                                }
+                            }
+
+                            // Date Range Picker Dropdown Panel
+                            if self.wifi_date_picker_open {
+                                ui.add_space(6.0);
+                                Frame::none()
+                                    .fill(Color32::from_rgb(12, 17, 26))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 60)))
+                                    .rounding(Rounding::same(8.0))
+                                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                                    .show(ui, |ui| {
+                                        let today = chrono::Local::now().date_naive();
+                                        let cur_year = today.year();
+
+                                        ui.horizontal(|ui| {
+                                            // Left Column: Presets
+                                            ui.vertical(|ui| {
+                                                ui.label(RichText::new("PRESETS").size(9.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                                                ui.add_space(4.0);
+
+                                                let presets: [(&str, i32); 6] = [
+                                                    ("Today", 1),
+                                                    ("Last 7 Days", 7),
+                                                    ("Last 30 Days", 30),
+                                                    ("This Month", 0),
+                                                    ("This Year", -1),
+                                                    ("Yearly (365d)", 365),
+                                                ];
+
+                                                for (name, days_val) in presets {
+                                                    let is_active = match days_val {
+                                                        0 => {
+                                                            self.wifi_app_period == WifiAppPeriod::Custom
+                                                                && self.wifi_custom_start_date == (cur_year, today.month(), 1)
+                                                                && self.wifi_custom_end_date == (cur_year, today.month(), today.day())
+                                                        }
+                                                        -1 => {
+                                                            self.wifi_app_period == WifiAppPeriod::Custom
+                                                                && self.wifi_custom_start_date == (cur_year, 1, 1)
+                                                                && self.wifi_custom_end_date == (cur_year, today.month(), today.day())
+                                                        }
+                                                        1 => self.wifi_app_period == WifiAppPeriod::Daily,
+                                                        30 => self.wifi_app_period == WifiAppPeriod::Monthly,
+                                                        365 => self.wifi_app_period == WifiAppPeriod::Yearly,
+                                                        d => {
+                                                            let s = today.checked_sub_signed(chrono::Duration::days((d - 1) as i64)).unwrap_or(today);
+                                                            self.wifi_app_period == WifiAppPeriod::Custom
+                                                                && self.wifi_custom_start_date == (s.year(), s.month(), s.day())
+                                                                && self.wifi_custom_end_date == (today.year(), today.month(), today.day())
+                                                        }
+                                                    };
+
+                                                    let btn = egui::Button::new(RichText::new(name).size(10.0).color(if is_active { Color32::from_rgb(15, 23, 42) } else { Color32::from_rgb(226, 232, 240) }))
+                                                        .fill(if is_active { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgba_unmultiplied(255, 255, 255, 12) })
+                                                        .rounding(Rounding::same(4.0))
+                                                        .min_size(egui::vec2(100.0, 22.0));
+
+                                                    if ui.add(btn).clicked() {
+                                                        match days_val {
+                                                            0 => {
+                                                                self.wifi_custom_start_date = (cur_year, today.month(), 1);
+                                                                self.wifi_custom_end_date = (cur_year, today.month(), today.day());
+                                                                self.wifi_app_period = WifiAppPeriod::Custom;
+                                                            }
+                                                            -1 => {
+                                                                self.wifi_custom_start_date = (cur_year, 1, 1);
+                                                                self.wifi_custom_end_date = (cur_year, today.month(), today.day());
+                                                                self.wifi_app_period = WifiAppPeriod::Custom;
+                                                            }
+                                                            1 => {
+                                                                self.wifi_custom_start_date = (cur_year, today.month(), today.day());
+                                                                self.wifi_custom_end_date = (cur_year, today.month(), today.day());
+                                                                self.wifi_app_period = WifiAppPeriod::Daily;
+                                                            }
+                                                            30 => {
+                                                                let s = today.checked_sub_signed(chrono::Duration::days(29)).unwrap_or(today);
+                                                                self.wifi_custom_start_date = (s.year(), s.month(), s.day());
+                                                                self.wifi_custom_end_date = (today.year(), today.month(), today.day());
+                                                                self.wifi_app_period = WifiAppPeriod::Monthly;
+                                                            }
+                                                            365 => {
+                                                                let s = today.checked_sub_signed(chrono::Duration::days(364)).unwrap_or(today);
+                                                                self.wifi_custom_start_date = (s.year(), s.month(), s.day());
+                                                                self.wifi_custom_end_date = (today.year(), today.month(), today.day());
+                                                                self.wifi_app_period = WifiAppPeriod::Yearly;
+                                                            }
+                                                            d => {
+                                                                let s = today.checked_sub_signed(chrono::Duration::days((d - 1) as i64)).unwrap_or(today);
+                                                                self.wifi_custom_start_date = (s.year(), s.month(), s.day());
+                                                                self.wifi_custom_end_date = (today.year(), today.month(), today.day());
+                                                                self.wifi_app_period = WifiAppPeriod::Custom;
+                                                            }
+                                                        }
+                                                    }
+                                                    ui.add_space(2.0);
+                                                }
+                                            });
+
+                                            ui.add_space(12.0);
+                                            ui.separator();
+                                            ui.add_space(12.0);
+
+                                            // Right Column: Date Selection inputs
+                                            ui.vertical(|ui| {
+                                                ui.label(RichText::new("CUSTOM DATE RANGE").size(9.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                                                ui.add_space(6.0);
+
+                                                // Start Date
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new("Start Date:").size(10.0).color(Color32::from_rgb(148, 163, 184)).monospace());
+                                                    ui.add(egui::DragValue::new(&mut self.wifi_custom_start_date.0).range(2020..=2035).prefix("Y: ").speed(1));
+                                                    ui.add(egui::DragValue::new(&mut self.wifi_custom_start_date.1).range(1..=12).prefix("M: ").speed(1));
+                                                    ui.add(egui::DragValue::new(&mut self.wifi_custom_start_date.2).range(1..=31).prefix("D: ").speed(1));
+                                                });
+
+                                                ui.add_space(4.0);
+
+                                                // End Date
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new("End Date:  ").size(10.0).color(Color32::from_rgb(148, 163, 184)).monospace());
+                                                    ui.add(egui::DragValue::new(&mut self.wifi_custom_end_date.0).range(2020..=2035).prefix("Y: ").speed(1));
+                                                    ui.add(egui::DragValue::new(&mut self.wifi_custom_end_date.1).range(1..=12).prefix("M: ").speed(1));
+                                                    ui.add(egui::DragValue::new(&mut self.wifi_custom_end_date.2).range(1..=31).prefix("D: ").speed(1));
+                                                });
+
+                                                ui.add_space(6.0);
+
+                                                let s_p = chrono::NaiveDate::from_ymd_opt(self.wifi_custom_start_date.0, self.wifi_custom_start_date.1, self.wifi_custom_start_date.2);
+                                                let e_p = chrono::NaiveDate::from_ymd_opt(self.wifi_custom_end_date.0, self.wifi_custom_end_date.1, self.wifi_custom_end_date.2);
+                                                let p_days = match (s_p, e_p) {
+                                                    (Some(s), Some(e)) => (e - s).num_days().max(1) as u32,
+                                                    _ => 30,
+                                                };
+
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new(format!("Selected Duration: {} day{}", p_days, if p_days == 1 { "" } else { "s" })).size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new(format!("(Scale: {:.2}x of 30d)", p_days as f64 / 30.0)).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                });
+
+                                                ui.add_space(8.0);
+
+                                                ui.horizontal(|ui| {
+                                                    let apply_btn = egui::Button::new(RichText::new("Apply Range").size(10.0).strong().color(Color32::from_rgb(15, 23, 42)))
+                                                        .fill(Color32::from_rgb(56, 189, 248))
+                                                        .rounding(Rounding::same(4.0));
+                                                    if ui.add(apply_btn).clicked() {
+                                                        self.wifi_app_period = WifiAppPeriod::Custom;
+                                                        self.wifi_date_picker_open = false;
+                                                    }
+
+                                                    let close_btn = egui::Button::new(RichText::new("Close").size(10.0).color(Color32::from_rgb(203, 213, 225)))
+                                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 12))
+                                                        .rounding(Rounding::same(4.0));
+                                                    if ui.add(close_btn).clicked() {
+                                                        self.wifi_date_picker_open = false;
+                                                    }
+                                                });
+                                            });
+                                        });
+                                    });
                             }
 
                             ui.add_space(8.0);
@@ -15158,7 +15712,7 @@ impl LauncherApp {
                                             let empty_msg = if !self.wifi_app_search_query.is_empty() {
                                                 format!("No applications matching '{}'", self.wifi_app_search_query)
                                             } else {
-                                                "No application network telemetry recorded yet".to_string()
+                                                "No application network telemetry recorded yet. Click Update above to fetch.".to_string()
                                             };
                                             ui.label(RichText::new(empty_msg).size(11.0).monospace().color(Color32::from_rgb(203, 213, 225)));
                                             if !self.wifi_app_search_query.is_empty() {
@@ -15177,7 +15731,7 @@ impl LauncherApp {
                                 const COL_TX_W: f32 = 94.0;
                                 const COL_TOT_W: f32 = 148.0;
                                 const COL_RATE_W: f32 = 82.0;
-                                const COL_SPACING: f32 = 14.0;
+                                const COL_SPACING: f32 = 12.0;
 
                                 let total_fixed_w = COL_RX_W + COL_TX_W + COL_TOT_W + COL_RATE_W + 4.0 * COL_SPACING + 24.0;
                                 let col_app_w = (avail_w - total_fixed_w).max(180.0);
@@ -15197,16 +15751,16 @@ impl LauncherApp {
                                 };
 
                                 let total_col_label = match self.wifi_app_period {
-                                    WifiAppPeriod::Daily => "Daily Data",
-                                    WifiAppPeriod::Monthly => "Total Data",
-                                    WifiAppPeriod::Yearly => "Yearly Data",
+                                    WifiAppPeriod::Daily => "Daily Data".to_string(),
+                                    WifiAppPeriod::Monthly => "Total Data".to_string(),
+                                    WifiAppPeriod::Yearly => "Yearly Data".to_string(),
+                                    WifiAppPeriod::Custom => format!("Data ({}d)", custom_days),
                                 };
 
                                 // Dedicated non-collapsing scroll area ensuring full process list is scrollable
                                 ScrollArea::vertical()
-                                    .id_salt("wifi_app_data_scroll_v4")
-                                    .min_scrolled_height(340.0)
-                                    .max_height(400.0)
+                                    .id_salt("data_usage_app_scroll")
+                                    .min_scrolled_height(480.0)
                                     .auto_shrink([false, false])
                                     .scroll_bar_visibility(egui::containers::scroll_area::ScrollBarVisibility::AlwaysVisible)
                                     .show(ui, |ui| {
@@ -15449,6 +16003,7 @@ impl LauncherApp {
                         });
                     });
 
+
                 ui.add_space(10.0);
             });
     }
@@ -15470,19 +16025,73 @@ impl LauncherApp {
 
                 let ac_online = snap.power.ac_online.unwrap_or(true);
                 let bat_pct = snap.power.total_battery_pct.unwrap_or(100.0);
-                let remaining_wh = bat.and_then(|b| b.energy_wh).unwrap_or(if is_remote { 0.0 } else { 45.2 });
-                let full_wh = bat.and_then(|b| b.energy_full_wh).unwrap_or(if is_remote { 0.0 } else { 48.0 });
+                let full_wh = bat.and_then(|b| b.energy_full_wh).or_else(|| bat.and_then(|b| b.energy_design_wh)).unwrap_or(50.0);
+                let remaining_wh = bat.and_then(|b| b.energy_wh).unwrap_or((full_wh * (bat_pct / 100.0)).max(0.1));
                 let bat_health = bat.and_then(|b| b.health_pct).unwrap_or_else(|| {
                     if let (Some(f), Some(d)) = (bat.and_then(|b| b.energy_full_wh), bat.and_then(|b| b.energy_design_wh)) {
                         if d > 0.0 {
                             (f / d * 100.0).clamp(10.0, 100.0)
                         } else {
-                            95.0
+                            96.0
                         }
                     } else {
-                        95.0
+                        96.0
                     }
                 });
+
+                let p_watts = bat.and_then(|b| b.power_watts)
+                    .or(snap.power.total_power_watts)
+                    .filter(|&w| w > 0.5)
+                    .unwrap_or_else(|| snap.cpu_power_watts.unwrap_or(8.0).max(4.0));
+
+                let (est_time_str, _est_time_short, status_str, status_col, status_bg) = if !has_battery {
+                    let st_str = if is_remote {
+                        format!("AC MAINS • HOST '{}'", host_id.unwrap_or("REMOTE"))
+                    } else {
+                        "AC MAINS • DIRECT FEED".to_string()
+                    };
+                    ("AC Grid Connected".to_string(), "Mains".to_string(), st_str, Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                } else if ac_online {
+                    if bat_pct >= 99.0 {
+                        ("Fully Charged".to_string(), "Full".to_string(), "AC ONLINE • 100% • FULLY CHARGED".to_string(), Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                    } else {
+                        let needed_wh = (full_wh - remaining_wh).max(0.1_f32);
+                        let hours_to_full = needed_wh / p_watts;
+                        let total_mins = (hours_to_full * 60.0).round() as u64;
+                        let time_formatted = if total_mins >= 60 {
+                            let h = total_mins / 60;
+                            let m = total_mins % 60;
+                            format!("{}h {}m", h, m)
+                        } else {
+                            format!("{}m", total_mins.max(1))
+                        };
+                        (
+                            format!("{} to full", time_formatted),
+                            time_formatted.clone(),
+                            format!("CHARGING • {:.0}% • {} TO FULL", bat_pct, time_formatted),
+                            Color32::from_rgb(56, 189, 248),
+                            Color32::from_rgba_unmultiplied(56, 189, 248, 22),
+                        )
+                    }
+                } else {
+                    // Discharging
+                    let hours_left = remaining_wh / p_watts;
+                    let total_mins = (hours_left * 60.0).round() as u64;
+                    let time_formatted = if total_mins >= 60 {
+                        let h = total_mins / 60;
+                        let m = total_mins % 60;
+                        format!("{}h {}m", h, m)
+                    } else {
+                        format!("{}m", total_mins.max(1))
+                    };
+                    (
+                        format!("{} remaining", time_formatted),
+                        time_formatted.clone(),
+                        format!("BATTERY • {:.0}% • {} LEFT", bat_pct, time_formatted),
+                        Color32::from_rgb(245, 158, 11),
+                        Color32::from_rgba_unmultiplied(245, 158, 11, 24),
+                    )
+                };
 
                 // 1. Top Header Banner
                 Frame::none()
@@ -15505,18 +16114,6 @@ impl LauncherApp {
                             // Row 2: Title and Status Badge
                             let avail_w = ui.available_width();
                             let is_narrow = avail_w < 680.0;
-
-                            let (status_str, status_col, status_bg) = if is_remote && !has_battery {
-                                ("AC MAINS • PLATINUM".to_string(), Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
-                            } else if ac_online {
-                                if bat_pct >= 99.0 {
-                                    ("AC ONLINE • 100%".to_string(), Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
-                                } else {
-                                    (format!("CHARGING • {:.0}%", bat_pct), Color32::from_rgb(56, 189, 248), Color32::from_rgba_unmultiplied(56, 189, 248, 22))
-                                }
-                            } else {
-                                (format!("BATTERY • {:.0}%", bat_pct), Color32::from_rgb(245, 158, 11), Color32::from_rgba_unmultiplied(245, 158, 11, 24))
-                            };
 
                             let title_str = if is_remote {
                                 format!("Power & Thermal • Host '{}'", host_id.unwrap_or("Remote"))
@@ -15543,7 +16140,7 @@ impl LauncherApp {
                                     });
                             } else {
                                 ui.horizontal(|ui| {
-                                    let right_pill_est = 320.0_f32;
+                                    let right_pill_est = 340.0_f32;
                                     let left_w = (avail_w - right_pill_est - 16.0).max(100.0);
                                     ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                         ui.label(RichText::new(title_str).size(16.5).strong().color(p.text_primary));
@@ -15570,10 +16167,14 @@ impl LauncherApp {
 
                             // Row 3: Subtitle spanning the full card width underneath
                             ui.horizontal_wrapped(|ui| {
-                                let sub_str = if is_remote && !has_battery {
-                                    "AC server power telemetry & energy states"
+                                let sub_str = if !has_battery {
+                                    if is_remote {
+                                        format!("Hardware AC power telemetry • Uptime {}", format_uptime(snap.uptime_secs))
+                                    } else {
+                                        "AC continuous feed power telemetry & energy states".to_string()
+                                    }
                                 } else {
-                                    "ACPI battery health & power telemetry"
+                                    format!("ACPI battery health & power telemetry • Remaining: {}", est_time_str)
                                 };
                                 ui.label(RichText::new(sub_str).size(10.0).color(Color32::from_rgb(148, 163, 184)));
                             });
@@ -15607,11 +16208,34 @@ impl LauncherApp {
                 let left_w = ((total_w - gap) * 0.64).max(380.0);
                 let right_w = (total_w - left_w - gap).max(220.0);
 
+                let num_cores = snap.cpu_cores_physical.max(snap.cpu_cores_logical).max(1);
+                let profile = if is_remote {
+                    crate::power::tdp_profile_from_nominal_or_cpu(snap.cpu_tdp_watts, &snap.cpu_brand, num_cores)
+                } else {
+                    self.cpu_tdp_profile
+                };
+                let active_gov = if is_remote {
+                    snap.cpu_governor.clone().unwrap_or_else(|| "performance".to_string())
+                } else {
+                    crate::power::query_current_governor()
+                };
+                let active_preset_idx = if is_remote {
+                    snap.cpu_governor.as_deref().map(crate::power::governor_to_preset_index).unwrap_or(self.power_preset)
+                } else {
+                    self.power_preset
+                };
+                let cpu_load = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
+                let raw_cpu = snap.cpu_power_watts.unwrap_or_else(|| {
+                    let tdp = snap.cpu_tdp_watts.unwrap_or(profile.nominal_watts);
+                    let idle = (tdp * 0.12).clamp(1.5, 20.0);
+                    idle + (tdp - idle) * (0.35 * cpu_load + 0.65 * cpu_load.powf(1.35))
+                });
+
                 ui.horizontal(|ui| {
                     // Left Column
                     ui.allocate_ui_with_layout(egui::vec2(left_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        if is_remote && !has_battery {
-                            // Remote Host Direct AC Power Supply Card
+                        if !has_battery {
+                            // Direct AC Power Supply Card (Desktop, Mini-PC, Server, or Workstation without battery)
                             Frame::none()
                                 .fill(p.bg_card)
                                 .rounding(Rounding::same(8.0))
@@ -15621,7 +16245,11 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         ui.label(RichText::new(crate::lucide::ZAP).size(12.0).color(Color32::from_rgb(56, 189, 248)));
-                                        let psu_hdr = format!("POWER SUPPLY // DIRECT AC GRID FEED • HOST '{}'", host_id.unwrap_or("REMOTE"));
+                                        let psu_hdr = if is_remote {
+                                            format!("POWER SUPPLY // DIRECT AC GRID FEED • HOST '{}'", host_id.unwrap_or("REMOTE"))
+                                        } else {
+                                            "POWER SUPPLY // DIRECT AC GRID FEED".to_string()
+                                        };
                                         ui.label(RichText::new(psu_hdr).size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -15630,27 +16258,55 @@ impl LauncherApp {
                                                 .rounding(Rounding::same(4.0))
                                                 .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                                 .show(ui, |ui| {
-                                                    ui.label(RichText::new("80 PLUS Platinum").size(9.0).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
+                                                    let badge_txt = if num_cores >= 16 || snap.cpu_brand.to_lowercase().contains("xeon") || snap.cpu_brand.to_lowercase().contains("epyc") {
+                                                        "Enterprise Platform"
+                                                    } else if !snap.gpus.is_empty() {
+                                                        "Workstation Grade"
+                                                    } else {
+                                                        "AC Continuous Feed"
+                                                    };
+                                                    ui.label(RichText::new(badge_txt).size(9.0).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
                                                 });
                                         });
                                     });
 
                                     ui.add_space(10.0);
 
-                                    // 3 Metric Cards in row
+                                    let render_ac_meta_row = |ui: &mut egui::Ui, label: &str, val: &str, val_col: Color32| {
+                                        ui.horizontal(|ui| {
+                                            let avail = ui.available_width();
+                                            let left_w = (avail * 0.40).clamp(28.0, 55.0);
+                                            let right_w = (avail - left_w - 4.0).max(10.0);
+                                            ui.allocate_ui_with_layout(egui::vec2(left_w, 14.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                ui.add(egui::Label::new(RichText::new(label).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184))).truncate());
+                                            });
+                                            ui.allocate_ui_with_layout(egui::vec2(right_w, 14.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.add(egui::Label::new(RichText::new(val).size(8.5).monospace().strong().color(val_col)).truncate());
+                                            });
+                                        });
+                                    };
+
+                                    // 3 Metric Cards in row (Equal Height Synced)
+                                    let ac_card_height_id = ui.make_persistent_id("ac_power_top_metric_cards_h");
+                                    let target_ac_card_h: f32 = ui.data(|d| d.get_temp::<f32>(ac_card_height_id)).unwrap_or(118.0).max(118.0);
+                                    let mut observed_ac_max_inner_h: f32 = 98.0;
+                                    let needed_ac_inner_h = (target_ac_card_h - 20.0).max(98.0);
+
                                     ui.columns(3, |cols| {
-                                        // Card 1: Power Delivery Mode
+                                        // Card 1: Power Delivery Feed
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 15, 29))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                            .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(6.0))
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[0], |ui| {
                                                 ui.set_width(ui.available_width());
+                                                let content_start_y = ui.cursor().min.y;
+
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::PLUG).size(11.0).color(Color32::from_rgb(56, 189, 248)));
-                                                    ui.label(RichText::new("Power Delivery Mode").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                    ui.label(RichText::new("Power Delivery Feed").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                                 });
                                                 ui.add_space(4.0);
                                                 ui.horizontal(|ui| {
@@ -15661,91 +16317,136 @@ impl LauncherApp {
                                                 let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
                                                 ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
                                                 ui.add_space(8.0);
-                                                ui.label(RichText::new("Grid-Tied Continuous Feed").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+
+                                                render_ac_meta_row(ui, "Feed", "AC Mains Feed", Color32::from_rgb(203, 213, 225));
+                                                ui.add_space(3.0);
+                                                let up_str = format_uptime(snap.uptime_secs);
+                                                render_ac_meta_row(ui, "Uptime", &up_str, Color32::from_rgb(56, 189, 248));
+
+                                                let inner_h = ui.cursor().min.y - content_start_y;
+                                                observed_ac_max_inner_h = observed_ac_max_inner_h.max(inner_h);
+                                                if inner_h < needed_ac_inner_h {
+                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_ac_inner_h - inner_h));
+                                                }
                                             });
 
-                                        // Card 2: Regulated Rails
+                                        // Card 2: Processor Package Draw
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 15, 29))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                            .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(6.0))
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[1], |ui| {
                                                 ui.set_width(ui.available_width());
+                                                let content_start_y = ui.cursor().min.y;
+
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::ACTIVITY).size(11.0).color(Color32::from_rgb(56, 189, 248)));
-                                                    ui.label(RichText::new("Supply Rail & Ripple").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                    ui.label(RichText::new("Processor Package Draw").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                                 });
                                                 ui.add_space(4.0);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 2.0;
-                                                    ui.label(RichText::new("12.0").size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                                    ui.label(RichText::new("V ATX").size(11.0).color(Color32::from_rgb(148, 163, 184)));
+                                                    ui.label(RichText::new(format!("{:.1}", raw_cpu)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                                    ui.label(RichText::new("W Package").size(11.0).color(Color32::from_rgb(148, 163, 184)));
                                                 });
                                                 ui.add_space(8.0);
                                                 let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
+                                                let fill_ratio = (raw_cpu / profile.turbo_pl2_watts.max(15.0)).clamp(0.05, 1.0);
+                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * fill_ratio, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
                                                 ui.add_space(8.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("DC Ripple Factor").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new("< 18 mV").size(8.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
-                                                    });
-                                                });
+
+                                                let pl1_s = format!("{:.0} W", profile.balanced_pl1_watts);
+                                                let pl2_s = format!("{:.0} W", profile.turbo_pl2_watts);
+                                                render_ac_meta_row(ui, "PL1 Cap", &pl1_s, Color32::from_rgb(203, 213, 225));
+                                                ui.add_space(3.0);
+                                                render_ac_meta_row(ui, "PL2 Peak", &pl2_s, Color32::from_rgb(56, 189, 248));
+
+                                                let inner_h = ui.cursor().min.y - content_start_y;
+                                                observed_ac_max_inner_h = observed_ac_max_inner_h.max(inner_h);
+                                                if inner_h < needed_ac_inner_h {
+                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_ac_inner_h - inner_h));
+                                                }
                                             });
 
-                                        // Card 3: Cell Subsystem
+                                        // Card 3: Thermal Dissipation
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 15, 29))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                            .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(6.0))
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[2], |ui| {
                                                 ui.set_width(ui.available_width());
+                                                let content_start_y = ui.cursor().min.y;
+
+                                                let temp_c = snap.cpu_temp.unwrap_or(36.0);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(Color32::from_rgb(56, 189, 248)));
-                                                    ui.label(RichText::new("Battery Subsystem").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                    ui.label(RichText::new("Thermal Dissipation").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                                 });
                                                 ui.add_space(4.0);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 2.0;
-                                                    ui.label(RichText::new("Direct AC").size(20.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                                 });
+                                                    ui.label(RichText::new(format!("{:.1}", temp_c)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                                    ui.label(RichText::new("°C Core").size(11.0).color(Color32::from_rgb(148, 163, 184)));
+                                                });
                                                 ui.add_space(8.0);
                                                 let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
+                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
+                                                let temp_ratio = (temp_c / 95.0).clamp(0.05, 1.0);
+                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * temp_ratio, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
                                                 ui.add_space(8.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Wear Degradation").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new("0% (Mains)").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                    });
-                                                });
+
+                                                let clk_s = format!("{} MHz", snap.cpu_frequency_mhz);
+                                                render_ac_meta_row(ui, "Gov", &active_gov, Color32::from_rgb(203, 213, 225));
+                                                ui.add_space(3.0);
+                                                render_ac_meta_row(ui, "Clock", &clk_s, Color32::from_rgb(56, 189, 248));
+
+                                                let inner_h = ui.cursor().min.y - content_start_y;
+                                                observed_ac_max_inner_h = observed_ac_max_inner_h.max(inner_h);
+                                                if inner_h < needed_ac_inner_h {
+                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_ac_inner_h - inner_h));
+                                                }
                                             });
                                     });
+
+                                    ui.data_mut(|d| d.insert_temp(ac_card_height_id, observed_ac_max_inner_h + 20.0));
 
                                     ui.add_space(12.0);
 
                                     // Row of 4 Sub-chips
                                     ui.columns(4, |cols| {
                                         let temp_val = snap.cpu_temp.unwrap_or(36.0);
+                                        let topology_str = if num_cores >= 16 || snap.cpu_brand.to_lowercase().contains("xeon") || snap.cpu_brand.to_lowercase().contains("epyc") {
+                                            "Rackmount / Server".to_string()
+                                        } else if !snap.gpus.is_empty() {
+                                            "Desktop Workstation".to_string()
+                                        } else {
+                                            "Desktop / Compact PC".to_string()
+                                        };
+                                        let vrm_str = if snap.cpu_tdp_watts.is_some() {
+                                            "RAPL Digital Regulation".to_string()
+                                        } else {
+                                            "Active Digital PMIC".to_string()
+                                        };
                                         let chips = [
-                                            ("Mains Standard", "230V / 115V Pure Sine".to_string(), Color32::from_rgb(241, 245, 249)),
-                                            ("Topology Type", "Rackmount / Server PSU".to_string(), Color32::from_rgb(241, 245, 249)),
-                                            ("Thermal Envelope", format!("{:.1} °C", temp_val), Color32::from_rgb(203, 213, 225)),
-                                            ("DC Converter", "Active VRM Bypass".to_string(), Color32::from_rgb(203, 213, 225)),
+                                            ("Mains Standard", "230V / 115V AC Pure Sine".to_string(), Color32::from_rgb(241, 245, 249)),
+                                            ("Chassis Topology", topology_str, Color32::from_rgb(241, 245, 249)),
+                                            ("Thermal Margin", format!("{:.1} °C Headroom", (95.0 - temp_val).max(0.0)), Color32::from_rgb(203, 213, 225)),
+                                            ("Power Regulation", vrm_str, Color32::from_rgb(203, 213, 225)),
                                         ];
                                         for (i, (title, val, val_col)) in chips.into_iter().enumerate() {
                                             Frame::none()
                                                 .fill(Color32::from_rgb(10, 15, 29))
-                                                .rounding(Rounding::same(4.0))
+                                                .rounding(Rounding::same(6.0))
                                                 .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                                                 .show(&mut cols[i], |ui| {
                                                     ui.set_width(ui.available_width());
                                                     ui.label(RichText::new(title).size(8.0).monospace().color(p.text_muted));
-                                                    ui.add_space(1.0);
+                                                    ui.add_space(2.0);
                                                     ui.label(RichText::new(val).size(9.5).monospace().strong().color(val_col));
                                                 });
                                         }
@@ -15763,8 +16464,8 @@ impl LauncherApp {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         ui.label(RichText::new(crate::lucide::BATTERY).size(12.0).color(Color32::from_rgb(56, 189, 248)));
                                         let bat_name = bat.map(|b| b.name.as_str()).unwrap_or("BAT1");
-                                        let bat_mfg = bat.map(|b| b.manufacturer.trim()).filter(|s| !s.is_empty()).unwrap_or(if is_remote { "OEM" } else { "COMPAL" });
-                                        let bat_model = bat.map(|b| b.model_name.trim()).filter(|s| !s.is_empty()).unwrap_or(if is_remote { "Standard Pack" } else { "PABAS0241231" });
+                                        let bat_mfg = bat.map(|b| b.manufacturer.trim()).filter(|s| !s.is_empty()).unwrap_or(if is_remote { "OEM Pack" } else { "COMPAL" });
+                                        let bat_model = bat.map(|b| b.model_name.trim()).filter(|s| !s.is_empty()).unwrap_or(if is_remote { "Lithium-Ion Pack" } else { "PABAS0241231" });
                                         let bat_hdr = format!("PRIMARY CELL TELEMETRY // {} ({} {})", bat_name, bat_mfg, bat_model);
                                         ui.label(RichText::new(bat_hdr).size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
@@ -15786,16 +16487,37 @@ impl LauncherApp {
 
                                     ui.add_space(10.0);
 
-                                    // 3 Metric Cards in row
+                                    // 3 Metric Cards in row (Equal Height Synced)
+                                    let card_height_id = ui.make_persistent_id("power_top_metric_cards_h");
+                                    let target_card_h: f32 = ui.data(|d| d.get_temp::<f32>(card_height_id)).unwrap_or(118.0).max(118.0);
+                                    let mut observed_max_inner_h: f32 = 98.0;
+                                    let needed_inner_h = (target_card_h - 20.0).max(98.0);
+
+                                    let render_card_meta_row = |ui: &mut egui::Ui, label: &str, val: &str, val_col: Color32| {
+                                        ui.horizontal(|ui| {
+                                            let avail = ui.available_width();
+                                            let left_w = (avail * 0.40).clamp(28.0, 55.0);
+                                            let right_w = (avail - left_w - 4.0).max(10.0);
+                                            ui.allocate_ui_with_layout(egui::vec2(left_w, 14.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                ui.add(egui::Label::new(RichText::new(label).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184))).truncate());
+                                            });
+                                            ui.allocate_ui_with_layout(egui::vec2(right_w, 14.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.add(egui::Label::new(RichText::new(val).size(8.5).monospace().strong().color(val_col)).truncate());
+                                            });
+                                        });
+                                    };
+
                                     ui.columns(3, |cols| {
                                         // Card 1: State of Charge
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 15, 29))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                            .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(6.0))
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[0], |ui| {
                                                 ui.set_width(ui.available_width());
+                                                let content_start_y = ui.cursor().min.y;
+
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::BATTERY_CHARGING).size(11.0).color(Color32::from_rgb(56, 189, 248)));
@@ -15813,27 +16535,33 @@ impl LauncherApp {
                                                 let fill_w = bar_r.width() * (bat_pct / 100.0).clamp(0.05, 1.0);
                                                 ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
                                                 ui.add_space(8.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Delivery Mode").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        let delivery_str = if ac_online {
-                                                            if bat_pct >= 99.0 { "Mains Bypass" } else { "AC Charging" }
-                                                        } else {
-                                                            "Discharging"
-                                                        };
-                                                        ui.label(RichText::new(delivery_str).size(8.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
-                                                    });
-                                                });
+
+                                                let delivery_str = if ac_online {
+                                                    if bat_pct >= 99.0 { "Mains Bypass" } else { "AC Charging" }
+                                                } else {
+                                                    "Discharging"
+                                                };
+                                                render_card_meta_row(ui, "Mode", delivery_str, Color32::from_rgb(203, 213, 225));
+                                                ui.add_space(3.0);
+                                                render_card_meta_row(ui, "Time", &est_time_str, Color32::from_rgb(56, 189, 248));
+
+                                                let inner_h = ui.cursor().min.y - content_start_y;
+                                                observed_max_inner_h = observed_max_inner_h.max(inner_h);
+                                                if inner_h < needed_inner_h {
+                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
+                                                }
                                             });
 
                                         // Card 2: Remaining vs Design
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 15, 29))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                            .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(6.0))
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[1], |ui| {
                                                 ui.set_width(ui.available_width());
+                                                let content_start_y = ui.cursor().min.y;
+
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(Color32::from_rgb(56, 189, 248)));
@@ -15851,22 +16579,29 @@ impl LauncherApp {
                                                 let cap_ratio = if full_wh > 0.0 { (remaining_wh / full_wh).clamp(0.05, 1.0) } else { 1.0 };
                                                 ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * cap_ratio, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
                                                 ui.add_space(8.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Relative Health").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new(format!("{:.1}%", bat_health)).size(8.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
-                                                    });
-                                                });
+
+                                                let design_wh = bat.and_then(|b| b.energy_design_wh).unwrap_or(full_wh);
+                                                render_card_meta_row(ui, "Health", &format!("{:.1}%", bat_health), Color32::from_rgb(203, 213, 225));
+                                                ui.add_space(3.0);
+                                                render_card_meta_row(ui, "Design", &format!("{:.1} Wh", design_wh), Color32::from_rgb(148, 163, 184));
+
+                                                let inner_h = ui.cursor().min.y - content_start_y;
+                                                observed_max_inner_h = observed_max_inner_h.max(inner_h);
+                                                if inner_h < needed_inner_h {
+                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
+                                                }
                                             });
 
                                         // Card 3: Lifecycle Endurance
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 15, 29))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                            .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(6.0))
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[2], |ui| {
                                                 ui.set_width(ui.available_width());
+                                                let content_start_y = ui.cursor().min.y;
+
                                                 let cycles_val = bat.and_then(|b| b.cycle_count).unwrap_or(0);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
@@ -15890,15 +16625,22 @@ impl LauncherApp {
                                                 let cycle_ratio = ((cycles_val as f32) / 1000.0).clamp(0.04, 1.0);
                                                 ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * cycle_ratio, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
                                                 ui.add_space(8.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Rated Lifespan").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        let life_label = if cycles_val == 0 { "1000 (New)" } else { "1000 Total" };
-                                                        ui.label(RichText::new(life_label).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                    });
-                                                });
+
+                                                let life_label = if cycles_val == 0 { "1000 (New)" } else { "1000 Total" };
+                                                let cond_label = if cycles_val == 0 { "Optimal" } else if cycles_val < 300 { "Good" } else { "Normal" };
+                                                render_card_meta_row(ui, "Lifespan", life_label, Color32::from_rgb(203, 213, 225));
+                                                ui.add_space(3.0);
+                                                render_card_meta_row(ui, "Condition", cond_label, Color32::from_rgb(148, 163, 184));
+
+                                                let inner_h = ui.cursor().min.y - content_start_y;
+                                                observed_max_inner_h = observed_max_inner_h.max(inner_h);
+                                                if inner_h < needed_inner_h {
+                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
+                                                }
                                             });
                                     });
+
+                                    ui.data_mut(|d| d.insert_temp(card_height_id, observed_max_inner_h + 20.0));
 
                                     ui.add_space(12.0);
 
@@ -15973,14 +16715,31 @@ impl LauncherApp {
 
                                 // 3 Presets in row
                                 ui.columns(3, |cols| {
-                                    let presets = [
-                                        ("Quiet / Eco", "Continuous PL1 Cap (6W)", "powersave", 0),
-                                        ("Balanced", "Optimized Dynamic (12W)", "schedutil", 1),
-                                        ("Turbo Boost", "Peak Burst TDP (18W)", "performance", 2),
+                                    let quiet_desc = if profile.quiet_pl1_watts.fract() == 0.0 {
+                                        format!("Continuous PL1 Cap ({:.0}W)", profile.quiet_pl1_watts)
+                                    } else {
+                                        format!("Continuous PL1 Cap ({:.1}W)", profile.quiet_pl1_watts)
+                                    };
+                                    let balanced_desc = if profile.balanced_pl1_watts.fract() == 0.0 {
+                                        format!("Optimized Dynamic ({:.0}W)", profile.balanced_pl1_watts)
+                                    } else {
+                                        format!("Optimized Dynamic ({:.1}W)", profile.balanced_pl1_watts)
+                                    };
+                                    let turbo_desc = if profile.turbo_pl2_watts.fract() == 0.0 {
+                                        format!("Peak Burst TDP ({:.0}W)", profile.turbo_pl2_watts)
+                                    } else {
+                                        format!("Peak Burst TDP ({:.1}W)", profile.turbo_pl2_watts)
+                                    };
+
+                                    let presets: [(&str, String, &str, usize); 3] = [
+                                        ("Quiet / Eco", quiet_desc, "powersave", 0),
+                                        ("Balanced", balanced_desc, "schedutil", 1),
+                                        ("Turbo Boost", turbo_desc, "performance", 2),
                                     ];
-                                    for &(name, desc, gov_name, idx) in &presets {
-                                        let is_sel = self.power_preset == idx;
-                                        let border = if is_sel { Stroke::new(1.2_f32, Color32::from_rgb(56, 189, 248)) } else { Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)) };
+                                    for (name, desc, gov_name, idx) in &presets {
+                                        let idx = *idx;
+                                        let is_sel = active_preset_idx == idx;
+                                        let border = if is_sel { Stroke::new(1.2_f32, Color32::from_rgb(56, 189, 248)) } else { Stroke::NONE };
                                         let bg = if is_sel { Color32::from_rgba_unmultiplied(56, 189, 248, 18) } else { Color32::from_rgb(10, 15, 29) };
 
                                         let frame_resp = Frame::none()
@@ -15992,17 +16751,17 @@ impl LauncherApp {
                                                 ui.set_width(ui.available_width());
                                                 ui.horizontal(|ui| {
                                                     let title_col = if is_sel { Color32::from_rgb(241, 245, 249) } else { Color32::from_rgb(203, 213, 225) };
-                                                    ui.label(RichText::new(name).size(11.0).strong().color(title_col));
+                                                    ui.label(RichText::new(*name).size(11.0).strong().color(title_col));
 
                                                     if is_sel {
                                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                             Frame::none()
-                                                                .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 30))
-                                                                .rounding(Rounding::same(3.0))
-                                                                .inner_margin(egui::Margin::symmetric(5.0, 1.5))
-                                                                .show(ui, |ui| {
-                                                                    ui.label(RichText::new("ACTIVE").size(7.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                                                });
+                                                                 .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 30))
+                                                                 .rounding(Rounding::same(3.0))
+                                                                 .inner_margin(egui::Margin::symmetric(5.0, 1.5))
+                                                                 .show(ui, |ui| {
+                                                                     ui.label(RichText::new("ACTIVE").size(7.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                                                 });
                                                         });
                                                     }
                                                 });
@@ -16016,33 +16775,32 @@ impl LauncherApp {
                                                     .show(ui, |ui| {
                                                         ui.horizontal(|ui| {
                                                             ui.label(RichText::new("GOV:").size(8.0).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                                            ui.label(RichText::new(gov_name).size(9.0).monospace().strong().color(if is_sel { Color32::from_rgb(241, 245, 249) } else { Color32::from_rgb(203, 213, 225) }));
+                                                            ui.label(RichText::new(*gov_name).size(9.0).monospace().strong().color(if is_sel { Color32::from_rgb(241, 245, 249) } else { Color32::from_rgb(203, 213, 225) }));
                                                         });
                                                     });
                                             });
 
                                         if frame_resp.response.interact(egui::Sense::click()).clicked() {
                                             self.power_preset = idx;
-                                            let target_gov = crate::power::preset_to_governor(idx);
                                             if let Some(hid) = host_id {
                                                 if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
                                                     let host_name = host.name.clone();
-                                                    let target_gov_str = target_gov.to_string();
+                                                    let cmd_str = crate::power::build_remote_preset_command(idx, &profile);
                                                     std::thread::spawn(move || {
-                                                        let cmd_str = format!("echo {} | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true", target_gov_str);
                                                         let mut cmd = crate::remote::build_ssh_command(&host, &cmd_str);
                                                         let _ = cmd.output();
                                                     });
-                                                    self.power_status_msg = Some((format!("Applied governor '{}' to remote host {}", target_gov, host_name), false, Instant::now()));
+                                                    self.power_status_msg = Some((format!("Applied preset to remote host {}", host_name), false, Instant::now()));
                                                 }
                                             } else {
-                                                match crate::power::apply_governor(target_gov) {
+                                                match crate::power::apply_thermal_power_preset(idx, &profile) {
                                                     Ok(msg) => self.power_status_msg = Some((msg, false, Instant::now())),
                                                     Err(err) => self.power_status_msg = Some((err, true, Instant::now())),
                                                 }
                                             }
                                         }
                                     }
+
                                 });
                             });
                     });
@@ -16073,15 +16831,13 @@ impl LauncherApp {
                                 // Realtime live telemetry calculation for components and total draw
                                 let disk_mb_s = ((snap.total_disk_read_rate_bps + snap.total_disk_write_rate_bps) / (1024.0 * 1024.0)) as f32;
                                 let net_mb_s = ((snap.total_rx_rate_bps + snap.total_tx_rate_bps) / (1024.0 * 1024.0)) as f32;
-                                let cpu_load = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
                                 let mem_ratio = (snap.mem_usage_pct / 100.0).clamp(0.0, 1.0);
-                                let gpu_load = snap.gpus.iter().filter_map(|g| g.load_pct).next().unwrap_or(0.0);
 
                                 let is_discharging = !ac_online || bat.map(|b| b.status.eq_ignore_ascii_case("discharging")).unwrap_or(false);
                                 let is_charging = ac_online && bat.map(|b| b.status.eq_ignore_ascii_case("charging")).unwrap_or(false);
 
-                                let (badge_str, badge_col) = if is_remote && !has_battery {
-                                    ("Direct PSU Line".to_string(), Color32::from_rgb(148, 163, 184))
+                                let (badge_str, badge_col) = if !has_battery {
+                                    ("Direct PSU Line".to_string(), Color32::from_rgb(56, 189, 248))
                                 } else if is_discharging {
                                     ("Battery active".to_string(), Color32::from_rgb(245, 158, 11))
                                 } else if is_charging {
@@ -16090,81 +16846,136 @@ impl LauncherApp {
                                     ("Bypass active".to_string(), Color32::from_rgb(56, 189, 248))
                                 };
 
-                                let (watts_val, components): (f32, [(&'static str, f32, f32); 4]) = if is_remote {
-                                    let raw_cpu = snap.cpu_power_watts.unwrap_or_else(|| {
-                                        let tdp = snap.cpu_tdp_watts.unwrap_or(65.0);
-                                        let idle = (tdp * 0.15).clamp(8.0, 25.0);
-                                        idle + (tdp - idle) * (0.35 * cpu_load + 0.65 * cpu_load.powf(1.35))
-                                    });
-                                    let raw_storage = (4.0 + (disk_mb_s * 0.12)).clamp(4.0, 35.0);
-                                    let raw_net = (3.0 + (net_mb_s * 0.15)).clamp(3.0, 25.0);
-                                    let raw_mb = (10.0 + mem_ratio * 12.0).clamp(10.0, 40.0);
-                                    let total = raw_cpu + raw_storage + raw_net + raw_mb;
-
-                                    (
-                                        total,
-                                        [
-                                            ("CPU Package & Cores", raw_cpu, snap.cpu_tdp_watts.unwrap_or(150.0).max(raw_cpu * 1.25)),
-                                            ("Storage Subsystem (NVMe/SAS)", raw_storage, 40.0),
-                                            ("Network PHY & Transceivers", raw_net, 30.0),
-                                            ("Motherboard Chipset & RAM", raw_mb, 45.0),
-                                        ],
-                                    )
+                                // GPU telemetry
+                                let (raw_gpu, gpu_cap) = if !snap.gpus.is_empty() {
+                                    let mut total_g_w = 0.0_f32;
+                                    let mut total_g_cap = 0.0_f32;
+                                    for g in &snap.gpus {
+                                        let limit = g.power_limit_watts.unwrap_or(if is_remote { 75.0 } else { 35.0 });
+                                        let g_load = (g.load_pct.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0);
+                                        let w = g.power_watts.unwrap_or_else(|| {
+                                            (limit * 0.08).max(0.5) + (limit * 0.92) * g_load
+                                        });
+                                        total_g_w += w;
+                                        total_g_cap += limit.max(w * 1.25);
+                                    }
+                                    (total_g_w, total_g_cap.max(total_g_w * 1.25))
                                 } else {
-                                    let tdp = snap.cpu_tdp_watts.unwrap_or(15.0);
-                                    let raw_cpu = snap.cpu_power_watts.unwrap_or_else(|| {
-                                        let idle = (tdp * 0.15).clamp(1.5, 6.0);
-                                        idle + (tdp - idle) * (0.35 * cpu_load + 0.65 * cpu_load.powf(1.35))
-                                    });
+                                    let g_tdp = (profile.nominal_watts * 0.30).clamp(3.0, 35.0);
+                                    let g_load = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
+                                    let igpu_w = (g_tdp * 0.06).max(0.3) + (g_tdp * 0.40) * (g_load * 0.5);
+                                    (igpu_w, g_tdp)
+                                };
 
-                                    let gpu_tdp = if snap.gpus.is_empty() {
-                                        tdp * 0.35
+                                // Storage subsystem
+                                let (num_rotational, num_ssd) = {
+                                    let mut rot = 0;
+                                    let mut ssd = 0;
+                                    for d in &snap.physical_disks {
+                                        if d.is_ssd { ssd += 1; } else { rot += 1; }
+                                    }
+                                    if rot == 0 && ssd == 0 {
+                                        if snap.disks.is_empty() { (0, 1) } else { (0, snap.disks.len()) }
                                     } else {
-                                        snap.gpus[0].power_limit_watts.unwrap_or(35.0)
-                                    };
-                                    let raw_gpu = snap.gpus.iter().filter_map(|g| g.power_watts).next().unwrap_or_else(|| {
-                                        (gpu_tdp * 0.08).max(0.3) + (gpu_tdp * 0.92) * (gpu_load / 100.0)
-                                    });
+                                        (rot, ssd)
+                                    }
+                                };
+                                let hdd_draw = (num_rotational as f32 * 2.2) + (disk_mb_s * 0.10).clamp(0.0, 8.0);
+                                let ssd_draw = (num_ssd.max(1) as f32 * 0.5) + (disk_mb_s * 0.04).clamp(0.0, 4.0);
+                                let raw_storage = (hdd_draw + ssd_draw).clamp(0.5, 50.0);
+                                let storage_cap = (num_rotational as f32 * 7.0 + num_ssd as f32 * 3.5).clamp(5.0, 60.0);
 
-                                    let br = read_backlight_brightness_ratio().unwrap_or(0.40);
-                                    let raw_display = if has_battery {
-                                        1.0 + br * 2.8 // Panel logic 1.0W + LED backlight 0 - 2.8W
-                                    } else {
-                                        0.8 // External monitor HDMI/DP buffer
-                                    };
+                                // Motherboard chipset & memory
+                                let mem_gb = (snap.mem_total_bytes as f32 / (1024.0 * 1024.0 * 1024.0)).max(4.0);
+                                let ram_draw = (mem_gb / 8.0) * (0.35 + mem_ratio * 0.55);
+                                let chipset_draw = if has_battery { 1.0 } else if num_cores >= 16 { 5.0 } else { 2.2 };
+                                let raw_mb = (chipset_draw + ram_draw).clamp(1.2, 35.0);
+                                let mb_cap = (chipset_draw * 2.0 + (mem_gb / 8.0) * 1.8).clamp(6.0, 40.0);
 
-                                    let raw_mb = (1.2 + mem_ratio * 0.6 + (disk_mb_s * 0.05).clamp(0.0, 1.8)).clamp(1.0, 6.0);
+                                // Network PHY & bus
+                                let raw_net = (0.4 + (net_mb_s * 0.06)).clamp(0.4, 20.0);
+                                let net_cap = 15.0_f32;
+
+                                // USB & Peripherals
+                                let (base_usb_w, usb_device_count) = snap.power.usb_power_watts.unwrap_or((0.45, 0));
+                                let usb_cap = (usb_device_count as f32 * 4.5 + 5.0).clamp(8.0, 30.0);
+
+                                // CPU cap
+                                let cpu_cap = profile.turbo_pl2_watts.max(raw_cpu * 1.25);
+
+                                let (watts_val, components): (f32, Vec<(&'static str, f32, f32)>) = if has_battery {
+                                    let br = snap.power.backlight_ratio.unwrap_or(0.40);
+                                    let raw_display = 1.0 + br * 2.8;
+                                    let disp_cap = 6.0_f32;
+                                    let raw_kbd_lights = snap.power.kbd_lights_watts.unwrap_or(0.25);
+                                    let kbd_cap = 4.0_f32;
 
                                     let bat_power = snap.power.total_power_watts.filter(|&w| w > 0.1);
 
-                                    let (final_watts, c_cpu, c_gpu, c_disp, c_mb) = if is_discharging && bat_power.is_some() {
+                                    let (final_watts, c_cpu, c_gpu, c_disp, c_storage, c_usb, c_kbd_lights, c_mb) = if is_discharging && bat_power.is_some() {
                                         let total = bat_power.unwrap();
-                                        let sum_raw = (raw_cpu + raw_gpu + raw_display + raw_mb).max(0.1);
-                                        let scale = total / sum_raw;
-                                        (total, raw_cpu * scale, raw_gpu * scale, raw_display * scale, raw_mb * scale)
+                                        let base_internal = raw_cpu + raw_gpu + raw_display + raw_storage + raw_kbd_lights + raw_mb + base_usb_w;
+                                        let c_usb_raw = if total > base_internal {
+                                            base_usb_w.max(total - base_internal)
+                                        } else {
+                                            base_usb_w
+                                        };
+                                        let non_cpu_sum = (raw_display + raw_storage + c_usb_raw + raw_kbd_lights + raw_mb).max(0.1);
+                                        let target_non_cpu = (total - raw_cpu - raw_gpu).max(0.1);
+                                        let scale = (target_non_cpu / non_cpu_sum).clamp(0.4, 1.8);
+
+                                        (
+                                            total,
+                                            raw_cpu,
+                                            raw_gpu,
+                                            raw_display * scale,
+                                            raw_storage * scale,
+                                            c_usb_raw * scale,
+                                            raw_kbd_lights * scale,
+                                            raw_mb * scale,
+                                        )
                                     } else if is_charging && bat_power.is_some() {
-                                        let sys_draw = raw_cpu + raw_gpu + raw_display + raw_mb;
+                                        let sys_draw = raw_cpu + raw_gpu + raw_display + raw_storage + base_usb_w + raw_kbd_lights + raw_mb;
                                         let total = sys_draw + bat_power.unwrap();
-                                        (total, raw_cpu, raw_gpu, raw_display, raw_mb)
+                                        (total, raw_cpu, raw_gpu, raw_display, raw_storage, base_usb_w, raw_kbd_lights, raw_mb)
                                     } else {
-                                        let total = (raw_cpu + raw_gpu + raw_display + raw_mb).max(2.5);
-                                        (total, raw_cpu, raw_gpu, raw_display, raw_mb)
+                                        let total = (raw_cpu + raw_gpu + raw_display + raw_storage + base_usb_w + raw_kbd_lights + raw_mb).max(2.5);
+                                        (total, raw_cpu, raw_gpu, raw_display, raw_storage, base_usb_w, raw_kbd_lights, raw_mb)
                                     };
 
-                                    let cpu_cap = tdp.max(c_cpu * 1.25);
-                                    let gpu_cap = (tdp * 0.6).max(c_gpu * 1.5).max(4.0);
-                                    let disp_cap = 6.0_f32;
-                                    let mb_cap = 8.0_f32;
+                                    let mut comps = vec![
+                                        ("CPU Package (PL0/1)", c_cpu, cpu_cap),
+                                    ];
+                                    if !snap.gpus.is_empty() {
+                                        comps.push(("Graphics Subsystem (GPU)", c_gpu, gpu_cap));
+                                    } else {
+                                        comps.push(("Integrated GPU (iGPU)", c_gpu, gpu_cap));
+                                    }
+                                    comps.push(("eDP Panel & Backlight", c_disp, disp_cap));
+                                    comps.push(("Drives & Storage (HDD/NVMe)", c_storage, storage_cap));
+                                    comps.push(("USB Ports & Peripherals", c_usb, usb_cap));
+                                    comps.push(("Keyboard & System Lights", c_kbd_lights, kbd_cap));
+                                    comps.push(("Motherboard Logic & RAM", c_mb, mb_cap));
 
-                                    (
-                                        final_watts,
-                                        [
-                                            ("CPU Package (PL0/1)", c_cpu, cpu_cap),
-                                            ("Integrated GPU", c_gpu, gpu_cap),
-                                            ("eDP Panel & Backlight", c_disp, disp_cap),
-                                            ("Motherboard Logic / NVMe", c_mb, mb_cap),
-                                        ],
-                                    )
+                                    (final_watts, comps)
+                                } else {
+                                    let fan_draw = ((snap.cpu_temp.unwrap_or(35.0) - 30.0) / 40.0).clamp(0.0, 1.0) * 5.0 + 1.2;
+                                    let fan_cap = 15.0_f32;
+                                    let total = raw_cpu + (if !snap.gpus.is_empty() { raw_gpu } else { 0.0 }) + raw_storage + raw_net + raw_mb + base_usb_w + fan_draw;
+
+                                    let mut comps = vec![
+                                        ("CPU Package & Cores", raw_cpu, cpu_cap),
+                                    ];
+                                    if !snap.gpus.is_empty() {
+                                        comps.push(("Graphics Subsystem (GPU)", raw_gpu, gpu_cap));
+                                    }
+                                    comps.push(("Storage Subsystem (HDD/NVMe)", raw_storage, storage_cap));
+                                    comps.push(("Network PHY & Interface", raw_net, net_cap));
+                                    comps.push(("Motherboard Logic & RAM", raw_mb, mb_cap));
+                                    comps.push(("Chassis Cooling & Fans", fan_draw, fan_cap));
+                                    comps.push(("USB & System Peripherals", base_usb_w, usb_cap));
+
+                                    (total, comps)
                                 };
 
                                 ui.horizontal(|ui| {
@@ -16195,7 +17006,7 @@ impl LauncherApp {
                                 ui.add_space(10.0);
 
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("COMPONENT LOAD ALLOCATION").size(8.0).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                    ui.label(RichText::new("LOAD ALLOCATION").size(8.0).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.label(RichText::new("ESTIMATED").size(7.5).monospace().color(Color32::from_rgb(71, 85, 105)));
                                     });
@@ -16214,7 +17025,7 @@ impl LauncherApp {
                                     ui.painter().rect_filled(br, Rounding::same(2.0), Color32::from_rgb(14, 20, 36));
                                     let fill_w = br.width() * (c_watts / c_max).clamp(0.04, 1.0);
                                     ui.painter().rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(fill_w, br.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
-                                    ui.add_space(5.0);
+                                    ui.add_space(3.0);
                                 }
                             });
                     });
@@ -16222,8 +17033,8 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 3. Bottom Card: Conservation & Longevity Circuit (Local) or Server AC Power Policy (Remote)
-                if is_remote && !has_battery {
+                // 3. Bottom Card: Conservation & Longevity Circuit (Battery) or Platform Governance (AC Continuous)
+                if !has_battery {
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
@@ -16233,22 +17044,24 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 ui.label(RichText::new(crate::lucide::SLIDERS).size(12.0).color(Color32::from_rgb(56, 189, 248)));
-                                ui.vertical(|ui| {
-                                    ui.label(RichText::new("Server AC Power Policy & Infrastructure Resilience").size(12.5).strong().color(p.text_primary));
-                                    ui.label(RichText::new("Host AC recovery firmware policies, power capping & ASPM bus power states").size(9.0).monospace().color(p.text_muted));
-                                });
+                                let card_title = if is_remote {
+                                    format!("PLATFORM POWER & THERMAL GOVERNANCE • HOST '{}'", host_id.unwrap_or("REMOTE"))
+                                } else {
+                                    "PLATFORM POWER & THERMAL GOVERNANCE".to_string()
+                                };
+                                ui.label(RichText::new(card_title).size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()
                                         .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 40)))
+                                        .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 3.0))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 ui.label(RichText::new(crate::lucide::SHIELD).size(10.0).color(Color32::from_rgb(56, 189, 248)));
-                                                ui.label(RichText::new("ALWAYS-ON HIGH AVAILABILITY").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                                ui.label(RichText::new("CONTINUOUS AC OPERATION").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                             });
                                         });
                                 });
@@ -16256,96 +17069,132 @@ impl LauncherApp {
 
                             ui.add_space(10.0);
 
-                            // 3 Columns
+                            let gov_card_height_id = ui.make_persistent_id("platform_power_card_h");
+                            let target_gov_h: f32 = ui.data(|d| d.get_temp::<f32>(gov_card_height_id)).unwrap_or(84.0);
+                            let mut observed_gov_max_inner_h: f32 = 64.0;
+                            let needed_gov_inner_h = (target_gov_h - 20.0).max(64.0);
+
+                            let render_gov_meta_row = |ui: &mut egui::Ui, label: &str, val: &str, val_col: Color32| {
+                                ui.horizontal(|ui| {
+                                    let avail = ui.available_width();
+                                    let left_w = (avail * 0.45).clamp(30.0, 80.0);
+                                    let right_w = (avail - left_w - 4.0).max(10.0);
+                                    ui.allocate_ui_with_layout(egui::vec2(left_w, 14.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                        ui.add(egui::Label::new(RichText::new(label).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184))).truncate());
+                                    });
+                                    ui.allocate_ui_with_layout(egui::vec2(right_w, 14.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.add(egui::Label::new(RichText::new(val).size(8.5).monospace().strong().color(val_col)).truncate());
+                                    });
+                                });
+                            };
+
                             ui.columns(3, |cols| {
-                                // Col 1: AC Power Loss Recovery
+                                // Col 1: Delivery & Governor
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 15, 29))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                    .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                     .show(&mut cols[0], |ui| {
                                         ui.set_width(ui.available_width());
-                                        ui.set_min_height(108.0);
-                                        ui.label(RichText::new("AC Power Loss Recovery").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                        ui.add_space(4.0);
-                                        ui.label(RichText::new("Firmware resumes system state automatically upon AC grid restoration after outage.").size(8.5).color(p.text_muted));
+                                        let content_start_y = ui.cursor().min.y;
+                                        ui.label(RichText::new("Delivery & Governor").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                         ui.add_space(8.0);
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(14, 20, 36))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("BIOS / IPMI Policy:").size(8.5).monospace().color(p.text_muted));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new("Always Power On").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                                    });
-                                                });
-                                            });
+                                        render_gov_meta_row(ui, "Feed", "AC Grid Mains", Color32::from_rgb(241, 245, 249));
+                                        ui.add_space(3.0);
+                                        render_gov_meta_row(ui, "Governor", &active_gov, Color32::from_rgb(56, 189, 248));
+                                        ui.add_space(3.0);
+                                        let clk_str = format!("{} MHz", snap.cpu_frequency_mhz);
+                                        render_gov_meta_row(ui, "Clock", &clk_str, Color32::from_rgb(203, 213, 225));
+
+                                        let inner_h = ui.cursor().min.y - content_start_y;
+                                        observed_gov_max_inner_h = observed_gov_max_inner_h.max(inner_h);
+                                        if inner_h < needed_gov_inner_h {
+                                            ui.allocate_space(egui::vec2(ui.available_width(), needed_gov_inner_h - inner_h));
+                                        }
                                     });
 
-                                // Col 2: PCIe ASPM & C-States
+                                // Col 2: Thermal & TDP Limits
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 15, 29))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                    .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                     .show(&mut cols[1], |ui| {
                                         ui.set_width(ui.available_width());
-                                        ui.set_min_height(108.0);
-                                        ui.label(RichText::new("PCIe ASPM & C-State Governance").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                        ui.add_space(4.0);
-                                        ui.label(RichText::new("Dynamically modulates idle PCIe lanes and core sleep states to minimize power drain.").size(8.5).color(p.text_muted));
+                                        let content_start_y = ui.cursor().min.y;
+                                        ui.label(RichText::new("Thermal & TDP Limits").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                         ui.add_space(8.0);
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(14, 20, 36))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Active State:").size(8.5).monospace().color(p.text_muted));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new("Autonomous C6 Sleep Active").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                                    });
-                                                });
-                                            });
+                                        let pl1_str = format!("{:.0} W", profile.balanced_pl1_watts);
+                                        render_gov_meta_row(ui, "PL1 Limit", &pl1_str, Color32::from_rgb(203, 213, 225));
+                                        ui.add_space(3.0);
+                                        let pl2_str = format!("{:.0} W", profile.turbo_pl2_watts);
+                                        render_gov_meta_row(ui, "PL2 Burst", &pl2_str, Color32::from_rgb(56, 189, 248));
+                                        ui.add_space(3.0);
+                                        let temp_c = snap.cpu_temp.unwrap_or(36.0);
+                                        let hr_str = format!("{:.1} °C Headroom", (95.0 - temp_c).max(0.0));
+                                        render_gov_meta_row(ui, "Headroom", &hr_str, Color32::from_rgb(241, 245, 249));
+
+                                        let inner_h = ui.cursor().min.y - content_start_y;
+                                        observed_gov_max_inner_h = observed_gov_max_inner_h.max(inner_h);
+                                        if inner_h < needed_gov_inner_h {
+                                            ui.allocate_space(egui::vec2(ui.available_width(), needed_gov_inner_h - inner_h));
+                                        }
                                     });
 
-                                // Col 3: UPS & Emergency Standby
+                                // Col 3: Hardware Topology
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 15, 29))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                    .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                     .show(&mut cols[2], |ui| {
                                         ui.set_width(ui.available_width());
-                                        ui.set_min_height(108.0);
-                                        ui.label(RichText::new("UPS / Remote Power Delivery").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                        ui.add_space(4.0);
-                                        ui.label(RichText::new("Compatible with Network UPS Tools (NUT) and IPMI alerts for graceful shutdown.").size(8.5).color(p.text_muted));
+                                        let content_start_y = ui.cursor().min.y;
+                                        ui.label(RichText::new("Hardware Topology").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                         ui.add_space(8.0);
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(14, 20, 36))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 8)))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Power Line:").size(8.5).monospace().color(p.text_muted));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new("Direct Grid 230V/115V").size(8.5).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
-                                                    });
-                                                });
-                                            });
+                                        let cpu_topo = format!("{} Physical Cores", num_cores);
+                                        render_gov_meta_row(ui, "CPU Topology", &cpu_topo, Color32::from_rgb(203, 213, 225));
+                                        ui.add_space(3.0);
+                                        let gpu_topo = if !snap.gpus.is_empty() {
+                                            format!("{} GPU(s) Active", snap.gpus.len())
+                                        } else {
+                                            "Integrated Logic".to_string()
+                                        };
+                                        render_gov_meta_row(ui, "Graphics", &gpu_topo, Color32::from_rgb(56, 189, 248));
+                                        ui.add_space(3.0);
+                                        let disk_cnt = snap.physical_disks.len().max(snap.disks.len()).max(1);
+                                        let disk_topo = format!("{} Storage Drive(s)", disk_cnt);
+                                        render_gov_meta_row(ui, "Storage", &disk_topo, Color32::from_rgb(241, 245, 249));
+
+                                        let inner_h = ui.cursor().min.y - content_start_y;
+                                        observed_gov_max_inner_h = observed_gov_max_inner_h.max(inner_h);
+                                        if inner_h < needed_gov_inner_h {
+                                            ui.allocate_space(egui::vec2(ui.available_width(), needed_gov_inner_h - inner_h));
+                                        }
                                     });
                             });
+
+                            ui.data_mut(|d| d.insert_temp(gov_card_height_id, observed_gov_max_inner_h + 20.0));
                         });
                 } else {
+                    if is_remote {
+                        if ui.ctx().dragged_id().is_none() {
+                            if let Some(limit) = snap.power.charge_limit {
+                                if limit < 100 {
+                                    self.power_conservation = true;
+                                    self.power_ceiling = limit as f32;
+                                } else {
+                                    self.power_conservation = false;
+                                    self.power_ceiling = 100.0;
+                                }
+                            }
+                        }
+                    }
+
                     Frame::none()
                         .fill(p.bg_card)
+                        .stroke(Stroke::NONE)
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                         .show(ui, |ui| {
@@ -16353,19 +17202,19 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 ui.label(RichText::new(crate::lucide::SLIDERS).size(12.0).color(Color32::from_rgb(56, 189, 248)));
-                          
+                                ui.label(RichText::new("BATTERY CONSERVATION & CHARGE GOVERNANCE").size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()
                                         .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 18))
-                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 40)))
+                                        .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 3.0))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 ui.label(RichText::new(crate::lucide::SHIELD).size(10.0).color(Color32::from_rgb(56, 189, 248)));
-                                                ui.label(RichText::new("LONGEVITY PROTECTION ACTIVE").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                                ui.label(RichText::new("PROTECTION ACTIVE").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                             });
                                         });
                                 });
@@ -16375,28 +17224,29 @@ impl LauncherApp {
 
                             // 3 Equal-Sized Conservation Circuit Cards
                             let card_height_id = ui.make_persistent_id("conservation_circuit_card_h");
-                            let target_card_h: f32 = ui.data(|d| d.get_temp::<f32>(card_height_id)).unwrap_or(124.0);
-                            let mut observed_max_inner_h: f32 = 104.0;
-                            let needed_inner_h = (target_card_h - 20.0).max(104.0);
+                            let target_card_h: f32 = ui.data(|d| d.get_temp::<f32>(card_height_id)).unwrap_or(84.0);
+                            let mut observed_max_inner_h: f32 = 64.0;
+                            let needed_inner_h = (target_card_h - 20.0).max(64.0);
 
                             ui.columns(3, |cols| {
                                 // Col 1: Conservation Threshold
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 15, 29))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                    .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                     .show(&mut cols[0], |ui| {
                                         ui.set_width(ui.available_width());
                                         let content_start_y = ui.cursor().min.y;
+                                        let mut cons_changed = false;
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new("Conservation Threshold").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                render_custom_toggle_switch(ui, &mut self.power_conservation);
+                                                if render_custom_toggle_switch(ui, &mut self.power_conservation) {
+                                                    cons_changed = true;
+                                                }
                                             });
                                         });
-                                        ui.add_space(4.0);
-                                        ui.label(RichText::new("Cuts off AC charging at peak threshold to prevent cell wear while docked.").size(8.5).color(p.text_muted));
                                         ui.add_space(8.0);
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new("Max Capacity Ceiling").size(8.5).monospace().color(p.text_muted));
@@ -16404,30 +17254,41 @@ impl LauncherApp {
                                                 ui.label(RichText::new(format!("{:.0}%", self.power_ceiling)).size(9.5).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
                                             });
                                         });
-                                        ui.add_space(3.0);
+                                        ui.add_space(4.0);
                                         let (bar_r, bar_resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 6.0), egui::Sense::click_and_drag());
+                                        let prev_ceiling = self.power_ceiling;
                                         if bar_resp.dragged() || bar_resp.clicked() {
                                             if let Some(pos) = bar_resp.interact_pointer_pos() {
-                                                let ratio = ((pos.x - bar_r.left()) / bar_r.width()).clamp(0.5, 1.0);
+                                                let ratio = ((pos.x - bar_r.left()) / bar_r.width()).clamp(0.5, 0.95);
                                                 self.power_ceiling = (ratio * 100.0).round();
+                                            }
+                                        }
+                                        if (bar_resp.drag_stopped() || (bar_resp.clicked() && (prev_ceiling - self.power_ceiling).abs() >= 1.0)) && self.power_conservation {
+                                            cons_changed = true;
+                                        }
+                                        if cons_changed {
+                                            let enabled = self.power_conservation;
+                                            let ceiling = self.power_ceiling as u32;
+                                            if let Some(hid) = host_id {
+                                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                                    let host_name = host.name.clone();
+                                                    let cmd_str = crate::power::build_remote_power_command("conservation", enabled, ceiling);
+                                                    std::thread::spawn(move || {
+                                                        let mut cmd = crate::remote::build_ssh_command(&host, &cmd_str);
+                                                        let _ = cmd.output();
+                                                    });
+                                                    self.power_status_msg = Some((format!("Applied conservation threshold ({:.0}%) to remote host {}", ceiling, host_name), false, Instant::now()));
+                                                }
+                                            } else {
+                                                match crate::power::apply_charge_conservation(enabled, ceiling) {
+                                                    Ok(msg) => self.power_status_msg = Some((msg, false, Instant::now())),
+                                                    Err(err) => self.power_status_msg = Some((err, true, Instant::now())),
+                                                }
                                             }
                                         }
                                         ui.painter().rect_filled(bar_r, Rounding::same(3.0), Color32::from_rgb(14, 20, 36));
                                         let fill_w = bar_r.width() * (self.power_ceiling / 100.0).clamp(0.1, 1.0);
                                         ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(3.0), Color32::from_rgb(56, 189, 248));
-                                        ui.add_space(4.0);
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("50% MIN").size(7.5).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.label(RichText::new("95% MAX").size(7.5).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                                ui.add_space(6.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 3.0;
-                                                    ui.label(RichText::new("●").size(6.0).color(Color32::from_rgb(56, 189, 248)));
-                                                    ui.label(RichText::new("80% OPTIMAL").size(7.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
-                                                });
-                                            });
-                                        });
 
                                         let inner_h = ui.cursor().min.y - content_start_y;
                                         observed_max_inner_h = observed_max_inner_h.max(inner_h);
@@ -16439,23 +17300,43 @@ impl LauncherApp {
                                 // Col 2: Rapid Charge Rate
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 15, 29))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                    .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                     .show(&mut cols[1], |ui| {
                                         ui.set_width(ui.available_width());
                                         let content_start_y = ui.cursor().min.y;
+                                        let mut rapid_changed = false;
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new("Rapid Charge Rate").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                render_custom_toggle_switch(ui, &mut self.power_rapid_charge);
+                                                if render_custom_toggle_switch(ui, &mut self.power_rapid_charge) {
+                                                    rapid_changed = true;
+                                                }
                                             });
                                         });
-                                        ui.add_space(4.0);
-                                        ui.label(RichText::new("High-amperage ramp to reach 80% capacity within 45 minutes. Increased thermal load.").size(8.5).color(p.text_muted));
+                                        if rapid_changed {
+                                            let enabled = self.power_rapid_charge;
+                                            if let Some(hid) = host_id {
+                                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                                    let host_name = host.name.clone();
+                                                    let cmd_str = crate::power::build_remote_power_command("rapid_charge", enabled, 0);
+                                                    std::thread::spawn(move || {
+                                                        let mut cmd = crate::remote::build_ssh_command(&host, &cmd_str);
+                                                        let _ = cmd.output();
+                                                    });
+                                                    self.power_status_msg = Some((format!("Applied rapid charge setting to remote host {}", host_name), false, Instant::now()));
+                                                }
+                                            } else {
+                                                match crate::power::apply_rapid_charge(enabled) {
+                                                    Ok(msg) => self.power_status_msg = Some((msg, false, Instant::now())),
+                                                    Err(err) => self.power_status_msg = Some((err, true, Instant::now())),
+                                                }
+                                            }
+                                        }
                                         ui.add_space(8.0);
                                         ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Charge Delivery Rate").size(8.5).monospace().color(p.text_muted));
+                                            ui.label(RichText::new("Delivery Rate").size(8.5).monospace().color(p.text_muted));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                 let rate_text = if self.power_rapid_charge {
                                                     "65W EXPRESS"
@@ -16465,7 +17346,7 @@ impl LauncherApp {
                                                 ui.label(RichText::new(rate_text).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                             });
                                         });
-                                        ui.add_space(3.0);
+                                        ui.add_space(4.0);
                                         let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 6.0), egui::Sense::hover());
                                         ui.painter().rect_filled(bar_r, Rounding::same(3.0), Color32::from_rgb(14, 20, 36));
                                         let (fill_pct, bar_color) = if self.power_rapid_charge {
@@ -16475,25 +17356,6 @@ impl LauncherApp {
                                         };
                                         let fill_w = bar_r.width() * fill_pct;
                                         ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(3.0), bar_color);
-                                        ui.add_space(4.0);
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("STANDARD").size(7.5).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.label(RichText::new("THERMAL SAFEGUARD").size(7.5).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                                ui.add_space(6.0);
-                                                let tag_dot = if self.power_rapid_charge { Color32::from_rgb(251, 146, 60) } else { Color32::from_rgb(56, 189, 248) };
-                                                let status_tag = if self.power_rapid_charge {
-                                                    "RAPID ACTIVE"
-                                                } else {
-                                                    "BYPASS BALANCED"
-                                                };
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 3.0;
-                                                    ui.label(RichText::new("●").size(6.0).color(tag_dot));
-                                                    ui.label(RichText::new(status_tag).size(7.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
-                                                });
-                                            });
-                                        });
 
                                         let inner_h = ui.cursor().min.y - content_start_y;
                                         observed_max_inner_h = observed_max_inner_h.max(inner_h);
@@ -16505,23 +17367,43 @@ impl LauncherApp {
                                 // Col 3: USB Always-On Standby
                                 Frame::none()
                                     .fill(Color32::from_rgb(10, 15, 29))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 10)))
+                                    .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(egui::Margin::symmetric(10.0, 10.0))
                                     .show(&mut cols[2], |ui| {
                                         ui.set_width(ui.available_width());
                                         let content_start_y = ui.cursor().min.y;
+                                        let mut usb_changed = false;
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new("USB Always-On Standby").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                render_custom_toggle_switch(ui, &mut self.power_usb_always_on);
+                                                if render_custom_toggle_switch(ui, &mut self.power_usb_always_on) {
+                                                    usb_changed = true;
+                                                }
                                             });
                                         });
-                                        ui.add_space(4.0);
-                                        ui.label(RichText::new("Permits Type-C and Type-A downstream ports to charge external devices when suspended.").size(8.5).color(p.text_muted));
+                                        if usb_changed {
+                                            let enabled = self.power_usb_always_on;
+                                            if let Some(hid) = host_id {
+                                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                                    let host_name = host.name.clone();
+                                                    let cmd_str = crate::power::build_remote_power_command("usb_always_on", enabled, 0);
+                                                    std::thread::spawn(move || {
+                                                        let mut cmd = crate::remote::build_ssh_command(&host, &cmd_str);
+                                                        let _ = cmd.output();
+                                                    });
+                                                    self.power_status_msg = Some((format!("Applied USB standby setting to remote host {}", host_name), false, Instant::now()));
+                                                }
+                                            } else {
+                                                match crate::power::apply_usb_always_on(enabled) {
+                                                    Ok(msg) => self.power_status_msg = Some((msg, false, Instant::now())),
+                                                    Err(err) => self.power_status_msg = Some((err, true, Instant::now())),
+                                                }
+                                            }
+                                        }
                                         ui.add_space(8.0);
                                         ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Bus Port Cap").size(8.5).monospace().color(p.text_muted));
+                                            ui.label(RichText::new("Port Capability").size(8.5).monospace().color(p.text_muted));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                 let cap_text = if self.power_usb_always_on {
                                                     "5.0V @ 1.5A (7.5W)"
@@ -16531,7 +17413,7 @@ impl LauncherApp {
                                                 ui.label(RichText::new(cap_text).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                             });
                                         });
-                                        ui.add_space(3.0);
+                                        ui.add_space(4.0);
                                         let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 6.0), egui::Sense::hover());
                                         ui.painter().rect_filled(bar_r, Rounding::same(3.0), Color32::from_rgb(14, 20, 36));
                                         let (fill_pct, bar_color) = if self.power_usb_always_on {
@@ -16543,24 +17425,6 @@ impl LauncherApp {
                                         if fill_w > 0.0 {
                                             ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(3.0), bar_color);
                                         }
-                                        ui.add_space(4.0);
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("LOW POWER").size(7.5).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.label(RichText::new("PORT PROTECT").size(7.5).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                                ui.add_space(6.0);
-                                                let (status_tag, dot_col) = if self.power_usb_always_on {
-                                                    ("7.5W FAST CAP", Color32::from_rgb(56, 189, 248))
-                                                } else {
-                                                    ("STANDBY OFF", Color32::from_rgb(100, 116, 139))
-                                                };
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 3.0;
-                                                    ui.label(RichText::new("●").size(6.0).color(dot_col));
-                                                    ui.label(RichText::new(status_tag).size(7.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
-                                                });
-                                            });
-                                        });
 
                                         let inner_h = ui.cursor().min.y - content_start_y;
                                         observed_max_inner_h = observed_max_inner_h.max(inner_h);
@@ -16569,6 +17433,7 @@ impl LauncherApp {
                                         }
                                     });
                             });
+
 
                             ui.data_mut(|d| d.insert_temp(card_height_id, observed_max_inner_h + 20.0));
                         });
@@ -17704,8 +18569,9 @@ impl LauncherApp {
                 let ram_card_name = if is_remote { "SYSTEM RAM" } else { "SODIMM RAM" };
                 let storage_card_name = if is_remote { "STORAGE DRIVE" } else { "NVME M.2 SSD" };
 
+                let cpu_tj = snap.cpu_tjunction_max.unwrap_or(95.0);
                 let sensor_cards = [
-                    ("CPU PACKAGE", cpu_temp, 95.0_f32, "+1.8°C / min", Color32::from_rgb(56, 189, 248)),
+                    ("CPU PACKAGE", cpu_temp, cpu_tj, "+1.8°C / min", Color32::from_rgb(56, 189, 248)),
                     (second_card_name, second_card_temp, second_card_limit, "STEADY", Color32::from_rgb(96, 165, 250)),
                     (ram_card_name, ram_temp, 75.0_f32, "STEADY", Color32::from_rgb(56, 189, 248)),
                     (storage_card_name, nvme_temp, 75.0_f32, "STEADY", Color32::from_rgb(96, 165, 250)),
@@ -18078,30 +18944,34 @@ impl LauncherApp {
                             draw_interactive_fan_curve(ui, 135.0, cpu_temp, cpu_fan_pct);
 
                             ui.add_space(8.0);
-                            ui.horizontal_wrapped(|ui| {
-                                ui.spacing_mut().item_spacing.x = 8.0;
-                                let node_chips = if !has_active_fans {
+                            ui.columns(4, |cols| {
+                                let node_chips: [(&str, Color32, &str); 4] = if !has_active_fans {
                                     [
-                                        ("P1: 30°C → Ambient", Color32::from_rgb(203, 213, 225)),
-                                        ("P2: 50°C → Nominal", Color32::from_rgb(203, 213, 225)),
-                                        ("P3: 75°C → Warm", Color32::from_rgb(203, 213, 225)),
-                                        ("P4: 90°C → Throttle (CRIT)", Color32::from_rgb(248, 113, 113)),
+                                        ("P1: 30°C → Ambient", Color32::from_rgb(203, 213, 225), "P1 Node: 30°C (Ambient baseline)"),
+                                        ("P2: 50°C → Nominal", Color32::from_rgb(203, 213, 225), "P2 Node: 50°C (Nominal operating temp)"),
+                                        ("P3: 75°C → Warm", Color32::from_rgb(203, 213, 225), "P3 Node: 75°C (Warm sustained workload)"),
+                                        ("P4: 90°C → Throttle", Color32::from_rgb(248, 113, 113), "P4 Node: 90°C (Thermal throttle threshold - CRIT)"),
                                     ]
                                 } else {
                                     [
-                                        ("P1: 30°C → 20%", Color32::from_rgb(203, 213, 225)),
-                                        ("P2: 50°C → 45%", Color32::from_rgb(203, 213, 225)),
-                                        ("P3: 75°C → 75%", Color32::from_rgb(203, 213, 225)),
-                                        ("P4: 90°C → 100% (CRIT)", Color32::from_rgb(248, 113, 113)),
+                                        ("P1: 30°C → 20%", Color32::from_rgb(203, 213, 225), "P1 Node: 30°C → 20% minimum duty cycle"),
+                                        ("P2: 50°C → 45%", Color32::from_rgb(203, 213, 225), "P2 Node: 50°C → 45% nominal duty cycle"),
+                                        ("P3: 75°C → 75%", Color32::from_rgb(203, 213, 225), "P3 Node: 75°C → 75% high load duty cycle"),
+                                        ("P4: 90°C → 100%", Color32::from_rgb(248, 113, 113), "P4 Node: 90°C → 100% maximum duty cycle (CRIT)"),
                                     ]
                                 };
-                                for (lbl, col) in node_chips {
+                                for (i, (lbl, col, tip)) in node_chips.iter().enumerate() {
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 14, 22))
+                                        .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(7.0, 3.0))
-                                        .show(ui, |ui| {
-                                            ui.label(RichText::new(lbl).size(8.5).monospace().strong().color(col));
+                                        .inner_margin(egui::Margin::symmetric(4.0, 3.5))
+                                        .show(&mut cols[i], |ui| {
+                                            ui.set_width(ui.available_width());
+                                            ui.centered_and_justified(|ui| {
+                                                ui.add(egui::Label::new(RichText::new(*lbl).size(8.0).monospace().strong().color(*col)).truncate())
+                                                    .on_hover_text(*tip);
+                                            });
                                         });
                                 }
                             });
@@ -18119,10 +18989,8 @@ impl LauncherApp {
                         ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                let matrix_title = if is_remote { "Remote Host Thermal Sensors Matrix" } else { "Thermal Sensor Telemetry Matrix (8 Thermistors)" };
-                                let matrix_sub = if is_remote { "Direct Linux hwmon sysfs endpoints and ACPI thermal zones" } else { "Direct EC-read thermistor channels across mainboard topology" };
+                                let matrix_title = if is_remote { "Thermal Sensors Matrix" } else { "Thermal Sensors Matrix" };
                                 ui.label(RichText::new(matrix_title).size(12.5).strong().color(p.text_primary));
-                                ui.label(RichText::new(matrix_sub).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -19706,6 +20574,16 @@ impl LauncherApp {
                                 self.active_group_filter = grp.clone();
                             }
                         }
+
+                        ui.add_space(6.0);
+                        let btn_add = egui::Button::new(RichText::new(format!("{} Add", crate::lucide::PLUS)).size(11.0).strong().color(p.accent_text))
+                            .fill(p.accent)
+                            .rounding(Rounding::same(999.0))
+                            .stroke(Stroke::NONE);
+
+                        if ui.add(btn_add).on_hover_text("Configure and add a new server service").clicked() {
+                            self.add_edit_modal.open_new();
+                        }
                     });
                 });
 
@@ -19726,6 +20604,60 @@ impl LauncherApp {
                                 .or_default()
                                 .push(idx);
                         }
+                    }
+
+                    if groups.is_empty() {
+                        ui.add_space(20.0);
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .stroke(Stroke::new(1.0_f32, p.border))
+                            .rounding(Rounding::same(12.0))
+                            .inner_margin(egui::Margin::symmetric(24.0, 24.0))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.vertical_centered(|ui| {
+                                    // Icon circle with cyan accent glow
+                                    Frame::none()
+                                        .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 22))
+                                        .rounding(Rounding::same(999.0))
+                                        .inner_margin(egui::Margin::same(14.0))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new(crate::lucide::SERVER).size(28.0).color(Color32::from_rgb(56, 189, 248)));
+                                        });
+
+                                    ui.add_space(12.0);
+
+                                    if self.services.is_empty() {
+                                        ui.label(RichText::new("Server Orchestration").size(16.0).strong().color(p.text_primary));
+                                        ui.add_space(6.0);
+                                        ui.label(
+                                            RichText::new("Servers let you launch, monitor, and manage backend services, web applications, and database processes directly from Server Launcher. Track real-time resource telemetry, stream terminal logs, configure automatic restarts, and control port bindings in one place.")
+                                                .size(11.5)
+                                                .color(p.text_muted)
+                                        );
+                                        ui.add_space(16.0);
+                                        let add_first_btn = egui::Button::new(RichText::new(format!("{} Add Your First Server", crate::lucide::PLUS)).size(12.0).strong().color(p.accent_text))
+                                            .fill(p.accent)
+                                            .rounding(Rounding::same(999.0))
+                                            .min_size(egui::vec2(170.0, 32.0));
+                                        if ui.add(add_first_btn).clicked() {
+                                            self.add_edit_modal.open_new();
+                                        }
+                                    } else {
+                                        ui.label(RichText::new(format!("No Servers in Group '{}'", self.active_group_filter)).size(15.0).strong().color(p.text_primary));
+                                        ui.add_space(6.0);
+                                        ui.label(RichText::new("No configured server matches the selected group filter.").size(11.5).color(p.text_muted));
+                                        ui.add_space(14.0);
+                                        let reset_btn = egui::Button::new(RichText::new("Show All Servers").size(12.0).color(p.text_primary))
+                                            .fill(p.bg_button)
+                                            .rounding(Rounding::same(999.0))
+                                            .min_size(egui::vec2(130.0, 28.0));
+                                        if ui.add(reset_btn).clicked() {
+                                            self.active_group_filter = "All".to_string();
+                                        }
+                                    }
+                                });
+                            });
                     }
 
                     let mut to_start = None;

@@ -7,6 +7,9 @@
 pub const FONT_NAME: &str = "lucide";
 pub const FONT_BYTES: &[u8] = include_bytes!("../assets/fonts/lucide.ttf");
 
+pub const SANS_FONT_NAME: &str = "inter_sans";
+pub const SANS_FONT_BYTES: &[u8] = include_bytes!("../assets/fonts/inter_sans.ttf");
+
 // Sidebar and Navigation Icons
 pub const SERVER: &str = "\u{e153}"; // server
 pub const SERVERS: &str = "\u{e153}"; // server
@@ -35,7 +38,8 @@ pub const ZAP: &str = "\u{e1b4}"; // zap
 pub const ACTIVITY: &str = "\u{e038}"; // activity
 pub const FLAME: &str = "\u{e0d2}"; // flame
 pub const GAUGE: &str = "\u{e1bf}"; // gauge
-pub const WIFI: &str = "\u{e15b}"; // wifi
+pub const WIFI: &str = "\u{e1ae}"; // wifi
+pub const WIFI_OFF: &str = "\u{e1af}"; // wifi-off
 pub const BLUETOOTH: &str = "\u{e05c}"; // bluetooth
 pub const HEADPHONES: &str = "\u{e0f0}"; // headphones
 pub const LAYOUT_GRID: &str = "\u{e101}"; // layout-grid
@@ -107,29 +111,32 @@ pub const CHEVRON_RIGHT: &str = "\u{e06f}"; // chevron-right
 pub const CHEVRON_UP: &str = "\u{e070}"; // chevron-up
 pub const CHEVRON_LEFT: &str = "\u{e06e}"; // chevron-left
 
-/// Configures and installs the Lucide font into egui's FontDefinitions.
+/// Configures and installs macOS-style sans-serif font and Lucide icon fonts into egui's FontDefinitions.
 pub fn setup_lucide_font(ctx: &eframe::egui::Context) {
     let mut fonts = eframe::egui::FontDefinitions::default();
+
+    // 1. Install modern Apple SF Pro / Inter style clean sans-serif typeface
+    fonts.font_data.insert(
+        SANS_FONT_NAME.to_owned(),
+        eframe::egui::FontData::from_static(SANS_FONT_BYTES),
+    );
+
+    // 2. Install Lucide icon glyphs font
     fonts.font_data.insert(
         FONT_NAME.to_owned(),
         eframe::egui::FontData::from_static(FONT_BYTES),
     );
 
-    // Add to Proportional font family so it acts as fallback for icon glyphs in any normal text
-    fonts
+    // Make Inter / macOS sans-serif the primary typeface for all proportional text
+    let prop_family = fonts
         .families
         .entry(eframe::egui::FontFamily::Proportional)
-        .or_default()
-        .push(FONT_NAME.to_owned());
+        .or_default();
+    prop_family.insert(0, SANS_FONT_NAME.to_owned());
+    prop_family.push(FONT_NAME.to_owned());
+    prop_family.push("Hack".to_owned());
 
-    // Also add Hack as fallback for Proportional font family so symbols (bullets, arrows) render reliably
-    fonts
-        .families
-        .entry(eframe::egui::FontFamily::Proportional)
-        .or_default()
-        .push("Hack".to_owned());
-
-    // Add to Monospace font family as well
+    // Add Lucide to Monospace family as well
     fonts
         .families
         .entry(eframe::egui::FontFamily::Monospace)

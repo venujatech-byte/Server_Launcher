@@ -16356,7 +16356,26 @@ impl LauncherApp {
 
                                     ui.add_space(10.0);
 
-                                    // 3 Metric Cards in row
+                                    // 3 Metric Cards in row (Equal Height Synced)
+                                    let card_height_id = ui.make_persistent_id("power_top_metric_cards_h");
+                                    let target_card_h: f32 = ui.data(|d| d.get_temp::<f32>(card_height_id)).unwrap_or(118.0).max(118.0);
+                                    let mut observed_max_inner_h: f32 = 98.0;
+                                    let needed_inner_h = (target_card_h - 20.0).max(98.0);
+
+                                    let render_card_meta_row = |ui: &mut egui::Ui, label: &str, val: &str, val_col: Color32| {
+                                        ui.horizontal(|ui| {
+                                            let avail = ui.available_width();
+                                            let left_w = (avail * 0.40).clamp(28.0, 55.0);
+                                            let right_w = (avail - left_w - 4.0).max(10.0);
+                                            ui.allocate_ui_with_layout(egui::vec2(left_w, 14.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                ui.add(egui::Label::new(RichText::new(label).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184))).truncate());
+                                            });
+                                            ui.allocate_ui_with_layout(egui::vec2(right_w, 14.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.add(egui::Label::new(RichText::new(val).size(8.5).monospace().strong().color(val_col)).truncate());
+                                            });
+                                        });
+                                    };
+
                                     ui.columns(3, |cols| {
                                         // Card 1: State of Charge
                                         Frame::none()
@@ -16366,6 +16385,8 @@ impl LauncherApp {
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[0], |ui| {
                                                 ui.set_width(ui.available_width());
+                                                let content_start_y = ui.cursor().min.y;
+
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::BATTERY_CHARGING).size(11.0).color(Color32::from_rgb(56, 189, 248)));
@@ -16383,24 +16404,21 @@ impl LauncherApp {
                                                 let fill_w = bar_r.width() * (bat_pct / 100.0).clamp(0.05, 1.0);
                                                 ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
                                                 ui.add_space(8.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Delivery Mode").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        let delivery_str = if ac_online {
-                                                            if bat_pct >= 99.0 { "Mains Bypass" } else { "AC Charging" }
-                                                        } else {
-                                                            "Discharging"
-                                                        };
-                                                        ui.label(RichText::new(delivery_str).size(8.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
-                                                    });
-                                                });
-                                                ui.add_space(2.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Estimated Time").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new(&est_time_str).size(8.5).monospace().strong().color(Color32::from_rgb(56, 189, 248)));
-                                                    });
-                                                });
+
+                                                let delivery_str = if ac_online {
+                                                    if bat_pct >= 99.0 { "Mains Bypass" } else { "AC Charging" }
+                                                } else {
+                                                    "Discharging"
+                                                };
+                                                render_card_meta_row(ui, "Mode", delivery_str, Color32::from_rgb(203, 213, 225));
+                                                ui.add_space(3.0);
+                                                render_card_meta_row(ui, "Time", &est_time_str, Color32::from_rgb(56, 189, 248));
+
+                                                let inner_h = ui.cursor().min.y - content_start_y;
+                                                observed_max_inner_h = observed_max_inner_h.max(inner_h);
+                                                if inner_h < needed_inner_h {
+                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
+                                                }
                                             });
 
                                         // Card 2: Remaining vs Design
@@ -16411,6 +16429,8 @@ impl LauncherApp {
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[1], |ui| {
                                                 ui.set_width(ui.available_width());
+                                                let content_start_y = ui.cursor().min.y;
+
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(Color32::from_rgb(56, 189, 248)));
@@ -16428,12 +16448,17 @@ impl LauncherApp {
                                                 let cap_ratio = if full_wh > 0.0 { (remaining_wh / full_wh).clamp(0.05, 1.0) } else { 1.0 };
                                                 ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * cap_ratio, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
                                                 ui.add_space(8.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Relative Health").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(RichText::new(format!("{:.1}%", bat_health)).size(8.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
-                                                    });
-                                                });
+
+                                                let design_wh = bat.and_then(|b| b.energy_design_wh).unwrap_or(full_wh);
+                                                render_card_meta_row(ui, "Health", &format!("{:.1}%", bat_health), Color32::from_rgb(203, 213, 225));
+                                                ui.add_space(3.0);
+                                                render_card_meta_row(ui, "Design", &format!("{:.1} Wh", design_wh), Color32::from_rgb(148, 163, 184));
+
+                                                let inner_h = ui.cursor().min.y - content_start_y;
+                                                observed_max_inner_h = observed_max_inner_h.max(inner_h);
+                                                if inner_h < needed_inner_h {
+                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
+                                                }
                                             });
 
                                         // Card 3: Lifecycle Endurance
@@ -16444,6 +16469,8 @@ impl LauncherApp {
                                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                                             .show(&mut cols[2], |ui| {
                                                 ui.set_width(ui.available_width());
+                                                let content_start_y = ui.cursor().min.y;
+
                                                 let cycles_val = bat.and_then(|b| b.cycle_count).unwrap_or(0);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
@@ -16467,15 +16494,22 @@ impl LauncherApp {
                                                 let cycle_ratio = ((cycles_val as f32) / 1000.0).clamp(0.04, 1.0);
                                                 ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * cycle_ratio, bar_r.height())), Rounding::same(2.0), Color32::from_rgb(56, 189, 248));
                                                 ui.add_space(8.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.label(RichText::new("Rated Lifespan").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        let life_label = if cycles_val == 0 { "1000 (New)" } else { "1000 Total" };
-                                                        ui.label(RichText::new(life_label).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                    });
-                                                });
+
+                                                let life_label = if cycles_val == 0 { "1000 (New)" } else { "1000 Total" };
+                                                let cond_label = if cycles_val == 0 { "Optimal" } else if cycles_val < 300 { "Good" } else { "Normal" };
+                                                render_card_meta_row(ui, "Lifespan", life_label, Color32::from_rgb(203, 213, 225));
+                                                ui.add_space(3.0);
+                                                render_card_meta_row(ui, "Condition", cond_label, Color32::from_rgb(148, 163, 184));
+
+                                                let inner_h = ui.cursor().min.y - content_start_y;
+                                                observed_max_inner_h = observed_max_inner_h.max(inner_h);
+                                                if inner_h < needed_inner_h {
+                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
+                                                }
                                             });
                                     });
+
+                                    ui.data_mut(|d| d.insert_temp(card_height_id, observed_max_inner_h + 20.0));
 
                                     ui.add_space(12.0);
 

@@ -35,6 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use sysinfo::System;
+use chrono::Datelike;
 
 #[derive(Clone, Debug)]
 pub enum SlashAction {
@@ -107,6 +108,7 @@ pub enum WifiAppPeriod {
     Daily,
     Monthly,
     Yearly,
+    Custom,
 }
 
 impl Default for WifiAppPeriod {
@@ -116,27 +118,32 @@ impl Default for WifiAppPeriod {
 }
 
 impl WifiAppPeriod {
+    #[allow(dead_code)]
     pub fn label(&self) -> &'static str {
         match self {
             Self::Daily => "Daily (24h)",
             Self::Monthly => "Monthly (30d)",
             Self::Yearly => "Yearly (365d)",
+            Self::Custom => "Custom Range",
         }
     }
 
+    #[allow(dead_code)]
     pub fn short_label(&self) -> &'static str {
         match self {
             Self::Daily => "Daily",
             Self::Monthly => "Monthly",
             Self::Yearly => "Yearly",
+            Self::Custom => "Custom",
         }
     }
 
-    pub fn multiplier(&self) -> f64 {
+    pub fn multiplier(&self, custom_days: u32) -> f64 {
         match self {
             Self::Daily => 1.0 / 30.0,
             Self::Monthly => 1.0,
             Self::Yearly => 12.0,
+            Self::Custom => (custom_days.max(1) as f64) / 30.0,
         }
     }
 }
@@ -432,9 +439,18 @@ pub struct LauncherApp {
     pub wifi_app_sort: String,
     pub wifi_app_sort_desc: bool,
     pub wifi_app_period: WifiAppPeriod,
+    pub wifi_custom_start_date: (i32, u32, u32),
+    pub wifi_custom_end_date: (i32, u32, u32),
+    pub wifi_date_picker_open: bool,
+    pub wifi_app_requested_update: bool,
+    pub wifi_app_force_refresh: bool,
+    pub wifi_last_update_time: Option<Instant>,
+    pub wifi_cached_raw_apps: Vec<WifiAppNetItem>,
+    pub wifi_cached_custom_dates: ((i32, u32, u32), (i32, u32, u32)),
 
     // Cached telemetry for Wi-Fi Application Network Data Usage (prevents high CPU usage from running every frame)
     pub wifi_cached_app_list: Vec<WifiAppNetItem>,
+    #[allow(dead_code)]
     pub wifi_cached_snap_timestamp: Option<Instant>,
     pub wifi_cached_period: WifiAppPeriod,
     pub wifi_cached_search: String,
@@ -955,6 +971,21 @@ impl LauncherApp {
             wifi_app_sort: "data".to_string(),
             wifi_app_sort_desc: true,
             wifi_app_period: WifiAppPeriod::Monthly,
+            wifi_custom_start_date: {
+                let today = chrono::Local::now().date_naive();
+                let start = today.checked_sub_signed(chrono::Duration::days(29)).unwrap_or(today);
+                (start.year(), start.month(), start.day())
+            },
+            wifi_custom_end_date: {
+                let today = chrono::Local::now().date_naive();
+                (today.year(), today.month(), today.day())
+            },
+            wifi_date_picker_open: false,
+            wifi_app_requested_update: false,
+            wifi_app_force_refresh: false,
+            wifi_last_update_time: None,
+            wifi_cached_raw_apps: Vec::new(),
+            wifi_cached_custom_dates: ((0, 0, 0), (0, 0, 0)),
             wifi_cached_app_list: Vec::new(),
             wifi_cached_snap_timestamp: None,
             wifi_cached_period: WifiAppPeriod::Monthly,
@@ -10346,9 +10377,10 @@ impl LauncherApp {
                 self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_else(|| Arc::new(crate::sensors::SystemSensorsSnapshot::default()))
             } else {
                 if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
-                    let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited) || self.sensors_subtab == SensorsSubTab::Wifi;
+                    let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited) || self.wifi_app_force_refresh;
                     self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
                     self.last_sensors_refresh = Instant::now();
+                    self.wifi_app_force_refresh = false;
                 }
                 Arc::clone(&self.sensors_snapshot)
             };
@@ -10373,9 +10405,10 @@ impl LauncherApp {
                                             self.trigger_remote_sensors_query(host);
                                         }
                                     } else {
-                                        let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited) || self.sensors_subtab == SensorsSubTab::Wifi;
+                                        let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited) || self.wifi_app_force_refresh;
                                         self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
                                         self.last_sensors_refresh = Instant::now();
+                                        self.wifi_app_force_refresh = false;
                                     }
                                 }
 
@@ -10440,13 +10473,19 @@ impl LauncherApp {
 
                             if ui.add(btn).clicked() {
                                 self.sensors_subtab = tab;
-                                if tab == SensorsSubTab::TopApps || tab == SensorsSubTab::Wifi {
-                                    if tab == SensorsSubTab::TopApps {
-                                        self.sensors_top_apps_visited = true;
-                                    }
+                                if tab == SensorsSubTab::TopApps {
+                                    self.sensors_top_apps_visited = true;
                                     if self.selected_machine == "local" && self.sensors_snapshot.top_apps.is_empty() {
                                         self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
                                         self.last_sensors_refresh = Instant::now();
+                                    }
+                                } else if tab == SensorsSubTab::Wifi {
+                                    if self.selected_machine == "local" && (self.sensors_snapshot.top_apps.is_empty() || self.wifi_cached_raw_apps.is_empty()) {
+                                        self.wifi_app_force_refresh = true;
+                                        self.wifi_app_requested_update = true;
+                                        self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
+                                        self.last_sensors_refresh = Instant::now();
+                                        self.wifi_app_force_refresh = false;
                                     }
                                 }
                             }
@@ -10488,9 +10527,10 @@ impl LauncherApp {
             self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_else(|| Arc::new(crate::sensors::SystemSensorsSnapshot::default()))
         } else {
             if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
-                let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited) || self.sensors_subtab == SensorsSubTab::Wifi;
+                let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited) || self.wifi_app_force_refresh;
                 self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
                 self.last_sensors_refresh = Instant::now();
+                self.wifi_app_force_refresh = false;
             }
             Arc::clone(&self.sensors_snapshot)
         };
@@ -14846,14 +14886,21 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
 
-                        // Process and cache application network data usage telemetry
-                        let need_recalc = self.wifi_cached_snap_timestamp != snap.timestamp
-                            || self.wifi_cached_period != self.wifi_app_period
-                            || self.wifi_cached_search != self.wifi_app_search_query
-                            || self.wifi_cached_sort != self.wifi_app_sort
-                            || self.wifi_cached_sort_desc != self.wifi_app_sort_desc;
+                        // Determine if raw application network data should be refreshed
+                        // ONLY refreshed on initial load (if empty) or when user explicitly clicked Update!
+                        let need_raw_update = self.wifi_app_requested_update
+                            || (self.wifi_cached_raw_apps.is_empty() && !snap.top_apps.is_empty());
 
-                        if need_recalc {
+                        // If user opened Wi-Fi tab and top_apps is empty, trigger an initial fetch once
+                        if self.wifi_cached_raw_apps.is_empty() && snap.top_apps.is_empty() && self.selected_machine == "local" && !self.wifi_app_force_refresh {
+                            self.wifi_app_force_refresh = true;
+                            self.wifi_app_requested_update = true;
+                            self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
+                            self.last_sensors_refresh = Instant::now();
+                            self.wifi_app_force_refresh = false;
+                        }
+
+                        if need_raw_update {
                             let mut app_map: std::collections::BTreeMap<String, WifiAppNetItem> = std::collections::BTreeMap::new();
 
                             for proc in &snap.top_apps {
@@ -14881,7 +14928,6 @@ impl LauncherApp {
                             }
 
                             // Correlate with active listening sockets from wifi_snap
-                            // Exact binary/process match prevents port cross-contamination (e.g. avahi-daemon getting sshd's port :22)
                             for sock in &wifi_snap.active_sockets {
                                 let sock_name = sock.process.trim().to_lowercase();
                                 if sock_name.is_empty() || sock_name == "system" || sock_name == "kernel" || sock_name == "unknown" {
@@ -14942,8 +14988,32 @@ impl LauncherApp {
                                 }
                             }
 
-                            let period_mult = self.wifi_app_period.multiplier();
-                            let mut app_list: Vec<WifiAppNetItem> = app_map.into_values().collect();
+                            self.wifi_cached_raw_apps = app_map.into_values().collect();
+                            self.wifi_app_requested_update = false;
+                            self.wifi_last_update_time = Some(Instant::now());
+                        }
+
+                        let (cur_s_date, cur_e_date) = (self.wifi_custom_start_date, self.wifi_custom_end_date);
+                        let cur_custom_dates = (cur_s_date, cur_e_date);
+
+                        let s_opt = chrono::NaiveDate::from_ymd_opt(cur_s_date.0, cur_s_date.1, cur_s_date.2);
+                        let e_opt = chrono::NaiveDate::from_ymd_opt(cur_e_date.0, cur_e_date.1, cur_e_date.2);
+                        let custom_days = match (s_opt, e_opt) {
+                            (Some(s), Some(e)) => (e - s).num_days().max(1) as u32,
+                            _ => 30,
+                        };
+                        let period_mult = self.wifi_app_period.multiplier(custom_days);
+
+                        let need_view_update = need_raw_update
+                            || (self.wifi_cached_app_list.is_empty() && !self.wifi_cached_raw_apps.is_empty())
+                            || self.wifi_cached_period != self.wifi_app_period
+                            || self.wifi_cached_search != self.wifi_app_search_query
+                            || self.wifi_cached_sort != self.wifi_app_sort
+                            || self.wifi_cached_sort_desc != self.wifi_app_sort_desc
+                            || (self.wifi_app_period == WifiAppPeriod::Custom && self.wifi_cached_custom_dates != cur_custom_dates);
+
+                        if need_view_update {
+                            let mut app_list: Vec<WifiAppNetItem> = self.wifi_cached_raw_apps.clone();
 
                             // Filter by search query
                             let search_q = self.wifi_app_search_query.trim().to_lowercase();
@@ -15013,11 +15083,11 @@ impl LauncherApp {
                             let total_visible_rate: f64 = app_list.iter().map(|a| a.rate_bps).sum();
 
                             self.wifi_cached_app_list = app_list;
-                            self.wifi_cached_snap_timestamp = snap.timestamp;
                             self.wifi_cached_period = self.wifi_app_period;
                             self.wifi_cached_search = self.wifi_app_search_query.clone();
                             self.wifi_cached_sort = self.wifi_app_sort.clone();
                             self.wifi_cached_sort_desc = self.wifi_app_sort_desc;
+                            self.wifi_cached_custom_dates = cur_custom_dates;
                             self.wifi_cached_max_data = max_data;
                             self.wifi_cached_total_data = total_visible_data;
                             self.wifi_cached_total_rx = total_visible_rx;
@@ -15025,13 +15095,12 @@ impl LauncherApp {
                             self.wifi_cached_total_rate = total_visible_rate;
                         }
 
-                        let app_list = &self.wifi_cached_app_list;
+                        let app_list = self.wifi_cached_app_list.clone();
                         let max_data = self.wifi_cached_max_data;
                         let total_visible_data = self.wifi_cached_total_data;
                         let total_visible_rx = self.wifi_cached_total_rx;
                         let total_visible_tx = self.wifi_cached_total_tx;
                         let total_visible_rate = self.wifi_cached_total_rate;
-                        let period_mult = self.wifi_app_period.multiplier();
 
                         // Heatmap tint color helper matching Windows 11 Task Manager / Top Apps
                         let get_tm_data_bg = |bytes: u64| -> Color32 {
@@ -15068,7 +15137,20 @@ impl LauncherApp {
                             let avail_w = ui.available_width();
                             let is_narrow = avail_w < 780.0;
 
-                            let render_header_left = |ui: &mut Ui| {
+                            let mut clicked_refresh = false;
+                            let mut toggle_date_picker = false;
+                            let mut clear_search = false;
+
+                            let period_disp = match self.wifi_app_period {
+                                WifiAppPeriod::Daily => "Daily (24h)".to_string(),
+                                WifiAppPeriod::Monthly => "Monthly (30d)".to_string(),
+                                WifiAppPeriod::Yearly => "Yearly (365d)".to_string(),
+                                WifiAppPeriod::Custom => format!("Custom ({}d)", custom_days),
+                            };
+
+                            let date_picker_open = self.wifi_date_picker_open;
+
+                            let render_header_left = |ui: &mut Ui, last_update: Option<Instant>, apps_count: usize| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
                                     ui.label(RichText::new("Application Network Data Usage").size(15.0).strong().color(p.text_primary));
@@ -15078,30 +15160,68 @@ impl LauncherApp {
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(6.0, 2.5))
                                         .show(ui, |ui| {
-                                            ui.label(RichText::new(format!("{} APPS", app_list.len())).size(8.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
+                                            ui.label(RichText::new(format!("{} APPS", apps_count)).size(8.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
                                         });
+
+                                    // Last updated badge
+                                    let update_str = if let Some(last_t) = last_update {
+                                        let el = last_t.elapsed().as_secs();
+                                        if el < 5 {
+                                            "Updated just now".to_string()
+                                        } else if el < 60 {
+                                            format!("Updated {}s ago", el)
+                                        } else {
+                                            format!("Updated {}m ago", el / 60)
+                                        }
+                                    } else {
+                                        "Click Update to refresh".to_string()
+                                    };
+                                    ui.label(RichText::new(update_str).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                 });
                             };
 
-                            let mut clear_search = false;
-
-                            let render_toolbar = |ui: &mut Ui, clear_s: &mut bool, search_str: &mut String, period: &mut WifiAppPeriod| {
+                            let render_toolbar = |ui: &mut Ui,
+                                                  do_refresh: &mut bool,
+                                                  toggle_picker: &mut bool,
+                                                  clear_s: &mut bool,
+                                                  search_str: &mut String,
+                                                  p_label: &str,
+                                                  picker_open: bool| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 6.0;
 
-                                    // Timeframe Dropdown (Daily, Monthly, Yearly)
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 4.0;
-                                        ui.label(RichText::new(crate::lucide::CLOCK).size(10.0).color(Color32::from_rgb(56, 189, 248)));
-                                        egui::ComboBox::from_id_salt("wifi_app_period_combo")
-                                            .selected_text(RichText::new(period.short_label()).size(9.5).monospace().color(Color32::from_rgb(241, 245, 249)))
-                                            .width(76.0)
-                                            .show_ui(ui, |ui| {
-                                                ui.selectable_value(period, WifiAppPeriod::Daily, RichText::new(WifiAppPeriod::Daily.label()).size(9.5).monospace());
-                                                ui.selectable_value(period, WifiAppPeriod::Monthly, RichText::new(WifiAppPeriod::Monthly.label()).size(9.5).monospace());
-                                                ui.selectable_value(period, WifiAppPeriod::Yearly, RichText::new(WifiAppPeriod::Yearly.label()).size(9.5).monospace());
-                                            });
-                                    });
+                                    // Dedicated Update Button
+                                    let update_btn = egui::Button::new(
+                                        RichText::new(format!("{} Update", crate::lucide::REFRESH_CW))
+                                            .size(9.5)
+                                            .monospace()
+                                            .strong()
+                                            .color(Color32::from_rgb(241, 245, 249))
+                                    )
+                                    .fill(Color32::from_rgba_unmultiplied(56, 189, 248, 25))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 90)))
+                                    .rounding(Rounding::same(999.0))
+                                    .min_size(egui::vec2(68.0, 22.0));
+
+                                    if ui.add(update_btn).on_hover_text("Refresh application network telemetry now").clicked() {
+                                        *do_refresh = true;
+                                    }
+
+                                    // Date Picker Button
+                                    let picker_btn = egui::Button::new(
+                                        RichText::new(format!("{} {} ▾", crate::lucide::CLOCK, p_label))
+                                            .size(9.5)
+                                            .monospace()
+                                            .color(if picker_open { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(226, 232, 240) })
+                                    )
+                                    .fill(if picker_open { Color32::from_rgba_unmultiplied(56, 189, 248, 30) } else { Color32::from_rgb(10, 14, 22) })
+                                    .stroke(Stroke::new(1.0_f32, if picker_open { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgba_unmultiplied(255, 255, 255, 14) }))
+                                    .rounding(Rounding::same(999.0))
+                                    .min_size(egui::vec2(90.0, 22.0));
+
+                                    if ui.add(picker_btn).on_hover_text("Select date range or timeframe preset").clicked() {
+                                        *toggle_picker = true;
+                                    }
 
                                     // Search Input Box (styled pill matching Top Apps)
                                     Frame::none()
@@ -15115,7 +15235,7 @@ impl LauncherApp {
                                                 ui.label(RichText::new(crate::lucide::SEARCH).size(11.0).color(Color32::from_rgb(148, 163, 184)));
                                                 let edit = egui::TextEdit::singleline(search_str)
                                                     .hint_text("Search apps or PID...")
-                                                    .desired_width(145.0)
+                                                    .desired_width(135.0)
                                                     .frame(false);
                                                 ui.add(edit);
                                                 if !search_str.is_empty() {
@@ -15130,20 +15250,198 @@ impl LauncherApp {
                             };
 
                             if is_narrow {
-                                render_header_left(ui);
+                                render_header_left(ui, self.wifi_last_update_time, app_list.len());
                                 ui.add_space(6.0);
-                                render_toolbar(ui, &mut clear_search, &mut self.wifi_app_search_query, &mut self.wifi_app_period);
+                                render_toolbar(ui, &mut clicked_refresh, &mut toggle_date_picker, &mut clear_search, &mut self.wifi_app_search_query, &period_disp, date_picker_open);
                             } else {
                                 ui.horizontal(|ui| {
-                                    render_header_left(ui);
+                                    render_header_left(ui, self.wifi_last_update_time, app_list.len());
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        render_toolbar(ui, &mut clear_search, &mut self.wifi_app_search_query, &mut self.wifi_app_period);
+                                        render_toolbar(ui, &mut clicked_refresh, &mut toggle_date_picker, &mut clear_search, &mut self.wifi_app_search_query, &period_disp, date_picker_open);
                                     });
                                 });
                             }
 
                             if clear_search {
                                 self.wifi_app_search_query.clear();
+                            }
+
+                            if toggle_date_picker {
+                                self.wifi_date_picker_open = !self.wifi_date_picker_open;
+                            }
+
+                            if clicked_refresh {
+                                self.wifi_app_requested_update = true;
+                                self.wifi_app_force_refresh = true;
+                                if let Some(hid) = host_id {
+                                    if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
+                                        self.trigger_remote_sensors_query(host);
+                                    }
+                                } else {
+                                    self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
+                                    self.last_sensors_refresh = Instant::now();
+                                    self.wifi_app_force_refresh = false;
+                                }
+                            }
+
+                            // Date Range Picker Dropdown Panel
+                            if self.wifi_date_picker_open {
+                                ui.add_space(6.0);
+                                Frame::none()
+                                    .fill(Color32::from_rgb(12, 17, 26))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(56, 189, 248, 60)))
+                                    .rounding(Rounding::same(8.0))
+                                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                                    .show(ui, |ui| {
+                                        let today = chrono::Local::now().date_naive();
+                                        let cur_year = today.year();
+
+                                        ui.horizontal(|ui| {
+                                            // Left Column: Presets
+                                            ui.vertical(|ui| {
+                                                ui.label(RichText::new("PRESETS").size(9.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                                                ui.add_space(4.0);
+
+                                                let presets: [(&str, i32); 6] = [
+                                                    ("Today", 1),
+                                                    ("Last 7 Days", 7),
+                                                    ("Last 30 Days", 30),
+                                                    ("This Month", 0),
+                                                    ("This Year", -1),
+                                                    ("Yearly (365d)", 365),
+                                                ];
+
+                                                for (name, days_val) in presets {
+                                                    let is_active = match days_val {
+                                                        0 => {
+                                                            self.wifi_app_period == WifiAppPeriod::Custom
+                                                                && self.wifi_custom_start_date == (cur_year, today.month(), 1)
+                                                                && self.wifi_custom_end_date == (cur_year, today.month(), today.day())
+                                                        }
+                                                        -1 => {
+                                                            self.wifi_app_period == WifiAppPeriod::Custom
+                                                                && self.wifi_custom_start_date == (cur_year, 1, 1)
+                                                                && self.wifi_custom_end_date == (cur_year, today.month(), today.day())
+                                                        }
+                                                        1 => self.wifi_app_period == WifiAppPeriod::Daily,
+                                                        30 => self.wifi_app_period == WifiAppPeriod::Monthly,
+                                                        365 => self.wifi_app_period == WifiAppPeriod::Yearly,
+                                                        d => {
+                                                            let s = today.checked_sub_signed(chrono::Duration::days((d - 1) as i64)).unwrap_or(today);
+                                                            self.wifi_app_period == WifiAppPeriod::Custom
+                                                                && self.wifi_custom_start_date == (s.year(), s.month(), s.day())
+                                                                && self.wifi_custom_end_date == (today.year(), today.month(), today.day())
+                                                        }
+                                                    };
+
+                                                    let btn = egui::Button::new(RichText::new(name).size(10.0).color(if is_active { Color32::from_rgb(15, 23, 42) } else { Color32::from_rgb(226, 232, 240) }))
+                                                        .fill(if is_active { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgba_unmultiplied(255, 255, 255, 12) })
+                                                        .rounding(Rounding::same(4.0))
+                                                        .min_size(egui::vec2(100.0, 22.0));
+
+                                                    if ui.add(btn).clicked() {
+                                                        match days_val {
+                                                            0 => {
+                                                                self.wifi_custom_start_date = (cur_year, today.month(), 1);
+                                                                self.wifi_custom_end_date = (cur_year, today.month(), today.day());
+                                                                self.wifi_app_period = WifiAppPeriod::Custom;
+                                                            }
+                                                            -1 => {
+                                                                self.wifi_custom_start_date = (cur_year, 1, 1);
+                                                                self.wifi_custom_end_date = (cur_year, today.month(), today.day());
+                                                                self.wifi_app_period = WifiAppPeriod::Custom;
+                                                            }
+                                                            1 => {
+                                                                self.wifi_custom_start_date = (cur_year, today.month(), today.day());
+                                                                self.wifi_custom_end_date = (cur_year, today.month(), today.day());
+                                                                self.wifi_app_period = WifiAppPeriod::Daily;
+                                                            }
+                                                            30 => {
+                                                                let s = today.checked_sub_signed(chrono::Duration::days(29)).unwrap_or(today);
+                                                                self.wifi_custom_start_date = (s.year(), s.month(), s.day());
+                                                                self.wifi_custom_end_date = (today.year(), today.month(), today.day());
+                                                                self.wifi_app_period = WifiAppPeriod::Monthly;
+                                                            }
+                                                            365 => {
+                                                                let s = today.checked_sub_signed(chrono::Duration::days(364)).unwrap_or(today);
+                                                                self.wifi_custom_start_date = (s.year(), s.month(), s.day());
+                                                                self.wifi_custom_end_date = (today.year(), today.month(), today.day());
+                                                                self.wifi_app_period = WifiAppPeriod::Yearly;
+                                                            }
+                                                            d => {
+                                                                let s = today.checked_sub_signed(chrono::Duration::days((d - 1) as i64)).unwrap_or(today);
+                                                                self.wifi_custom_start_date = (s.year(), s.month(), s.day());
+                                                                self.wifi_custom_end_date = (today.year(), today.month(), today.day());
+                                                                self.wifi_app_period = WifiAppPeriod::Custom;
+                                                            }
+                                                        }
+                                                    }
+                                                    ui.add_space(2.0);
+                                                }
+                                            });
+
+                                            ui.add_space(12.0);
+                                            ui.separator();
+                                            ui.add_space(12.0);
+
+                                            // Right Column: Date Selection inputs
+                                            ui.vertical(|ui| {
+                                                ui.label(RichText::new("CUSTOM DATE RANGE").size(9.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                                                ui.add_space(6.0);
+
+                                                // Start Date
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new("Start Date:").size(10.0).color(Color32::from_rgb(148, 163, 184)).monospace());
+                                                    ui.add(egui::DragValue::new(&mut self.wifi_custom_start_date.0).range(2020..=2035).prefix("Y: ").speed(1));
+                                                    ui.add(egui::DragValue::new(&mut self.wifi_custom_start_date.1).range(1..=12).prefix("M: ").speed(1));
+                                                    ui.add(egui::DragValue::new(&mut self.wifi_custom_start_date.2).range(1..=31).prefix("D: ").speed(1));
+                                                });
+
+                                                ui.add_space(4.0);
+
+                                                // End Date
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new("End Date:  ").size(10.0).color(Color32::from_rgb(148, 163, 184)).monospace());
+                                                    ui.add(egui::DragValue::new(&mut self.wifi_custom_end_date.0).range(2020..=2035).prefix("Y: ").speed(1));
+                                                    ui.add(egui::DragValue::new(&mut self.wifi_custom_end_date.1).range(1..=12).prefix("M: ").speed(1));
+                                                    ui.add(egui::DragValue::new(&mut self.wifi_custom_end_date.2).range(1..=31).prefix("D: ").speed(1));
+                                                });
+
+                                                ui.add_space(6.0);
+
+                                                let s_p = chrono::NaiveDate::from_ymd_opt(self.wifi_custom_start_date.0, self.wifi_custom_start_date.1, self.wifi_custom_start_date.2);
+                                                let e_p = chrono::NaiveDate::from_ymd_opt(self.wifi_custom_end_date.0, self.wifi_custom_end_date.1, self.wifi_custom_end_date.2);
+                                                let p_days = match (s_p, e_p) {
+                                                    (Some(s), Some(e)) => (e - s).num_days().max(1) as u32,
+                                                    _ => 30,
+                                                };
+
+                                                ui.horizontal(|ui| {
+                                                    ui.label(RichText::new(format!("Selected Duration: {} day{}", p_days, if p_days == 1 { "" } else { "s" })).size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                                    ui.label(RichText::new(format!("(Scale: {:.2}x of 30d)", p_days as f64 / 30.0)).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                });
+
+                                                ui.add_space(8.0);
+
+                                                ui.horizontal(|ui| {
+                                                    let apply_btn = egui::Button::new(RichText::new("Apply Range").size(10.0).strong().color(Color32::from_rgb(15, 23, 42)))
+                                                        .fill(Color32::from_rgb(56, 189, 248))
+                                                        .rounding(Rounding::same(4.0));
+                                                    if ui.add(apply_btn).clicked() {
+                                                        self.wifi_app_period = WifiAppPeriod::Custom;
+                                                        self.wifi_date_picker_open = false;
+                                                    }
+
+                                                    let close_btn = egui::Button::new(RichText::new("Close").size(10.0).color(Color32::from_rgb(203, 213, 225)))
+                                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 12))
+                                                        .rounding(Rounding::same(4.0));
+                                                    if ui.add(close_btn).clicked() {
+                                                        self.wifi_date_picker_open = false;
+                                                    }
+                                                });
+                                            });
+                                        });
+                                    });
                             }
 
                             ui.add_space(8.0);
@@ -15158,7 +15456,7 @@ impl LauncherApp {
                                             let empty_msg = if !self.wifi_app_search_query.is_empty() {
                                                 format!("No applications matching '{}'", self.wifi_app_search_query)
                                             } else {
-                                                "No application network telemetry recorded yet".to_string()
+                                                "No application network telemetry recorded yet. Click Update above to fetch.".to_string()
                                             };
                                             ui.label(RichText::new(empty_msg).size(11.0).monospace().color(Color32::from_rgb(203, 213, 225)));
                                             if !self.wifi_app_search_query.is_empty() {
@@ -15177,7 +15475,7 @@ impl LauncherApp {
                                 const COL_TX_W: f32 = 94.0;
                                 const COL_TOT_W: f32 = 148.0;
                                 const COL_RATE_W: f32 = 82.0;
-                                const COL_SPACING: f32 = 14.0;
+                                const COL_SPACING: f32 = 12.0;
 
                                 let total_fixed_w = COL_RX_W + COL_TX_W + COL_TOT_W + COL_RATE_W + 4.0 * COL_SPACING + 24.0;
                                 let col_app_w = (avail_w - total_fixed_w).max(180.0);
@@ -15197,9 +15495,10 @@ impl LauncherApp {
                                 };
 
                                 let total_col_label = match self.wifi_app_period {
-                                    WifiAppPeriod::Daily => "Daily Data",
-                                    WifiAppPeriod::Monthly => "Total Data",
-                                    WifiAppPeriod::Yearly => "Yearly Data",
+                                    WifiAppPeriod::Daily => "Daily Data".to_string(),
+                                    WifiAppPeriod::Monthly => "Total Data".to_string(),
+                                    WifiAppPeriod::Yearly => "Yearly Data".to_string(),
+                                    WifiAppPeriod::Custom => format!("Data ({}d)", custom_days),
                                 };
 
                                 // Dedicated non-collapsing scroll area ensuring full process list is scrollable

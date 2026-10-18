@@ -683,6 +683,21 @@ impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     // ADB DEVICE COCKPIT VIEW: Full Android Management Center
     // ═════════════════════════════════════════════════════════════════════════
+    fn schedule_adb_telemetry(&mut self, serial: &str, ctx: egui::Context) {
+        if !self.adb_telemetry_pending.insert(serial.to_string()) {
+            return;
+        }
+        let serial = serial.to_string();
+        let results = self.adb_telemetry_results.clone();
+        std::thread::spawn(move || {
+            let telemetry = crate::adb::query_telemetry(&serial);
+            if let Ok(mut results) = results.lock() {
+                results.insert(serial, telemetry);
+            }
+            ctx.request_repaint();
+        });
+    }
+
     pub fn render_adb_cockpit_view(&mut self, ctx: &egui::Context, adb_dev: &crate::config::AdbDeviceConfig) {
         let p = self.palette();
 
@@ -697,9 +712,14 @@ impl LauncherApp {
             self.adb_photos.clear();
             self.adb_photo_preview = None;
         }
+        if let Ok(mut results) = self.adb_telemetry_results.lock() {
+            if let Some(telem) = results.remove(&serial) {
+                self.adb_telemetry_cache.insert(serial.clone(), telem);
+                self.adb_telemetry_pending.remove(&serial);
+            }
+        }
         if !self.adb_telemetry_cache.contains_key(&serial) {
-            let telem = crate::adb::query_telemetry(&serial);
-            self.adb_telemetry_cache.insert(serial.clone(), telem);
+            self.schedule_adb_telemetry(&serial, ctx.clone());
         }
         let telem = self.adb_telemetry_cache.get(&serial).cloned().unwrap_or_default();
 
@@ -810,6 +830,22 @@ impl LauncherApp {
 
                     // Right Quick Action Buttons
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let btn_modern = egui::Button::new(RichText::new("✦ Modern Cockpit").size(10.5).strong().color(Color32::WHITE))
+                            .fill(Color32::from_rgb(99, 102, 241))
+                            .rounding(Rounding::same(7.0));
+                        if ui.add(btn_modern).on_hover_text("Open the modern Tauri Android cockpit").clicked() {
+                            match std::env::current_exe() {
+                                Ok(exe) => match std::process::Command::new(exe)
+                                    .arg(format!("--adb-cockpit={serial}"))
+                                    .spawn()
+                                {
+                                    Ok(_) => self.adb_status_msg = Some(("Modern Android Cockpit opened".into(), false, Instant::now())),
+                                    Err(err) => self.adb_status_msg = Some((format!("Could not open cockpit: {err}"), true, Instant::now())),
+                                },
+                                Err(err) => self.adb_status_msg = Some((format!("Could not find app executable: {err}"), true, Instant::now())),
+                            }
+                        }
+
                         // Disconnect button
                         let btn_disc = egui::Button::new(RichText::new(format!("{} Disconnect", crate::lucide::LOG_OUT)).size(10.5).color(p.text_secondary))
                             .fill(p.bg_button)
@@ -847,8 +883,12 @@ impl LauncherApp {
                             .fill(p.bg_button)
                             .rounding(Rounding::same(6.0));
                         if ui.add(btn_ref).on_hover_text("Refresh device telemetry and metrics").clicked() {
-                            let telem = crate::adb::query_telemetry(&serial);
-                            self.adb_telemetry_cache.insert(serial.clone(), telem);
+                            self.adb_telemetry_cache.remove(&serial);
+                            if let Ok(mut results) = self.adb_telemetry_results.lock() {
+                                results.remove(&serial);
+                            }
+                            self.adb_telemetry_pending.remove(&serial);
+                            self.schedule_adb_telemetry(&serial, ui.ctx().clone());
                         }
 
                         // External Shell
@@ -3572,25 +3612,40 @@ impl LauncherApp {
 
                                 for row in dial_keys.chunks(3) {
                                     ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing = egui::vec2(16.0, 0.0);
+                                        ui.spacing_mut().item_spacing = egui::vec2(10.0, 0.0);
                                         for &(num, letters) in row {
-                                            let btn_frame = Frame::none()
-                                                .fill(Color32::from_rgb(22, 24, 35))
-                                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 60)))
-                                                .rounding(Rounding::same(999.0))
-                                                .inner_margin(egui::Margin::symmetric(18.0, 10.0));
-
-                                            let resp = btn_frame.show(ui, |ui| {
-                                                ui.set_min_size(Vec2::new(76.0, 52.0));
-                                                ui.vertical_centered(|ui| {
-                                                    ui.label(RichText::new(num).size(18.0).strong().color(Color32::WHITE));
-                                                    if !letters.is_empty() {
-                                                        ui.label(RichText::new(letters).size(8.5).color(p.text_muted));
-                                                    }
-                                                });
-                                            });
-
-                                            if resp.response.interact(egui::Sense::click()).clicked() {
+                                            let (rect, response) = ui.allocate_exact_size(Vec2::new(76.0, 60.0), egui::Sense::click());
+                                            let fill = if response.is_pointer_button_down_on() {
+                                                Color32::from_rgb(54, 58, 78)
+                                            } else if response.hovered() {
+                                                Color32::from_rgb(39, 43, 61)
+                                            } else {
+                                                Color32::from_rgb(27, 30, 43)
+                                            };
+                                            ui.painter().rect_filled(rect, Rounding::same(14.0), fill);
+                                            ui.painter().rect_stroke(
+                                                rect,
+                                                Rounding::same(14.0),
+                                                Stroke::new(1.0_f32, Color32::from_rgb(48, 53, 73)),
+                                            );
+                                            let center = rect.center();
+                                            ui.painter().text(
+                                                center - egui::vec2(0.0, if letters.is_empty() { 0.0 } else { 7.0 }),
+                                                Align2::CENTER_CENTER,
+                                                num,
+                                                egui::FontId::proportional(19.0),
+                                                Color32::WHITE,
+                                            );
+                                            if !letters.is_empty() {
+                                                ui.painter().text(
+                                                    center + egui::vec2(0.0, 13.0),
+                                                    Align2::CENTER_CENTER,
+                                                    letters,
+                                                    egui::FontId::proportional(8.5),
+                                                    p.text_muted,
+                                                );
+                                            }
+                                            if response.clicked() {
                                                 self.adb_dialer_input.push_str(num);
                                             }
                                         }

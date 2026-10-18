@@ -13,7 +13,7 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
 pub struct AdbDeviceInfo {
     pub serial: String,
     pub state: String, // "device", "offline", "unauthorized", "recovery", "bootloader"
@@ -23,7 +23,7 @@ pub struct AdbDeviceInfo {
     pub transport_id: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
 pub struct AdbDeviceTelemetry {
     pub model: String,
     pub manufacturer: String,

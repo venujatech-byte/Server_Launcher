@@ -4,6 +4,7 @@ mod modals;
 mod remote;
 mod scanner;
 mod service;
+mod tauri_app;
 pub mod adb;
 pub mod autostart;
 pub mod bluetooth;
@@ -171,6 +172,17 @@ X-GNOME-UsesNotifications=true\n",
 pub fn ensure_linux_desktop_integration() {}
 
 fn main() -> eframe::Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(index) = args.iter().position(|arg| arg == "--adb-cockpit" || arg.starts_with("--adb-cockpit=")) {
+        if let Some(serial) = args[index].strip_prefix("--adb-cockpit=") {
+            std::env::set_var("SERVER_LAUNCHER_ADB_SERIAL", serial);
+        } else if let Some(serial) = args.get(index + 1) {
+            std::env::set_var("SERVER_LAUNCHER_ADB_SERIAL", serial);
+        }
+        tauri_app::run();
+        return Ok(());
+    }
+
     #[cfg(target_os = "linux")]
     ensure_linux_desktop_integration();
 

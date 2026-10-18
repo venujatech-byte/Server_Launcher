@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Android Cockpit · Server Launcher</title>
+    <link rel="stylesheet" href="./style.css" />
+    <script defer src="./app.js"></script>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="#overview"><span class="brand-mark">S</span><span><b>Server Launcher</b><small>ANDROID COCKPIT</small></span></a>
+        <div class="device-label">DEVICE</div>
+        <select id="device-select" aria-label="Android device"><option>Searching for devices…</option></select>
+        <div id="connection-state" class="connection"><i></i><span>Connecting to ADB</span></div>
+        <nav id="navigation" aria-label="Device management">
+          <button class="nav-item active" data-tab="overview"><span>⌂</span>Overview</button>
+          <button class="nav-item" data-tab="screen"><span>▣</span>Screen</button>
+          <button class="nav-item" data-tab="messages"><span>▤</span>Messages</button>
+          <button class="nav-item" data-tab="calls"><span>◉</span>Calls</button>
+          <button class="nav-item" data-tab="photos"><span>▧</span>Photos</button>
+          <button class="nav-item" data-tab="notifications"><span>♧</span>Notifications</button>
+          <div class="nav-divider"></div>
+          <button class="nav-item" data-tab="storage"><span>▱</span>Storage</button>
+          <button class="nav-item" data-tab="apps"><span>▦</span>Apps</button>
+          <button class="nav-item" data-tab="clipboard"><span>▣</span>Clipboard</button>
+          <button class="nav-item" data-tab="terminal"><span>›_</span>Terminal</button>
+          <button class="nav-item" data-tab="wireless"><span>⌁</span>Wireless</button>
+          <button class="nav-item" data-tab="firmware"><span>⏻</span>Device controls</button>
+        </nav>
+        <div class="sidebar-footer"><span class="status-dot"></span> Local ADB bridge</div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div><div id="eyebrow" class="eyebrow">DEVICE OVERVIEW</div><h1 id="page-title">Overview</h1></div>
+          <div class="top-actions"><span id="device-model" class="device-chip">No device selected</span><button class="icon-button" id="refresh" title="Refresh current view" aria-label="Refresh">↻</button><button class="button primary" data-action="scrcpy">↗ Open scrcpy</button></div>
+        </header>
+        <section id="content" class="content"><div class="loading-card"><span class="spinner"></span><p>Looking for Android devices…</p></div></section>
+        <div id="toast" class="toast" role="status"></div>
+      </main>
+    </div>
+  </body>
+</html>

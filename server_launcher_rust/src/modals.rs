@@ -1228,7 +1228,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .max_width(ui.available_width())
-                .max_height(ui.available_height() - 55.0)
+                .max_height((ui.available_height() - 55.0).max(100.0))
                 .show(ui, |ui| {
                     ui.set_max_width(ui.available_width());
 

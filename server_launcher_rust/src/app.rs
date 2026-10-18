@@ -3028,7 +3028,7 @@ impl LauncherApp {
                 ui.add_space(6.0);
 
                 // Split layout below: Shrunk Sensors left sidebar (240px) + Right Subtab Page (remaining width)
-                let total_h = ui.available_height();
+                let total_h = ui.available_height().max(100.0);
                 let left_w = 240.0;
 
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
@@ -3056,7 +3056,7 @@ impl LauncherApp {
                 });
             } else {
                 // Split layout: Left panel (width 380px with Tabs on top) + Right panel (Remaining width)
-                let total_h = ui.available_height();
+                let total_h = ui.available_height().max(100.0);
                 ui.horizontal(|ui| {
                     ui.set_height(total_h);
                     ui.set_min_height(total_h);
@@ -4483,7 +4483,7 @@ impl eframe::App for LauncherApp {
                         ui.add_space(6.0);
 
                         // 2. Main split below top row: Shrunk Sensors left sidebar (240px) + Right Subtab Page (remaining width)
-                        let total_h = ui.available_height();
+                        let total_h = ui.available_height().max(100.0);
                         let left_w = 240.0;
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                             ui.set_height(total_h);
@@ -4521,7 +4521,7 @@ impl eframe::App for LauncherApp {
                             });
                         });
                     } else {
-                        let total_h = ui.available_height();
+                        let total_h = ui.available_height().max(100.0);
                         let left_w = 380.0;
                         ui.horizontal(|ui| {
                             ui.set_height(total_h);
@@ -9486,7 +9486,7 @@ impl LauncherApp {
                 ScrollArea::vertical()
                     .id_salt("settings_tab_content_scroll")
                     .auto_shrink([false, false])
-                    .max_height(max_h - 145.0)
+                    .max_height((max_h - 145.0).max(100.0))
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 12.0;
 
@@ -10014,7 +10014,7 @@ impl LauncherApp {
                 crate::modals::render_modal_titlebar(ui, &format!("Properties: {} (PID {})", self.proc_properties_name, self.proc_properties_pid), &mut is_open);
                 ui.add_space(8.0);
 
-                ScrollArea::vertical().max_height(max_h - 100.0).show(ui, |ui| {
+                ScrollArea::vertical().max_height((max_h - 100.0).max(100.0)).show(ui, |ui| {
                     if self.proc_properties_loading {
                         ui.add_space(40.0);
                         ui.vertical_centered(|ui| {
@@ -10275,7 +10275,7 @@ impl LauncherApp {
                         let row_height = 20.0_f32;
                         let total_rows = matching.len();
                         ScrollArea::vertical()
-                            .max_height(max_h - 140.0)
+                            .max_height((max_h - 140.0).max(100.0))
                             .auto_shrink([false, false])
                             .show_rows(ui, row_height, total_rows, |ui, row_range| {
                                 for idx in row_range {
@@ -10443,7 +10443,7 @@ impl LauncherApp {
                         let row_height = 20.0_f32;
                         let total_rows = matching.len();
                         ScrollArea::vertical()
-                            .max_height(max_h - 140.0)
+                            .max_height((max_h - 140.0).max(100.0))
                             .auto_shrink([false, false])
                             .show_rows(ui, row_height, total_rows, |ui, row_range| {
                                 for idx in row_range {
@@ -21851,7 +21851,7 @@ impl LauncherApp {
                 .rounding(Rounding { nw: 0.0, ne: 6.0, sw: 6.0, se: 6.0 })
                 .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                 .show(ui, |ui| {
-                    ui.set_height(ui.available_height());
+                    ui.set_height(ui.available_height().max(100.0));
                     if self.active_tab == "overview" {
                         self.render_overview_content(ui);
                     } else {

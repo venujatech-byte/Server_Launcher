@@ -972,15 +972,19 @@ impl LauncherApp {
                 // ═════════════════════════════════════════════════════════════
                 // PHONE LINK MASTER COCKPIT DECK
                 // ═════════════════════════════════════════════════════════════
-                ui.columns(2, |cols| {
+                let deck_avail_w = ui.available_width();
+                let left_w = 340.0_f32.min(deck_avail_w);
+                let right_w = (deck_avail_w - left_w - 12.0).max(280.0);
+
+                ui.horizontal_top(|ui| {
                     // LEFT COLUMN: Phone Link Hardware Card & Live Notifications Preview
-                    cols[0].set_width(340.0);
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(14.0))
                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
                         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                        .show(&mut cols[0], |ui| {
+                        .show(ui, |ui| {
+                            ui.set_width(left_w);
                             // Phone Hardware Preview Box
                             Frame::none()
                                 .fill(Color32::from_rgb(14, 16, 24))
@@ -1115,24 +1119,30 @@ impl LauncherApp {
                             }
                         });
 
+                    ui.add_space(12.0);
+
                     // RIGHT COLUMN: Quick Communications & Apps Launchpad
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(14.0))
                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
                         .inner_margin(egui::Margin::symmetric(16.0, 14.0))
-                        .show(&mut cols[1], |ui| {
+                        .show(ui, |ui| {
+                            ui.set_width(right_w);
                             ui.label(RichText::new("PHONE LINK QUICK LAUNCHPAD").size(10.0).monospace().strong().color(p.text_muted));
                             ui.add_space(8.0);
 
-                            ui.columns(2, |tiles| {
+                            let half_tile_w = ((right_w - 32.0 - 10.0) * 0.5).max(120.0);
+
+                            ui.horizontal(|ui| {
                                 // Tile 1: Messages (SMS)
                                 Frame::none()
                                     .fill(Color32::from_rgb(18, 20, 30))
                                     .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 60)))
                                     .rounding(Rounding::same(10.0))
                                     .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                                    .show(&mut tiles[0], |ui| {
+                                    .show(ui, |ui| {
+                                        ui.set_width(half_tile_w);
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new(crate::lucide::MESSAGE_SQUARE).size(18.0).color(Color32::from_rgb(56, 189, 248)));
                                             ui.vertical(|ui| {
@@ -1149,13 +1159,16 @@ impl LauncherApp {
                                         }
                                     });
 
+                                ui.add_space(10.0);
+
                                 // Tile 2: Calls & Dialpad
                                 Frame::none()
                                     .fill(Color32::from_rgb(18, 20, 30))
                                     .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 60)))
                                     .rounding(Rounding::same(10.0))
                                     .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                                    .show(&mut tiles[1], |ui| {
+                                    .show(ui, |ui| {
+                                        ui.set_width(half_tile_w);
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new(crate::lucide::PHONE).size(18.0).color(Color32::from_rgb(74, 222, 128)));
                                             ui.vertical(|ui| {
@@ -1173,16 +1186,17 @@ impl LauncherApp {
                                     });
                             });
 
-                            ui.add_space(8.0);
+                            ui.add_space(10.0);
 
-                            ui.columns(2, |tiles| {
+                            ui.horizontal(|ui| {
                                 // Tile 3: Photos Gallery
                                 Frame::none()
                                     .fill(Color32::from_rgb(18, 20, 30))
                                     .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 60)))
                                     .rounding(Rounding::same(10.0))
                                     .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                                    .show(&mut tiles[0], |ui| {
+                                    .show(ui, |ui| {
+                                        ui.set_width(half_tile_w);
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new(crate::lucide::IMAGE).size(18.0).color(Color32::from_rgb(244, 114, 182)));
                                             ui.vertical(|ui| {
@@ -1199,13 +1213,16 @@ impl LauncherApp {
                                         }
                                     });
 
+                                ui.add_space(10.0);
+
                                 // Tile 4: Screen Share
                                 Frame::none()
                                     .fill(Color32::from_rgb(18, 20, 30))
                                     .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 60)))
                                     .rounding(Rounding::same(10.0))
                                     .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                                    .show(&mut tiles[1], |ui| {
+                                    .show(ui, |ui| {
+                                        ui.set_width(half_tile_w);
                                         ui.horizontal(|ui| {
                                             ui.label(RichText::new(crate::lucide::SCREEN_SHARE).size(18.0).color(Color32::from_rgb(168, 85, 247)));
                                             ui.vertical(|ui| {
@@ -2113,7 +2130,7 @@ impl LauncherApp {
             ui.add_space(6.0);
 
             // Terminal Output Well
-            let total_h = ui.available_height() - 42.0;
+            let total_h = (ui.available_height() - 42.0).max(100.0);
             Frame::none()
                 .fill(Color32::from_rgb(10, 11, 16))
                 .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 28, 40)))
@@ -2989,14 +3006,17 @@ impl LauncherApp {
             .id_salt("adb_messages_scroll")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.columns(2, |cols| {
+                let avail_w = ui.available_width();
+                let left_w = 320.0_f32.min(avail_w);
+                let right_w = (avail_w - left_w - 12.0).max(280.0);
+                ui.horizontal_top(|ui| {
                     // LEFT COLUMN: Conversation Threads List (320px)
-                    cols[0].set_width(320.0);
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(12.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                        .show(&mut cols[0], |ui| {
+                        .show(ui, |ui| {
+                            ui.set_width(left_w);
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(crate::lucide::MESSAGE_SQUARE).size(15.0).color(Color32::from_rgb(56, 189, 248)));
                                 ui.label(RichText::new("Messages").size(15.0).strong().color(p.text_primary));
@@ -3125,12 +3145,15 @@ impl LauncherApp {
                                 });
                         });
 
+                    ui.add_space(12.0);
+
                     // RIGHT COLUMN: Active Chat Thread View & Composer
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(12.0))
                         .inner_margin(egui::Margin::symmetric(16.0, 14.0))
-                        .show(&mut cols[1], |ui| {
+                        .show(ui, |ui| {
+                            ui.set_width(right_w);
                             let sel_contact = self.adb_sms_selected_contact.clone().unwrap_or_else(|| "Anisa Kipenzi".to_string());
                             let thread_msgs: Vec<&crate::adb::AdbSmsMessage> = self
                                 .adb_sms_messages
@@ -3297,14 +3320,17 @@ impl LauncherApp {
             .id_salt("adb_calls_scroll")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.columns(2, |cols| {
+                let avail_w = ui.available_width();
+                let left_w = 360.0_f32.min(avail_w);
+                let right_w = (avail_w - left_w - 12.0).max(280.0);
+                ui.horizontal_top(|ui| {
                     // LEFT COLUMN: Recent Calls History (360px)
-                    cols[0].set_width(360.0);
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(12.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                        .show(&mut cols[0], |ui| {
+                        .show(ui, |ui| {
+                            ui.set_width(left_w);
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(crate::lucide::PHONE).size(15.0).color(Color32::from_rgb(74, 222, 128)));
                                 ui.label(RichText::new("Calls & Call Log").size(15.0).strong().color(p.text_primary));
@@ -3417,12 +3443,15 @@ impl LauncherApp {
                                 });
                         });
 
+                    ui.add_space(12.0);
+
                     // RIGHT COLUMN: Keypad & Dialer
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(12.0))
                         .inner_margin(egui::Margin::symmetric(24.0, 18.0))
-                        .show(&mut cols[1], |ui| {
+                        .show(ui, |ui| {
+                            ui.set_width(right_w);
                             ui.vertical_centered(|ui| {
                                 ui.label(RichText::new("KEYPAD DIALER").size(10.5).monospace().strong().color(p.text_muted));
                                 ui.add_space(8.0);
@@ -3625,7 +3654,7 @@ impl LauncherApp {
 
                 // Photos Grid (4 Columns)
                 let num_cols = 4;
-                let card_w = (ui.available_width() - ((num_cols - 1) as f32 * 12.0)) / num_cols as f32;
+                let card_w = ((ui.available_width() - ((num_cols - 1) as f32 * 12.0)) / num_cols as f32).max(100.0);
 
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);

@@ -531,15 +531,14 @@ echo __UPTIME__; cat /proc/uptime
             .and_then(|value| value.parse::<u64>().ok())
     };
     let cpu_lines: Vec<&str> = section("CPUINFO").lines().collect();
-    let cpu_model = cpu_lines
+    let cpu_model = ["Hardware", "model name", "Processor"]
         .iter()
-        .find_map(|line| {
-            let line = line.trim();
-            ["Hardware", "model name", "Processor"]
-                .iter()
-                .find_map(|key| line.strip_prefix(&format!("{key}:")))
+        .find_map(|key| {
+            cpu_lines.iter().find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.trim().eq_ignore_ascii_case(key).then_some(value.trim())
+            })
         })
-        .map(str::trim)
         .unwrap_or("")
         .to_string();
     let cpu_cores = cpu_lines

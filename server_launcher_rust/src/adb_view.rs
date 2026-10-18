@@ -693,7 +693,7 @@ impl LauncherApp {
         adb_dev: &crate::config::AdbDeviceConfig,
     ) {
         if self.adb_tauri_opened.insert(adb_dev.serial.clone()) {
-            self.launch_adb_tauri_window(ctx, adb_dev);
+            self.launch_adb_tauri_window(adb_dev);
         }
 
         let palette = self.palette();
@@ -720,7 +720,7 @@ impl LauncherApp {
                     );
                     ui.add_space(18.0);
                     if ui.button("Open Android Cockpit").clicked() {
-                        self.launch_adb_tauri_window(ui.ctx(), adb_dev);
+                        self.launch_adb_tauri_window(adb_dev);
                     }
                 });
             });
@@ -728,30 +728,33 @@ impl LauncherApp {
 
     fn launch_adb_tauri_window(
         &mut self,
-        ctx: &egui::Context,
         adb_dev: &crate::config::AdbDeviceConfig,
     ) {
+        let [red, green, blue, _] = self.palette().accent.to_array();
+        let accent = format!("#{red:02x}{green:02x}{blue:02x}");
         match std::env::current_exe() {
-            Ok(exe) => match std::process::Command::new(exe)
-                .arg(format!("--adb-cockpit={}", adb_dev.serial))
-                .spawn()
-            {
-                Ok(_) => {
-                    self.adb_status_msg = Some((
-                        format!("Android Cockpit opened for {}", adb_dev.name),
-                        false,
-                        Instant::now(),
-                    ));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            Ok(exe) => {
+                let mut command = std::process::Command::new(exe);
+                command
+                    .arg(format!("--adb-cockpit={}", adb_dev.serial))
+                    .env("SERVER_LAUNCHER_ADB_ACCENT", accent);
+                match command.spawn() {
+                    Ok(_) => {
+                        self.adb_status_msg = Some((
+                            format!("Android Cockpit opened for {}", adb_dev.name),
+                            false,
+                            Instant::now(),
+                        ));
+                    }
+                    Err(error) => {
+                        self.adb_status_msg = Some((
+                            format!("Could not open Android Cockpit: {error}"),
+                            true,
+                            Instant::now(),
+                        ));
+                    }
                 }
-                Err(error) => {
-                    self.adb_status_msg = Some((
-                        format!("Could not open Android Cockpit: {error}"),
-                        true,
-                        Instant::now(),
-                    ));
-                }
-            },
+            }
             Err(error) => {
                 self.adb_status_msg = Some((
                     format!("Could not find application executable: {error}"),

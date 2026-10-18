@@ -155,7 +155,15 @@
   document.addEventListener('visibilitychange', () => { if(document.hidden){clearInterval(state.screenTimer);state.screenTimer=null;} else if(state.tab==='screen'&&state.serial) selectTab('screen'); });
   (async () => {
     if (!invoke) { content.innerHTML=`<div class="card empty"><b>Tauri runtime is unavailable</b><span>Launch the Android cockpit from Server Launcher.</span></div>`; return; }
-    try { state.serial=await invoke('adb_initial_serial') || ''; await refreshDevices(); } catch(e) { toast(String(e),true); }
+    try {
+      state.serial=await invoke('adb_initial_serial') || '';
+      const accent=await invoke('adb_accent_color');
+      if (/^#[\da-f]{6}$/i.test(accent || '')) {
+        document.documentElement.style.setProperty('--accent', accent);
+        document.documentElement.style.setProperty('--accent-strong', accent);
+      }
+      await refreshDevices();
+    } catch(e) { toast(String(e),true); }
     setInterval(async () => { if(document.hidden)return; const old=state.serial; await refreshDevices(); if(state.serial===old && state.tab!=='screen' && Date.now()-state.lastTelemetry>30000) await refreshTelemetry(); }, 7000);
   })();
 })();

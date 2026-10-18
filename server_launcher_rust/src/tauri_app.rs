@@ -25,6 +25,11 @@ fn adb_initial_serial() -> Option<String> {
 }
 
 #[tauri::command]
+fn adb_accent_color() -> Option<String> {
+    std::env::var("SERVER_LAUNCHER_ADB_ACCENT").ok()
+}
+
+#[tauri::command]
 async fn adb_telemetry(serial: String) -> Result<crate::adb::AdbDeviceTelemetry, String> {
     on_worker(move || Ok(crate::adb::query_telemetry(&serial))).await
 }
@@ -151,6 +156,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             adb_devices,
             adb_initial_serial,
+            adb_accent_color,
             adb_telemetry,
             adb_data,
             adb_screenshot,

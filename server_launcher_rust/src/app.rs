@@ -384,6 +384,22 @@ pub struct LauncherApp {
     pub adb_screenshare_text_input: String,
     pub adb_file_filter: String,
 
+    // Phone Link Suite State
+    pub adb_notifications: Vec<crate::adb::AdbNotification>,
+    pub adb_call_logs: Vec<crate::adb::AdbCallLogEntry>,
+    pub adb_dialer_input: String,
+    pub adb_sms_messages: Vec<crate::adb::AdbSmsMessage>,
+    pub adb_sms_selected_contact: Option<String>,
+    pub adb_sms_input: String,
+    pub adb_photos: Vec<crate::adb::AdbPhotoItem>,
+    pub adb_selected_photo: Option<crate::adb::AdbPhotoItem>,
+    pub adb_dnd_enabled: bool,
+    pub adb_audio_muted: bool,
+    pub adb_media_playing: bool,
+    pub adb_notifications_filter: String,
+    pub adb_call_search: String,
+    pub adb_sms_search: String,
+    pub adb_quick_call_number: String,
 
     // Scripts State
     pub script_executions: HashMap<String, ScriptExecution>,
@@ -1190,6 +1206,23 @@ impl LauncherApp {
             adb_mirror_drag_start: None,
             adb_screenshare_text_input: String::new(),
             adb_file_filter: String::new(),
+
+            // Phone Link Suite State Defaults
+            adb_notifications: Vec::new(),
+            adb_call_logs: Vec::new(),
+            adb_dialer_input: String::new(),
+            adb_sms_messages: Vec::new(),
+            adb_sms_selected_contact: None,
+            adb_sms_input: String::new(),
+            adb_photos: Vec::new(),
+            adb_selected_photo: None,
+            adb_dnd_enabled: false,
+            adb_audio_muted: false,
+            adb_media_playing: false,
+            adb_notifications_filter: String::new(),
+            adb_call_search: String::new(),
+            adb_sms_search: String::new(),
+            adb_quick_call_number: String::new(),
         }
     }
 

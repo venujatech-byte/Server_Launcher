@@ -53,6 +53,24 @@ pub const CLIPBOARD_CHECK: &str = "\u{e219}"; // clipboard-check
 pub const USB: &str = "\u{e356}"; // usb
 pub const CAST: &str = "\u{e066}"; // cast
 
+// Communications & Phone Link Icons
+pub const PHONE: &str = "\u{e133}"; // phone
+pub const PHONE_CALL: &str = "\u{e135}"; // phone-call
+pub const PHONE_INCOMING: &str = "\u{e137}"; // phone-incoming
+pub const PHONE_OUTGOING: &str = "\u{e139}"; // phone-outgoing
+pub const PHONE_MISSED: &str = "\u{e138}"; // phone-missed
+pub const MESSAGE_SQUARE: &str = "\u{e119}"; // message-square
+pub const IMAGE: &str = "\u{e0f7}"; // image
+pub const BELL: &str = "\u{e056}"; // bell
+pub const BELL_OFF: &str = "\u{e057}"; // bell-off
+pub const VOLUME_2: &str = "\u{e1a8}"; // volume-2
+pub const VOLUME_X: &str = "\u{e1aa}"; // volume-x
+pub const SEND: &str = "\u{e152}"; // send
+pub const USER: &str = "\u{e1a1}"; // user
+pub const USERS: &str = "\u{e1a2}"; // users
+pub const SKIP_FORWARD: &str = "\u{e15c}"; // skip-forward
+pub const SKIP_BACK: &str = "\u{e15b}"; // skip-back
+
 // Actions and UI Controls
 pub const SEARCH: &str = "\u{e151}"; // search
 pub const REFRESH_CW: &str = "\u{e145}"; // refresh-cw

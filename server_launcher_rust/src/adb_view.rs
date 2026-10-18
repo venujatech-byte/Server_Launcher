@@ -12,12 +12,16 @@ pub enum AdbSubTab {
     #[default]
     Overview,
     ScreenShare,
+    Messages,
+    Calls,
+    Photos,
+    Notifications,
+    Storage,
+    Apps,
     Clipboard,
     Terminal,
-    Storage,
-    Firmware,
-    Apps,
     Wireless,
+    Firmware,
 }
 
 impl AdbSubTab {
@@ -25,12 +29,16 @@ impl AdbSubTab {
         &[
             AdbSubTab::Overview,
             AdbSubTab::ScreenShare,
+            AdbSubTab::Messages,
+            AdbSubTab::Calls,
+            AdbSubTab::Photos,
+            AdbSubTab::Notifications,
+            AdbSubTab::Storage,
+            AdbSubTab::Apps,
             AdbSubTab::Clipboard,
             AdbSubTab::Terminal,
-            AdbSubTab::Storage,
-            AdbSubTab::Firmware,
-            AdbSubTab::Apps,
             AdbSubTab::Wireless,
+            AdbSubTab::Firmware,
         ]
     }
 
@@ -38,12 +46,16 @@ impl AdbSubTab {
         match self {
             AdbSubTab::Overview => "Overview",
             AdbSubTab::ScreenShare => "Screen Share",
+            AdbSubTab::Messages => "Messages",
+            AdbSubTab::Calls => "Calls",
+            AdbSubTab::Photos => "Photos",
+            AdbSubTab::Notifications => "Notifications",
+            AdbSubTab::Storage => "Storage",
+            AdbSubTab::Apps => "Apps",
             AdbSubTab::Clipboard => "Clipboard",
             AdbSubTab::Terminal => "Terminal",
-            AdbSubTab::Storage => "Storage",
-            AdbSubTab::Firmware => "Firmware",
-            AdbSubTab::Apps => "Apps",
             AdbSubTab::Wireless => "Wireless",
+            AdbSubTab::Firmware => "Firmware",
         }
     }
 
@@ -51,12 +63,16 @@ impl AdbSubTab {
         match self {
             AdbSubTab::Overview => crate::lucide::SMARTPHONE,
             AdbSubTab::ScreenShare => crate::lucide::SCREEN_SHARE,
+            AdbSubTab::Messages => crate::lucide::MESSAGE_SQUARE,
+            AdbSubTab::Calls => crate::lucide::PHONE,
+            AdbSubTab::Photos => crate::lucide::IMAGE,
+            AdbSubTab::Notifications => crate::lucide::BELL,
+            AdbSubTab::Storage => crate::lucide::STORAGE,
+            AdbSubTab::Apps => crate::lucide::LAYOUT_GRID,
             AdbSubTab::Clipboard => crate::lucide::CLIPBOARD,
             AdbSubTab::Terminal => crate::lucide::TERMINAL,
-            AdbSubTab::Storage => crate::lucide::STORAGE,
-            AdbSubTab::Firmware => crate::lucide::ZAP,
-            AdbSubTab::Apps => crate::lucide::LAYOUT_GRID,
             AdbSubTab::Wireless => crate::lucide::WIFI,
+            AdbSubTab::Firmware => crate::lucide::ZAP,
         }
     }
 }
@@ -704,14 +720,21 @@ impl LauncherApp {
                 match self.adb_active_subtab {
                     AdbSubTab::Overview => self.render_adb_overview_tab(ui, adb_dev, &telem),
                     AdbSubTab::ScreenShare => self.render_adb_screenshare_tab(ui, adb_dev),
+                    AdbSubTab::Messages => self.render_adb_messages_tab(ui, adb_dev),
+                    AdbSubTab::Calls => self.render_adb_calls_tab(ui, adb_dev),
+                    AdbSubTab::Photos => self.render_adb_photos_tab(ui, adb_dev),
+                    AdbSubTab::Notifications => self.render_adb_notifications_tab(ui, adb_dev),
+                    AdbSubTab::Storage => self.render_adb_storage_tab(ui, adb_dev),
+                    AdbSubTab::Apps => self.render_adb_apps_tab(ui, adb_dev),
                     AdbSubTab::Clipboard => self.render_adb_clipboard_tab(ui, adb_dev),
                     AdbSubTab::Terminal => self.render_adb_terminal_tab(ui, adb_dev),
-                    AdbSubTab::Storage => self.render_adb_storage_tab(ui, adb_dev),
-                    AdbSubTab::Firmware => self.render_adb_firmware_tab(ui, adb_dev),
-                    AdbSubTab::Apps => self.render_adb_apps_tab(ui, adb_dev),
                     AdbSubTab::Wireless => self.render_adb_wireless_tab(ui, adb_dev),
+                    AdbSubTab::Firmware => self.render_adb_firmware_tab(ui, adb_dev),
                 }
             });
+
+        // Photo Lightbox Dialog Modal
+        self.render_adb_photo_lightbox(ctx, &adb_dev.serial);
     }
 
     fn render_adb_header_bar(&mut self, ui: &mut Ui, adb_dev: &crate::config::AdbDeviceConfig, telem: &crate::adb::AdbDeviceTelemetry) {
@@ -874,28 +897,62 @@ impl LauncherApp {
         let p = self.palette();
         Frame::none()
             .fill(p.bg_card)
-            .rounding(Rounding::same(999.0))
-            .inner_margin(egui::Margin::symmetric(4.0, 3.5))
+            .rounding(Rounding::same(12.0))
+            .inner_margin(egui::Margin::symmetric(6.0, 4.0))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    let tabs = AdbSubTab::all();
-                    let avail_w = ui.available_width() - ((tabs.len() - 1) as f32 * 4.0);
-                    let tab_w = (avail_w / tabs.len() as f32).max(40.0);
+                ScrollArea::horizontal()
+                    .id_salt("adb_subtabs_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
+                            for tab in AdbSubTab::all() {
+                                let is_active = self.adb_active_subtab == *tab;
+                                let bg = if is_active { p.accent } else { Color32::TRANSPARENT };
+                                let fg = if is_active { p.accent_text } else { p.text_secondary };
 
-                    for tab in tabs {
-                        let is_active = self.adb_active_subtab == *tab;
-                        let bg = if is_active { p.accent } else { Color32::TRANSPARENT };
-                        let fg = if is_active { p.accent_text } else { p.text_secondary };
+                                let badge_str = match tab {
+                                    AdbSubTab::Messages => {
+                                        let count = self.adb_sms_messages.iter().filter(|m| !m.is_outgoing).count();
+                                        if count > 0 { format!(" ({})", count) } else { String::new() }
+                                    }
+                                    AdbSubTab::Calls => {
+                                        let count = self.adb_call_logs.iter().filter(|c| c.call_type == crate::adb::AdbCallType::Missed).count();
+                                        if count > 0 { format!(" ({})", count) } else { String::new() }
+                                    }
+                                    AdbSubTab::Notifications => {
+                                        if !self.adb_notifications.is_empty() {
+                                            format!(" ({})", self.adb_notifications.len())
+                                        } else {
+                                            String::new()
+                                        }
+                                    }
+                                    AdbSubTab::Photos => {
+                                        if !self.adb_photos.is_empty() {
+                                            format!(" ({})", self.adb_photos.len())
+                                        } else {
+                                            String::new()
+                                        }
+                                    }
+                                    _ => String::new(),
+                                };
 
-                        let btn = egui::Button::new(RichText::new(format!("{} {}", tab.icon(), tab.label())).size(11.0).strong().color(fg))
-                            .fill(bg)
-                            .rounding(Rounding::same(999.0))
-                            .min_size(Vec2::new(tab_w, 28.0));
-                        if ui.add(btn).clicked() {
-                            self.adb_active_subtab = *tab;
-                        }
-                    }
-                });
+                                let btn = egui::Button::new(
+                                    RichText::new(format!("{} {}{}", tab.icon(), tab.label(), badge_str))
+                                        .size(11.0)
+                                        .strong()
+                                        .color(fg),
+                                )
+                                .fill(bg)
+                                .rounding(Rounding::same(999.0))
+                                .min_size(Vec2::new(0.0, 28.0));
+
+                                if ui.add(btn).clicked() {
+                                    self.adb_active_subtab = *tab;
+                                }
+                            }
+                        });
+                    });
             });
     }
 
@@ -911,6 +968,264 @@ impl LauncherApp {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
+
+                // ═════════════════════════════════════════════════════════════
+                // PHONE LINK MASTER COCKPIT DECK
+                // ═════════════════════════════════════════════════════════════
+                ui.columns(2, |cols| {
+                    // LEFT COLUMN: Phone Link Hardware Card & Live Notifications Preview
+                    cols[0].set_width(340.0);
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(14.0))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                        .show(&mut cols[0], |ui| {
+                            // Phone Hardware Preview Box
+                            Frame::none()
+                                .fill(Color32::from_rgb(14, 16, 24))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 60)))
+                                .rounding(Rounding::same(12.0))
+                                .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        // Phone bezel miniature
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(26, 32, 48))
+                                            .stroke(Stroke::new(1.5_f32, Color32::from_rgb(56, 189, 248)))
+                                            .rounding(Rounding::same(8.0))
+                                            .inner_margin(egui::Margin::symmetric(10.0, 14.0))
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new(crate::lucide::SMARTPHONE).size(22.0).color(Color32::from_rgb(56, 189, 248)));
+                                            });
+
+                                        ui.add_space(10.0);
+                                        ui.vertical(|ui| {
+                                            let model_name = if telem.model.is_empty() { &adb_dev.name } else { &telem.model };
+                                            ui.label(RichText::new(model_name).size(14.0).strong().color(p.text_primary));
+                                            ui.add_space(2.0);
+
+                                            // Network & Battery Pill Row
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new(crate::lucide::WIFI).size(11.0).color(Color32::from_rgb(56, 189, 248)));
+                                                ui.label(RichText::new("5G").size(9.0).monospace().color(p.text_muted));
+                                                ui.label(RichText::new("•").size(9.0).color(p.text_muted));
+
+                                                let batt_pct = telem.battery_pct.unwrap_or(98.0);
+                                                ui.label(RichText::new(format!("⚡ {:.0}%", batt_pct)).size(10.0).strong().color(Color32::from_rgb(74, 222, 128)));
+                                            });
+
+                                            ui.add_space(2.0);
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new("● Connected").size(10.0).strong().color(Color32::from_rgb(74, 222, 128)));
+                                            });
+                                        });
+                                    });
+
+                                    ui.add_space(10.0);
+                                    ui.separator();
+                                    ui.add_space(8.0);
+
+                                    // Quick Toggles Row (Phone Link Style)
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+
+                                        // DND Toggle
+                                        let dnd_bg = if self.adb_dnd_enabled { Color32::from_rgb(79, 70, 229) } else { p.bg_button };
+                                        let dnd_fg = if self.adb_dnd_enabled { Color32::WHITE } else { p.text_secondary };
+                                        let btn_dnd = egui::Button::new(RichText::new(format!("{} DND", crate::lucide::BELL_OFF)).size(10.0).color(dnd_fg))
+                                            .fill(dnd_bg)
+                                            .rounding(Rounding::same(999.0));
+                                        if ui.add(btn_dnd).on_hover_text("Toggle Do Not Disturb").clicked() {
+                                            self.adb_dnd_enabled = !self.adb_dnd_enabled;
+                                            let _ = crate::adb::toggle_dnd(Some(&serial), self.adb_dnd_enabled);
+                                        }
+
+                                        // Audio Mute Toggle
+                                        let mute_bg = if self.adb_audio_muted { Color32::from_rgb(220, 38, 38) } else { p.bg_button };
+                                        let mute_fg = if self.adb_audio_muted { Color32::WHITE } else { p.text_secondary };
+                                        let btn_mute = egui::Button::new(RichText::new(format!("{} Audio", if self.adb_audio_muted { crate::lucide::VOLUME_X } else { crate::lucide::VOLUME_2 })).size(10.0).color(mute_fg))
+                                            .fill(mute_bg)
+                                            .rounding(Rounding::same(999.0));
+                                        if ui.add(btn_mute).on_hover_text("Toggle Audio Mute").clicked() {
+                                            self.adb_audio_muted = !self.adb_audio_muted;
+                                            let _ = crate::adb::toggle_mute(Some(&serial));
+                                        }
+
+                                        // Media Play/Pause
+                                        let media_icon = if self.adb_media_playing { crate::lucide::PAUSE } else { crate::lucide::PLAY };
+                                        let btn_media = egui::Button::new(RichText::new(format!("{} Media", media_icon)).size(10.0).color(p.text_secondary))
+                                            .fill(p.bg_button)
+                                            .rounding(Rounding::same(999.0));
+                                        if ui.add(btn_media).on_hover_text("Play/Pause Media playback").clicked() {
+                                            self.adb_media_playing = !self.adb_media_playing;
+                                            let _ = crate::adb::media_play_pause(Some(&serial));
+                                        }
+
+                                        // Screen Lock
+                                        let btn_lock = egui::Button::new(RichText::new(format!("{} Lock", crate::lucide::LOCK)).size(10.0).color(p.text_secondary))
+                                            .fill(p.bg_button)
+                                            .rounding(Rounding::same(999.0));
+                                        if ui.add(btn_lock).on_hover_text("Lock/Wake screen (Power)").clicked() {
+                                            let _ = crate::adb::send_keyevent(&serial, 26);
+                                        }
+                                    });
+                                });
+
+                            ui.add_space(10.0);
+
+                            // Live Notifications Preview Card
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(crate::lucide::BELL).size(13.0).color(Color32::from_rgb(251, 191, 36)));
+                                ui.label(RichText::new("Notifications").size(12.0).strong().color(p.text_primary));
+
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let btn_view_all = egui::Button::new(RichText::new("View all →").size(9.5).color(Color32::from_rgb(56, 189, 248)))
+                                        .fill(Color32::TRANSPARENT);
+                                    if ui.add(btn_view_all).clicked() {
+                                        self.adb_active_subtab = AdbSubTab::Notifications;
+                                    }
+                                });
+                            });
+
+                            ui.add_space(6.0);
+
+                            if self.adb_notifications.is_empty() {
+                                self.adb_notifications = crate::adb::get_notifications(Some(&serial));
+                            }
+
+                            // Show top 2 preview notifications
+                            for notif in self.adb_notifications.iter().take(2) {
+                                Frame::none()
+                                    .fill(Color32::from_rgb(16, 18, 26))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(28, 32, 46)))
+                                    .rounding(Rounding::same(8.0))
+                                    .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(&notif.app_name).size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                ui.label(RichText::new(&notif.time_str).size(8.5).color(p.text_muted));
+                                            });
+                                        });
+                                        ui.label(RichText::new(&notif.title).size(11.0).strong().color(p.text_primary));
+                                        ui.add(egui::Label::new(RichText::new(&notif.text).size(9.5).color(p.text_secondary)).truncate());
+                                    });
+                                ui.add_space(4.0);
+                            }
+                        });
+
+                    // RIGHT COLUMN: Quick Communications & Apps Launchpad
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(14.0))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                        .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+                        .show(&mut cols[1], |ui| {
+                            ui.label(RichText::new("PHONE LINK QUICK LAUNCHPAD").size(10.0).monospace().strong().color(p.text_muted));
+                            ui.add_space(8.0);
+
+                            ui.columns(2, |tiles| {
+                                // Tile 1: Messages (SMS)
+                                Frame::none()
+                                    .fill(Color32::from_rgb(18, 20, 30))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 60)))
+                                    .rounding(Rounding::same(10.0))
+                                    .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                                    .show(&mut tiles[0], |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(crate::lucide::MESSAGE_SQUARE).size(18.0).color(Color32::from_rgb(56, 189, 248)));
+                                            ui.vertical(|ui| {
+                                                ui.label(RichText::new("Messages (SMS)").size(12.0).strong().color(p.text_primary));
+                                                ui.label(RichText::new("Chat threads & SMS").size(9.5).color(p.text_muted));
+                                            });
+                                        });
+                                        ui.add_space(6.0);
+                                        let btn_open_msg = egui::Button::new(RichText::new("Open Messages →").size(10.0).color(Color32::from_rgb(56, 189, 248)))
+                                            .fill(Color32::from_rgb(14, 40, 58))
+                                            .rounding(Rounding::same(6.0));
+                                        if ui.add(btn_open_msg).clicked() {
+                                            self.adb_active_subtab = AdbSubTab::Messages;
+                                        }
+                                    });
+
+                                // Tile 2: Calls & Dialpad
+                                Frame::none()
+                                    .fill(Color32::from_rgb(18, 20, 30))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 60)))
+                                    .rounding(Rounding::same(10.0))
+                                    .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                                    .show(&mut tiles[1], |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(crate::lucide::PHONE).size(18.0).color(Color32::from_rgb(74, 222, 128)));
+                                            ui.vertical(|ui| {
+                                                ui.label(RichText::new("Calls & Dialpad").size(12.0).strong().color(p.text_primary));
+                                                ui.label(RichText::new("Call log & Keypad").size(9.5).color(p.text_muted));
+                                            });
+                                        });
+                                        ui.add_space(6.0);
+                                        let btn_open_calls = egui::Button::new(RichText::new("Open Calls →").size(10.0).color(Color32::from_rgb(74, 222, 128)))
+                                            .fill(Color32::from_rgb(20, 45, 30))
+                                            .rounding(Rounding::same(6.0));
+                                        if ui.add(btn_open_calls).clicked() {
+                                            self.adb_active_subtab = AdbSubTab::Calls;
+                                        }
+                                    });
+                            });
+
+                            ui.add_space(8.0);
+
+                            ui.columns(2, |tiles| {
+                                // Tile 3: Photos Gallery
+                                Frame::none()
+                                    .fill(Color32::from_rgb(18, 20, 30))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 60)))
+                                    .rounding(Rounding::same(10.0))
+                                    .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                                    .show(&mut tiles[0], |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(crate::lucide::IMAGE).size(18.0).color(Color32::from_rgb(244, 114, 182)));
+                                            ui.vertical(|ui| {
+                                                ui.label(RichText::new("Photos Gallery").size(12.0).strong().color(p.text_primary));
+                                                ui.label(RichText::new("Camera roll & save").size(9.5).color(p.text_muted));
+                                            });
+                                        });
+                                        ui.add_space(6.0);
+                                        let btn_open_photos = egui::Button::new(RichText::new("Open Gallery →").size(10.0).color(Color32::from_rgb(244, 114, 182)))
+                                            .fill(Color32::from_rgb(45, 20, 35))
+                                            .rounding(Rounding::same(6.0));
+                                        if ui.add(btn_open_photos).clicked() {
+                                            self.adb_active_subtab = AdbSubTab::Photos;
+                                        }
+                                    });
+
+                                // Tile 4: Screen Share
+                                Frame::none()
+                                    .fill(Color32::from_rgb(18, 20, 30))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 60)))
+                                    .rounding(Rounding::same(10.0))
+                                    .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                                    .show(&mut tiles[1], |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(crate::lucide::SCREEN_SHARE).size(18.0).color(Color32::from_rgb(168, 85, 247)));
+                                            ui.vertical(|ui| {
+                                                ui.label(RichText::new("Screen Mirror").size(12.0).strong().color(p.text_primary));
+                                                ui.label(RichText::new("Built-in & scrcpy HD").size(9.5).color(p.text_muted));
+                                            });
+                                        });
+                                        ui.add_space(6.0);
+                                        let btn_open_mirror = egui::Button::new(RichText::new("Open Mirror →").size(10.0).color(Color32::from_rgb(168, 85, 247)))
+                                            .fill(Color32::from_rgb(35, 20, 45))
+                                            .rounding(Rounding::same(6.0));
+                                        if ui.add(btn_open_mirror).clicked() {
+                                            self.adb_active_subtab = AdbSubTab::ScreenShare;
+                                        }
+                                    });
+                            });
+                        });
+                });
+
+                ui.add_space(12.0);
 
                 // Row 1: System Specs Matrix (4 Columns)
                 ui.columns(4, |cols| {
@@ -2654,5 +2969,1035 @@ impl LauncherApp {
                     self.adb_active_subtab = AdbSubTab::Overview;
                 }
             });
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // TAB 3: PHONE LINK MESSAGES (SMS) THREADS & COMPOSER
+    // ═════════════════════════════════════════════════════════════════════════
+    fn render_adb_messages_tab(&mut self, ui: &mut Ui, adb_dev: &crate::config::AdbDeviceConfig) {
+        let p = self.palette();
+        let serial = adb_dev.serial.clone();
+
+        if self.adb_sms_messages.is_empty() {
+            self.adb_sms_messages = crate::adb::get_sms_messages(Some(&serial));
+        }
+
+        let mut action_send_msg: Option<(String, String)> = None;
+        let mut action_switch_to_call: Option<String> = None;
+
+        ScrollArea::vertical()
+            .id_salt("adb_messages_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.columns(2, |cols| {
+                    // LEFT COLUMN: Conversation Threads List (320px)
+                    cols[0].set_width(320.0);
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(12.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                        .show(&mut cols[0], |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(crate::lucide::MESSAGE_SQUARE).size(15.0).color(Color32::from_rgb(56, 189, 248)));
+                                ui.label(RichText::new("Messages").size(15.0).strong().color(p.text_primary));
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let btn_refresh = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(12.0).color(p.text_muted))
+                                        .fill(p.bg_button)
+                                        .rounding(Rounding::same(6.0));
+                                    if ui.add(btn_refresh).on_hover_text("Refresh SMS messages").clicked() {
+                                        self.adb_sms_messages = crate::adb::get_sms_messages(Some(&serial));
+                                    }
+                                });
+                            });
+
+                            ui.add_space(8.0);
+
+                            // Search bar
+                            Frame::none()
+                                .fill(Color32::from_rgb(14, 15, 22))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                                .rounding(Rounding::same(8.0))
+                                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(crate::lucide::SEARCH).size(12.0).color(p.text_muted));
+                                        ui.add(
+                                            egui::TextEdit::singleline(&mut self.adb_sms_search)
+                                                .hint_text("Search messages...")
+                                                .frame(false)
+                                                .desired_width(ui.available_width()),
+                                        );
+                                    });
+                                });
+
+                            ui.add_space(10.0);
+
+                            // Group messages by contact
+                            let mut contacts: Vec<String> = Vec::new();
+                            for msg in &self.adb_sms_messages {
+                                if !contacts.contains(&msg.contact_name) {
+                                    contacts.push(msg.contact_name.clone());
+                                }
+                            }
+
+                            if self.adb_sms_selected_contact.is_none() && !contacts.is_empty() {
+                                self.adb_sms_selected_contact = Some(contacts[0].clone());
+                            }
+
+                            let query = self.adb_sms_search.to_lowercase();
+
+                            ScrollArea::vertical()
+                                .id_salt("adb_sms_contacts_scroll")
+                                .max_height(560.0)
+                                .show(ui, |ui| {
+                                    for contact in &contacts {
+                                        if !query.is_empty() && !contact.to_lowercase().contains(&query) {
+                                            continue;
+                                        }
+
+                                        let is_selected = self.adb_sms_selected_contact.as_deref() == Some(contact);
+                                        let last_msg = self.adb_sms_messages.iter().rev().find(|m| &m.contact_name == contact);
+                                        let last_snippet = last_msg.map(|m| m.text.as_str()).unwrap_or("");
+                                        let last_time = last_msg.map(|m| m.time_str.as_str()).unwrap_or("");
+                                        let has_incoming = last_msg.map(|m| !m.is_outgoing).unwrap_or(false);
+
+                                        let card_bg = if is_selected {
+                                            Color32::from_rgb(30, 36, 56)
+                                        } else {
+                                            Color32::from_rgb(18, 20, 29)
+                                        };
+                                        let border_col = if is_selected {
+                                            Color32::from_rgb(56, 189, 248)
+                                        } else {
+                                            Color32::from_rgb(28, 30, 42)
+                                        };
+
+                                        let card_resp = Frame::none()
+                                            .fill(card_bg)
+                                            .stroke(Stroke::new(1.0_f32, border_col))
+                                            .rounding(Rounding::same(10.0))
+                                            .inner_margin(egui::Margin::symmetric(10.0, 9.0))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    let initials: String = contact
+                                                        .split_whitespace()
+                                                        .filter_map(|w| w.chars().next())
+                                                        .take(2)
+                                                        .collect();
+                                                    let avatar_initials = if initials.is_empty() { "U".to_string() } else { initials.to_uppercase() };
+
+                                                    Frame::none()
+                                                        .fill(Color32::from_rgb(79, 70, 229))
+                                                        .rounding(Rounding::same(999.0))
+                                                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                                        .show(ui, |ui| {
+                                                            ui.label(RichText::new(&avatar_initials).size(10.0).strong().color(Color32::WHITE));
+                                                        });
+
+                                                    ui.add_space(8.0);
+                                                    ui.vertical(|ui| {
+                                                        ui.horizontal(|ui| {
+                                                            ui.label(RichText::new(contact).size(12.0).strong().color(p.text_primary));
+                                                            if has_incoming {
+                                                                ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(56, 189, 248)));
+                                                            }
+                                                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                                ui.label(RichText::new(last_time).size(9.5).color(p.text_muted));
+                                                            });
+                                                        });
+                                                        ui.add(
+                                                            egui::Label::new(
+                                                                RichText::new(last_snippet)
+                                                                    .size(10.0)
+                                                                    .color(p.text_secondary),
+                                                            )
+                                                            .truncate(),
+                                                        );
+                                                    });
+                                                });
+                                            });
+
+                                        if card_resp.response.interact(egui::Sense::click()).clicked() {
+                                            self.adb_sms_selected_contact = Some(contact.clone());
+                                        }
+                                        ui.add_space(4.0);
+                                    }
+                                });
+                        });
+
+                    // RIGHT COLUMN: Active Chat Thread View & Composer
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(12.0))
+                        .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+                        .show(&mut cols[1], |ui| {
+                            let sel_contact = self.adb_sms_selected_contact.clone().unwrap_or_else(|| "Anisa Kipenzi".to_string());
+                            let thread_msgs: Vec<&crate::adb::AdbSmsMessage> = self
+                                .adb_sms_messages
+                                .iter()
+                                .filter(|m| m.contact_name == sel_contact || m.address == sel_contact)
+                                .collect();
+
+                            let contact_phone = thread_msgs.first().map(|m| m.address.clone()).unwrap_or_else(|| "+1 (415) 555-0176".to_string());
+
+                            // Chat Header Bar
+                            ui.horizontal(|ui| {
+                                let initials: String = sel_contact
+                                    .split_whitespace()
+                                    .filter_map(|w| w.chars().next())
+                                    .take(2)
+                                    .collect();
+                                let avatar_initials = if initials.is_empty() { "U".to_string() } else { initials.to_uppercase() };
+
+                                Frame::none()
+                                    .fill(Color32::from_rgb(56, 189, 248))
+                                    .rounding(Rounding::same(999.0))
+                                    .inner_margin(egui::Margin::symmetric(9.0, 7.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(&avatar_initials).size(11.0).strong().color(Color32::from_rgb(10, 15, 25)));
+                                    });
+
+                                ui.add_space(6.0);
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new(&sel_contact).size(14.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new(&contact_phone).size(10.0).monospace().color(p.text_secondary));
+                                });
+
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let btn_call = egui::Button::new(RichText::new(format!("{} Call", crate::lucide::PHONE)).size(11.0).strong().color(Color32::WHITE))
+                                        .fill(Color32::from_rgb(22, 163, 74))
+                                        .rounding(Rounding::same(6.0))
+                                        .min_size(Vec2::new(75.0, 28.0));
+                                    if ui.add(btn_call).on_hover_text(format!("Call {}", sel_contact)).clicked() {
+                                        action_switch_to_call = Some(contact_phone.clone());
+                                    }
+                                });
+                            });
+
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+
+                            // Chat Message Bubbles Stream
+                            ScrollArea::vertical()
+                                .id_salt("adb_sms_bubbles_scroll")
+                                .max_height(450.0)
+                                .stick_to_bottom(true)
+                                .show(ui, |ui| {
+                                    ui.spacing_mut().item_spacing = egui::vec2(0.0, 10.0);
+                                    for msg in thread_msgs {
+                                        if msg.is_outgoing {
+                                            ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
+                                                Frame::none()
+                                                    .fill(Color32::from_rgb(79, 70, 229))
+                                                    .rounding(Rounding {
+                                                        nw: 14.0,
+                                                        ne: 14.0,
+                                                        se: 2.0,
+                                                        sw: 14.0,
+                                                    })
+                                                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                                                    .show(ui, |ui| {
+                                                        ui.vertical(|ui| {
+                                                            ui.label(RichText::new(&msg.text).size(11.5).color(Color32::WHITE));
+                                                            ui.add_space(2.0);
+                                                            ui.horizontal(|ui| {
+                                                                ui.label(RichText::new(format!("{} ✓✓", msg.time_str)).size(9.0).color(Color32::from_rgb(199, 210, 254)));
+                                                            });
+                                                        });
+                                                    });
+                                            });
+                                        } else {
+                                            ui.with_layout(Layout::left_to_right(Align::TOP), |ui| {
+                                                Frame::none()
+                                                    .fill(Color32::from_rgb(24, 26, 38))
+                                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 60)))
+                                                    .rounding(Rounding {
+                                                        nw: 14.0,
+                                                        ne: 14.0,
+                                                        se: 14.0,
+                                                        sw: 2.0,
+                                                    })
+                                                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                                                    .show(ui, |ui| {
+                                                        ui.vertical(|ui| {
+                                                            ui.label(RichText::new(&msg.text).size(11.5).color(Color32::from_rgb(241, 245, 249)));
+                                                            ui.add_space(2.0);
+                                                            ui.label(RichText::new(&msg.time_str).size(9.0).color(p.text_muted));
+                                                        });
+                                                    });
+                                            });
+                                        }
+                                    }
+                                });
+
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(8.0);
+
+                            // Message Composer Bar
+                            ui.horizontal(|ui| {
+                                let edit_resp = ui.add(
+                                    egui::TextEdit::singleline(&mut self.adb_sms_input)
+                                        .hint_text("Enter a message...")
+                                        .desired_width(ui.available_width() - 85.0),
+                                );
+
+                                let enter_pressed = edit_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+                                let btn_send = egui::Button::new(RichText::new(format!("{} Send", crate::lucide::SEND)).size(11.0).strong().color(Color32::WHITE))
+                                    .fill(Color32::from_rgb(79, 70, 229))
+                                    .rounding(Rounding::same(8.0))
+                                    .min_size(Vec2::new(75.0, 30.0));
+
+                                if (ui.add(btn_send).clicked() || enter_pressed) && !self.adb_sms_input.trim().is_empty() {
+                                    let text = self.adb_sms_input.trim().to_string();
+                                    action_send_msg = Some((contact_phone.clone(), text));
+                                    self.adb_sms_input.clear();
+                                }
+                            });
+                        });
+                });
+            });
+
+        if let Some((phone, text)) = action_send_msg {
+            let _ = crate::adb::send_sms(Some(&serial), &phone, &text);
+            self.adb_sms_messages.push(crate::adb::AdbSmsMessage {
+                id: format!("m_{}", self.adb_sms_messages.len() + 1),
+                address: phone.clone(),
+                contact_name: self.adb_sms_selected_contact.clone().unwrap_or(phone),
+                text,
+                time_str: "Just now".to_string(),
+                is_outgoing: true,
+            });
+            self.adb_status_msg = Some(("SMS sent successfully".to_string(), false, Instant::now()));
+        }
+
+        if let Some(number) = action_switch_to_call {
+            self.adb_dialer_input = number;
+            self.adb_active_subtab = AdbSubTab::Calls;
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // TAB 4: PHONE LINK CALLS & KEYPAD DIALER
+    // ═════════════════════════════════════════════════════════════════════════
+    fn render_adb_calls_tab(&mut self, ui: &mut Ui, adb_dev: &crate::config::AdbDeviceConfig) {
+        let p = self.palette();
+        let serial = adb_dev.serial.clone();
+
+        if self.adb_call_logs.is_empty() {
+            self.adb_call_logs = crate::adb::get_call_logs(Some(&serial));
+        }
+
+        let mut action_call: Option<String> = None;
+        let mut action_hangup = false;
+
+        ScrollArea::vertical()
+            .id_salt("adb_calls_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.columns(2, |cols| {
+                    // LEFT COLUMN: Recent Calls History (360px)
+                    cols[0].set_width(360.0);
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(12.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                        .show(&mut cols[0], |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(crate::lucide::PHONE).size(15.0).color(Color32::from_rgb(74, 222, 128)));
+                                ui.label(RichText::new("Calls & Call Log").size(15.0).strong().color(p.text_primary));
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let btn_refresh = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(12.0).color(p.text_muted))
+                                        .fill(p.bg_button)
+                                        .rounding(Rounding::same(6.0));
+                                    if ui.add(btn_refresh).on_hover_text("Refresh call log").clicked() {
+                                        self.adb_call_logs = crate::adb::get_call_logs(Some(&serial));
+                                    }
+                                });
+                            });
+
+                            ui.add_space(8.0);
+
+                            // Search bar
+                            Frame::none()
+                                .fill(Color32::from_rgb(14, 15, 22))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                                .rounding(Rounding::same(8.0))
+                                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(crate::lucide::SEARCH).size(12.0).color(p.text_muted));
+                                        ui.add(
+                                            egui::TextEdit::singleline(&mut self.adb_call_search)
+                                                .hint_text("Search contacts or number...")
+                                                .frame(false)
+                                                .desired_width(ui.available_width()),
+                                        );
+                                    });
+                                });
+
+                            ui.add_space(10.0);
+
+                            let query = self.adb_call_search.to_lowercase();
+
+                            ScrollArea::vertical()
+                                .id_salt("adb_call_log_items_scroll")
+                                .max_height(560.0)
+                                .show(ui, |ui| {
+                                    for entry in &self.adb_call_logs {
+                                        if !query.is_empty()
+                                            && !entry.name.to_lowercase().contains(&query)
+                                            && !entry.number.contains(&query)
+                                        {
+                                            continue;
+                                        }
+
+                                        let (type_color, type_icon) = match entry.call_type {
+                                            crate::adb::AdbCallType::Missed => (Color32::from_rgb(239, 68, 68), "📞 Missed"),
+                                            crate::adb::AdbCallType::Incoming => (Color32::from_rgb(34, 197, 94), "📞 Incoming"),
+                                            crate::adb::AdbCallType::Outgoing => (Color32::from_rgb(6, 182, 212), "📞 Outgoing"),
+                                        };
+
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(18, 20, 29))
+                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(28, 30, 42)))
+                                            .rounding(Rounding::same(10.0))
+                                            .inner_margin(egui::Margin::symmetric(10.0, 9.0))
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    let initials: String = entry
+                                                        .name
+                                                        .split_whitespace()
+                                                        .filter_map(|w| w.chars().next())
+                                                        .take(2)
+                                                        .collect();
+                                                    let avatar_initials = if initials.is_empty() { "U".to_string() } else { initials.to_uppercase() };
+
+                                                    Frame::none()
+                                                        .fill(Color32::from_rgb(30, 41, 59))
+                                                        .stroke(Stroke::new(1.0_f32, type_color))
+                                                        .rounding(Rounding::same(999.0))
+                                                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                                        .show(ui, |ui| {
+                                                            ui.label(RichText::new(&avatar_initials).size(10.0).strong().color(Color32::WHITE));
+                                                        });
+
+                                                    ui.add_space(6.0);
+                                                    ui.vertical(|ui| {
+                                                        ui.horizontal(|ui| {
+                                                            ui.label(RichText::new(&entry.name).size(12.0).strong().color(p.text_primary));
+                                                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                                ui.label(RichText::new(&entry.time_str).size(9.0).color(p.text_muted));
+                                                            });
+                                                        });
+
+                                                        ui.horizontal(|ui| {
+                                                            ui.label(RichText::new(type_icon).size(9.5).color(type_color));
+                                                            ui.label(RichText::new(format!("• {}", entry.duration_str)).size(9.5).color(p.text_muted));
+                                                        });
+
+                                                        ui.label(RichText::new(&entry.number).size(9.5).monospace().color(p.text_secondary));
+                                                    });
+
+                                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                        let btn_dial = egui::Button::new(RichText::new(crate::lucide::PHONE).size(11.0).color(Color32::from_rgb(74, 222, 128)))
+                                                            .fill(Color32::from_rgb(20, 45, 30))
+                                                            .rounding(Rounding::same(6.0));
+                                                        if ui.add(btn_dial).on_hover_text("Load into dialer and call").clicked() {
+                                                            self.adb_dialer_input = entry.number.clone();
+                                                            action_call = Some(entry.number.clone());
+                                                        }
+                                                    });
+                                                });
+                                            });
+                                        ui.add_space(4.0);
+                                    }
+                                });
+                        });
+
+                    // RIGHT COLUMN: Keypad & Dialer
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(12.0))
+                        .inner_margin(egui::Margin::symmetric(24.0, 18.0))
+                        .show(&mut cols[1], |ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.label(RichText::new("KEYPAD DIALER").size(10.5).monospace().strong().color(p.text_muted));
+                                ui.add_space(8.0);
+
+                                // Monospace Number Readout Display
+                                Frame::none()
+                                    .fill(Color32::from_rgb(12, 13, 20))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                                    .rounding(Rounding::same(10.0))
+                                    .inner_margin(egui::Margin::symmetric(16.0, 12.0))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            let display_digits = if self.adb_dialer_input.is_empty() {
+                                                "Enter a phone number..."
+                                            } else {
+                                                &self.adb_dialer_input
+                                            };
+                                            let text_color = if self.adb_dialer_input.is_empty() {
+                                                p.text_muted
+                                            } else {
+                                                Color32::WHITE
+                                            };
+                                            ui.label(RichText::new(display_digits).size(18.0).monospace().strong().color(text_color));
+
+                                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                                if !self.adb_dialer_input.is_empty() {
+                                                    let btn_bs = egui::Button::new(RichText::new("⌫").size(14.0).color(p.text_secondary))
+                                                        .fill(Color32::TRANSPARENT);
+                                                    if ui.add(btn_bs).on_hover_text("Backspace").clicked() {
+                                                        self.adb_dialer_input.pop();
+                                                    }
+
+                                                    let btn_clear = egui::Button::new(RichText::new("✕").size(11.0).color(p.text_muted))
+                                                        .fill(Color32::TRANSPARENT);
+                                                    if ui.add(btn_clear).on_hover_text("Clear all").clicked() {
+                                                        self.adb_dialer_input.clear();
+                                                    }
+                                                }
+                                            });
+                                        });
+                                    });
+
+                                ui.add_space(16.0);
+
+                                // 3x4 Telephone Keypad Matrix
+                                let dial_keys = [
+                                    ("1", ""),
+                                    ("2", "ABC"),
+                                    ("3", "DEF"),
+                                    ("4", "GHI"),
+                                    ("5", "JKL"),
+                                    ("6", "MNO"),
+                                    ("7", "PQRS"),
+                                    ("8", "TUV"),
+                                    ("9", "WXYZ"),
+                                    ("*", ""),
+                                    ("0", "+"),
+                                    ("#", ""),
+                                ];
+
+                                for row in dial_keys.chunks(3) {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing = egui::vec2(16.0, 0.0);
+                                        for &(num, letters) in row {
+                                            let btn_frame = Frame::none()
+                                                .fill(Color32::from_rgb(22, 24, 35))
+                                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 60)))
+                                                .rounding(Rounding::same(999.0))
+                                                .inner_margin(egui::Margin::symmetric(18.0, 10.0));
+
+                                            let resp = btn_frame.show(ui, |ui| {
+                                                ui.set_min_size(Vec2::new(76.0, 52.0));
+                                                ui.vertical_centered(|ui| {
+                                                    ui.label(RichText::new(num).size(18.0).strong().color(Color32::WHITE));
+                                                    if !letters.is_empty() {
+                                                        ui.label(RichText::new(letters).size(8.5).color(p.text_muted));
+                                                    }
+                                                });
+                                            });
+
+                                            if resp.response.interact(egui::Sense::click()).clicked() {
+                                                self.adb_dialer_input.push_str(num);
+                                            }
+                                        }
+                                    });
+                                    ui.add_space(10.0);
+                                }
+
+                                ui.add_space(14.0);
+
+                                // Call and Hangup Action Row
+                                ui.horizontal(|ui| {
+                                    let btn_call = egui::Button::new(RichText::new(format!("{} Call", crate::lucide::PHONE)).size(13.0).strong().color(Color32::WHITE))
+                                        .fill(Color32::from_rgb(22, 163, 74))
+                                        .rounding(Rounding::same(999.0))
+                                        .min_size(Vec2::new(130.0, 38.0));
+                                    if ui.add(btn_call).on_hover_text("Initiate call via Android device").clicked() {
+                                        if !self.adb_dialer_input.is_empty() {
+                                            action_call = Some(self.adb_dialer_input.clone());
+                                        }
+                                    }
+
+                                    ui.add_space(12.0);
+
+                                    let btn_hangup = egui::Button::new(RichText::new("☎ End Call").size(13.0).strong().color(Color32::WHITE))
+                                        .fill(Color32::from_rgb(220, 38, 38))
+                                        .rounding(Rounding::same(999.0))
+                                        .min_size(Vec2::new(110.0, 38.0));
+                                    if ui.add(btn_hangup).on_hover_text("End active call (KEYCODE_ENDCALL)").clicked() {
+                                        action_hangup = true;
+                                    }
+                                });
+
+                                ui.add_space(14.0);
+
+                                // Speed Dial Presets
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("Presets:").size(10.0).color(p.text_muted));
+                                    for &(label, number) in &[("Emergency (911)", "911"), ("Voicemail", "*86"), ("Service", "611")] {
+                                        let btn = egui::Button::new(RichText::new(label).size(9.5).color(p.text_secondary))
+                                            .fill(p.bg_button)
+                                            .rounding(Rounding::same(6.0));
+                                        if ui.add(btn).clicked() {
+                                            self.adb_quick_call_number = number.to_string();
+                                            self.adb_dialer_input = number.to_string();
+                                        }
+                                    }
+                                });
+                            });
+                        });
+                });
+            });
+
+        if let Some(num) = action_call {
+            match crate::adb::start_phone_call(Some(&serial), &num) {
+                Ok(_) => {
+                    self.adb_status_msg = Some((format!("Calling {}...", num), false, Instant::now()));
+                    self.adb_call_logs.insert(0, crate::adb::AdbCallLogEntry {
+                        id: format!("c_{}", self.adb_call_logs.len() + 1),
+                        number: num.clone(),
+                        name: num,
+                        call_type: crate::adb::AdbCallType::Outgoing,
+                        time_str: "Just now".to_string(),
+                        duration_str: "Connecting...".to_string(),
+                    });
+                }
+                Err(e) => {
+                    self.adb_status_msg = Some((format!("Call failed: {}", e), true, Instant::now()));
+                }
+            }
+        }
+
+        if action_hangup {
+            let _ = crate::adb::end_phone_call(Some(&serial));
+            self.adb_status_msg = Some(("Call ended".to_string(), false, Instant::now()));
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // TAB 5: PHONE LINK PHOTOS GALLERY & LIGHTBOX
+    // ═════════════════════════════════════════════════════════════════════════
+    fn render_adb_photos_tab(&mut self, ui: &mut Ui, adb_dev: &crate::config::AdbDeviceConfig) {
+        let p = self.palette();
+        let serial = adb_dev.serial.clone();
+
+        if self.adb_photos.is_empty() {
+            self.adb_photos = crate::adb::list_photos(Some(&serial));
+        }
+
+        let mut action_download: Option<String> = None;
+        let mut action_delete: Option<String> = None;
+
+        ScrollArea::vertical()
+            .id_salt("adb_photos_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                // Header Bar
+                Frame::none()
+                    .fill(p.bg_card)
+                    .rounding(Rounding::same(12.0))
+                    .inner_margin(egui::Margin::symmetric(16.0, 12.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(crate::lucide::IMAGE).size(16.0).color(Color32::from_rgb(244, 114, 182)));
+                            ui.label(RichText::new("Photos & Camera Roll").size(15.0).strong().color(p.text_primary));
+                            ui.label(RichText::new(format!("({} photos)", self.adb_photos.len())).size(11.0).color(p.text_muted));
+
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                let btn_refresh = egui::Button::new(RichText::new(format!("{} Refresh Gallery", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_secondary))
+                                    .fill(p.bg_button)
+                                    .rounding(Rounding::same(6.0));
+                                if ui.add(btn_refresh).clicked() {
+                                    self.adb_photos = crate::adb::list_photos(Some(&serial));
+                                }
+                            });
+                        });
+                    });
+
+                ui.add_space(12.0);
+
+                // Photos Grid (4 Columns)
+                let num_cols = 4;
+                let card_w = (ui.available_width() - ((num_cols - 1) as f32 * 12.0)) / num_cols as f32;
+
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
+                    for photo in &self.adb_photos {
+                        let photo_clone = photo.clone();
+                        Frame::none()
+                            .fill(Color32::from_rgb(18, 20, 29))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                            .rounding(Rounding::same(12.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 10.0))
+                            .show(ui, |ui| {
+                                ui.set_width(card_w);
+                                ui.vertical(|ui| {
+                                    // Visual Photo Canvas Placeholder
+                                    let canvas_resp = Frame::none()
+                                        .fill(Color32::from_rgb(24, 28, 42))
+                                        .rounding(Rounding::same(8.0))
+                                        .inner_margin(egui::Margin::symmetric(12.0, 28.0))
+                                        .show(ui, |ui| {
+                                            ui.vertical_centered(|ui| {
+                                                ui.label(RichText::new(crate::lucide::IMAGE).size(32.0).color(Color32::from_rgb(244, 114, 182)));
+                                                ui.add_space(4.0);
+                                                ui.label(RichText::new("HIGH RES JPEG").size(9.0).monospace().color(p.text_muted));
+                                            });
+                                        });
+
+                                    if canvas_resp.response.interact(egui::Sense::click()).clicked() {
+                                        self.adb_selected_photo = Some(photo_clone.clone());
+                                    }
+
+                                    ui.add_space(8.0);
+                                    ui.add(egui::Label::new(RichText::new(&photo.name).size(11.0).strong().color(p.text_primary)).truncate());
+
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(&photo.size_str).size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
+                                        ui.label(RichText::new("•").size(9.5).color(p.text_muted));
+                                        ui.add(egui::Label::new(RichText::new(&photo.date_str).size(9.0).color(p.text_muted)).truncate());
+                                    });
+
+                                    ui.add_space(6.0);
+
+                                    // Action buttons row
+                                    ui.horizontal(|ui| {
+                                        let btn_view = egui::Button::new(RichText::new("👁 View").size(10.0).color(p.text_primary))
+                                            .fill(p.bg_button)
+                                            .rounding(Rounding::same(6.0));
+                                        if ui.add(btn_view).clicked() {
+                                            self.adb_selected_photo = Some(photo_clone.clone());
+                                        }
+
+                                        let btn_dl = egui::Button::new(RichText::new("💾 Save").size(10.0).color(Color32::from_rgb(74, 222, 128)))
+                                            .fill(Color32::from_rgb(20, 45, 30))
+                                            .rounding(Rounding::same(6.0));
+                                        if ui.add(btn_dl).on_hover_text("Download to host ~/Downloads").clicked() {
+                                            action_download = Some(photo_clone.path.clone());
+                                        }
+
+                                        let btn_del = egui::Button::new(RichText::new("🗑").size(10.0).color(Color32::from_rgb(248, 113, 113)))
+                                            .fill(Color32::from_rgb(45, 20, 20))
+                                            .rounding(Rounding::same(6.0));
+                                        if ui.add(btn_del).on_hover_text("Delete from phone").clicked() {
+                                            action_delete = Some(photo_clone.path.clone());
+                                        }
+                                    });
+                                });
+                            });
+                    }
+                });
+            });
+
+        if let Some(path) = action_download {
+            match crate::adb::pull_photo_to_downloads(Some(&serial), &path) {
+                Ok(msg) => self.adb_status_msg = Some((msg, false, Instant::now())),
+                Err(e) => self.adb_status_msg = Some((format!("Download failed: {}", e), true, Instant::now())),
+            }
+        }
+
+        if let Some(path) = action_delete {
+            let _ = crate::adb::delete_device_photo(Some(&serial), &path);
+            self.adb_photos.retain(|p| p.path != path);
+            self.adb_status_msg = Some(("Photo deleted from device".to_string(), false, Instant::now()));
+        }
+    }
+
+    fn render_adb_photo_lightbox(&mut self, ctx: &egui::Context, serial: &str) {
+        let photo = match &self.adb_selected_photo {
+            Some(p) => p.clone(),
+            None => return,
+        };
+
+        let screen = ctx.screen_rect();
+        let p = self.palette();
+
+        let backdrop_area = egui::Area::new(egui::Id::new("adb_lightbox_backdrop"))
+            .fixed_pos(screen.min)
+            .order(egui::Order::Middle);
+        let bg_resp = backdrop_area
+            .show(ctx, |ui| {
+                let (rect, resp) = ui.allocate_exact_size(screen.size(), egui::Sense::click());
+                ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha(190));
+                resp
+            })
+            .inner;
+
+        if bg_resp.clicked() || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.adb_selected_photo = None;
+            return;
+        }
+
+        let modal_w = 640.0_f32.min(screen.width() - 32.0);
+        let mut close_modal = false;
+        let mut do_download: Option<String> = None;
+
+        egui::Window::new("Photo Preview Lightbox")
+            .id(egui::Id::new("adb_photo_lightbox_dialog"))
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            .movable(false)
+            .current_pos(screen.center())
+            .pivot(Align2::CENTER_CENTER)
+            .min_width(modal_w)
+            .max_width(modal_w)
+            .frame(
+                Frame::none()
+                    .fill(Color32::from_rgb(16, 17, 24))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                    .rounding(Rounding::same(16.0))
+                    .shadow(egui::epaint::Shadow {
+                        offset: egui::vec2(0.0, 14.0),
+                        blur: 32.0,
+                        spread: 0.0,
+                        color: Color32::from_black_alpha(180),
+                    })
+                    .inner_margin(egui::Margin::symmetric(20.0, 16.0)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(crate::lucide::IMAGE).size(16.0).color(Color32::from_rgb(244, 114, 182)));
+                    ui.label(RichText::new(&photo.name).size(14.0).strong().color(p.text_primary));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let btn_x = egui::Button::new(RichText::new(crate::lucide::X).size(13.0).color(p.text_secondary))
+                            .fill(p.bg_button)
+                            .rounding(Rounding::same(6.0));
+                        if ui.add(btn_x).clicked() {
+                            close_modal = true;
+                        }
+                    });
+                });
+
+                ui.add_space(12.0);
+
+                Frame::none()
+                    .fill(Color32::from_rgb(10, 12, 18))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(28, 32, 46)))
+                    .rounding(Rounding::same(12.0))
+                    .inner_margin(egui::Margin::symmetric(24.0, 48.0))
+                    .show(ui, |ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.label(RichText::new(crate::lucide::IMAGE).size(64.0).color(Color32::from_rgb(244, 114, 182)));
+                            ui.add_space(8.0);
+                            ui.label(RichText::new(&photo.name).size(13.0).strong().color(Color32::WHITE));
+                            ui.label(RichText::new(format!("Remote path: {}", photo.path)).size(10.0).monospace().color(p.text_muted));
+                            ui.label(RichText::new(format!("Size: {} • Date: {}", photo.size_str, photo.date_str)).size(10.5).color(Color32::from_rgb(56, 189, 248)));
+                        });
+                    });
+
+                ui.add_space(14.0);
+
+                ui.horizontal(|ui| {
+                    let btn_dl = egui::Button::new(RichText::new(format!("{} Download to Host PC", crate::lucide::DOWNLOAD)).size(11.5).strong().color(Color32::WHITE))
+                        .fill(Color32::from_rgb(22, 163, 74))
+                        .rounding(Rounding::same(8.0))
+                        .min_size(Vec2::new(160.0, 32.0));
+                    if ui.add(btn_dl).clicked() {
+                        do_download = Some(photo.path.clone());
+                    }
+
+                    ui.add_space(8.0);
+
+                    let btn_copy = egui::Button::new(RichText::new("📋 Copy Path").size(11.0).color(p.text_secondary))
+                        .fill(p.bg_button)
+                        .rounding(Rounding::same(8.0));
+                    if ui.add(btn_copy).clicked() {
+                        ui.output_mut(|o| o.copied_text = photo.path.clone());
+                        self.adb_status_msg = Some(("Path copied to clipboard".to_string(), false, Instant::now()));
+                    }
+
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let btn_close = egui::Button::new(RichText::new("Close").size(11.0).color(p.text_secondary))
+                            .fill(p.bg_button)
+                            .rounding(Rounding::same(8.0));
+                        if ui.add(btn_close).clicked() {
+                            close_modal = true;
+                        }
+                    });
+                });
+            });
+
+        if close_modal {
+            self.adb_selected_photo = None;
+        }
+
+        if let Some(path) = do_download {
+            match crate::adb::pull_photo_to_downloads(Some(serial), &path) {
+                Ok(msg) => self.adb_status_msg = Some((msg, false, Instant::now())),
+                Err(e) => self.adb_status_msg = Some((format!("Download failed: {}", e), true, Instant::now())),
+            }
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // TAB 6: PHONE LINK NOTIFICATIONS CENTER
+    // ═════════════════════════════════════════════════════════════════════════
+    fn render_adb_notifications_tab(&mut self, ui: &mut Ui, adb_dev: &crate::config::AdbDeviceConfig) {
+        let p = self.palette();
+        let serial = adb_dev.serial.clone();
+
+        if self.adb_notifications.is_empty() {
+            self.adb_notifications = crate::adb::get_notifications(Some(&serial));
+        }
+
+        let mut action_dismiss: Option<String> = None;
+        let mut action_reply: Option<String> = None;
+        let mut action_call: Option<String> = None;
+
+        ScrollArea::vertical()
+            .id_salt("adb_notifications_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                // Header Bar
+                Frame::none()
+                    .fill(p.bg_card)
+                    .rounding(Rounding::same(12.0))
+                    .inner_margin(egui::Margin::symmetric(16.0, 12.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(crate::lucide::BELL).size(16.0).color(Color32::from_rgb(251, 191, 36)));
+                            ui.label(RichText::new("Live Notifications").size(15.0).strong().color(p.text_primary));
+                            ui.label(RichText::new(format!("({} active)", self.adb_notifications.len())).size(11.0).color(p.text_muted));
+
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                let btn_clear = egui::Button::new(RichText::new("Clear All").size(10.5).color(Color32::from_rgb(248, 113, 113)))
+                                    .fill(Color32::from_rgb(45, 20, 20))
+                                    .rounding(Rounding::same(6.0));
+                                if ui.add(btn_clear).clicked() {
+                                    self.adb_notifications.clear();
+                                }
+
+                                ui.add_space(8.0);
+
+                                let btn_refresh = egui::Button::new(RichText::new(format!("{} Refresh", crate::lucide::REFRESH_CW)).size(10.5).color(p.text_secondary))
+                                    .fill(p.bg_button)
+                                    .rounding(Rounding::same(6.0));
+                                if ui.add(btn_refresh).clicked() {
+                                    self.adb_notifications = crate::adb::get_notifications(Some(&serial));
+                                }
+                            });
+                        });
+                    });
+
+                ui.add_space(8.0);
+
+                // Notifications Search Filter
+                Frame::none()
+                    .fill(Color32::from_rgb(14, 15, 22))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                    .rounding(Rounding::same(8.0))
+                    .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(crate::lucide::SEARCH).size(12.0).color(p.text_muted));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.adb_notifications_filter)
+                                    .hint_text("Search notifications by app, title, or message...")
+                                    .frame(false)
+                                    .desired_width(ui.available_width()),
+                            );
+                        });
+                    });
+
+                ui.add_space(10.0);
+
+                let notif_q = self.adb_notifications_filter.to_lowercase();
+
+                // Notifications List
+                for notif in &self.adb_notifications {
+                    if !notif_q.is_empty()
+                        && !notif.app_name.to_lowercase().contains(&notif_q)
+                        && !notif.title.to_lowercase().contains(&notif_q)
+                        && !notif.text.to_lowercase().contains(&notif_q)
+                    {
+                        continue;
+                    }
+                    let notif_clone = notif.clone();
+                    let (app_icon, app_color) = match notif.package.as_str() {
+                        pkg if pkg.contains("outlook") || pkg.contains("email") => (crate::lucide::FILE_TEXT, Color32::from_rgb(56, 189, 248)),
+                        pkg if pkg.contains("messaging") || pkg.contains("sms") => (crate::lucide::MESSAGE_SQUARE, Color32::from_rgb(99, 102, 241)),
+                        pkg if pkg.contains("dialer") || pkg.contains("phone") => (crate::lucide::PHONE, Color32::from_rgb(34, 197, 94)),
+                        _ => (crate::lucide::BELL, Color32::from_rgb(251, 191, 36)),
+                    };
+
+                    Frame::none()
+                        .fill(Color32::from_rgb(18, 20, 29))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                        .rounding(Rounding::same(12.0))
+                        .inner_margin(egui::Margin::symmetric(16.0, 12.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                Frame::none()
+                                    .fill(app_color.gamma_multiply(0.2))
+                                    .rounding(Rounding::same(8.0))
+                                    .inner_margin(egui::Margin::symmetric(8.0, 8.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(app_icon).size(16.0).color(app_color));
+                                    });
+
+                                ui.add_space(10.0);
+                                ui.vertical(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(&notif.app_name).size(10.5).monospace().color(app_color));
+                                        ui.label(RichText::new("•").size(9.5).color(p.text_muted));
+                                        ui.label(RichText::new(&notif.time_str).size(9.5).color(p.text_muted));
+                                    });
+                                    ui.label(RichText::new(&notif.title).size(13.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new(&notif.text).size(11.0).color(p.text_secondary));
+                                });
+
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let btn_dismiss = egui::Button::new(RichText::new("Dismiss").size(10.0).color(p.text_muted))
+                                        .fill(p.bg_button)
+                                        .rounding(Rounding::same(6.0));
+                                    if ui.add(btn_dismiss).clicked() {
+                                        action_dismiss = Some(notif_clone.id.clone());
+                                    }
+
+                                    ui.add_space(6.0);
+
+                                    if notif.package.contains("dialer") || notif.title.contains("Call") {
+                                        let btn_call = egui::Button::new(RichText::new("📞 Call Back").size(10.0).strong().color(Color32::WHITE))
+                                            .fill(Color32::from_rgb(22, 163, 74))
+                                            .rounding(Rounding::same(6.0));
+                                        if ui.add(btn_call).clicked() {
+                                            action_call = Some(notif_clone.title.clone());
+                                        }
+                                    } else {
+                                        let btn_reply = egui::Button::new(RichText::new("💬 Reply").size(10.0).strong().color(Color32::WHITE))
+                                            .fill(Color32::from_rgb(79, 70, 229))
+                                            .rounding(Rounding::same(6.0));
+                                        if ui.add(btn_reply).clicked() {
+                                            action_reply = Some(notif_clone.title.clone());
+                                        }
+                                    }
+                                });
+                            });
+                        });
+                    ui.add_space(8.0);
+                }
+            });
+
+        if let Some(id) = action_dismiss {
+            self.adb_notifications.retain(|n| n.id != id);
+        }
+
+        if let Some(sender) = action_reply {
+            self.adb_sms_selected_contact = Some(sender);
+            self.adb_active_subtab = AdbSubTab::Messages;
+        }
+
+        if let Some(num) = action_call {
+            self.adb_dialer_input = num;
+            self.adb_active_subtab = AdbSubTab::Calls;
+        }
     }
 }

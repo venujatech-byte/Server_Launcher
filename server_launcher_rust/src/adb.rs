@@ -10,6 +10,7 @@
 //! - Firmware & Recovery toolkits (OTA sideload, fastboot flashing, reboot targets, bugreports)
 //! - Hardware input simulation (power, volume, navigation, screenshot capture)
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -45,6 +46,49 @@ pub struct AdbDeviceTelemetry {
     pub storage_sdcard_free_gb: Option<f32>,
     pub storage_sdcard_total_gb: Option<f32>,
     pub uptime_secs: u64,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct AdbSensorProcess {
+    pub pid: u32,
+    pub name: String,
+    pub cpu_pct: Option<f32>,
+    pub memory: String,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct AdbNetworkInterface {
+    pub name: String,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct AdbTemperatureSensor {
+    pub name: String,
+    pub temp_c: f32,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct AdbDeviceSensors {
+    pub cpu_model: String,
+    pub cpu_cores: usize,
+    pub cpu_usage_pct: Option<f32>,
+    pub top_processes: Vec<AdbSensorProcess>,
+    pub mem_total_kb: Option<u64>,
+    pub mem_available_kb: Option<u64>,
+    pub swap_total_kb: Option<u64>,
+    pub swap_free_kb: Option<u64>,
+    pub gpu_renderer: String,
+    pub gpu_platform: String,
+    pub battery_voltage_mv: Option<u64>,
+    pub battery_health: String,
+    pub battery_plugged: String,
+    pub wifi_enabled: Option<bool>,
+    pub bluetooth_enabled: Option<bool>,
+    pub network_interfaces: Vec<AdbNetworkInterface>,
+    pub temperatures: Vec<AdbTemperatureSensor>,
+    pub sensor_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -416,6 +460,179 @@ pub fn query_telemetry(serial: &str) -> AdbDeviceTelemetry {
     }
 
     telem
+}
+
+/// Reads Android hardware and resource sensor data in one device shell session.
+pub fn query_device_sensors(serial: &str) -> Result<AdbDeviceSensors, String> {
+    let script = r#"
+echo __CPUINFO__; cat /proc/cpuinfo
+echo __MEMINFO__; cat /proc/meminfo
+echo __TOP__; top -b -n 1 -m 12
+echo __BATTERY__; dumpsys battery
+echo __NETDEV__; cat /proc/net/dev
+echo __THERMAL__; dumpsys thermalservice
+echo __THERMAL_ZONES__; for zone in /sys/class/thermal/thermal_zone*; do if [ -r "$zone/temp" ]; then printf '%s ' "$(cat "$zone/type" 2>/dev/null)"; cat "$zone/temp"; fi; done
+echo __SENSORS__; dumpsys sensorservice
+echo __WIFI__; settings get global wifi_on
+echo __BLUETOOTH__; settings get global bluetooth_on
+echo __GPU__; getprop ro.hardware.egl; getprop ro.board.platform
+"#;
+    let output = adb_cmd(Some(serial), &["shell", "sh", "-c", script])?;
+    let mut sections = HashMap::new();
+    let mut current = "";
+    for line in output.lines() {
+        if let Some(name) = line.strip_prefix("__").and_then(|line| line.strip_suffix("__")) {
+            current = name;
+            sections.entry(current).or_insert_with(String::new);
+        } else if !current.is_empty() {
+            let section: &mut String = sections.get_mut(current).expect("section was inserted");
+            section.push_str(line);
+            section.push('\n');
+        }
+    }
+    let section = |name: &str| sections.get(name).map(String::as_str).unwrap_or("");
+
+    let mem_value = |name: &str| {
+        section("MEMINFO")
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{name}:")))
+            .and_then(|value| value.split_whitespace().next())
+            .and_then(|value| value.parse::<u64>().ok())
+    };
+    let cpu_lines: Vec<&str> = section("CPUINFO").lines().collect();
+    let cpu_model = cpu_lines
+        .iter()
+        .find_map(|line| {
+            let line = line.trim();
+            ["Hardware", "model name", "Processor"]
+                .iter()
+                .find_map(|key| line.strip_prefix(&format!("{key}:")))
+        })
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string();
+    let cpu_cores = cpu_lines
+        .iter()
+        .filter(|line| line.trim_start().starts_with("processor"))
+        .count();
+
+    let top_processes = section("TOP")
+        .lines()
+        .filter_map(|line| {
+            let columns: Vec<&str> = line.split_whitespace().collect();
+            let pid = columns.first()?.parse::<u32>().ok()?;
+            if columns.len() < 9 {
+                return None;
+            }
+            let cpu_pct = columns[8].trim_end_matches('%').parse::<f32>().ok();
+            Some(AdbSensorProcess {
+                pid,
+                name: columns.get(11..).unwrap_or(&[]).join(" ").trim().to_string(),
+                cpu_pct,
+                memory: columns.get(5).copied().unwrap_or("").to_string(),
+            })
+        })
+        .take(12)
+        .collect();
+    let cpu_usage_pct = section("TOP")
+        .lines()
+        .find(|line| line.to_ascii_lowercase().contains("cpu:"))
+        .and_then(|line| {
+            line.split_whitespace()
+                .find(|part| part.ends_with('%'))
+                .and_then(|part| part.trim_end_matches('%').parse::<f32>().ok())
+        });
+
+    let network_interfaces = section("NETDEV")
+        .lines()
+        .skip(2)
+        .filter_map(|line| {
+            let (name, counters) = line.split_once(':')?;
+            let counters: Vec<&str> = counters.split_whitespace().collect();
+            Some(AdbNetworkInterface {
+                name: name.trim().to_string(),
+                rx_bytes: counters.first()?.parse().ok()?,
+                tx_bytes: counters.get(8)?.parse().ok()?,
+            })
+        })
+        .collect();
+
+    let mut temperatures: Vec<AdbTemperatureSensor> = section("THERMAL")
+        .lines()
+        .filter_map(|line| {
+            let value = line.split("mValue=").nth(1)?.split(|c: char| !c.is_ascii_digit() && c != '.' && c != '-')
+                .next()?.parse::<f32>().ok()?;
+            let name = line.split("mType=").nth(1)
+                .and_then(|tail| tail.split(|c: char| !c.is_ascii_alphanumeric() && c != '_').next())
+                .filter(|name| !name.is_empty())
+                .or_else(|| line.split("mName=").nth(1).and_then(|tail| tail.split('}').next()))
+                .unwrap_or("Thermal sensor");
+            Some(AdbTemperatureSensor { name: name.to_string(), temp_c: value })
+        })
+        .collect();
+    temperatures.extend(section("THERMAL_ZONES").lines().filter_map(|line| {
+        let (name, value) = line.rsplit_once(char::is_whitespace)?;
+        let mut temp_c = value.trim().parse::<f32>().ok()?;
+        if temp_c.abs() > 200.0 {
+            temp_c /= 1000.0;
+        }
+        Some(AdbTemperatureSensor {
+            name: if name.trim().is_empty() { "Thermal zone" } else { name.trim() }.to_string(),
+            temp_c,
+        })
+    }));
+
+    let sensor_names = section("SENSORS")
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.starts_with("0x") || line.starts_with("Handle ") {
+                let name = line.split_once('(').map(|(_, name)| name.trim_end_matches(')').trim())
+                    .or_else(|| line.split_once(':').map(|(_, name)| name.trim()))?;
+                (!name.is_empty()).then(|| name.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let parse_toggle = |name: &str| match section(name).trim() {
+        "1" => Some(true),
+        "0" => Some(false),
+        _ => None,
+    };
+    let battery_value = |prefix: &str| {
+        section("BATTERY")
+            .lines()
+            .find_map(|line| line.trim().strip_prefix(prefix))
+            .map(str::trim)
+    };
+    let gpu: Vec<&str> = section("GPU").lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    let battery_plugged = ["AC", "USB", "Wireless"]
+        .iter()
+        .find(|source| battery_value(&format!("{source} powered:")) == Some("true"))
+        .map(|source| source.to_string())
+        .unwrap_or_else(|| "Not charging".to_string());
+    Ok(AdbDeviceSensors {
+        cpu_model,
+        cpu_cores,
+        cpu_usage_pct,
+        top_processes,
+        mem_total_kb: mem_value("MemTotal"),
+        mem_available_kb: mem_value("MemAvailable"),
+        swap_total_kb: mem_value("SwapTotal"),
+        swap_free_kb: mem_value("SwapFree"),
+        gpu_renderer: gpu.first().copied().unwrap_or("").to_string(),
+        gpu_platform: gpu.get(1).copied().unwrap_or("").to_string(),
+        battery_voltage_mv: battery_value("voltage:").and_then(|value| value.parse().ok()),
+        battery_health: battery_value("health:").unwrap_or("").to_string(),
+        battery_plugged,
+        wifi_enabled: parse_toggle("WIFI"),
+        bluetooth_enabled: parse_toggle("BLUETOOTH"),
+        network_interfaces,
+        temperatures,
+        sensor_names,
+    })
 }
 
 fn parse_getprop_line(line: &str) -> Option<(&str, &str)> {

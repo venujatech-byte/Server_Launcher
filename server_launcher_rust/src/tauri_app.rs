@@ -61,6 +61,7 @@ async fn adb_data(serial: String, section: String, path: Option<String>) -> Resu
             "endpoints" => json!(crate::adb::discover_device_endpoints(serial).into_iter().map(|e| json!({
                 "interface":e.interface,"ip":e.ip,"wifi":e.is_wifi,"label":e.label
             })).collect::<Vec<_>>()),
+            "sensors" => json!(crate::adb::query_device_sensors(serial)?),
             _ => return Err("Unsupported ADB data section".to_string()),
         };
         Ok(data)

@@ -902,7 +902,8 @@ impl LauncherApp {
             .show(ui, |ui| {
                 ScrollArea::horizontal()
                     .id_salt("adb_subtabs_scroll")
-                    .auto_shrink([false, false])
+                    .auto_shrink([false, true])
+                    .max_height(34.0)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
@@ -985,7 +986,8 @@ impl LauncherApp {
                         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                         .show(ui, |ui| {
                             ui.set_width(left_w);
-                            // Phone Hardware Preview Box
+                            ui.vertical(|ui| {
+                                // Phone Hardware Preview Box
                             Frame::none()
                                 .fill(Color32::from_rgb(14, 16, 24))
                                 .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 60)))
@@ -1117,6 +1119,7 @@ impl LauncherApp {
                                     });
                                 ui.add_space(4.0);
                             }
+                            });
                         });
 
                     ui.add_space(12.0);
@@ -1129,8 +1132,9 @@ impl LauncherApp {
                         .inner_margin(egui::Margin::symmetric(16.0, 14.0))
                         .show(ui, |ui| {
                             ui.set_width(right_w);
-                            ui.label(RichText::new("PHONE LINK QUICK LAUNCHPAD").size(10.0).monospace().strong().color(p.text_muted));
-                            ui.add_space(8.0);
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new("PHONE LINK QUICK LAUNCHPAD").size(10.0).monospace().strong().color(p.text_muted));
+                                ui.add_space(8.0);
 
                             let half_tile_w = ((right_w - 32.0 - 10.0) * 0.5).max(120.0);
 
@@ -1238,6 +1242,7 @@ impl LauncherApp {
                                             self.adb_active_subtab = AdbSubTab::ScreenShare;
                                         }
                                     });
+                            });
                             });
                         });
                 });
@@ -3017,7 +3022,8 @@ impl LauncherApp {
                         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                         .show(ui, |ui| {
                             ui.set_width(left_w);
-                            ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
                                 ui.label(RichText::new(crate::lucide::MESSAGE_SQUARE).size(15.0).color(Color32::from_rgb(56, 189, 248)));
                                 ui.label(RichText::new("Messages").size(15.0).strong().color(p.text_primary));
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -3143,6 +3149,7 @@ impl LauncherApp {
                                         ui.add_space(4.0);
                                     }
                                 });
+                            });
                         });
 
                     ui.add_space(12.0);
@@ -3154,6 +3161,7 @@ impl LauncherApp {
                         .inner_margin(egui::Margin::symmetric(16.0, 14.0))
                         .show(ui, |ui| {
                             ui.set_width(right_w);
+                            ui.vertical(|ui| {
                             let sel_contact = self.adb_sms_selected_contact.clone().unwrap_or_else(|| "Anisa Kipenzi".to_string());
                             let thread_msgs: Vec<&crate::adb::AdbSmsMessage> = self
                                 .adb_sms_messages
@@ -3279,6 +3287,7 @@ impl LauncherApp {
                                     self.adb_sms_input.clear();
                                 }
                             });
+                            });
                         });
                 });
             });
@@ -3331,7 +3340,8 @@ impl LauncherApp {
                         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                         .show(ui, |ui| {
                             ui.set_width(left_w);
-                            ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
                                 ui.label(RichText::new(crate::lucide::PHONE).size(15.0).color(Color32::from_rgb(74, 222, 128)));
                                 ui.label(RichText::new("Calls & Call Log").size(15.0).strong().color(p.text_primary));
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -3441,6 +3451,7 @@ impl LauncherApp {
                                         ui.add_space(4.0);
                                     }
                                 });
+                            });
                         });
 
                     ui.add_space(12.0);

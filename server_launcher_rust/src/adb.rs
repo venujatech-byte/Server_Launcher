@@ -54,6 +54,21 @@ pub struct AdbSensorProcess {
     pub name: String,
     pub cpu_pct: Option<f32>,
     pub memory: String,
+    pub memory_kb: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct AdbCpuCounters {
+    pub name: String,
+    pub total: u64,
+    pub idle: u64,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct AdbDiskCounters {
+    pub name: String,
+    pub read_sectors: u64,
+    pub written_sectors: u64,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -74,21 +89,32 @@ pub struct AdbDeviceSensors {
     pub cpu_model: String,
     pub cpu_cores: usize,
     pub cpu_usage_pct: Option<f32>,
+    pub cpu_counters: Vec<AdbCpuCounters>,
+    pub cpu_frequencies_mhz: Vec<u64>,
     pub top_processes: Vec<AdbSensorProcess>,
     pub mem_total_kb: Option<u64>,
     pub mem_available_kb: Option<u64>,
     pub swap_total_kb: Option<u64>,
     pub swap_free_kb: Option<u64>,
+    pub storage_internal_total_kb: Option<u64>,
+    pub storage_internal_free_kb: Option<u64>,
+    pub storage_shared_total_kb: Option<u64>,
+    pub storage_shared_free_kb: Option<u64>,
+    pub disk_counters: Vec<AdbDiskCounters>,
     pub gpu_renderer: String,
     pub gpu_platform: String,
     pub battery_voltage_mv: Option<u64>,
     pub battery_health: String,
     pub battery_plugged: String,
+    pub battery_pct: Option<f32>,
+    pub battery_status: String,
+    pub battery_temp_c: Option<f32>,
     pub wifi_enabled: Option<bool>,
     pub bluetooth_enabled: Option<bool>,
     pub network_interfaces: Vec<AdbNetworkInterface>,
     pub temperatures: Vec<AdbTemperatureSensor>,
     pub sensor_names: Vec<String>,
+    pub uptime_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -466,18 +492,23 @@ pub fn query_telemetry(serial: &str) -> AdbDeviceTelemetry {
 pub fn query_device_sensors(serial: &str) -> Result<AdbDeviceSensors, String> {
     let script = r#"
 echo __CPUINFO__; cat /proc/cpuinfo
+echo __CPU_STAT__; cat /proc/stat
+echo __CPU_FREQ__; for freq in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq; do [ -r "$freq" ] && cat "$freq"; done
 echo __MEMINFO__; cat /proc/meminfo
-echo __TOP__; top -b -n 1 -m 12
+echo __TOP__; top -b -n 1 -m 50
 echo __BATTERY__; dumpsys battery
 echo __NETDEV__; cat /proc/net/dev
+echo __DISKSTATS__; cat /proc/diskstats
+echo __DF__; df -k /data /sdcard
 echo __THERMAL__; dumpsys thermalservice
 echo __THERMAL_ZONES__; for zone in /sys/class/thermal/thermal_zone*; do if [ -r "$zone/temp" ]; then printf '%s ' "$(cat "$zone/type" 2>/dev/null)"; cat "$zone/temp"; fi; done
-echo __SENSORS__; dumpsys sensorservice
+echo __SENSORS__; dumpsys sensorservice | sed -n '/Sensor List:/,/Fusion States:/p'
 echo __WIFI__; settings get global wifi_on
-echo __BLUETOOTH__; settings get global bluetooth_on
+echo __BLUETOOTH__; dumpsys bluetooth_manager | head -n 8
 echo __GPU__; getprop ro.hardware.egl; getprop ro.board.platform
+echo __UPTIME__; cat /proc/uptime
 "#;
-    let output = adb_cmd(Some(serial), &["shell", "sh", "-c", script])?;
+    let output = adb_cmd(Some(serial), &["shell", script])?;
     let mut sections = HashMap::new();
     let mut current = "";
     for line in output.lines() {
@@ -515,6 +546,28 @@ echo __GPU__; getprop ro.hardware.egl; getprop ro.board.platform
         .iter()
         .filter(|line| line.trim_start().starts_with("processor"))
         .count();
+    let cpu_counters = section("CPU_STAT")
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let name = fields.next()?;
+            if !name.starts_with("cpu") {
+                return None;
+            }
+            let values: Vec<u64> = fields.filter_map(|field| field.parse().ok()).collect();
+            let idle = *values.get(3)? + values.get(4).copied().unwrap_or(0);
+            Some(AdbCpuCounters {
+                name: name.to_string(),
+                total: values.iter().sum(),
+                idle,
+            })
+        })
+        .collect();
+    let cpu_frequencies_mhz = section("CPU_FREQ")
+        .lines()
+        .filter_map(|line| line.trim().parse::<u64>().ok())
+        .map(|khz| khz / 1000)
+        .collect();
 
     let top_processes = section("TOP")
         .lines()
@@ -530,17 +583,24 @@ echo __GPU__; getprop ro.hardware.egl; getprop ro.board.platform
                 name: columns.get(11..).unwrap_or(&[]).join(" ").trim().to_string(),
                 cpu_pct,
                 memory: columns.get(5).copied().unwrap_or("").to_string(),
+                memory_kb: columns
+                    .get(5)
+                    .and_then(|value| parse_top_memory_kb(value)),
             })
         })
-        .take(12)
+        .filter(|process| !process.name.is_empty() && !process.name.starts_with("top ") && !process.name.starts_with("sh "))
+        .take(50)
         .collect();
     let cpu_usage_pct = section("TOP")
         .lines()
-        .find(|line| line.to_ascii_lowercase().contains("cpu:"))
+        .find(|line| line.to_ascii_lowercase().contains("%cpu"))
         .and_then(|line| {
-            line.split_whitespace()
-                .find(|part| part.ends_with('%'))
-                .and_then(|part| part.trim_end_matches('%').parse::<f32>().ok())
+            let columns: Vec<&str> = line.split_whitespace().collect();
+            let total = columns.first()?.trim_end_matches("%cpu").parse::<f32>().ok()?;
+            let idle = columns.iter().find_map(|part| {
+                part.strip_suffix("%idle")?.parse::<f32>().ok()
+            })?;
+            (total > 0.0).then_some(((total - idle) / total * 100.0).clamp(0.0, 100.0))
         });
 
     let network_interfaces = section("NETDEV")
@@ -556,6 +616,35 @@ echo __GPU__; getprop ro.hardware.egl; getprop ro.board.platform
             })
         })
         .collect();
+
+    let disk_counters = section("DISKSTATS")
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let name = *fields.get(2)?;
+            Some(AdbDiskCounters {
+                name: name.to_string(),
+                read_sectors: fields.get(5)?.parse().ok()?,
+                written_sectors: fields.get(9)?.parse().ok()?,
+            })
+        })
+        .collect();
+    let mut storage_internal = None;
+    let mut storage_shared = None;
+    for line in section("DF").lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 6 {
+            continue;
+        }
+        let total = fields[1].parse::<u64>().ok();
+        let free = fields[3].parse::<u64>().ok();
+        let mount = fields.last().copied().unwrap_or("");
+        if mount.starts_with("/data") && storage_internal.is_none() {
+            storage_internal = total.zip(free);
+        } else if mount.starts_with("/storage/emulated") && storage_shared.is_none() {
+            storage_shared = total.zip(free);
+        }
+    }
 
     let mut temperatures: Vec<AdbTemperatureSensor> = section("THERMAL")
         .lines()
@@ -587,7 +676,10 @@ echo __GPU__; getprop ro.hardware.egl; getprop ro.board.platform
         .filter_map(|line| {
             let line = line.trim();
             if line.starts_with("0x") || line.starts_with("Handle ") {
-                let name = line.split_once('(').map(|(_, name)| name.trim_end_matches(')').trim())
+                let name = line
+                    .split_once(')')
+                    .map(|(_, name)| name.split('|').next().unwrap_or(name).trim())
+                    .filter(|name| !name.is_empty())
                     .or_else(|| line.split_once(':').map(|(_, name)| name.trim()))?;
                 (!name.is_empty()).then(|| name.to_string())
             } else {
@@ -596,10 +688,15 @@ echo __GPU__; getprop ro.hardware.egl; getprop ro.board.platform
         })
         .collect();
 
-    let parse_toggle = |name: &str| match section(name).trim() {
-        "1" => Some(true),
-        "0" => Some(false),
-        _ => None,
+    let parse_toggle = |name: &str| {
+        let raw = section(name).trim();
+        match raw {
+            "1" => Some(true),
+            "0" => Some(false),
+            _ if raw.lines().any(|line| line.trim() == "enabled: true" || line.trim() == "state: ON") => Some(true),
+            _ if raw.lines().any(|line| line.trim() == "enabled: false" || line.trim() == "state: OFF") => Some(false),
+            _ => None,
+        }
     };
     let battery_value = |prefix: &str| {
         section("BATTERY")
@@ -613,26 +710,68 @@ echo __GPU__; getprop ro.hardware.egl; getprop ro.board.platform
         .find(|source| battery_value(&format!("{source} powered:")) == Some("true"))
         .map(|source| source.to_string())
         .unwrap_or_else(|| "Not charging".to_string());
+    let uptime_secs = section("UPTIME")
+        .split_whitespace()
+        .next()
+        .and_then(|value| value.parse::<f64>().ok())
+        .map(|seconds| seconds as u64);
+    let battery_status = battery_value("status:")
+        .and_then(|status| match status {
+            "2" => Some("Charging"),
+            "3" => Some("Discharging"),
+            "4" => Some("Not charging"),
+            "5" => Some("Full"),
+            _ => None,
+        })
+        .unwrap_or("Unavailable")
+        .to_string();
     Ok(AdbDeviceSensors {
         cpu_model,
         cpu_cores,
         cpu_usage_pct,
+        cpu_counters,
+        cpu_frequencies_mhz,
         top_processes,
         mem_total_kb: mem_value("MemTotal"),
         mem_available_kb: mem_value("MemAvailable"),
         swap_total_kb: mem_value("SwapTotal"),
         swap_free_kb: mem_value("SwapFree"),
+        storage_internal_total_kb: storage_internal.map(|(total, _)| total),
+        storage_internal_free_kb: storage_internal.map(|(_, free)| free),
+        storage_shared_total_kb: storage_shared.map(|(total, _)| total),
+        storage_shared_free_kb: storage_shared.map(|(_, free)| free),
+        disk_counters,
         gpu_renderer: gpu.first().copied().unwrap_or("").to_string(),
         gpu_platform: gpu.get(1).copied().unwrap_or("").to_string(),
         battery_voltage_mv: battery_value("voltage:").and_then(|value| value.parse().ok()),
         battery_health: battery_value("health:").unwrap_or("").to_string(),
         battery_plugged,
+        battery_pct: battery_value("level:").and_then(|value| value.parse().ok()),
+        battery_status,
+        battery_temp_c: battery_value("temperature:")
+            .and_then(|value| value.parse::<f32>().ok())
+            .map(|value| value / 10.0),
         wifi_enabled: parse_toggle("WIFI"),
         bluetooth_enabled: parse_toggle("BLUETOOTH"),
         network_interfaces,
         temperatures,
         sensor_names,
+        uptime_secs,
     })
+}
+
+fn parse_top_memory_kb(value: &str) -> Option<u64> {
+    let value = value.trim();
+    let (number, multiplier) = match value.chars().last()? {
+        'K' | 'k' => (&value[..value.len() - 1], 1.0),
+        'M' | 'm' => (&value[..value.len() - 1], 1024.0),
+        'G' | 'g' => (&value[..value.len() - 1], 1024.0 * 1024.0),
+        _ => (value, 1.0 / 1024.0),
+    };
+    number
+        .parse::<f64>()
+        .ok()
+        .map(|value| (value * multiplier) as u64)
 }
 
 fn parse_getprop_line(line: &str) -> Option<(&str, &str)> {

@@ -2,7 +2,7 @@
   const invoke = window.__TAURI__?.core?.invoke;
   const $ = (selector) => document.querySelector(selector);
   const content = $('#content');
-  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], sensorsView: 'overview', path: '/sdcard', screenTimer: null, toastTimer: null, lastTelemetry: 0 };
+  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], sensorsView: 'overview', sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', path: '/sdcard', screenTimer: null, toastTimer: null, lastTelemetry: 0 };
   const tabNames = { overview: 'Overview', screen: 'Screen share', messages: 'Messages', calls: 'Calls', photos: 'Photos', notifications: 'Notifications', sensors: 'Sensors', storage: 'Storage', apps: 'Apps', clipboard: 'Clipboard', terminal: 'Terminal', wireless: 'Wireless debugging', firmware: 'Device controls' };
   const tabKinds = { messages: 'messages', calls: 'calls', photos: 'photos', notifications: 'notifications', sensors: 'sensors', apps: 'apps', storage: 'files', wireless: 'endpoints' };
   const icon = (code) => `<span class="icon" aria-hidden="true">&#x${code};</span>`;
@@ -19,6 +19,7 @@
     if (!tabNames[tab]) return;
     clearInterval(state.screenTimer); state.screenTimer = null;
     state.tab = tab; document.querySelectorAll('.nav-item').forEach((n) => n.classList.toggle('active', n.dataset.tab === tab));
+    clearTimeout(state.sensorTimer); state.sensorTimer = null;
     $('#page-title').textContent = tabNames[tab]; $('#eyebrow').textContent = `ANDROID DEVICE / ${tab.toUpperCase()}`;
     void renderTab();
   }
@@ -28,6 +29,7 @@
       const online = devices.filter((d) => d.state === 'device');
       const picker = $('#device-select');
       if (!online.some((d) => d.serial === state.serial)) state.serial = online[0]?.serial ?? '';
+      if (state.sensorHistory.length && state.sensorHistorySerial !== state.serial) { state.sensorHistory = []; state.sensorHistorySerial = state.serial; }
       picker.innerHTML = online.length ? online.map((d) => `<option value="${escapeHtml(d.serial)}" ${d.serial === state.serial ? 'selected' : ''}>${escapeHtml(d.model || d.serial)}</option>`).join('') : '<option value="">No authorized device</option>';
       state.device = online.find((d) => d.serial === state.serial) || null;
       setConnection(Boolean(state.device), state.device ? `Connected · ${state.device.state}` : 'No authorized ADB device');
@@ -44,7 +46,7 @@
   }
   async function loadData(section, path) {
     if (!state.serial) return [];
-    try { state.data = await invokeOrFail('adb_data', { serial: state.serial, section, path: path ?? null }); return state.data; }
+    try { state.data = await invokeOrFail('adb_data', { serial: state.serial, section, path: path ?? null }); if (section === 'sensors') recordSensorSample(state.data); return state.data; }
     catch (error) { state.data = []; toast(String(error), true); return []; }
   }
   async function action(action, value = '', extra = '') {
@@ -137,6 +139,46 @@
   function renderFirmware() {
     content.innerHTML=`<div class="grid two"><section class="card"><div class="card-head"><h2>Power and navigation</h2></div><div class="toolbar"><button class="button" data-action="key_power">Power / Wake</button><button class="button" data-action="key_back">Back</button><button class="button" data-action="key_home">Home</button><button class="button" data-action="key_recents">Recents</button><button class="button" data-action="key_volume_down">Volume −</button><button class="button" data-action="key_volume_up">Volume +</button></div></section><section class="card"><div class="card-head"><h2>Restart device</h2></div><div class="stack"><div class="notice">Recovery and bootloader restart the device outside Android. The device may disconnect until it boots again.</div><div class="toolbar"><button class="button danger" data-action="reboot" data-value="system">System</button><button class="button" data-action="reboot" data-value="recovery">Recovery</button><button class="button" data-action="reboot" data-value="bootloader">Bootloader</button><button class="button" data-action="reboot" data-value="fastboot">Fastboot</button></div></div></section></div>`;
   }
+  function recordSensorSample(s) {
+    if (!s || typeof s !== 'object') return;
+    state.sensorHistorySerial = state.serial;
+    const previous = state.sensorHistory.at(-1), now = Date.now();
+    const sum = (items, key) => (items || []).reduce((n, item) => n + (Number(item[key]) || 0), 0);
+    const mem = s.mem_total_kb ? 100 * (s.mem_total_kb - (s.mem_available_kb || 0)) / s.mem_total_kb : null;
+    const diskTotal = s.storage_internal_total_kb, diskFree = s.storage_internal_free_kb;
+    const rx = sum(s.network_interfaces, 'rx_bytes'), tx = sum(s.network_interfaces, 'tx_bytes');
+    const diskRead = sum(s.disk_counters, 'read_sectors'), diskWrite = sum(s.disk_counters, 'written_sectors');
+    const seconds = previous ? Math.max(.1, (now - previous.at) / 1000) : 0;
+    const rate = (current, old) => previous && current >= old ? (current - old) / seconds : null;
+    const temps = s.temperatures || [];
+    const cores = {};
+    for (const c of s.cpu_counters || []) {
+      if (c.name === 'cpu' || !previous) continue;
+      const old = (previous.cpuCounters || {})[c.name];
+      if (old && c.total > old.total && c.idle >= old.idle) cores[c.name] = 100 * (1 - (c.idle - old.idle) / (c.total - old.total));
+    }
+    state.sensorHistory.push({ at: now, cpu: s.cpu_usage_pct, ram: mem,
+      swap: s.swap_total_kb ? 100 * (s.swap_total_kb - (s.swap_free_kb || 0)) / s.swap_total_kb : null,
+      storage: diskTotal && diskFree != null ? 100 * (diskTotal - diskFree) / diskTotal : null,
+      rx, tx, rxRate: rate(rx, previous?.rx || 0), txRate: rate(tx, previous?.tx || 0),
+      diskReadRate: rate(diskRead, previous?.diskRead || 0) == null ? null : rate(diskRead, previous?.diskRead || 0) * 512,
+      diskWriteRate: rate(diskWrite, previous?.diskWrite || 0) == null ? null : rate(diskWrite, previous?.diskWrite || 0) * 512,
+      battery: s.battery_pct, temp: temps.length ? Math.max(...temps.map(x => Number(x.temp_c)).filter(Number.isFinite)) : s.battery_temp_c,
+      cores, cpuCounters: Object.fromEntries((s.cpu_counters || []).map(c => [c.name, { total: c.total, idle: c.idle }])), diskRead, diskWrite });
+    if (state.sensorHistory.length > 60) state.sensorHistory.shift();
+  }
+  function sensorChart(title, keys, labels, suffix = '%') {
+    const rows = state.sensorHistory.filter(row => keys.some(key => Number.isFinite(row[key] ?? row.cores?.[key])));
+    if (rows.length < 2) return `<section class="card sensor-chart"><div class="card-head"><h2>${title}</h2><span class="subtle">Collecting samples · ${rows.length}/2</span></div><div class="chart-empty">Charts appear after two live samples.</div></section>`;
+    const colors = ['var(--accent)', 'var(--cyan)', 'var(--green)'], w = 600, h = 126, pad = 6;
+    const values = rows.flatMap(row => keys.map(key => row[key] ?? row.cores?.[key])).filter(Number.isFinite);
+    let min = suffix === ' °C' ? Math.floor(Math.min(...values) - 1) : Math.min(0, ...values), max = Math.max(...values); if (max === min) max = min + 1;
+    const axis = value => {
+      if (suffix.includes('B')) { const units=['B','KB','MB','GB','TB']; let n=value,i=0; while(Math.abs(n)>=1024&&i<units.length-1){n/=1024;i++;} return `${n.toFixed(i?1:0)} ${units[i]}${suffix.includes('/s')?'/s':''}`; }
+      return `${value.toFixed(suffix === '%' ? 0 : 1)}${suffix}`;
+    };
+    return `<section class="card sensor-chart"><div class="card-head"><h2>${title}</h2><div class="chart-legend">${labels.map((label,i)=>`<span class="chart-legend-item"><i style="background:${colors[i%colors.length]}"></i>${escapeHtml(label)}</span>`).join('')}</div></div><div class="chart-scale"><span>${axis(max)}</span><span>${axis(min)}</span></div><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(title)} history" preserveAspectRatio="none"><path d="M0 ${h/2} H${w}" stroke="var(--line)" stroke-dasharray="3 6"/>${keys.map((key,i)=>{ const pts=rows.map((row,j)=>{const value=row[key]??row.cores?.[key];return Number.isFinite(value)?`${pad+j*(w-2*pad)/Math.max(1,rows.length-1)},${h-pad-(value-min)*(h-2*pad)/(max-min)}`:null;}).filter(Boolean).join(' '); return pts?`<polyline points="${pts}" fill="none" stroke="${colors[i%colors.length]}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`:''; }).join('')}</svg><div class="chart-time"><span>Oldest</span><span>Now</span></div></section>`;
+  }
   function renderSensors() {
     const s = state.data || {}, t = state.telemetry || {};
     const sections = [
@@ -146,25 +188,40 @@
     const bytes = (value) => { if (value == null) return 'Unavailable'; const units=['B','KB','MB','GB','TB']; let n=value, i=0; while(n>=1024 && i<units.length-1){n/=1024;i++;} return `${n.toFixed(i ? 1 : 0)} ${units[i]}`; };
     const onOff = (value) => value == null ? 'Unavailable' : value ? 'On' : 'Off';
     const usage = s.mem_total_kb && s.mem_available_kb != null ? (100 * (s.mem_total_kb - s.mem_available_kb) / s.mem_total_kb) : null;
-    const totalStorage = t.storage_internal_total_gb, freeStorage = t.storage_internal_free_gb;
+    const totalStorage = s.storage_internal_total_kb == null ? t.storage_internal_total_gb : s.storage_internal_total_kb / 1024 / 1024;
+    const freeStorage = s.storage_internal_free_kb == null ? t.storage_internal_free_gb : s.storage_internal_free_kb / 1024 / 1024;
     const storageUsage = totalStorage && freeStorage != null ? 100 * (1 - freeStorage / totalStorage) : null;
     const network = s.network_interfaces || [], temps = s.temperatures || [], processes = s.top_processes || [], sensors = s.sensor_names || [];
-    const topAppsCard = `<section class="card"><div class="card-head"><div><h2>Top processes</h2><div class="subtle">Current Android process sample</div></div></div>${processes.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Process</th><th>PID</th><th>CPU</th><th>Memory</th></tr></thead><tbody>${processes.map(p=>`<tr><td>${escapeHtml(p.name || 'Unknown process')}</td><td>${escapeHtml(p.pid)}</td><td>${p.cpu_pct == null ? '—' : `${escapeHtml(p.cpu_pct)}%`}</td><td>${escapeHtml(p.memory || '—')}</td></tr>`).join('')}</tbody></table></div>` : empty('Process sample unavailable','This Android build did not expose process details to the ADB shell.')}</section>`;
+    const grouped = new Map();
+    for (const p of processes) { const name = p.name || 'Unknown process', app = name.split(':')[0], row = grouped.get(app) || { name: app, pids: [], cpu: 0, memory: 0 }; row.pids.push(p.pid); row.cpu += Number(p.cpu_pct) || 0; row.memory += Number(p.memory_kb) || 0; grouped.set(app, row); }
+    const apps = [...grouped.values()].filter(p => !state.sensorFilter || p.name.toLowerCase().includes(state.sensorFilter.toLowerCase()));
+    apps.sort((a,b) => state.sensorSort === 'memory' ? b.memory-a.memory : state.sensorSort === 'name' ? a.name.localeCompare(b.name) : b.cpu-a.cpu);
+    const topAppsCard = `<section class="card"><div class="card-head"><div><h2>Top apps</h2><div class="subtle">Grouped Android processes · current sample · ${grouped.size} apps</div></div><div class="toolbar compact"><input class="input" id="sensor-app-filter" value="${escapeHtml(state.sensorFilter)}" placeholder="Filter apps"><select class="input sensor-sort" id="sensor-app-sort"><option value="cpu" ${state.sensorSort==='cpu'?'selected':''}>Sort: CPU</option><option value="memory" ${state.sensorSort==='memory'?'selected':''}>Sort: Memory</option><option value="name" ${state.sensorSort==='name'?'selected':''}>Sort: Name</option></select></div></div>${apps.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>App / process</th><th>Processes</th><th>CPU</th><th>Memory</th></tr></thead><tbody>${apps.slice(0,30).map(p=>`<tr><td>${escapeHtml(p.name)}</td><td>${p.pids.length}</td><td>${p.cpu.toFixed(1)}%</td><td>${bytes(p.memory*1024)}</td></tr>`).join('')}</tbody></table></div>` : empty('No matching processes','Try another filter or refresh the device sample.')}</section>`;
     const cards = {
       'top-apps': topAppsCard,
-      cpu: `<div class="grid metrics">${metric('Processor',escapeHtml(val(s.cpu_model)),`${s.cpu_cores || '—'} logical cores`,null)}${metric('Current load',s.cpu_usage_pct == null ? 'Unavailable' : `${escapeHtml(s.cpu_usage_pct)}%`,'Sample from Android top',s.cpu_usage_pct)}${metric('Architecture',escapeHtml(val(s.cpu_cores ? t.cpu_abi : null)),'Device ABI',null)}</div>${topAppsCard}`,
-      ram: `<div class="grid metrics">${metric('Total RAM',kb(s.mem_total_kb),'Android kernel memory',null)}${metric('Available',kb(s.mem_available_kb),'Memory available to apps',usage == null ? null : 100-usage)}${metric('In use',usage == null ? 'Unavailable' : `${usage.toFixed(1)}%`,'Calculated from MemAvailable',usage)}${metric('Swap',s.swap_total_kb == null ? 'Unavailable' : `${kb(s.swap_total_kb - (s.swap_free_kb || 0))} / ${kb(s.swap_total_kb)}`,'Used / total',null)}</div>`,
+      cpu: `<div class="grid metrics">${metric('Processor',escapeHtml(val(s.cpu_model)),`${s.cpu_cores || '—'} logical cores`,null)}${metric('Current load',s.cpu_usage_pct == null ? 'Unavailable' : `${escapeHtml(s.cpu_usage_pct.toFixed(1))}%`,'Sample from Android top',s.cpu_usage_pct)}${metric('Architecture',escapeHtml(val(t.cpu_abi)),'Device ABI',null)}${metric('Core frequency',s.cpu_frequencies_mhz?.length ? `${Math.min(...s.cpu_frequencies_mhz)}–${Math.max(...s.cpu_frequencies_mhz)} MHz` : 'Unavailable','Current scaling frequency',null)}</div>${sensorChart('CPU load history',['cpu'],['Total'])}${sensorChart('Per-core load',Array.from({length:s.cpu_cores||0},(_,i)=>`cpu${i}`),Array.from({length:s.cpu_cores||0},(_,i)=>`Core ${i}`))}${topAppsCard}`,
+      ram: `<div class="grid metrics">${metric('Total RAM',kb(s.mem_total_kb),'Android kernel memory',null)}${metric('Available',kb(s.mem_available_kb),'Memory available to apps',usage == null ? null : 100-usage)}${metric('In use',usage == null ? 'Unavailable' : `${usage.toFixed(1)}%`,'Calculated from MemAvailable',usage)}${metric('Swap',s.swap_total_kb == null ? 'Unavailable' : `${kb(s.swap_total_kb - (s.swap_free_kb || 0))} / ${kb(s.swap_total_kb)}`,'Used / total',null)}</div><div class="grid two">${sensorChart('RAM utilization',['ram'],['RAM'])}${sensorChart('Swap utilization',['swap'],['Swap'])}</div>`,
       gpu: `<div class="grid two">${card('Graphics renderer',`<div class="kv"><div><small>OpenGL renderer</small><b>${escapeHtml(val(s.gpu_renderer))}</b></div><div><small>Platform</small><b>${escapeHtml(val(s.gpu_platform))}</b></div></div>`)}${card('Graphics telemetry',empty('GPU load unavailable','Android does not provide a standard unprivileged ADB interface for live GPU load and temperature. Renderer and platform identifiers are shown when exposed by the device.'))}</div>`,
-      storage: `<div class="grid metrics">${metric('Internal used',totalStorage != null && freeStorage != null ? `${(totalStorage-freeStorage).toFixed(1)} GB` : 'Unavailable',totalStorage != null ? `${freeStorage.toFixed(1)} GB available of ${totalStorage.toFixed(1)} GB` : 'Device storage telemetry unavailable',storageUsage)}${metric('Shared storage',t.storage_sdcard_total_gb != null ? `${(t.storage_sdcard_total_gb-(t.storage_sdcard_free_gb||0)).toFixed(1)} GB` : 'Unavailable',t.storage_sdcard_total_gb != null ? `${t.storage_sdcard_free_gb.toFixed(1)} GB free` : 'No shared storage telemetry',null)}</div>`,
-      wifi: `<div class="grid two">${card('Wireless status',`<div class="kv"><div><small>Wi-Fi radio</small><b>${onOff(s.wifi_enabled)}</b></div><div><small>Interfaces</small><b>${network.length}</b></div></div>`)}${card('Network interfaces',network.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Interface</th><th>Received</th><th>Sent</th></tr></thead><tbody>${network.map(n=>`<tr><td>${escapeHtml(n.name)}</td><td>${bytes(n.rx_bytes)}</td><td>${bytes(n.tx_bytes)}</td></tr>`).join('')}</tbody></table></div>` : empty('Network counters unavailable','The device did not expose /proc/net/dev to the ADB shell.'))}</div>`,
-      'data-usage': `<section class="card"><div class="card-head"><div><h2>Interface data counters</h2><div class="subtle">Cumulative bytes reported by Android since boot; includes system traffic.</div></div></div>${network.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Interface</th><th>Received</th><th>Transmitted</th><th>Total</th></tr></thead><tbody>${network.map(n=>`<tr><td>${escapeHtml(n.name)}</td><td>${bytes(n.rx_bytes)}</td><td>${bytes(n.tx_bytes)}</td><td>${bytes(n.rx_bytes+n.tx_bytes)}</td></tr>`).join('')}</tbody></table></div>` : empty('Data counters unavailable','Android did not expose interface byte counters.')}</section>`,
-      power: `<div class="grid metrics">${metric('Battery',val(t.battery_pct,'%'),escapeHtml(val(t.battery_status)),t.battery_pct)}${metric('Battery temperature',val(t.battery_temp_c,' °C'),escapeHtml(val(s.battery_health ? `Health code ${s.battery_health}` : null)),null)}${metric('Voltage',s.battery_voltage_mv == null ? 'Unavailable' : `${(s.battery_voltage_mv/1000).toFixed(2)} V`,escapeHtml(val(s.battery_plugged)),null)}${metric('Uptime',t.uptime_secs ? `${Math.floor(t.uptime_secs/3600)}h ${Math.floor(t.uptime_secs%3600/60)}m` : 'Unavailable','Since last boot',null)}</div>`,
+      storage: `<div class="grid metrics">${metric('Internal used',totalStorage != null && freeStorage != null ? `${(totalStorage-freeStorage).toFixed(1)} GB` : 'Unavailable',totalStorage != null ? `${freeStorage.toFixed(1)} GB available of ${totalStorage.toFixed(1)} GB` : 'Device storage telemetry unavailable',storageUsage)}${metric('Shared storage',s.storage_shared_total_kb != null ? `${((s.storage_shared_total_kb-s.storage_shared_free_kb)/1024/1024).toFixed(1)} GB` : 'Unavailable',s.storage_shared_total_kb != null ? `${(s.storage_shared_free_kb/1024/1024).toFixed(1)} GB free` : 'No shared storage telemetry',null)}</div>${sensorChart('Storage utilization',['storage'],['Used'])}${sensorChart('Disk throughput',['diskReadRate','diskWriteRate'],['Read','Write'],' B/s')}`,
+      wifi: `<div class="grid two">${sensorChart('Network throughput',['rxRate','txRate'],['Received','Sent'],' B/s')}${card('Wireless status',`<div class="kv"><div><small>Wi-Fi radio</small><b>${onOff(s.wifi_enabled)}</b></div><div><small>Interfaces</small><b>${network.length}</b></div></div>`)}${card('Network interfaces',network.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Interface</th><th>Received</th><th>Sent</th></tr></thead><tbody>${network.map(n=>`<tr><td>${escapeHtml(n.name)}</td><td>${bytes(n.rx_bytes)}</td><td>${bytes(n.tx_bytes)}</td></tr>`).join('')}</tbody></table></div>` : empty('Network counters unavailable','The device did not expose /proc/net/dev to the ADB shell.'))}</div>`,
+      'data-usage': `${sensorChart('Cumulative interface traffic',['rx','tx'],['Received','Transmitted'],' bytes')}<section class="card"><div class="card-head"><div><h2>Interface data counters</h2><div class="subtle">Cumulative bytes reported by Android since boot; includes system traffic.</div></div></div>${network.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Interface</th><th>Received</th><th>Transmitted</th><th>Total</th></tr></thead><tbody>${network.map(n=>`<tr><td>${escapeHtml(n.name)}</td><td>${bytes(n.rx_bytes)}</td><td>${bytes(n.tx_bytes)}</td><td>${bytes(n.rx_bytes+n.tx_bytes)}</td></tr>`).join('')}</tbody></table></div>` : empty('Data counters unavailable','Android did not expose interface byte counters.')}</section>`,
+      power: `<div class="grid metrics">${metric('Battery',val(s.battery_pct,'%'),escapeHtml(val(s.battery_status)),s.battery_pct)}${metric('Battery temperature',val(s.battery_temp_c,' °C'),escapeHtml(val(s.battery_health ? `Health code ${s.battery_health}` : null)),null)}${metric('Voltage',s.battery_voltage_mv == null ? 'Unavailable' : `${(s.battery_voltage_mv/1000).toFixed(2)} V`,escapeHtml(val(s.battery_plugged)),null)}${metric('Uptime',s.uptime_secs ? `${Math.floor(s.uptime_secs/3600)}h ${Math.floor(s.uptime_secs%3600/60)}m` : 'Unavailable','Since last boot',null)}</div><div class="grid two">${sensorChart('Battery level',['battery'],['Charge'])}${sensorChart('Battery temperature',['temp'],['Temperature'],' °C')}</div>`,
       bluetooth: `<section class="card"><div class="card-head"><h2>Bluetooth radio</h2></div><div class="grid metrics">${metric('State',onOff(s.bluetooth_enabled),'Android global Bluetooth setting',null)}${metric('Adapter',s.bluetooth_enabled == null ? 'Unavailable' : s.bluetooth_enabled ? 'Enabled' : 'Disabled','Radio state',null)}</div></section>`,
-      temperature: `<section class="card"><div class="card-head"><div><h2>Thermal sensors</h2><div class="subtle">Read from Android ThermalService. Access varies by device vendor.</div></div></div>${temps.length ? `<div class="photo-grid">${temps.map(x=>`<article class="list-item"><div class="list-title">${escapeHtml(x.name)}</div><div class="metric-value">${escapeHtml(x.temp_c.toFixed(1))} °C</div></article>`).join('')}</div>` : empty('Thermal readings unavailable','Android did not expose current thermal zone values.')}</section><section class="card"><div class="card-head"><h2>Registered sensors</h2><span class="chip">${sensors.length} reported</span></div>${sensors.length ? `<div class="sensor-tags">${sensors.map(name=>`<span class="chip">${escapeHtml(name)}</span>`).join('')}</div>` : empty('Sensor inventory unavailable','The device does not expose its sensor list through dumpsys sensorservice.')}</section>`
+      temperature: `${sensorChart('Temperature history',['temp'],['Warmest sensor'],' °C')}<section class="card"><div class="card-head"><div><h2>Thermal sensors</h2><div class="subtle">Read from Android ThermalService and readable kernel thermal zones.</div></div></div>${temps.length ? `<div class="photo-grid">${temps.map(x=>`<article class="list-item"><div class="list-title">${escapeHtml(x.name)}</div><div class="metric-value">${escapeHtml(x.temp_c.toFixed(1))} °C</div></article>`).join('')}</div>` : empty('Thermal readings unavailable','Android did not expose current thermal zone values.')}</section><section class="card"><div class="card-head"><h2>Registered sensors</h2><span class="chip">${sensors.length} reported</span></div>${sensors.length ? `<div class="sensor-tags">${sensors.map(name=>`<span class="chip">${escapeHtml(name)}</span>`).join('')}</div>` : empty('Sensor inventory unavailable','The device does not expose its sensor list through dumpsys sensorservice.')}</section>`
     };
-    const overviewCards = `<div class="grid metrics">${metric('CPU',escapeHtml(val(s.cpu_model)),`${s.cpu_cores || '—'} cores · ${s.cpu_usage_pct == null ? 'load unavailable' : `${escapeHtml(s.cpu_usage_pct)}% sampled`}`,s.cpu_usage_pct)}${metric('RAM',usage == null ? 'Unavailable' : `${usage.toFixed(1)}% used`,`${kb(s.mem_available_kb)} available of ${kb(s.mem_total_kb)}`,usage)}${metric('Storage',totalStorage != null && freeStorage != null ? `${(totalStorage-freeStorage).toFixed(1)} GB used` : 'Unavailable',totalStorage != null ? `${freeStorage.toFixed(1)} GB available` : 'Device storage telemetry unavailable',storageUsage)}${metric('Battery',val(t.battery_pct,'%'),escapeHtml(val(t.battery_status)),t.battery_pct)}</div><div class="grid two">${card('Connectivity',`<div class="kv"><div><small>Wi-Fi</small><b>${onOff(s.wifi_enabled)}</b></div><div><small>Bluetooth</small><b>${onOff(s.bluetooth_enabled)}</b></div><div><small>Interfaces</small><b>${network.length}</b></div><div><small>Data transferred</small><b>${bytes(network.reduce((n,x)=>n+x.rx_bytes+x.tx_bytes,0))}</b></div></div>`)}${card('Thermals & sensors',`<div class="kv"><div><small>Temperature sensors</small><b>${temps.length || 'Unavailable'}</b></div><div><small>Registered sensors</small><b>${sensors.length || 'Unavailable'}</b></div><div><small>Battery temperature</small><b>${val(t.battery_temp_c,' °C')}</b></div><div><small>GPU renderer</small><b>${escapeHtml(val(s.gpu_renderer))}</b></div></div>`)}</div>${topAppsCard}`;
+    const overviewCards = `<div class="grid metrics">${metric('CPU',escapeHtml(val(s.cpu_model)),`${s.cpu_cores || '—'} cores · ${s.cpu_usage_pct == null ? 'load unavailable' : `${escapeHtml(s.cpu_usage_pct.toFixed(1))}% sampled`}`,s.cpu_usage_pct)}${metric('RAM',usage == null ? 'Unavailable' : `${usage.toFixed(1)}% used`,`${kb(s.mem_available_kb)} available of ${kb(s.mem_total_kb)}`,usage)}${metric('Storage',totalStorage != null && freeStorage != null ? `${(totalStorage-freeStorage).toFixed(1)} GB used` : 'Unavailable',totalStorage != null ? `${freeStorage.toFixed(1)} GB available` : 'Device storage telemetry unavailable',storageUsage)}${metric('Battery',val(s.battery_pct,'%'),escapeHtml(val(s.battery_status)),s.battery_pct)}</div><div class="grid two">${sensorChart('CPU load',['cpu'],['CPU'])}${sensorChart('Memory usage',['ram','swap'],['RAM','Swap'])}${sensorChart('Network throughput',['rxRate','txRate'],['Received','Sent'],' B/s')}${sensorChart('Thermal trend',['temp'],['Warmest sensor'],' °C')}</div><div class="grid two">${card('Connectivity',`<div class="kv"><div><small>Wi-Fi</small><b>${onOff(s.wifi_enabled)}</b></div><div><small>Bluetooth</small><b>${onOff(s.bluetooth_enabled)}</b></div><div><small>Interfaces</small><b>${network.length}</b></div><div><small>Data transferred</small><b>${bytes(network.reduce((n,x)=>n+x.rx_bytes+x.tx_bytes,0))}</b></div></div>`)}${card('Thermals & sensors',`<div class="kv"><div><small>Temperature sensors</small><b>${temps.length || 'Unavailable'}</b></div><div><small>Registered sensors</small><b>${sensors.length || 'Unavailable'}</b></div><div><small>Battery temperature</small><b>${val(s.battery_temp_c,' °C')}</b></div><div><small>GPU renderer</small><b>${escapeHtml(val(s.gpu_renderer))}</b></div></div>`)}</div>${topAppsCard}`;
     const active = state.sensorsView in cards ? cards[state.sensorsView] : overviewCards;
     content.innerHTML = `<section class="sensor-toolbar"><div><h2>Device sensors</h2><span class="subtle">Live readings from Android system services and kernel interfaces</span></div><button class="button" data-refresh>${icon('e145')} Refresh</button></section><nav class="sensor-nav" aria-label="Sensor categories">${sections.map(([key,label])=>`<button class="sensor-tab ${state.sensorsView===key?'active':''}" data-sensor-view="${key}">${escapeHtml(label)}</button>`).join('')}</nav><div class="sensor-panel">${active}</div>`;
+    const filter = $('#sensor-app-filter'), sort = $('#sensor-app-sort');
+    if (filter) filter.oninput = () => { state.sensorFilter = filter.value; renderSensors(); const next = $('#sensor-app-filter'); next.focus(); next.setSelectionRange(next.value.length, next.value.length); };
+    if (sort) sort.onchange = () => { state.sensorSort = sort.value; renderSensors(); };
+    clearTimeout(state.sensorTimer);
+    if (state.tab === 'sensors' && !document.hidden) state.sensorTimer = setTimeout(async () => {
+      if (state.sensorBusy || state.tab !== 'sensors' || document.hidden) return;
+      state.sensorBusy = true;
+      try { await loadData('sensors'); if (state.tab === 'sensors' && !document.activeElement?.matches('#sensor-app-filter')) renderSensors(); }
+      finally { state.sensorBusy = false; }
+    }, 5000);
   }
   async function refreshCurrent() { if (state.tab === 'overview' || state.tab === 'storage') await refreshTelemetry(); else await renderTab(); }
 
@@ -183,7 +240,7 @@
   });
   $('#device-select').addEventListener('change', async e => { state.serial=e.target.value; state.telemetry=null; await refreshDevices(); });
   $('#refresh').addEventListener('click', () => void refreshCurrent());
-  document.addEventListener('visibilitychange', () => { if(document.hidden){clearInterval(state.screenTimer);state.screenTimer=null;} else if(state.tab==='screen'&&state.serial) selectTab('screen'); });
+  document.addEventListener('visibilitychange', () => { if(document.hidden){clearInterval(state.screenTimer);state.screenTimer=null;clearTimeout(state.sensorTimer);state.sensorTimer=null;} else if(state.tab==='screen'&&state.serial) selectTab('screen'); else if(state.tab==='sensors'&&state.serial) void renderTab(); });
   (async () => {
     if (!invoke) { content.innerHTML=`<div class="card empty"><b>Tauri runtime is unavailable</b><span>Launch the Android cockpit from Server Launcher.</span></div>`; return; }
     try {
@@ -195,6 +252,6 @@
       }
       await refreshDevices();
     } catch(e) { toast(String(e),true); }
-    setInterval(async () => { if(document.hidden)return; const old=state.serial; await refreshDevices(); if(state.serial===old && state.tab!=='screen' && Date.now()-state.lastTelemetry>30000) await refreshTelemetry(); }, 7000);
+    setInterval(async () => { if(document.hidden)return; const old=state.serial; await refreshDevices(); if(state.serial===old && !['screen','sensors'].includes(state.tab) && Date.now()-state.lastTelemetry>30000) await refreshTelemetry(); }, 7000);
   })();
 })();

@@ -352,6 +352,8 @@ pub struct LauncherApp {
     pub adb_device_name_input: String,
     pub adb_active_subtab: AdbSubTab,
     pub adb_telemetry_cache: HashMap<String, crate::adb::AdbDeviceTelemetry>,
+    pub adb_data_serial: String,
+    pub adb_queries_loaded: HashSet<String>,
     pub adb_status_msg: Option<(String, bool, Instant)>,
     pub adb_input_text_field: String,
     pub adb_clipboard_cache: HashMap<String, String>,
@@ -393,6 +395,7 @@ pub struct LauncherApp {
     pub adb_sms_input: String,
     pub adb_photos: Vec<crate::adb::AdbPhotoItem>,
     pub adb_selected_photo: Option<crate::adb::AdbPhotoItem>,
+    pub adb_photo_preview: Option<(String, Result<egui::TextureHandle, String>)>,
     pub adb_dnd_enabled: bool,
     pub adb_audio_muted: bool,
     pub adb_media_playing: bool,
@@ -1177,6 +1180,8 @@ impl LauncherApp {
             adb_device_name_input: String::new(),
             adb_active_subtab: AdbSubTab::Overview,
             adb_telemetry_cache: HashMap::new(),
+            adb_data_serial: String::new(),
+            adb_queries_loaded: HashSet::new(),
             adb_status_msg: None,
             adb_input_text_field: String::new(),
             adb_clipboard_cache: HashMap::new(),
@@ -1216,6 +1221,7 @@ impl LauncherApp {
             adb_sms_input: String::new(),
             adb_photos: Vec::new(),
             adb_selected_photo: None,
+            adb_photo_preview: None,
             adb_dnd_enabled: false,
             adb_audio_muted: false,
             adb_media_playing: false,
@@ -24063,4 +24069,3 @@ impl LauncherApp {
 }
 
 include!("adb_view.rs");
-

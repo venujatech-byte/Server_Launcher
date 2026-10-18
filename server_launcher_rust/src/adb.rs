@@ -391,15 +391,19 @@ pub fn query_telemetry(serial: &str) -> AdbDeviceTelemetry {
                 let total_kb = parts[1].parse::<f32>().unwrap_or(0.0);
                 let free_kb = parts[3].parse::<f32>().unwrap_or(0.0);
                 let mount = parts[5];
-                if mount == "/data" {
+                if mount.starts_with("/data") && telem.storage_internal_total_gb.is_none() {
                     telem.storage_internal_total_gb = Some(total_kb / (1024.0 * 1024.0));
                     telem.storage_internal_free_gb = Some(free_kb / (1024.0 * 1024.0));
-                } else if mount.contains("sdcard") || mount.contains("emulated") {
+                } else if (mount.contains("sdcard") || mount.contains("emulated")) && telem.storage_sdcard_total_gb.is_none() {
                     telem.storage_sdcard_total_gb = Some(total_kb / (1024.0 * 1024.0));
                     telem.storage_sdcard_free_gb = Some(free_kb / (1024.0 * 1024.0));
                 }
             }
         }
+    }
+    if telem.storage_sdcard_total_gb.is_none() && telem.storage_internal_total_gb.is_some() {
+        telem.storage_sdcard_total_gb = telem.storage_internal_total_gb;
+        telem.storage_sdcard_free_gb = telem.storage_internal_free_gb;
     }
 
     // 6. System Uptime
@@ -889,8 +893,25 @@ read -r
 // PHONE LINK SUITE: NOTIFICATIONS, CALLS, MESSAGING, GALLERY & QUICK CONTROLS
 // ═════════════════════════════════════════════════════════════════════════════
 
+pub fn format_timestamp_millis(ms: i64) -> String {
+    if let Some(dt) = chrono::DateTime::from_timestamp_millis(ms) {
+        let local_dt = chrono::DateTime::<chrono::Local>::from(dt);
+        local_dt.format("%b %-d, %-I:%M %p").to_string()
+    } else {
+        "Recent".to_string()
+    }
+}
+
+pub fn format_timestamp_secs(secs: i64) -> String {
+    if let Some(dt) = chrono::DateTime::from_timestamp(secs, 0) {
+        let local_dt = chrono::DateTime::<chrono::Local>::from(dt);
+        local_dt.format("%b %-d, %-I:%M %p").to_string()
+    } else {
+        "Recent".to_string()
+    }
+}
+
 /// Fetches active notifications from the Android device via `dumpsys notification`.
-/// If no device is connected or permissions are restricted, returns realistic Phone Link fallback feed.
 pub fn get_notifications(serial: Option<&str>) -> Vec<AdbNotification> {
     let mut notifications = Vec::new();
     if let Ok(raw) = adb_cmd(serial, &["shell", "dumpsys", "notification", "--noredact"])
@@ -968,53 +989,7 @@ pub fn get_notifications(serial: Option<&str>) -> Vec<AdbNotification> {
         }
     }
 
-    if notifications.is_empty() {
-        // High fidelity defaults matching Microsoft Phone Link interface
-        vec![
-            AdbNotification {
-                id: "notif_outlook".to_string(),
-                package: "com.microsoft.office.outlook".to_string(),
-                app_name: "Outlook".to_string(),
-                title: "Max Lindgren".to_string(),
-                text: "Yesterdays greenhouse trip: Thanks for inviting me yesterday! I had a lot of fun, and learned a lot of new things.".to_string(),
-                subtext: "max@example.com".to_string(),
-                time_str: "10:38 AM".to_string(),
-                key: "key_outlook".to_string(),
-            },
-            AdbNotification {
-                id: "notif_messages".to_string(),
-                package: "com.google.android.apps.messaging".to_string(),
-                app_name: "Messages".to_string(),
-                title: "Anisa Kipenzi".to_string(),
-                text: "I can also send you a link to all the photos!".to_string(),
-                subtext: "+1 (415) 555-0176".to_string(),
-                time_str: "10:18 AM".to_string(),
-                key: "key_messages".to_string(),
-            },
-            AdbNotification {
-                id: "notif_phone_missed".to_string(),
-                package: "com.google.android.dialer".to_string(),
-                app_name: "Phone".to_string(),
-                title: "Missed Call".to_string(),
-                text: "Daniela Hanzlova called. Tap to call back or send quick reply.".to_string(),
-                subtext: "Mobile".to_string(),
-                time_str: "9:46 AM".to_string(),
-                key: "key_phone".to_string(),
-            },
-            AdbNotification {
-                id: "notif_yuna".to_string(),
-                package: "com.microsoft.office.outlook".to_string(),
-                app_name: "Outlook".to_string(),
-                title: "Yuna Sakai".to_string(),
-                text: "Reminiscing about our vacation: Let's catch up this weekend!".to_string(),
-                subtext: "yuna@example.com".to_string(),
-                time_str: "8:52 AM".to_string(),
-                key: "key_yuna".to_string(),
-            },
-        ]
-    } else {
-        notifications
-    }
+    notifications
 }
 
 fn clean_package_label(pkg: &str) -> String {
@@ -1028,22 +1003,35 @@ fn clean_package_label(pkg: &str) -> String {
 /// Fetches recent call logs from Android `content://call_log/calls`.
 pub fn get_call_logs(serial: Option<&str>) -> Vec<AdbCallLogEntry> {
     let mut list = Vec::new();
-    let query_res = adb_cmd(
-        serial,
-        &[
-            "shell",
-            "content",
-            "query",
-            "--uri",
-            "content://call_log/calls",
-            "--projection",
-            "_id,number,name,date,duration,type",
-            "--sort",
-            "date DESC",
-        ],
-    );
+    let query_args = &[
+        "content",
+        "query",
+        "--uri",
+        "content://call_log/calls",
+        "--projection",
+        "_id,number,name,date,duration,type",
+        "--sort",
+        "\"date DESC\"",
+    ];
 
-    if let Ok(raw) = query_res {
+    let mut raw_opt = adb_cmd(serial, &[&["shell"], &query_args[..]].concat().as_slice()).ok();
+    if let Some(ref raw) = raw_opt {
+        if raw.contains("SecurityException") || raw.contains("Permission Denial") {
+            // Attempt with root su -c if available
+            raw_opt = adb_cmd(
+                serial,
+                &[
+                    "shell",
+                    "su",
+                    "-c",
+                    "content query --uri content://call_log/calls --projection _id,number,name,date,duration,type --sort 'date DESC'",
+                ],
+            )
+            .ok();
+        }
+    }
+
+    if let Some(raw) = raw_opt {
         for line in raw.lines() {
             let trimmed = line.trim();
             if !trimmed.starts_with("Row:") {
@@ -1055,6 +1043,7 @@ pub fn get_call_logs(serial: Option<&str>) -> Vec<AdbCallLogEntry> {
             let mut name = String::new();
             let mut duration = 0u64;
             let mut call_type = AdbCallType::Incoming;
+            let mut date_millis: Option<i64> = None;
 
             for token in trimmed.split(',') {
                 let kv = token.trim();
@@ -1068,6 +1057,8 @@ pub fn get_call_logs(serial: Option<&str>) -> Vec<AdbCallLogEntry> {
                     }
                 } else if let Some(val) = kv.strip_prefix("duration=") {
                     duration = val.parse().unwrap_or(0);
+                } else if let Some(val) = kv.strip_prefix("date=") {
+                    date_millis = val.parse::<i64>().ok();
                 } else if let Some(val) = kv.strip_prefix("type=") {
                     match val.trim() {
                         "1" => call_type = AdbCallType::Incoming,
@@ -1080,88 +1071,31 @@ pub fn get_call_logs(serial: Option<&str>) -> Vec<AdbCallLogEntry> {
 
             if !number.is_empty() {
                 let display_name = if name.is_empty() { number.clone() } else { name };
-                let dur_str = if duration == 0 {
+                let dur_str = if call_type == AdbCallType::Missed {
+                    "Missed".to_string()
+                } else if duration == 0 {
                     "0s".to_string()
                 } else if duration < 60 {
                     format!("{}s", duration)
                 } else {
                     format!("{}m {}s", duration / 60, duration % 60)
                 };
+                let time_str = date_millis
+                    .map(format_timestamp_millis)
+                    .unwrap_or_else(|| "Recent".to_string());
                 list.push(AdbCallLogEntry {
                     id,
                     number,
                     name: display_name,
                     call_type,
-                    time_str: "Recent".to_string(),
+                    time_str,
                     duration_str: dur_str,
                 });
             }
         }
     }
 
-    if list.is_empty() {
-        // High fidelity mock entries faithful to Microsoft Phone Link reference
-        vec![
-            AdbCallLogEntry {
-                id: "call_1".to_string(),
-                number: "+1 (415) 555-0176".to_string(),
-                name: "Daniela Hanzlova".to_string(),
-                call_type: AdbCallType::Missed,
-                time_str: "4/27/2026 at 9:46 AM".to_string(),
-                duration_str: "Missed".to_string(),
-            },
-            AdbCallLogEntry {
-                id: "call_2".to_string(),
-                number: "+1 (415) 555-0143".to_string(),
-                name: "Violet Martinez".to_string(),
-                call_type: AdbCallType::Outgoing,
-                time_str: "4/27/2026 at 8:34 AM".to_string(),
-                duration_str: "3m 12s".to_string(),
-            },
-            AdbCallLogEntry {
-                id: "call_3".to_string(),
-                number: "+1 (415) 555-0199".to_string(),
-                name: "Max Lindgren".to_string(),
-                call_type: AdbCallType::Incoming,
-                time_str: "4/26/2026 at 9:51 AM".to_string(),
-                duration_str: "5m 48s".to_string(),
-            },
-            AdbCallLogEntry {
-                id: "call_4".to_string(),
-                number: "+1 (415) 555-0122".to_string(),
-                name: "Reza Moriaga".to_string(),
-                call_type: AdbCallType::Outgoing,
-                time_str: "4/26/2026 at 2:10 PM".to_string(),
-                duration_str: "1m 05s".to_string(),
-            },
-            AdbCallLogEntry {
-                id: "call_5".to_string(),
-                number: "+1 (415) 555-0188".to_string(),
-                name: "Yuna Sakai".to_string(),
-                call_type: AdbCallType::Incoming,
-                time_str: "4/25/2026 at 7:11 PM".to_string(),
-                duration_str: "8m 20s".to_string(),
-            },
-            AdbCallLogEntry {
-                id: "call_6".to_string(),
-                number: "+1 (415) 555-0155".to_string(),
-                name: "Christian Lacombe".to_string(),
-                call_type: AdbCallType::Outgoing,
-                time_str: "4/25/2026 at 10:30 AM".to_string(),
-                duration_str: "2m 44s".to_string(),
-            },
-            AdbCallLogEntry {
-                id: "call_7".to_string(),
-                number: "+1 (415) 555-0111".to_string(),
-                name: "Kai Morita".to_string(),
-                call_type: AdbCallType::Missed,
-                time_str: "4/24/2026 at 3:14 PM".to_string(),
-                duration_str: "Missed".to_string(),
-            },
-        ]
-    } else {
-        list
-    }
+    list
 }
 
 /// Initiates an outgoing call using Android telephony intents.
@@ -1209,34 +1143,69 @@ pub fn get_sms_messages(serial: Option<&str>) -> Vec<AdbSmsMessage> {
             "--projection",
             "_id,address,body,date,type",
             "--sort",
-            "date ASC",
+            "\"date DESC\"",
         ],
     );
 
     if let Ok(raw) = query_res {
+        // Collect multi-line rows
+        let mut raw_rows: Vec<String> = Vec::new();
         for line in raw.lines() {
-            let trimmed = line.trim();
-            if !trimmed.starts_with("Row:") {
+            if line.starts_with("Row: ") {
+                raw_rows.push(line.to_string());
+            } else if let Some(last) = raw_rows.last_mut() {
+                last.push('\n');
+                last.push_str(line);
+            }
+        }
+
+        for row_str in raw_rows {
+            // Row format: Row: <idx> _id=<id>, address=<addr>, body=<body>, date=<date>, type=<type>
+            let after_row = if let Some(idx) = row_str.find("_id=") {
+                &row_str[idx..]
+            } else {
                 continue;
-            }
+            };
 
-            let mut id = String::new();
-            let mut address = String::new();
-            let mut body = String::new();
-            let mut is_outgoing = false;
+            let addr_marker = ", address=";
+            let body_marker = ", body=";
+            let date_marker = ", date=";
+            let type_marker = ", type=";
 
-            for token in trimmed.split(',') {
-                let kv = token.trim();
-                if let Some(val) = kv.strip_prefix("_id=") {
-                    id = val.to_string();
-                } else if let Some(val) = kv.strip_prefix("address=") {
-                    address = val.to_string();
-                } else if let Some(val) = kv.strip_prefix("body=") {
-                    body = val.to_string();
-                } else if let Some(val) = kv.strip_prefix("type=") {
-                    is_outgoing = val.trim() == "2";
-                }
-            }
+            let addr_pos = match after_row.find(addr_marker) {
+                Some(p) => p,
+                None => continue,
+            };
+            let id = after_row["_id=".len()..addr_pos].trim().to_string();
+
+            let after_addr = &after_row[addr_pos + addr_marker.len()..];
+            let body_pos = match after_addr.find(body_marker) {
+                Some(p) => p,
+                None => continue,
+            };
+            let address = after_addr[..body_pos].trim().to_string();
+
+            let after_body = &after_addr[body_pos + body_marker.len()..];
+            let type_pos = match after_body.rfind(type_marker) {
+                Some(p) => p,
+                None => continue,
+            };
+            let type_str = after_body[type_pos + type_marker.len()..].trim();
+            let is_outgoing = type_str == "2";
+
+            let before_type = &after_body[..type_pos];
+            let date_pos = match before_type.rfind(date_marker) {
+                Some(p) => p,
+                None => continue,
+            };
+            let date_str = before_type[date_pos + date_marker.len()..].trim();
+            let body = before_type[..date_pos].to_string();
+
+            let time_str = date_str
+                .parse::<i64>()
+                .ok()
+                .map(format_timestamp_millis)
+                .unwrap_or_else(|| "Recent".to_string());
 
             if !address.is_empty() && !body.is_empty() {
                 list.push(AdbSmsMessage {
@@ -1244,68 +1213,14 @@ pub fn get_sms_messages(serial: Option<&str>) -> Vec<AdbSmsMessage> {
                     contact_name: address.clone(),
                     address,
                     text: body,
-                    time_str: "10:18 AM".to_string(),
+                    time_str,
                     is_outgoing,
                 });
             }
         }
     }
 
-    if list.is_empty() {
-        // High fidelity mock conversation faithful to Microsoft Phone Link reference
-        vec![
-            AdbSmsMessage {
-                id: "m_1".to_string(),
-                address: "+1 (415) 555-0176".to_string(),
-                contact_name: "Anisa Kipenzi".to_string(),
-                text: "Max, Yuna and I were thinking about getting some lunch at Fourth Coffee around noon. What do you think?".to_string(),
-                time_str: "10:10 AM".to_string(),
-                is_outgoing: false,
-            },
-            AdbSmsMessage {
-                id: "m_2".to_string(),
-                address: "+1 (415) 555-0176".to_string(),
-                contact_name: "Anisa Kipenzi".to_string(),
-                text: "Yeah, that sounds good to me! Also, do you have the picture of all of us in the greenhouse?".to_string(),
-                time_str: "10:16 AM".to_string(),
-                is_outgoing: true,
-            },
-            AdbSmsMessage {
-                id: "m_3".to_string(),
-                address: "+1 (415) 555-0176".to_string(),
-                contact_name: "Anisa Kipenzi".to_string(),
-                text: "Were you talking about this one? I have a few more. I can also send you a link to all the photos!".to_string(),
-                time_str: "10:18 AM".to_string(),
-                is_outgoing: false,
-            },
-            AdbSmsMessage {
-                id: "m_4".to_string(),
-                address: "+1 (415) 555-0199".to_string(),
-                contact_name: "Max Lindgren".to_string(),
-                text: "Yesterday's greenhouse trip was awesome! Let's do it again soon.".to_string(),
-                time_str: "9:51 AM".to_string(),
-                is_outgoing: false,
-            },
-            AdbSmsMessage {
-                id: "m_5".to_string(),
-                address: "+1 (415) 555-0188".to_string(),
-                contact_name: "Yuna Sakai".to_string(),
-                text: "I can bring your sweater the next time we hang out!".to_string(),
-                time_str: "9:20 AM".to_string(),
-                is_outgoing: false,
-            },
-            AdbSmsMessage {
-                id: "m_6".to_string(),
-                address: "+1 (678) 555-0198".to_string(),
-                contact_name: "Hair Salon".to_string(),
-                text: "Your appointment has been booked for May 11 at 10 AM. Reply STOP to cancel.".to_string(),
-                time_str: "8:43 AM".to_string(),
-                is_outgoing: false,
-            },
-        ]
-    } else {
-        list
-    }
+    list
 }
 
 /// Sends an SMS message to a phone number using Android SENDTO intent.
@@ -1335,83 +1250,97 @@ pub fn send_sms(serial: Option<&str>, number: &str, text: &str) -> Result<String
     )
 }
 
-/// Lists camera and gallery photos stored on `/sdcard/DCIM/Camera` or `/sdcard/Pictures`.
+/// Lists camera and gallery photos stored on device MediaStore or standard storage folders.
 pub fn list_photos(serial: Option<&str>) -> Vec<AdbPhotoItem> {
     let mut items = Vec::new();
-    let cmd = "ls -lt /sdcard/DCIM/Camera /sdcard/Pictures /sdcard/Download 2>/dev/null | grep -Ei '\\.(jpg|jpeg|png|webp)$' | head -n 36";
-    if let Ok(out) = adb_cmd(serial, &["shell", cmd]) {
-        for line in out.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 8 {
-                let name = parts[parts.len() - 1].to_string();
-                let size_str = parts[4].to_string();
-                let date_str = format!("{} {} {}", parts[5], parts[6], parts[7]);
-                let path = format!("/sdcard/DCIM/Camera/{}", name);
+
+    // 1. Query Android MediaStore
+    if let Ok(raw) = adb_cmd(serial, &["shell", "content", "query", "--uri", "content://media/external/images/media"]) {
+        for line in raw.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("Row:") {
+                continue;
+            }
+
+            let mut name = String::new();
+            let mut path = String::new();
+            let mut size_bytes: Option<u64> = None;
+            let mut date_secs: Option<i64> = None;
+
+            for token in trimmed.split(", ") {
+                let kv = token.trim();
+                if let Some(val) = kv.strip_prefix("_display_name=") {
+                    name = val.to_string();
+                } else if let Some(val) = kv.strip_prefix("_data=") {
+                    path = val.to_string();
+                } else if let Some(val) = kv.strip_prefix("_size=") {
+                    size_bytes = val.parse::<u64>().ok();
+                } else if let Some(val) = kv.strip_prefix("date_modified=") {
+                    date_secs = val.parse::<i64>().ok();
+                }
+            }
+
+            if !path.is_empty() {
+                if name.is_empty() {
+                    name = Path::new(&path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("photo.jpg")
+                        .to_string();
+                }
+
+                let size_str = if let Some(bytes) = size_bytes {
+                    if bytes < 1024 {
+                        format!("{} B", bytes)
+                    } else if bytes < 1024 * 1024 {
+                        format!("{:.1} KB", bytes as f64 / 1024.0)
+                    } else {
+                        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+                    }
+                } else {
+                    "--".to_string()
+                };
+
+                let date_str = date_secs
+                    .map(format_timestamp_secs)
+                    .unwrap_or_else(|| "Recent".to_string());
+
                 items.push(AdbPhotoItem {
                     name,
                     path,
-                    size_str: format!("{} KB", size_str.parse::<u64>().unwrap_or(1024) / 1024),
+                    size_str,
                     date_str,
                 });
             }
         }
     }
 
+    // 2. Fallback via file system search if MediaStore is empty
     if items.is_empty() {
-        // High fidelity gallery items matching Phone Link reference
-        vec![
-            AdbPhotoItem {
-                name: "IMG_20260427_101822.jpg".to_string(),
-                path: "/sdcard/DCIM/Camera/IMG_20260427_101822.jpg".to_string(),
-                size_str: "2.4 MB".to_string(),
-                date_str: "Today at 10:18 AM".to_string(),
-            },
-            AdbPhotoItem {
-                name: "IMG_20260427_101511.jpg".to_string(),
-                path: "/sdcard/DCIM/Camera/IMG_20260427_101511.jpg".to_string(),
-                size_str: "3.1 MB".to_string(),
-                date_str: "Today at 10:15 AM".to_string(),
-            },
-            AdbPhotoItem {
-                name: "IMG_20260426_164019.jpg".to_string(),
-                path: "/sdcard/DCIM/Camera/IMG_20260426_164019.jpg".to_string(),
-                size_str: "1.8 MB".to_string(),
-                date_str: "Yesterday at 4:40 PM".to_string(),
-            },
-            AdbPhotoItem {
-                name: "IMG_20260426_142205.jpg".to_string(),
-                path: "/sdcard/DCIM/Camera/IMG_20260426_142205.jpg".to_string(),
-                size_str: "4.2 MB".to_string(),
-                date_str: "Yesterday at 2:22 PM".to_string(),
-            },
-            AdbPhotoItem {
-                name: "IMG_20260425_110944.jpg".to_string(),
-                path: "/sdcard/DCIM/Camera/IMG_20260425_110944.jpg".to_string(),
-                size_str: "2.9 MB".to_string(),
-                date_str: "Apr 25, 2026".to_string(),
-            },
-            AdbPhotoItem {
-                name: "IMG_20260425_093012.jpg".to_string(),
-                path: "/sdcard/DCIM/Camera/IMG_20260425_093012.jpg".to_string(),
-                size_str: "3.7 MB".to_string(),
-                date_str: "Apr 25, 2026".to_string(),
-            },
-            AdbPhotoItem {
-                name: "IMG_20260424_182045.jpg".to_string(),
-                path: "/sdcard/DCIM/Camera/IMG_20260424_182045.jpg".to_string(),
-                size_str: "2.1 MB".to_string(),
-                date_str: "Apr 24, 2026".to_string(),
-            },
-            AdbPhotoItem {
-                name: "IMG_20260424_151208.jpg".to_string(),
-                path: "/sdcard/DCIM/Camera/IMG_20260424_151208.jpg".to_string(),
-                size_str: "3.4 MB".to_string(),
-                date_str: "Apr 24, 2026".to_string(),
-            },
-        ]
-    } else {
-        items
+        let cmd = "find /sdcard/DCIM /sdcard/Pictures /sdcard/Download -maxdepth 3 -type f \\( -iname '*.jpg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.jpeg' \\) 2>/dev/null | head -n 48";
+        if let Ok(out) = adb_cmd(serial, &["shell", cmd]) {
+            for line in out.lines() {
+                let path = line.trim().to_string();
+                if path.is_empty() {
+                    continue;
+                }
+                let name = Path::new(&path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("image.jpg")
+                    .to_string();
+
+                items.push(AdbPhotoItem {
+                    name,
+                    path,
+                    size_str: "Image".to_string(),
+                    date_str: "Device Photo".to_string(),
+                });
+            }
+        }
     }
+
+    items
 }
 
 /// Pulls a remote file/photo to local directory.
@@ -1432,6 +1361,23 @@ pub fn pull_photo_to_downloads(serial: Option<&str>, remote_path: &str) -> Resul
 
     pull_file(serial.unwrap_or(""), remote_path, &dest_file)?;
     Ok(format!("Saved to {}", dest_file.display()))
+}
+
+/// Reads a remote image into memory through a temporary file for the photo preview.
+pub fn read_remote_file(serial: &str, remote_path: &str) -> Result<Vec<u8>, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let local_path = std::env::temp_dir().join(format!("launcher-adb-preview-{}-{stamp}", std::process::id()));
+    let pull_result = pull_file(serial, remote_path, &local_path);
+    if let Err(e) = pull_result {
+        let _ = std::fs::remove_file(&local_path);
+        return Err(e);
+    }
+    let bytes = std::fs::read(&local_path).map_err(|e| format!("Failed to read preview: {e}"));
+    let _ = std::fs::remove_file(local_path);
+    bytes
 }
 
 /// Deletes a photo from the device.

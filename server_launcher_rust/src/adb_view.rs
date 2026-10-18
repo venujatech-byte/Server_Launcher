@@ -1,5 +1,6 @@
 use egui::{pos2, Align, Align2, Layout, Rect, Vec2};
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AdbScreenMirrorMode {
     #[default]
@@ -7,6 +8,7 @@ pub enum AdbScreenMirrorMode {
     Scrcpy,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AdbSubTab {
     #[default]
@@ -24,6 +26,7 @@ pub enum AdbSubTab {
     Firmware,
 }
 
+#[allow(dead_code)]
 impl AdbSubTab {
     pub fn all() -> &'static [AdbSubTab] {
         &[
@@ -77,6 +80,7 @@ impl AdbSubTab {
     }
 }
 
+#[allow(dead_code)]
 impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     // ADD DEVICE TYPE SELECTOR MODAL (SSH PC vs Android ADB)
@@ -683,6 +687,81 @@ impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     // ADB DEVICE COCKPIT VIEW: Full Android Management Center
     // ═════════════════════════════════════════════════════════════════════════
+    pub fn render_adb_tauri_handoff(
+        &mut self,
+        ctx: &egui::Context,
+        adb_dev: &crate::config::AdbDeviceConfig,
+    ) {
+        if self.adb_tauri_opened.insert(adb_dev.serial.clone()) {
+            self.launch_adb_tauri_window(ctx, adb_dev);
+        }
+
+        let palette = self.palette();
+        egui::CentralPanel::default()
+            .frame(Frame::none().fill(palette.bg_main))
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space((ui.available_height() * 0.28).max(48.0));
+                    ui.label(
+                        RichText::new(crate::lucide::SMARTPHONE)
+                            .font(egui::FontId::new(30.0, egui::FontFamily::Proportional))
+                            .color(palette.accent),
+                    );
+                    ui.add_space(14.0);
+                    ui.heading("Android Cockpit");
+                    ui.label(
+                        RichText::new(format!("{} · {}", adb_dev.name, adb_dev.serial))
+                            .color(palette.text_secondary),
+                    );
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new("Device management opens in the GTK-style Android Cockpit window.")
+                            .color(palette.text_muted),
+                    );
+                    ui.add_space(18.0);
+                    if ui.button("Open Android Cockpit").clicked() {
+                        self.launch_adb_tauri_window(ui.ctx(), adb_dev);
+                    }
+                });
+            });
+    }
+
+    fn launch_adb_tauri_window(
+        &mut self,
+        ctx: &egui::Context,
+        adb_dev: &crate::config::AdbDeviceConfig,
+    ) {
+        match std::env::current_exe() {
+            Ok(exe) => match std::process::Command::new(exe)
+                .arg(format!("--adb-cockpit={}", adb_dev.serial))
+                .spawn()
+            {
+                Ok(_) => {
+                    self.adb_status_msg = Some((
+                        format!("Android Cockpit opened for {}", adb_dev.name),
+                        false,
+                        Instant::now(),
+                    ));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                }
+                Err(error) => {
+                    self.adb_status_msg = Some((
+                        format!("Could not open Android Cockpit: {error}"),
+                        true,
+                        Instant::now(),
+                    ));
+                }
+            },
+            Err(error) => {
+                self.adb_status_msg = Some((
+                    format!("Could not find application executable: {error}"),
+                    true,
+                    Instant::now(),
+                ));
+            }
+        }
+    }
+
     fn schedule_adb_telemetry(&mut self, serial: &str, ctx: egui::Context) {
         if !self.adb_telemetry_pending.insert(serial.to_string()) {
             return;
@@ -830,22 +909,6 @@ impl LauncherApp {
 
                     // Right Quick Action Buttons
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let btn_modern = egui::Button::new(RichText::new("✦ Modern Cockpit").size(10.5).strong().color(Color32::WHITE))
-                            .fill(Color32::from_rgb(99, 102, 241))
-                            .rounding(Rounding::same(7.0));
-                        if ui.add(btn_modern).on_hover_text("Open the modern Tauri Android cockpit").clicked() {
-                            match std::env::current_exe() {
-                                Ok(exe) => match std::process::Command::new(exe)
-                                    .arg(format!("--adb-cockpit={serial}"))
-                                    .spawn()
-                                {
-                                    Ok(_) => self.adb_status_msg = Some(("Modern Android Cockpit opened".into(), false, Instant::now())),
-                                    Err(err) => self.adb_status_msg = Some((format!("Could not open cockpit: {err}"), true, Instant::now())),
-                                },
-                                Err(err) => self.adb_status_msg = Some((format!("Could not find app executable: {err}"), true, Instant::now())),
-                            }
-                        }
-
                         // Disconnect button
                         let btn_disc = egui::Button::new(RichText::new(format!("{} Disconnect", crate::lucide::LOG_OUT)).size(10.5).color(p.text_secondary))
                             .fill(p.bg_button)
@@ -4183,6 +4246,7 @@ impl LauncherApp {
 }
 
 /// Renders a Nocturnal Command empty state card with icon badge, headline, subtitle, and action button.
+#[allow(dead_code)]
 fn render_empty_state_card(
     ui: &mut Ui,
     p: &crate::theme::ThemePalette,

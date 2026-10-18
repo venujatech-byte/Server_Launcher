@@ -257,6 +257,7 @@ impl SettingsTab {
     }
 }
 
+#[allow(dead_code)]
 pub struct LauncherApp {
     pub active_sidebar_tab: SidebarTab,
     pub scripts: Vec<CustomScript>,
@@ -344,6 +345,7 @@ pub struct LauncherApp {
 
     // ADB / Android Device Cockpit State
     pub adb_devices: Vec<crate::config::AdbDeviceConfig>,
+    pub adb_tauri_opened: HashSet<String>,
     pub add_device_selector_modal_open: bool,
     pub adb_add_modal_open: bool,
     pub adb_detected_devices: Vec<crate::adb::AdbDeviceInfo>,
@@ -1174,6 +1176,7 @@ impl LauncherApp {
 
             // ADB / Android Device Cockpit State
             adb_devices,
+            adb_tauri_opened: HashSet::new(),
             add_device_selector_modal_open: false,
             adb_add_modal_open: false,
             adb_detected_devices: Vec::new(),
@@ -4574,7 +4577,7 @@ impl eframe::App for LauncherApp {
             // ═════════════════════════════════════════════════════════════════
             // ADB ANDROID DEVICE COCKPIT
             // ═════════════════════════════════════════════════════════════════
-            self.render_adb_cockpit_view(ctx, &adb_dev);
+            self.render_adb_tauri_handoff(ctx, &adb_dev);
         } else {
             // ═════════════════════════════════════════════════════════════════
             // SSH REMOTE PC DASHBOARD

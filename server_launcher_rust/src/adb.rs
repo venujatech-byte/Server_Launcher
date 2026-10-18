@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
 pub struct AdbDeviceInfo {
@@ -495,16 +496,14 @@ echo __CPUINFO__; cat /proc/cpuinfo
 echo __CPU_STAT__; cat /proc/stat
 echo __CPU_FREQ__; for freq in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq; do [ -r "$freq" ] && cat "$freq"; done
 echo __MEMINFO__; cat /proc/meminfo
-echo __TOP__; top -b -n 1 -m 50
+echo __TOP__; top -b -n 1 -m 20
 echo __BATTERY__; dumpsys battery
 echo __NETDEV__; cat /proc/net/dev
 echo __DISKSTATS__; cat /proc/diskstats
 echo __DF__; df -k /data /sdcard
-echo __THERMAL__; dumpsys thermalservice
 echo __THERMAL_ZONES__; for zone in /sys/class/thermal/thermal_zone*; do if [ -r "$zone/temp" ]; then printf '%s ' "$(cat "$zone/type" 2>/dev/null)"; cat "$zone/temp"; fi; done
-echo __SENSORS__; dumpsys sensorservice | sed -n '/Sensor List:/,/Fusion States:/p'
 echo __WIFI__; settings get global wifi_on
-echo __BLUETOOTH__; dumpsys bluetooth_manager | head -n 8
+echo __BLUETOOTH__; settings get global bluetooth_on
 echo __GPU__; getprop ro.hardware.egl; getprop ro.board.platform
 echo __UPTIME__; cat /proc/uptime
 "#;
@@ -645,20 +644,7 @@ echo __UPTIME__; cat /proc/uptime
         }
     }
 
-    let mut temperatures: Vec<AdbTemperatureSensor> = section("THERMAL")
-        .lines()
-        .filter_map(|line| {
-            let value = line.split("mValue=").nth(1)?.split(|c: char| !c.is_ascii_digit() && c != '.' && c != '-')
-                .next()?.parse::<f32>().ok()?;
-            let name = line.split("mType=").nth(1)
-                .and_then(|tail| tail.split(|c: char| !c.is_ascii_alphanumeric() && c != '_').next())
-                .filter(|name| !name.is_empty())
-                .or_else(|| line.split("mName=").nth(1).and_then(|tail| tail.split('}').next()))
-                .unwrap_or("Thermal sensor");
-            Some(AdbTemperatureSensor { name: name.to_string(), temp_c: value })
-        })
-        .collect();
-    temperatures.extend(section("THERMAL_ZONES").lines().filter_map(|line| {
+    let temperatures = section("THERMAL_ZONES").lines().filter_map(|line| {
         let (name, value) = line.rsplit_once(char::is_whitespace)?;
         let mut temp_c = value.trim().parse::<f32>().ok()?;
         if temp_c.abs() > 200.0 {
@@ -668,24 +654,7 @@ echo __UPTIME__; cat /proc/uptime
             name: if name.trim().is_empty() { "Thermal zone" } else { name.trim() }.to_string(),
             temp_c,
         })
-    }));
-
-    let sensor_names = section("SENSORS")
-        .lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            if line.starts_with("0x") || line.starts_with("Handle ") {
-                let name = line
-                    .split_once(')')
-                    .map(|(_, name)| name.split('|').next().unwrap_or(name).trim())
-                    .filter(|name| !name.is_empty())
-                    .or_else(|| line.split_once(':').map(|(_, name)| name.trim()))?;
-                (!name.is_empty()).then(|| name.to_string())
-            } else {
-                None
-            }
-        })
-        .collect();
+    }).collect();
 
     let parse_toggle = |name: &str| {
         let raw = section(name).trim();
@@ -754,9 +723,44 @@ echo __UPTIME__; cat /proc/uptime
         bluetooth_enabled: parse_toggle("BLUETOOTH"),
         network_interfaces,
         temperatures,
-        sensor_names,
+        sensor_names: Vec::new(),
         uptime_secs,
     })
+}
+
+/// Loads the mostly static Android sensor inventory only when its view is opened.
+pub fn query_device_sensor_inventory(serial: &str) -> Result<Vec<String>, String> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(sensors) = cache.lock().map_err(|e| e.to_string())?.get(serial).cloned() {
+        return Ok(sensors);
+    }
+
+    let output = adb_cmd(
+        Some(serial),
+        &[
+            "shell",
+            "dumpsys sensorservice | sed -n '/Sensor List:/,/Fusion States:/p'",
+        ],
+    )?;
+    let sensors = output
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.starts_with("0x") || line.starts_with("Handle ") {
+                let name = line
+                    .split_once(')')
+                    .map(|(_, name)| name.split('|').next().unwrap_or(name).trim())
+                    .filter(|name| !name.is_empty())
+                    .or_else(|| line.split_once(':').map(|(_, name)| name.trim()))?;
+                (!name.is_empty()).then(|| name.to_string())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    cache.lock().map_err(|e| e.to_string())?.insert(serial.to_string(), sensors.clone());
+    Ok(sensors)
 }
 
 fn parse_top_memory_kb(value: &str) -> Option<u64> {

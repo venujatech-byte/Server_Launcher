@@ -112,7 +112,7 @@ fn adb_theme_info() -> AdbThemeInfo {
         surface: hex(palette.bg_card),
         surface2: hex(palette.bg_button),
         well: hex(palette.bg_subtle),
-        line: if palette.is_dark { "rgba(255, 255, 255, 0.08)".into() } else { "rgba(0, 0, 0, 0.08)".into() },
+        line: "transparent".into(),
         text: hex(palette.text_primary),
         muted: hex(palette.text_secondary),
         dim: hex(palette.text_muted),

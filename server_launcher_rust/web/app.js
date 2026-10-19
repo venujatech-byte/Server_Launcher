@@ -747,7 +747,7 @@
               <button class="button tonal" id="scan-fastboot-btn">${icon("e145")} Scan Fastboot Devices</button>
             </div>
             <p class="tool-panel-desc">Check if any connected devices are running in Bootloader, Fastboot, or Fastbootd mode.</p>
-            <div id="fastboot-scan-result" class="mono" style="padding:10px 14px; background:var(--well); border:1px solid var(--line); border-radius:8px; font-size:12px; color:#38bdf8;">
+            <div id="fastboot-scan-result" class="mono" style="padding:10px 14px; background:var(--well); border-radius:8px; font-size:12px; color:#38bdf8;">
               ${state.customFastbootDevices || 'Click "Scan Fastboot Devices" to query connected fastboot interfaces.'}
             </div>
           </div>

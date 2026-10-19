@@ -500,7 +500,7 @@ echo __CPUINFO__; cat /proc/cpuinfo
 echo __CPU_STAT__; cat /proc/stat
 echo __CPU_FREQ__; for freq in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq; do [ -r "$freq" ] && cat "$freq"; done
 echo __MEMINFO__; cat /proc/meminfo
-echo __TOP__; top -b -n 1 -m 20
+echo __TOP__; top -b -n 1 -m 120
 echo __BATTERY__; dumpsys battery
 echo __NETDEV__; cat /proc/net/dev
 echo __DISKSTATS__; cat /proc/diskstats
@@ -596,7 +596,7 @@ echo __UPTIME__; cat /proc/uptime
             })
         })
         .filter(|process| !process.name.is_empty() && !process.name.starts_with("top ") && !process.name.starts_with("sh "))
-        .take(50)
+        .take(150)
         .collect();
     let cpu_usage_pct = section("TOP")
         .lines()

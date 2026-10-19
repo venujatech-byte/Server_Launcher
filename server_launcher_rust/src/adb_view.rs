@@ -730,14 +730,29 @@ impl LauncherApp {
         &mut self,
         adb_dev: &crate::config::AdbDeviceConfig,
     ) {
-        let [red, green, blue, _] = self.palette().accent.to_array();
-        let accent = format!("#{red:02x}{green:02x}{blue:02x}");
+        let p = self.palette();
+        let hex = |c: egui::Color32| format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b());
+        let accent = hex(p.accent);
+        let bg = hex(p.bg_app);
+        let sidebar = hex(p.bg_sidebar);
+        let card = hex(p.bg_card);
+        let button = hex(p.bg_button);
+        let subtle = hex(p.bg_subtle);
+        let accent_text = hex(p.accent_text);
+        let theme_id = self.theme.id_str();
         match std::env::current_exe() {
             Ok(exe) => {
                 let mut command = std::process::Command::new(exe);
                 command
                     .arg(format!("--adb-cockpit={}", adb_dev.serial))
-                    .env("SERVER_LAUNCHER_ADB_ACCENT", accent);
+                    .env("SERVER_LAUNCHER_ADB_THEME", theme_id)
+                    .env("SERVER_LAUNCHER_ADB_ACCENT", accent)
+                    .env("SERVER_LAUNCHER_ADB_BG", bg)
+                    .env("SERVER_LAUNCHER_ADB_SIDEBAR", sidebar)
+                    .env("SERVER_LAUNCHER_ADB_CARD", card)
+                    .env("SERVER_LAUNCHER_ADB_BUTTON", button)
+                    .env("SERVER_LAUNCHER_ADB_WELL", subtle)
+                    .env("SERVER_LAUNCHER_ADB_ACCENT_TEXT", accent_text);
                 match command.spawn() {
                     Ok(_) => {
                         self.adb_status_msg = Some((

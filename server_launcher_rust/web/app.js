@@ -3134,18 +3134,65 @@
       }
     });
   }
-  document.addEventListener('visibilitychange', () => { if(document.hidden){clearInterval(state.screenTimer);state.screenTimer=null;clearTimeout(state.sensorTimer);state.sensorTimer=null;} else if(state.tab==='screen'&&state.serial) selectTab('screen'); else if(state.tab==='sensors'&&state.serial) void renderTab(); });
-  (async () => {
-    if (!invoke) { content.innerHTML=`<div class="card empty"><b>Tauri runtime is unavailable</b><span>Launch the Android cockpit from Server Launcher.</span></div>`; return; }
+  async function syncTheme() {
+    if (!invoke) return;
     try {
-      state.serial=await invoke('adb_initial_serial') || '';
-      const accent=await invoke('adb_accent_color');
-      if (/^#[\da-f]{6}$/i.test(accent || '')) {
-        document.documentElement.style.setProperty('--accent', accent);
-        document.documentElement.style.setProperty('--accent-strong', accent);
+      const t = await invoke('adb_theme_info');
+      if (t) {
+        const root = document.documentElement.style;
+        if (t.bg) root.setProperty('--bg', t.bg);
+        if (t.side) root.setProperty('--side', t.side);
+        if (t.surface) root.setProperty('--surface', t.surface);
+        if (t.surface2) root.setProperty('--surface2', t.surface2);
+        if (t.well) root.setProperty('--well', t.well);
+        if (t.line) root.setProperty('--line', t.line);
+        if (t.text) root.setProperty('--text', t.text);
+        if (t.muted) root.setProperty('--muted', t.muted);
+        if (t.dim) root.setProperty('--dim', t.dim);
+        if (t.accent) root.setProperty('--accent', t.accent);
+        if (t.accent_strong) root.setProperty('--accent-strong', t.accent_strong);
+        if (t.accent_soft) root.setProperty('--accent-soft', t.accent_soft);
+        if (t.accent_text) root.setProperty('--accent-text', t.accent_text);
+        document.documentElement.setAttribute('data-theme', t.theme);
+        document.documentElement.style.colorScheme = t.is_dark ? 'dark' : 'light';
       }
+    } catch {}
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      clearInterval(state.screenTimer);
+      state.screenTimer = null;
+      clearTimeout(state.sensorTimer);
+      state.sensorTimer = null;
+    } else {
+      void syncTheme();
+      if (state.tab === 'screen' && state.serial) selectTab('screen');
+      else if (state.tab === 'sensors' && state.serial) void renderTab();
+    }
+  });
+
+  window.addEventListener('focus', () => { void syncTheme(); });
+
+  (async () => {
+    if (!invoke) {
+      content.innerHTML = `<div class="card empty"><b>Tauri runtime is unavailable</b><span>Launch the Android cockpit from Server Launcher.</span></div>`;
+      return;
+    }
+    try {
+      state.serial = await invoke('adb_initial_serial') || '';
+      await syncTheme();
       await refreshDevices();
-    } catch(e) { toast(String(e),true); }
-    setInterval(async () => { if(document.hidden)return; const old=state.serial; await refreshDevices(); if(state.serial===old && !['screen','sensors'].includes(state.tab) && Date.now()-state.lastTelemetry>30000) await refreshTelemetry(); }, 7000);
+    } catch(e) { toast(String(e), true); }
+
+    setInterval(async () => {
+      if (document.hidden) return;
+      void syncTheme();
+      const old = state.serial;
+      await refreshDevices();
+      if (state.serial === old && !['screen','sensors'].includes(state.tab) && Date.now() - state.lastTelemetry > 30000) {
+        await refreshTelemetry();
+      }
+    }, 4000);
   })();
 })();

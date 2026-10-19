@@ -18,6 +18,7 @@
   --accent: #75aef5;
   --accent-strong: #3584e4;
   --accent-soft: #3584e426;
+  --accent-text: #ffffff;
   --green: #8ff0a4;
   --amber: #f8e45c;
   --red: #ff938a;
@@ -68,8 +69,8 @@ nav { display: grid; gap: 3px; }
 .nav-item { background: transparent; border: 0; border-radius: 9px; color: var(--muted); text-align: left; font: 600 13px Inter, system-ui, sans-serif; min-height: 38px; padding: 8px 10px; display: flex; align-items: center; gap: 11px; cursor: pointer; transition: background .12s, color .12s; }
 .nav-item > .icon { width: 18px; color: var(--dim); font-size: 16px; }
 .nav-item:hover { background: var(--surface2); color: var(--text); }
-.nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
-.nav-item.active > .icon { color: var(--accent); }
+.nav-item.active { background: var(--accent); color: var(--accent-text); font-weight: 700; box-shadow: 0 2px 10px color-mix(in srgb, var(--accent), transparent 60%); }
+.nav-item.active > .icon { color: var(--accent-text); }
 .nav-divider { height: 1px; background: var(--line); margin: 8px; }
 .sidebar-footer { margin-top: auto; padding: 15px 10px 3px; border-top: 1px solid var(--line); display: flex; gap: 9px; align-items: center; color: var(--muted); font: 600 11px var(--font-mono); }
 .main { min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
@@ -81,8 +82,8 @@ h1 { font-size: 24px; line-height: 1.2; margin: 0; font-weight: 800; letter-spac
 .icon-button, .button { border: 1px solid var(--line); background: var(--surface2); color: var(--text); border-radius: 9px; min-height: 36px; padding: 7px 14px; font: 600 12.5px Inter, system-ui, sans-serif; cursor: pointer; transition: background .12s, border-color .12s; }
 .icon-button { width: 36px; padding: 0; font-size: 16px; }
 .button:hover, .icon-button:hover { background: color-mix(in srgb, var(--surface2), var(--text) 8%); }
-.button.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; }
-.button.primary:hover { background: color-mix(in srgb, var(--accent-strong), white 12%); }
+.button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.button.primary:hover { background: var(--accent-strong); }
 .button.tonal { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
 .button.danger { background: color-mix(in srgb, var(--red), transparent 88%); border-color: color-mix(in srgb, var(--red), transparent 70%); color: var(--red); }
 .button.success { background: color-mix(in srgb, var(--green), transparent 88%); border-color: color-mix(in srgb, var(--green), transparent 70%); color: var(--green); }
@@ -232,10 +233,10 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 
 .album-pill.active {
   background: var(--accent);
-  color: #0f172a;
+  color: var(--accent-text);
   border-color: var(--accent);
   font-weight: 700;
-  box-shadow: 0 0 12px rgba(14, 165, 233, 0.35);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent), transparent 60%);
 }
 
 .photos-search-wrap {
@@ -393,7 +394,7 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 .photo-card.selected .photo-select-box {
   background: var(--accent);
   border-color: var(--accent);
-  color: #0f172a;
+  color: var(--accent-text);
 }
 
 /* Hover Quick Overlay */
@@ -433,7 +434,7 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 
 .photo-overlay-btn:hover {
   background: var(--accent);
-  color: #0f172a;
+  color: var(--accent-text);
   transform: translateY(-1px);
 }
 
@@ -586,7 +587,7 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 
 .lightbox-nav-btn:hover {
   background: var(--accent);
-  color: #0f172a;
+  color: var(--accent-text);
 }
 
 .lightbox-nav-btn.prev { left: 24px; }
@@ -687,7 +688,7 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 
 .sensors-subtab-pill.active {
   background: var(--accent);
-  color: #080c14;
+  color: var(--accent-text);
   border-color: var(--accent);
   font-weight: 750;
   box-shadow: 0 2px 14px color-mix(in srgb, var(--accent), transparent 50%);
@@ -700,7 +701,7 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 }
 
 .sensors-subtab-pill.active .icon {
-  color: #080c14;
+  color: var(--accent-text);
 }
 
 /* Telemetry Header Controls (inside top header) */
@@ -1652,8 +1653,8 @@ tr[hidden], .app-row[hidden] { display: none !important; }
 
 .custom-subtab-btn.active {
   background: var(--accent);
-  color: #0f172a;
-  box-shadow: 0 0 12px rgba(14, 165, 233, 0.35);
+  color: var(--accent-text);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent), transparent 60%);
 }
 
 /* Boot Modes Grid */
@@ -1839,7 +1840,7 @@ tr[hidden], .app-row[hidden] { display: none !important; }
 
 .preset-pill.active {
   background: var(--accent);
-  color: #0f172a;
+  color: var(--accent-text);
   font-weight: 700;
 }
 

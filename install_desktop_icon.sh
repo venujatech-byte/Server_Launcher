@@ -91,3 +91,4 @@ fi
 
 echo "✓ Application icon and shortcut setup complete."
 
+fix: hide the host's swap devices from memory-limited containers

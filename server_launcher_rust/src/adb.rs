@@ -116,6 +116,9 @@ pub struct AdbDeviceSensors {
     pub temperatures: Vec<AdbTemperatureSensor>,
     pub sensor_names: Vec<String>,
     pub uptime_secs: Option<u64>,
+    pub socket_total: usize,
+    pub socket_tcp: usize,
+    pub socket_udp: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -505,6 +508,7 @@ echo __THERMAL_ZONES__; for zone in /sys/class/thermal/thermal_zone*; do if [ -r
 echo __WIFI__; settings get global wifi_on
 echo __BLUETOOTH__; settings get global bluetooth_on
 echo __GPU__; getprop ro.hardware.egl; getprop ro.board.platform
+echo __SOCKSTAT__; cat /proc/net/sockstat
 echo __UPTIME__; cat /proc/uptime
 "#;
     let output = adb_cmd(Some(serial), &["shell", script])?;
@@ -693,6 +697,34 @@ echo __UPTIME__; cat /proc/uptime
         })
         .unwrap_or("Unavailable")
         .to_string();
+    let mut socket_total = 0;
+    let mut socket_tcp = 0;
+    let mut socket_udp = 0;
+    for line in section("SOCKSTAT").lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if line.starts_with("sockets:") {
+            if parts.len() >= 3 {
+                socket_total = parts[2].parse().unwrap_or(0);
+            }
+        } else if line.starts_with("TCP:") {
+            for (i, &p) in parts.iter().enumerate() {
+                if p == "inuse" || p == "alloc" {
+                    if let Some(&val) = parts.get(i + 1) {
+                        socket_tcp = val.parse().unwrap_or(socket_tcp);
+                    }
+                }
+            }
+        } else if line.starts_with("UDP:") {
+            for (i, &p) in parts.iter().enumerate() {
+                if p == "inuse" {
+                    if let Some(&val) = parts.get(i + 1) {
+                        socket_udp = val.parse().unwrap_or(socket_udp);
+                    }
+                }
+            }
+        }
+    }
+
     Ok(AdbDeviceSensors {
         cpu_model,
         cpu_cores,
@@ -725,6 +757,9 @@ echo __UPTIME__; cat /proc/uptime
         temperatures,
         sensor_names: Vec::new(),
         uptime_secs,
+        socket_total,
+        socket_tcp,
+        socket_udp,
     })
 }
 

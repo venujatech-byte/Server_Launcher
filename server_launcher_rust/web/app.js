@@ -2,7 +2,7 @@
   const invoke = window.__TAURI__?.core?.invoke;
   const $ = (selector) => document.querySelector(selector);
   const content = $('#content');
-  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', screenTimer: null, toastTimer: null, lastTelemetry: 0 };
+  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', screenTimer: null, toastTimer: null, lastTelemetry: 0 };
   const tabNames = { overview: 'Overview', screen: 'Screen share', messages: 'Messages', calls: 'Calls', photos: 'Photos', notifications: 'Notifications', sensors: 'Sensors', storage: 'Storage', apps: 'Apps', clipboard: 'Clipboard', terminal: 'Terminal', wireless: 'Wireless debugging', firmware: 'Device controls' };
   const tabKinds = { messages: 'messages', calls: 'calls', photos: 'photos', notifications: 'notifications', sensors: 'sensors', apps: 'apps', storage: 'files', wireless: 'endpoints' };
   const icon = (code) => `<span class="icon" aria-hidden="true">&#x${code};</span>`;
@@ -150,6 +150,22 @@
   function renderFirmware() {
     content.innerHTML=`<div class="grid two"><section class="card"><div class="card-head"><h2>Power and navigation</h2></div><div class="toolbar"><button class="button" data-action="key_power">Power / Wake</button><button class="button" data-action="key_back">Back</button><button class="button" data-action="key_home">Home</button><button class="button" data-action="key_recents">Recents</button><button class="button" data-action="key_volume_down">Volume −</button><button class="button" data-action="key_volume_up">Volume +</button></div></section><section class="card"><div class="card-head"><h2>Restart device</h2></div><div class="stack"><div class="notice">Recovery and bootloader restart the device outside Android. The device may disconnect until it boots again.</div><div class="toolbar"><button class="button danger" data-action="reboot" data-value="system">System</button><button class="button" data-action="reboot" data-value="recovery">Recovery</button><button class="button" data-action="reboot" data-value="bootloader">Bootloader</button><button class="button" data-action="reboot" data-value="fastboot">Fastboot</button></div></div></section></div>`;
   }
+  function formatRate(value) {
+    if (value == null || !Number.isFinite(value)) return '0 B/s';
+    const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+    let n = Math.abs(value), i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return `${(value < 0 ? -1 : 1 * n).toFixed(i ? 1 : 0)} ${units[i]}`;
+  }
+
+  function formatBytes(value) {
+    if (value == null || !Number.isFinite(value)) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let n = Math.abs(value), i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return `${(value < 0 ? -1 : 1 * n).toFixed(i ? 1 : 0)} ${units[i]}`;
+  }
+
   function recordSensorSample(s) {
     if (!s || typeof s !== 'object') return;
     state.sensorHistorySerial = state.serial;
@@ -159,112 +175,1252 @@
     const diskTotal = s.storage_internal_total_kb, diskFree = s.storage_internal_free_kb;
     const rx = sum(s.network_interfaces, 'rx_bytes'), tx = sum(s.network_interfaces, 'tx_bytes');
     const diskRead = sum(s.disk_counters, 'read_sectors'), diskWrite = sum(s.disk_counters, 'written_sectors');
-    const seconds = previous ? Math.max(.1, (now - previous.at) / 1000) : 0;
-    const rate = (current, old) => previous && current >= old ? (current - old) / seconds : null;
+    const seconds = previous ? Math.max(0.1, (now - previous.at) / 1000) : 0;
+    const rate = (current, old) => previous && current >= old && seconds > 0 ? (current - old) / seconds : 0;
     const temps = s.temperatures || [];
     const cores = {};
     let procCpu = null;
     for (const c of s.cpu_counters || []) {
       if (c.name === 'cpu') {
         const oldTotal = previous?.cpuCounters?.cpu?.total, oldIdle = previous?.cpuCounters?.cpu?.idle;
-        if (oldTotal != null && c.total > oldTotal && c.idle >= oldIdle) procCpu = 100 * (1 - (c.idle - oldIdle) / (c.total - oldTotal));
+        if (oldTotal != null && c.total > oldTotal && c.idle >= oldIdle) {
+          procCpu = 100 * (1 - (c.idle - oldIdle) / (c.total - oldTotal));
+        }
         continue;
       }
       if (!previous) continue;
       const old = (previous.cpuCounters || {})[c.name];
-      if (old && c.total > old.total && c.idle >= old.idle) cores[c.name] = 100 * (1 - (c.idle - old.idle) / (c.total - old.total));
+      if (old && c.total > old.total && c.idle >= old.idle) {
+        cores[c.name] = 100 * (1 - (c.idle - old.idle) / (c.total - old.total));
+      }
     }
-    state.sensorHistory.push({ at: now, cpu: s.cpu_usage_pct ?? procCpu, ram: mem,
-      swap: s.swap_total_kb ? 100 * (s.swap_total_kb - (s.swap_free_kb || 0)) / s.swap_total_kb : null,
-      storage: diskTotal && diskFree != null ? 100 * (diskTotal - diskFree) / diskTotal : null,
-      rx, tx, rxRate: rate(rx, previous?.rx || 0), txRate: rate(tx, previous?.tx || 0),
-      diskReadRate: rate(diskRead, previous?.diskRead || 0) == null ? null : rate(diskRead, previous?.diskRead || 0) * 512,
-      diskWriteRate: rate(diskWrite, previous?.diskWrite || 0) == null ? null : rate(diskWrite, previous?.diskWrite || 0) * 512,
-      battery: s.battery_pct, temp: temps.length ? Math.max(...temps.map(x => Number(x.temp_c)).filter(Number.isFinite)) : s.battery_temp_c,
-      cores, cpuCounters: Object.fromEntries((s.cpu_counters || []).map(c => [c.name, { total: c.total, idle: c.idle }])), diskRead, diskWrite });
+    const socketTotal = Number(s.socket_total) || 0;
+    const socketTcp = Number(s.socket_tcp) || 0;
+    const socketUdp = Number(s.socket_udp) || 0;
+    const rxRate = rate(rx, previous?.rx ?? rx);
+    const txRate = rate(tx, previous?.tx ?? tx);
+    const diskReadRate = rate(diskRead, previous?.diskRead ?? diskRead) * 512;
+    const diskWriteRate = rate(diskWrite, previous?.diskWrite ?? diskWrite) * 512;
+
+    state.sensorHistory.push({
+      at: now,
+      cpu: s.cpu_usage_pct ?? procCpu ?? 0,
+      ram: mem ?? 0,
+      swap: s.swap_total_kb ? 100 * (s.swap_total_kb - (s.swap_free_kb || 0)) / s.swap_total_kb : 0,
+      storage: diskTotal && diskFree != null ? 100 * (diskTotal - diskFree) / diskTotal : 0,
+      rx, tx, rxRate, txRate,
+      diskReadRate, diskWriteRate,
+      battery: s.battery_pct ?? 0,
+      temp: temps.length ? Math.max(...temps.map(x => Number(x.temp_c)).filter(Number.isFinite)) : (s.battery_temp_c ?? 0),
+      cores,
+      cpuCounters: Object.fromEntries((s.cpu_counters || []).map(c => [c.name, { total: c.total, idle: c.idle }])),
+      diskRead, diskWrite,
+      socketTotal, socketTcp, socketUdp
+    });
     if (state.sensorHistory.length > 60) state.sensorHistory.shift();
   }
-  function sensorChart(title, keys, labels, suffix = '%') {
-    const newest = state.sensorHistory.at(-1)?.at || 0;
-    const rows = state.sensorHistory.filter(row => row.at >= newest - 60000 && keys.some(key => Number.isFinite(row[key] ?? row.cores?.[key])));
-    if (rows.length < 2) return `<section class="card sensor-chart"><div class="card-head"><h2>${title}</h2><span class="subtle">Collecting samples · ${rows.length}/2</span></div><div class="chart-empty">Charts appear after two live samples.</div></section>`;
-    const colors = ['var(--accent)', 'var(--cyan)', 'var(--green)'], w = 900, h = 210, pad = 12;
-    const values = rows.flatMap(row => keys.map(key => row[key] ?? row.cores?.[key])).filter(Number.isFinite);
-    let min = suffix === ' °C' ? Math.floor(Math.min(...values) - 1) : Math.min(0, ...values), max = Math.max(...values); if (max === min) max = min + 1;
-    const axis = value => {
-      if (suffix.includes('B')) { const units=['B','KB','MB','GB','TB']; let n=value,i=0; while(Math.abs(n)>=1024&&i<units.length-1){n/=1024;i++;} return `${n.toFixed(i?1:0)} ${units[i]}${suffix.includes('/s')?'/s':''}`; }
-      return `${value.toFixed(suffix === '%' ? 0 : 1)}${suffix}`;
-    };
-    const grid = [0, 1, 2, 3].map(n => `<path d="M0 ${pad+n*(h-2*pad)/3} H${w}" class="chart-grid-line"/>`).join('');
-    return `<section class="card sensor-chart"><div class="card-head"><h2>${title}</h2><div class="chart-legend">${labels.map((label,i)=>`<span class="chart-legend-item"><i style="background:${colors[i%colors.length]}"></i>${escapeHtml(label)}</span>`).join('')}</div></div><div class="chart-scale"><span>${axis(max)}</span><span>${axis(min)}</span></div><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(title)} history" preserveAspectRatio="none"><defs>${keys.map((key,i)=>`<linearGradient id="sensor-fill-${i}" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="${colors[i%colors.length]}" stop-opacity=".32"/><stop offset="100%" stop-color="${colors[i%colors.length]}" stop-opacity=".015"/></linearGradient>`).join('')}</defs>${grid}${keys.map((key,i)=>{ const pts=rows.map((row,j)=>{const value=row[key]??row.cores?.[key];return Number.isFinite(value)?`${pad+j*(w-2*pad)/Math.max(1,rows.length-1)},${h-pad-(value-min)*(h-2*pad)/(max-min)}`:null;}); const defined=pts.map((point,j)=>point?{point,j}:null).filter(Boolean); if(!defined.length)return ''; const first=defined[0], last=defined.at(-1), line=defined.map(x=>x.point).join(' '), area=`${line} ${last.point.split(',')[0]},${h-pad} ${first.point.split(',')[0]},${h-pad}`; return `<polygon points="${area}" fill="url(#sensor-fill-${i})"/><polyline points="${line}" fill="none" stroke="${colors[i%colors.length]}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`; }).join('')}</svg><div class="chart-time"><span>60s ago</span><span>30s</span><span>Now</span></div></section>`;
+
+  function renderSparklineSvg(data = [], maxVal = 100, dottedRatio = 0.5, color = 'var(--accent)') {
+    const pointsData = (data.length === 1 ? [data[0], data[0]] : data).map(v => Number(v)).filter(Number.isFinite);
+    if (pointsData.length < 2) {
+      return `<svg class="stat-card-spark" viewBox="0 0 100 32" preserveAspectRatio="none"><line x1="0" y1="16" x2="100" y2="16" stroke="rgba(255,255,255,0.06)" stroke-width="1"/></svg>`;
+    }
+    const max = Math.max(maxVal || 1, ...pointsData);
+    const min = Math.min(0, ...pointsData);
+    const range = max - min || 1;
+    const n = pointsData.length;
+    const stepX = 100 / (n - 1);
+    const pts = pointsData.map((v, i) => {
+      const x = (i * stepX).toFixed(1);
+      const norm = Math.max(0.02, Math.min(0.96, (v - min) / range));
+      const y = (31 - norm * 29).toFixed(1);
+      return `${x},${y}`;
+    }).join(' ');
+
+    const gradId = 'spk-' + Math.random().toString(36).slice(2, 7);
+    const dottedLine = dottedRatio != null
+      ? `<line x1="0" y1="${(31 - Math.max(0.05, Math.min(0.95, dottedRatio)) * 29).toFixed(1)}" x2="100" y2="${(31 - Math.max(0.05, Math.min(0.95, dottedRatio)) * 29).toFixed(1)}" stroke="${color}" stroke-opacity="0.4" stroke-dasharray="3,3" stroke-width="1"/>`
+      : '';
+
+    return `
+      <svg class="stat-card-spark" viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${color}" stop-opacity="0.35"/>
+            <stop offset="100%" stop-color="${color}" stop-opacity="0.02"/>
+          </linearGradient>
+        </defs>
+        ${dottedLine}
+        <polygon points="0,32 ${pts} 100,32" fill="url(#${gradId})"/>
+        <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+      </svg>
+    `;
   }
-  function sensorSpark(keys, color = 'var(--accent)') {
-    const values = state.sensorHistory.map(row => keys.map(key => row[key] ?? row.cores?.[key]).find(Number.isFinite)).filter(Number.isFinite).slice(-36);
-    if (values.length < 2) return '';
-    let min = Math.min(...values), max = Math.max(...values); if (min === max) { min -= 1; max += 1; }
-    const points = values.map((value,index)=>`${index*100/(values.length-1)},${30-(value-min)*25/(max-min)}`).join(' ');
-    return `<svg class="sensor-spark" viewBox="0 0 100 34" preserveAspectRatio="none" aria-hidden="true"><polygon points="0,34 ${points} 100,34" fill="${color}" opacity=".18"/><polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`;
+
+  function renderBigStatCard({ iconCode, title, heroVal, heroUnit = '', subtitle = '', leftStat = '', rightStat = '', data = [], maxVal = 100, dottedRatio = 0.5, color = 'var(--accent)' }) {
+    const spark = renderSparklineSvg(data, maxVal, dottedRatio, color);
+    return `
+      <article class="sensors-stat-card">
+        <div class="stat-card-title"><span class="icon">${icon(iconCode)}</span><span>${escapeHtml(title)}</span></div>
+        <div class="stat-card-hero">
+          <span class="stat-hero-val">${escapeHtml(heroVal)}</span>
+          ${heroUnit ? `<span class="stat-hero-unit">${escapeHtml(heroUnit)}</span>` : ''}
+        </div>
+        <div class="stat-card-sub" title="${escapeHtml(subtitle)}">${escapeHtml(subtitle)}</div>
+        <div class="stat-card-range">
+          <span>${escapeHtml(leftStat)}</span>
+          <span>${escapeHtml(rightStat)}</span>
+        </div>
+        <div class="stat-card-spark">${spark}</div>
+      </article>
+    `;
   }
+
+  function renderDualNetworkSvg(txHistory = [], rxHistory = [], peakVal = 0, accentColor = 'var(--accent)') {
+    const n = Math.max(txHistory.length, rxHistory.length);
+    const h = 130, w = 500;
+    if (n < 2) {
+      return `<div class="chart-empty">Collecting network telemetry samples…</div>`;
+    }
+    const maxV = Math.max(peakVal || 0, ...txHistory, ...rxHistory, 1024);
+    const stepX = (w - 20) / (n - 1);
+    const yBase = h - 14;
+    const yTop = 14;
+    const graphH = yBase - yTop;
+
+    const toPoints = (series) => series.map((v, i) => {
+      const x = (10 + i * stepX).toFixed(1);
+      const norm = Math.max(0.02, Math.min(0.94, (Number(v) || 0) / maxV));
+      const y = (yBase - norm * graphH).toFixed(1);
+      return `${x},${y}`;
+    });
+
+    const txPts = toPoints(txHistory);
+    const rxPts = toPoints(rxHistory);
+
+    const txPoly = txPts.join(' ');
+    const rxPoly = rxPts.join(' ');
+
+    const txArea = `10,${yBase} ${txPoly} ${10 + (txHistory.length - 1) * stepX},${yBase}`;
+    const rxArea = `10,${yBase} ${rxPoly} ${10 + (rxHistory.length - 1) * stepX},${yBase}`;
+
+    const gradTx = 'dnet-tx-' + Math.random().toString(36).slice(2, 7);
+    const gradRx = 'dnet-rx-' + Math.random().toString(36).slice(2, 7);
+    const yPeak = (yTop + graphH * 0.28).toFixed(1);
+
+    return `
+      <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Network throughput history" preserveAspectRatio="none" style="width:100%;height:130px;display:block;">
+        <defs>
+          <linearGradient id="${gradTx}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${accentColor}" stop-opacity="0.32"/>
+            <stop offset="100%" stop-color="${accentColor}" stop-opacity="0.02"/>
+          </linearGradient>
+          <linearGradient id="${gradRx}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.18"/>
+            <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.01"/>
+          </linearGradient>
+        </defs>
+        <line x1="10" y1="${yBase}" x2="${w - 10}" y2="${yBase}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+        <line x1="10" y1="${yPeak}" x2="${w - 10}" y2="${yPeak}" stroke="${accentColor}" stroke-opacity="0.45" stroke-dasharray="5,4" stroke-width="1.2"/>
+        <polygon points="${rxArea}" fill="url(#${gradRx})"/>
+        <polyline points="${rxPoly}" fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        <polygon points="${txArea}" fill="url(#${gradTx})"/>
+        <polyline points="${txPoly}" fill="none" stroke="${accentColor}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    `;
+  }
+
+  function renderSocketsChartSvg(tcpHistory = [], udpHistory = [], accentColor = 'var(--accent)') {
+    const n = Math.max(tcpHistory.length, udpHistory.length);
+    const h = 130, w = 350;
+    if (n < 2) {
+      return `<div class="chart-empty">Collecting socket telemetry…</div>`;
+    }
+    const maxV = Math.max(10, ...tcpHistory, ...udpHistory);
+    const stepX = (w - 20) / (n - 1);
+    const yBase = h - 14;
+    const yTop = 14;
+    const graphH = yBase - yTop;
+
+    const toPoints = (series) => series.map((v, i) => {
+      const x = (10 + i * stepX).toFixed(1);
+      const norm = Math.max(0.04, Math.min(0.92, (Number(v) || 0) / maxV));
+      const y = (yBase - norm * graphH).toFixed(1);
+      return `${x},${y}`;
+    });
+
+    const tcpPts = toPoints(tcpHistory);
+    const udpPts = toPoints(udpHistory);
+
+    const tcpPoly = tcpPts.join(' ');
+    const udpPoly = udpPts.join(' ');
+
+    const tcpArea = `10,${yBase} ${tcpPoly} ${10 + (tcpHistory.length - 1) * stepX},${yBase}`;
+    const gradTcp = 'sock-tcp-' + Math.random().toString(36).slice(2, 7);
+    const yMid = (yTop + graphH * 0.45).toFixed(1);
+
+    return `
+      <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Sockets history" preserveAspectRatio="none" style="width:100%;height:130px;display:block;">
+        <defs>
+          <linearGradient id="${gradTcp}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${accentColor}" stop-opacity="0.32"/>
+            <stop offset="100%" stop-color="${accentColor}" stop-opacity="0.02"/>
+          </linearGradient>
+        </defs>
+        <line x1="10" y1="${yBase}" x2="${w - 10}" y2="${yBase}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+        <line x1="10" y1="${yMid}" x2="${w - 10}" y2="${yMid}" stroke="${accentColor}" stroke-opacity="0.35" stroke-dasharray="4,4" stroke-width="1.2"/>
+        <polygon points="${tcpArea}" fill="url(#${gradTcp})"/>
+        <polyline points="${tcpPoly}" fill="none" stroke="${accentColor}" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="${udpPoly}" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4,3"/>
+      </svg>
+    `;
+  }
+
+  function renderWaveformChartSvg({ title, series = [], height = 140, suffix = '%', benchmarkVal = null }) {
+    const n = Math.max(...series.map(s => s.data?.length || 0));
+    const w = 700, h = height;
+    if (n < 2) {
+      return `
+        <section class="card sensors-waveform-card">
+          <div class="card-head"><h2>${escapeHtml(title)}</h2><span class="subtle">Collecting samples · ${n}/2</span></div>
+          <div class="waveform-chart-box"><div class="chart-empty">Waveform appears after two live samples.</div></div>
+        </section>
+      `;
+    }
+    const allValues = series.flatMap(s => s.data || []).map(Number).filter(Number.isFinite);
+    let maxV = Math.max(...allValues, 1);
+    let minV = suffix === ' °C' ? Math.floor(Math.min(...allValues) - 2) : Math.min(0, ...allValues);
+    if (suffix === '%' && maxV < 100) maxV = 100;
+    if (maxV === minV) maxV = minV + 1;
+    const range = maxV - minV;
+
+    const yBase = h - 14;
+    const yTop = 14;
+    const graphH = yBase - yTop;
+    const stepX = (w - 20) / (n - 1);
+
+    const legend = series.map((s, idx) => `
+      <span class="chart-legend-item">
+        <i style="background:${s.color || 'var(--accent)'}"></i>
+        ${escapeHtml(s.label)}
+      </span>
+    `).join('');
+
+    const gridLines = [0.25, 0.5, 0.75].map(ratio => {
+      const y = (yBase - ratio * graphH).toFixed(1);
+      return `<line x1="10" y1="${y}" x2="${w - 10}" y2="${y}" stroke="rgba(255,255,255,0.06)" stroke-dasharray="4,4" stroke-width="1"/>`;
+    }).join('');
+
+    const benchmarkLine = benchmarkVal != null
+      ? `<line x1="10" y1="${(yBase - Math.max(0.05, Math.min(0.95, (benchmarkVal - minV) / range)) * graphH).toFixed(1)}" x2="${w - 10}" y2="${(yBase - Math.max(0.05, Math.min(0.95, (benchmarkVal - minV) / range)) * graphH).toFixed(1)}" stroke="var(--accent)" stroke-opacity="0.45" stroke-dasharray="6,4" stroke-width="1.2"/>`
+      : '';
+
+    const paths = series.map((s, idx) => {
+      const d = s.data || [];
+      const pts = d.map((v, i) => {
+        const x = (10 + i * stepX).toFixed(1);
+        const norm = Math.max(0.02, Math.min(0.98, ((Number(v) || 0) - minV) / range));
+        const y = (yBase - norm * graphH).toFixed(1);
+        return `${x},${y}`;
+      });
+      const poly = pts.join(' ');
+      const area = `10,${yBase} ${poly} ${10 + (d.length - 1) * stepX},${yBase}`;
+      const gradId = 'wf-grad-' + idx + '-' + Math.random().toString(36).slice(2, 6);
+      return `
+        <defs>
+          <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${s.color || 'var(--accent)'}" stop-opacity="${s.fillOpacity ?? 0.28}"/>
+            <stop offset="100%" stop-color="${s.color || 'var(--accent)'}" stop-opacity="0.01"/>
+          </linearGradient>
+        </defs>
+        <polygon points="${area}" fill="url(#${gradId})"/>
+        <polyline points="${poly}" fill="none" stroke="${s.color || 'var(--accent)'}" stroke-width="${s.strokeWidth || 2.0}" stroke-linecap="round" stroke-linejoin="round"/>
+      `;
+    }).join('');
+
+    return `
+      <section class="card sensors-waveform-card">
+        <div class="card-head">
+          <h2>${escapeHtml(title)}</h2>
+          <div class="chart-legend">${legend}</div>
+        </div>
+        <div class="waveform-chart-box">
+          <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(title)}" preserveAspectRatio="none" style="width:100%;height:${h}px;display:block;">
+            <line x1="10" y1="${yBase}" x2="${w - 10}" y2="${yBase}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+            ${gridLines}
+            ${benchmarkLine}
+            ${paths}
+          </svg>
+        </div>
+        <div class="waveform-time-axis">
+          <span>60s ago</span>
+          <span>45s</span>
+          <span>30s</span>
+          <span>15s</span>
+          <span>Now</span>
+        </div>
+      </section>
+    `;
+  }
+
+  async function pollSensors() {
+    if (state.sensorBusy || state.tab !== 'sensors' || document.hidden || state.sensorsCadence === 0) return;
+    state.sensorBusy = true;
+    try {
+      await loadData('sensors');
+      if (state.tab === 'sensors' && !document.activeElement?.matches('#sensor-app-filter')) {
+        renderSensors();
+      }
+    } finally {
+      state.sensorBusy = false;
+      if (state.tab === 'sensors' && state.sensorsCadence > 0 && !document.hidden) {
+        clearTimeout(state.sensorTimer);
+        state.sensorTimer = setTimeout(pollSensors, state.sensorsCadence);
+      }
+    }
+  }
+
   function renderSensors() {
     const s = state.data || {}, t = state.telemetry || {};
-    const sections = [
-      ['overview','Overview'],['top-apps','Top apps'],['cpu','CPU'],['ram','RAM'],['gpu','GPU'],['storage','Storage'],['wifi','Wi-Fi'],['data-usage','Data usage'],['power','Power'],['bluetooth','Bluetooth'],['temperature','Temperature']
+    const subtabs = [
+      ['overview', 'Overview', 'e186'],
+      ['top-apps', 'Top Apps', 'e129'],
+      ['cpu', 'CPU', 'e181'],
+      ['ram', 'RAM', 'e085'],
+      ['gpu', 'GPU', 'e0f7'],
+      ['storage', 'Storage', 'e0c5'],
+      ['wifi', 'Wi-Fi', 'e1ae'],
+      ['data-usage', 'Data Usage', 'e119'],
+      ['power', 'Power', 'e145'],
+      ['bluetooth', 'Bluetooth', 'e14f'],
+      ['temperature', 'Temperature', 'e186']
     ];
+
     const kb = (value) => value == null ? 'Unavailable' : `${(value / 1024 / 1024).toFixed(1)} GB`;
-    const bytes = (value) => { if (value == null) return 'Unavailable'; const units=['B','KB','MB','GB','TB']; let n=value, i=0; while(n>=1024 && i<units.length-1){n/=1024;i++;} return `${n.toFixed(i ? 1 : 0)} ${units[i]}`; };
     const onOff = (value) => value == null ? 'Unavailable' : value ? 'On' : 'Off';
-    const usage = s.mem_total_kb && s.mem_available_kb != null ? (100 * (s.mem_total_kb - s.mem_available_kb) / s.mem_total_kb) : null;
-    const usedMemoryKb = s.mem_total_kb && s.mem_available_kb != null ? s.mem_total_kb - s.mem_available_kb : null;
-    const currentCpu = s.cpu_usage_pct ?? state.sensorHistory.at(-1)?.cpu ?? null;
-    const totalStorage = s.storage_internal_total_kb == null ? t.storage_internal_total_gb : s.storage_internal_total_kb / 1024 / 1024;
-    const freeStorage = s.storage_internal_free_kb == null ? t.storage_internal_free_gb : s.storage_internal_free_kb / 1024 / 1024;
-    const storageUsage = totalStorage && freeStorage != null ? 100 * (1 - freeStorage / totalStorage) : null;
-    const network = s.network_interfaces || [], temps = s.temperatures || [], processes = s.top_processes || [], sensors = state.sensorInventoryLoaded ? state.sensorInventory : (s.sensor_names || []);
+    const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+    const peak = (arr) => arr.length ? Math.max(...arr) : 0;
+
+    const currentCpu = s.cpu_usage_pct ?? state.sensorHistory.at(-1)?.cpu ?? 0;
+    const memUsage = s.mem_total_kb && s.mem_available_kb != null ? (100 * (s.mem_total_kb - s.mem_available_kb) / s.mem_total_kb) : 0;
+    const usedMemoryKb = s.mem_total_kb && s.mem_available_kb != null ? s.mem_total_kb - s.mem_available_kb : 0;
+    const swapUsage = s.swap_total_kb ? (100 * (s.swap_total_kb - (s.swap_free_kb || 0)) / s.swap_total_kb) : 0;
+    const usedSwapKb = s.swap_total_kb ? s.swap_total_kb - (s.swap_free_kb || 0) : 0;
+
+    const totalStorageGb = s.storage_internal_total_kb == null ? (t.storage_internal_total_gb || 0) : s.storage_internal_total_kb / 1024 / 1024;
+    const freeStorageGb = s.storage_internal_free_kb == null ? (t.storage_internal_free_gb || 0) : s.storage_internal_free_kb / 1024 / 1024;
+    const usedStorageGb = Math.max(0, totalStorageGb - freeStorageGb);
+    const storageUsage = totalStorageGb > 0 ? (100 * usedStorageGb / totalStorageGb) : 0;
+
+    const sharedTotalGb = (s.storage_shared_total_kb || 0) / 1024 / 1024;
+    const sharedFreeGb = (s.storage_shared_free_kb || 0) / 1024 / 1024;
+    const sharedUsedGb = Math.max(0, sharedTotalGb - sharedFreeGb);
+
+    const network = s.network_interfaces || [];
+    const temps = s.temperatures || [];
+    const processes = s.top_processes || [];
+    const sensors = state.sensorInventoryLoaded ? state.sensorInventory : (s.sensor_names || []);
+
+    const hist = state.sensorHistory;
+    const cpuHist = hist.map(h => h.cpu ?? 0);
+    const ramHist = hist.map(h => h.ram ?? 0);
+    const swapHist = hist.map(h => h.swap ?? 0);
+    const storageHist = hist.map(h => h.storage ?? 0);
+    const rxHist = hist.map(h => h.rxRate ?? 0);
+    const txHist = hist.map(h => h.txRate ?? 0);
+    const readHist = hist.map(h => h.diskReadRate ?? 0);
+    const writeHist = hist.map(h => h.diskWriteRate ?? 0);
+    const tcpHist = hist.map(h => h.socketTcp ?? 0);
+    const udpHist = hist.map(h => h.socketUdp ?? 0);
+    const battHist = hist.map(h => h.battery ?? 0);
+    const tempHist = hist.map(h => h.temp ?? 0);
+
+    const latest = hist.at(-1) || {};
+    const currRxRate = latest.rxRate ?? 0;
+    const currTxRate = latest.txRate ?? 0;
+    const netPeakRate = Math.max(1024, ...rxHist, ...txHist);
+    const totRx = network.reduce((acc, iface) => acc + (Number(iface.rx_bytes) || 0), 0);
+    const totTx = network.reduce((acc, iface) => acc + (Number(iface.tx_bytes) || 0), 0);
+    const avgRxRate = avg(rxHist);
+    const avgTxRate = avg(txHist);
+
+    const socketTotal = latest.socketTotal || s.socket_total || 0;
+    const socketTcp = latest.socketTcp || s.socket_tcp || 0;
+    const socketUdp = latest.socketUdp || s.socket_udp || 0;
+
+    const freqGhz = s.cpu_frequencies_mhz?.length ? (Math.max(...s.cpu_frequencies_mhz) / 1000).toFixed(2) : '2.00';
+    const minFreqMhz = s.cpu_frequencies_mhz?.length ? Math.min(...s.cpu_frequencies_mhz) : 0;
+    const uptimeHours = s.uptime_secs ? Math.floor(s.uptime_secs / 3600) : 0;
+    const uptimeMins = s.uptime_secs ? Math.floor((s.uptime_secs % 3600) / 60) : 0;
+
+    // Group Top Apps
     const grouped = new Map();
-    for (const p of processes) { const name = p.name || 'Unknown process', app = name.split(':')[0], row = grouped.get(app) || { name: app, pids: [], cpu: 0, memory: 0 }; row.pids.push(p.pid); row.cpu += Number(p.cpu_pct) || 0; row.memory += Number(p.memory_kb) || 0; grouped.set(app, row); }
+    for (const p of processes) {
+      const name = p.name || 'Unknown process';
+      const app = name.split(':')[0];
+      const row = grouped.get(app) || { name: app, pids: [], cpu: 0, memory: 0 };
+      row.pids.push(p.pid);
+      row.cpu += Number(p.cpu_pct) || 0;
+      row.memory += Number(p.memory_kb) || 0;
+      grouped.set(app, row);
+    }
     const apps = [...grouped.values()].filter(p => !state.sensorFilter || p.name.toLowerCase().includes(state.sensorFilter.toLowerCase()));
-    apps.sort((a,b) => state.sensorSort === 'memory' ? b.memory-a.memory : state.sensorSort === 'name' ? a.name.localeCompare(b.name) : b.cpu-a.cpu);
-    const topAppsCard = () => `<section class="card"><div class="card-head"><div><h2>Top apps</h2><div class="subtle">Grouped Android processes · current sample · ${grouped.size} apps</div></div><div class="toolbar compact"><input class="input" id="sensor-app-filter" value="${escapeHtml(state.sensorFilter)}" placeholder="Filter apps"><select class="input sensor-sort" id="sensor-app-sort"><option value="cpu" ${state.sensorSort==='cpu'?'selected':''}>Sort: CPU</option><option value="memory" ${state.sensorSort==='memory'?'selected':''}>Sort: Memory</option><option value="name" ${state.sensorSort==='name'?'selected':''}>Sort: Name</option></select></div></div>${apps.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>App / process</th><th>Processes</th><th>CPU</th><th>Memory</th></tr></thead><tbody>${apps.slice(0,30).map(p=>`<tr><td>${escapeHtml(p.name)}</td><td>${p.pids.length}</td><td>${p.cpu.toFixed(1)}%</td><td>${bytes(p.memory*1024)}</td></tr>`).join('')}</tbody></table></div>` : empty('No matching processes','Try another filter or refresh the device sample.')}</section>`;
-    const sensorStat = (label,value,note,keys,pct) => {
-      const series = state.sensorHistory.map(row => keys.map(key => row[key] ?? row.cores?.[key]).find(Number.isFinite)).filter(Number.isFinite);
-      const range = series.length > 1 ? `<div class="sensor-stat-range"><span>AVG ${ (series.reduce((a,b)=>a+b,0)/series.length).toFixed(0)}%</span><span>PEAK ${Math.max(...series).toFixed(0)}%</span></div>` : '';
-      return `<article class="card sensor-stat"><div class="metric-label">${label}</div><div class="metric-value">${value}</div><div class="metric-note">${note}</div>${range}${pct == null ? '' : `<div class="progress"><i style="width:${Math.max(0,Math.min(100,pct))}%"></i></div>`}${sensorSpark(keys)}</article>`;
+    apps.sort((a, b) => state.sensorSort === 'memory' ? b.memory - a.memory : state.sensorSort === 'name' ? a.name.localeCompare(b.name) : b.cpu - a.cpu);
+
+    const topAppsTable = () => `
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2>Top Apps</h2>
+            <div class="subtle">Grouped Android processes · current sample · ${grouped.size} apps</div>
+          </div>
+          <div class="toolbar compact">
+            <input class="input" id="sensor-app-filter" value="${escapeHtml(state.sensorFilter)}" placeholder="Filter apps">
+            <select class="input sensor-sort" id="sensor-app-sort">
+              <option value="cpu" ${state.sensorSort === 'cpu' ? 'selected' : ''}>Sort: CPU</option>
+              <option value="memory" ${state.sensorSort === 'memory' ? 'selected' : ''}>Sort: Memory</option>
+              <option value="name" ${state.sensorSort === 'name' ? 'selected' : ''}>Sort: Name</option>
+            </select>
+          </div>
+        </div>
+        ${apps.length ? `
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>App / Package</th><th>Processes</th><th>CPU</th><th>Memory</th></tr></thead>
+              <tbody>
+                ${apps.slice(0, 30).map(p => `
+                  <tr>
+                    <td class="mono"><b>${escapeHtml(p.name)}</b></td>
+                    <td><span class="chip">${p.pids.length} pids</span></td>
+                    <td><b>${p.cpu.toFixed(1)}%</b></td>
+                    <td>${formatBytes(p.memory * 1024)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        ` : empty('No matching processes', 'Try another search query or refresh.')}
+      </section>
+    `;
+
+    // 11 Subtab Views matching the Rust app
+    const views = {
+      overview: () => `
+        <div class="sensors-stat-grid">
+          ${renderBigStatCard({
+            iconCode: 'e186',
+            title: 'CPU',
+            heroVal: currentCpu.toFixed(1),
+            heroUnit: '%',
+            subtitle: `${s.cpu_cores || '—'} Cores · ${freqGhz} GHz · ${val(s.cpu_model)}`,
+            leftStat: `AVG ${avg(cpuHist).toFixed(0)}%`,
+            rightStat: `PEAK ${peak(cpuHist).toFixed(0)}%`,
+            data: cpuHist,
+            maxVal: 100,
+            dottedRatio: 0.12,
+            color: 'var(--accent)'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e085',
+            title: 'RAM',
+            heroVal: memUsage.toFixed(1),
+            heroUnit: '%',
+            subtitle: `${kb(usedMemoryKb)} / ${kb(s.mem_total_kb)}`,
+            leftStat: `AVG ${avg(ramHist).toFixed(0)}%`,
+            rightStat: `PEAK ${peak(ramHist).toFixed(0)}%`,
+            data: ramHist,
+            maxVal: 100,
+            dottedRatio: 0.85,
+            color: 'var(--accent)'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e145',
+            title: 'SWAP',
+            heroVal: swapUsage.toFixed(1),
+            heroUnit: '%',
+            subtitle: `${kb(usedSwapKb)} / ${kb(s.swap_total_kb)}`,
+            leftStat: `AVG ${avg(swapHist).toFixed(0)}%`,
+            rightStat: `PEAK ${peak(swapHist).toFixed(0)}%`,
+            data: swapHist,
+            maxVal: 100,
+            dottedRatio: 0.10,
+            color: 'var(--accent)'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e0c5',
+            title: 'STORAGE',
+            heroVal: storageUsage.toFixed(1),
+            heroUnit: '%',
+            subtitle: `${usedStorageGb.toFixed(1)} GB / ${totalStorageGb.toFixed(1)} GB`,
+            leftStat: `FREE ${freeStorageGb.toFixed(1)} GB`,
+            rightStat: `PEAK ${storageUsage.toFixed(0)}%`,
+            data: storageHist,
+            maxVal: 100,
+            dottedRatio: 0.65,
+            color: 'var(--accent)'
+          })}
+        </div>
+
+        <div class="sensors-overview-split">
+          <section class="card overall-speed-card">
+            <div class="speed-head-row">
+              <div>
+                <div class="stat-card-title">OVERALL SPEED</div>
+                <div class="subtle" style="margin-top:2px">Interface total · peak ${formatRate(netPeakRate)}</div>
+              </div>
+              <div class="speed-rates-pill">
+                <span class="speed-rate-item down"><span class="rate-arrow">↓</span> Down <b>${formatRate(currRxRate)}</b></span>
+                <span class="speed-rate-item up"><span class="rate-arrow">↑</span> Up <b>${formatRate(currTxRate)}</b></span>
+              </div>
+            </div>
+            <div class="speed-chart-box">
+              ${renderDualNetworkSvg(txHist, rxHist, netPeakRate, 'var(--accent)')}
+            </div>
+            <div class="speed-footer-stats">
+              <div class="speed-footer-stat-col">
+                <small>SENT</small>
+                <strong>${formatBytes(totTx)}</strong>
+                <span>↑ ${formatRate(currTxRate)} live</span>
+              </div>
+              <div class="speed-footer-stat-col">
+                <small>RECEIVED</small>
+                <strong>${formatBytes(totRx)}</strong>
+                <span>↓ ${formatRate(currRxRate)} live</span>
+              </div>
+              <div class="speed-footer-stat-col">
+                <small>AVG OVER WINDOW</small>
+                <span>↑ ${formatRate(avgTxRate)}</span>
+                <span>↓ ${formatRate(avgRxRate)}</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="card conn-stats-card">
+            <div class="stat-card-title">CONNECTION STATS</div>
+            <div class="conn-stats-hero">
+              <strong>${socketTotal}</strong>
+              <span>open sockets</span>
+            </div>
+            <div class="chart-legend" style="margin-bottom:6px">
+              <span class="chart-legend-item"><i style="background:var(--accent)"></i>TCP ${socketTcp}</span>
+              <span class="chart-legend-item"><i style="background:#94a3b8"></i>UDP ${socketUdp}</span>
+            </div>
+            <div class="speed-chart-box">
+              ${renderSocketsChartSvg(tcpHist, udpHist, 'var(--accent)')}
+            </div>
+            <div class="conn-interface-chips">
+              ${network.slice(0, 3).map(iface => `
+                <div class="conn-iface-item">
+                  <b>${escapeHtml(iface.name)}</b>
+                  <span>↓ ${formatBytes(iface.rx_bytes)} · ↑ ${formatBytes(iface.tx_bytes)}</span>
+                </div>
+              `).join('')}
+            </div>
+          </section>
+        </div>
+      `,
+
+      'top-apps': topAppsTable,
+
+      cpu: () => `
+        <section class="card sensor-cpu-head">
+          <div class="card-head">
+            <div>
+              <h2>${escapeHtml(val(s.cpu_model))}</h2>
+              <div class="subtle mono">${s.cpu_cores || '—'} cores · ${freqGhz} GHz · ${escapeHtml(val(t.cpu_abi))}</div>
+            </div>
+            <span class="chip">ANDROID LIVE</span>
+          </div>
+        </section>
+
+        <div class="sensors-stat-grid">
+          ${renderBigStatCard({
+            iconCode: 'e181',
+            title: 'CPU LOAD',
+            heroVal: currentCpu.toFixed(1),
+            heroUnit: '%',
+            subtitle: `${s.cpu_cores || '—'} cores active`,
+            leftStat: `AVG ${avg(cpuHist).toFixed(0)}%`,
+            rightStat: `PEAK ${peak(cpuHist).toFixed(0)}%`,
+            data: cpuHist,
+            maxVal: 100,
+            dottedRatio: 0.12,
+            color: 'var(--accent)'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e186',
+            title: 'FREQUENCY',
+            heroVal: freqGhz,
+            heroUnit: 'GHz',
+            subtitle: `Min ${(minFreqMhz / 1000).toFixed(2)} GHz`,
+            leftStat: 'SCALING',
+            rightStat: `${freqGhz} GHz`,
+            data: cpuHist,
+            maxVal: 100,
+            dottedRatio: 0.5,
+            color: 'var(--accent)'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e085',
+            title: 'ONLINE CORES',
+            heroVal: `${s.cpu_cores || '—'}`,
+            heroUnit: 'cores',
+            subtitle: 'Kernel /proc/cpuinfo',
+            leftStat: 'TOPOLOGY',
+            rightStat: 'SMP',
+            data: Array(cpuHist.length).fill(s.cpu_cores || 4),
+            maxVal: s.cpu_cores || 8,
+            dottedRatio: 0.9,
+            color: 'var(--accent)'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e145',
+            title: 'UPTIME',
+            heroVal: `${uptimeHours}h ${uptimeMins}m`,
+            heroUnit: '',
+            subtitle: 'Since device boot',
+            leftStat: 'KERNEL',
+            rightStat: 'ONLINE',
+            data: cpuHist,
+            maxVal: 100,
+            dottedRatio: 0.3,
+            color: 'var(--accent)'
+          })}
+        </div>
+
+        ${renderWaveformChartSvg({
+          title: 'CPU Utilization · 60s Window',
+          series: [{ label: 'Total CPU', data: cpuHist, color: 'var(--accent)' }],
+          height: 140,
+          benchmarkVal: 50
+        })}
+
+        <section class="card">
+          <div class="card-head">
+            <h2>Per-Core Telemetry</h2>
+            <span class="subtle mono">${s.cpu_cores || 0} physical/logical cores</span>
+          </div>
+          <div class="cores-grid">
+            ${Array.from({ length: s.cpu_cores || 0 }, (_, i) => {
+              const coreKey = `cpu${i}`;
+              const coreHist = hist.map(h => h.cores?.[coreKey] ?? 0);
+              const val = coreHist.at(-1) ?? 0;
+              const f = s.cpu_frequencies_mhz?.[i] ? `${(s.cpu_frequencies_mhz[i] / 1000).toFixed(2)} GHz` : 'Online';
+              return `
+                <div class="core-card">
+                  <div class="core-card-head">
+                    <span>Core ${i}</span>
+                    <b>${val.toFixed(0)}%</b>
+                  </div>
+                  <div class="core-card-sub">${f}</div>
+                  ${renderSparklineSvg(coreHist, 100, 0.5, 'var(--accent)')}
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </section>
+
+        ${topAppsTable()}
+      `,
+
+      ram: () => `
+        <div class="sensors-stat-grid">
+          ${renderBigStatCard({
+            iconCode: 'e085',
+            title: 'TOTAL RAM',
+            heroVal: `${((s.mem_total_kb || 0) / 1024 / 1024).toFixed(2)}`,
+            heroUnit: 'GB',
+            subtitle: 'Android kernel memory',
+            leftStat: 'TOTAL',
+            rightStat: `${kb(s.mem_total_kb)}`,
+            data: ramHist,
+            maxVal: 100,
+            dottedRatio: 0.85,
+            color: 'var(--accent)'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e085',
+            title: 'AVAILABLE',
+            heroVal: `${((s.mem_available_kb || 0) / 1024 / 1024).toFixed(2)}`,
+            heroUnit: 'GB',
+            subtitle: `${(100 - memUsage).toFixed(1)}% free memory`,
+            leftStat: 'FREE',
+            rightStat: `${(100 - memUsage).toFixed(0)}%`,
+            data: ramHist.map(v => 100 - v),
+            maxVal: 100,
+            dottedRatio: 0.15,
+            color: '#38bdf8'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e186',
+            title: 'IN USE',
+            heroVal: memUsage.toFixed(1),
+            heroUnit: '%',
+            subtitle: `${kb(usedMemoryKb)} used by apps`,
+            leftStat: `AVG ${avg(ramHist).toFixed(0)}%`,
+            rightStat: `PEAK ${peak(ramHist).toFixed(0)}%`,
+            data: ramHist,
+            maxVal: 100,
+            dottedRatio: 0.85,
+            color: 'var(--accent)'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e145',
+            title: 'SWAP USED',
+            heroVal: swapUsage.toFixed(1),
+            heroUnit: '%',
+            subtitle: `${kb(usedSwapKb)} / ${kb(s.swap_total_kb)}`,
+            leftStat: `AVG ${avg(swapHist).toFixed(0)}%`,
+            rightStat: `PEAK ${peak(swapHist).toFixed(0)}%`,
+            data: swapHist,
+            maxVal: 100,
+            dottedRatio: 0.1,
+            color: '#a78bfa'
+          })}
+        </div>
+
+        ${renderWaveformChartSvg({
+          title: 'Memory Utilization · 60s Window',
+          series: [
+            { label: 'RAM', data: ramHist, color: 'var(--accent)' },
+            { label: 'Swap', data: swapHist, color: '#a78bfa', strokeWidth: 1.8 }
+          ],
+          height: 150,
+          benchmarkVal: 80
+        })}
+
+        ${topAppsTable()}
+      `,
+
+      gpu: () => `
+        <div class="sensors-stat-grid">
+          <article class="sensors-stat-card">
+            <div class="stat-card-title"><span class="icon">${icon('e0f7')}</span><span>OPENGL RENDERER</span></div>
+            <div class="stat-card-hero"><span class="stat-hero-val" style="font-size:18px">${escapeHtml(val(s.gpu_renderer))}</span></div>
+            <div class="stat-card-sub">Hardware graphics pipeline</div>
+            <div class="stat-card-range"><span>DRIVER</span><span>LIVE</span></div>
+            <div class="stat-card-spark">${renderSparklineSvg([100, 100], 100, 0.5, 'var(--accent)')}</div>
+          </article>
+          <article class="sensors-stat-card">
+            <div class="stat-card-title"><span class="icon">${icon('e181')}</span><span>GRAPHICS PLATFORM</span></div>
+            <div class="stat-card-hero"><span class="stat-hero-val" style="font-size:18px">${escapeHtml(val(s.gpu_platform))}</span></div>
+            <div class="stat-card-sub">API & Vulkan integration</div>
+            <div class="stat-card-range"><span>OPENGL ES</span><span>COMPLIANT</span></div>
+            <div class="stat-card-spark">${renderSparklineSvg([100, 100], 100, 0.5, 'var(--accent)')}</div>
+          </article>
+        </div>
+
+        <section class="card">
+          <div class="card-head">
+            <h2>Graphics Telemetry</h2>
+            <span class="chip">ADB LIMITS</span>
+          </div>
+          <div class="notice">
+            Android kernel security limits non-root ADB access to direct GPU clock and memory bus counters. Renderer, platform, and hardware vendor strings are queried through OpenGL ES bindings.
+          </div>
+        </section>
+      `,
+
+      storage: () => `
+        <div class="sensors-stat-grid">
+          ${renderBigStatCard({
+            iconCode: 'e0c5',
+            title: 'INTERNAL USED',
+            heroVal: storageUsage.toFixed(1),
+            heroUnit: '%',
+            subtitle: `${freeStorageGb.toFixed(1)} GB free of ${totalStorageGb.toFixed(1)} GB`,
+            leftStat: `FREE ${freeStorageGb.toFixed(1)} GB`,
+            rightStat: `PEAK ${storageUsage.toFixed(0)}%`,
+            data: storageHist,
+            maxVal: 100,
+            dottedRatio: 0.7,
+            color: 'var(--accent)'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e0c5',
+            title: 'SHARED STORAGE',
+            heroVal: `${sharedUsedGb.toFixed(1)}`,
+            heroUnit: 'GB',
+            subtitle: `${sharedFreeGb.toFixed(1)} GB available`,
+            leftStat: 'SHARED',
+            rightStat: `${sharedTotalGb.toFixed(1)} GB`,
+            data: storageHist,
+            maxVal: 100,
+            dottedRatio: 0.5,
+            color: '#38bdf8'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e186',
+            title: 'READ RATE',
+            heroVal: formatRate(latest.diskReadRate ?? 0),
+            heroUnit: '',
+            subtitle: 'Disk read throughput',
+            leftStat: `AVG ${formatRate(avg(readHist))}`,
+            rightStat: `PEAK ${formatRate(peak(readHist))}`,
+            data: readHist,
+            maxVal: Math.max(1024, ...readHist),
+            dottedRatio: 0.3,
+            color: 'var(--accent)'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e186',
+            title: 'WRITE RATE',
+            heroVal: formatRate(latest.diskWriteRate ?? 0),
+            heroUnit: '',
+            subtitle: 'Disk write throughput',
+            leftStat: `AVG ${formatRate(avg(writeHist))}`,
+            rightStat: `PEAK ${formatRate(peak(writeHist))}`,
+            data: writeHist,
+            maxVal: Math.max(1024, ...writeHist),
+            dottedRatio: 0.3,
+            color: '#a78bfa'
+          })}
+        </div>
+
+        ${renderWaveformChartSvg({
+          title: 'Disk Throughput · 60s Window',
+          series: [
+            { label: 'Read Throughput', data: readHist, color: 'var(--accent)' },
+            { label: 'Write Throughput', data: writeHist, color: '#a78bfa' }
+          ],
+          height: 140,
+          suffix: ' B/s'
+        })}
+      `,
+
+      wifi: () => `
+        <div class="sensors-stat-grid">
+          ${renderBigStatCard({
+            iconCode: 'e1ae',
+            title: 'WI-FI RADIO',
+            heroVal: onOff(s.wifi_enabled),
+            heroUnit: '',
+            subtitle: 'Android global Wi-Fi setting',
+            leftStat: 'RADIO',
+            rightStat: s.wifi_enabled ? 'ONLINE' : 'OFFLINE',
+            data: [s.wifi_enabled ? 1 : 0, s.wifi_enabled ? 1 : 0],
+            maxVal: 1,
+            dottedRatio: 0.5,
+            color: 'var(--accent)'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e119',
+            title: 'INTERFACES',
+            heroVal: `${network.length}`,
+            heroUnit: 'active',
+            subtitle: 'Exposed via /proc/net/dev',
+            leftStat: 'IFACES',
+            rightStat: 'COUNT',
+            data: Array(rxHist.length).fill(network.length),
+            maxVal: network.length || 1,
+            dottedRatio: 0.9,
+            color: '#38bdf8'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e186',
+            title: 'CURRENT RX',
+            heroVal: formatRate(currRxRate),
+            heroUnit: '',
+            subtitle: 'Live network downlink',
+            leftStat: `AVG ${formatRate(avgRxRate)}`,
+            rightStat: `PEAK ${formatRate(peak(rxHist))}`,
+            data: rxHist,
+            maxVal: Math.max(1024, ...rxHist),
+            dottedRatio: 0.3,
+            color: '#38bdf8'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e186',
+            title: 'CURRENT TX',
+            heroVal: formatRate(currTxRate),
+            heroUnit: '',
+            subtitle: 'Live network uplink',
+            leftStat: `AVG ${formatRate(avgTxRate)}`,
+            rightStat: `PEAK ${formatRate(peak(txHist))}`,
+            data: txHist,
+            maxVal: Math.max(1024, ...txHist),
+            dottedRatio: 0.3,
+            color: 'var(--accent)'
+          })}
+        </div>
+
+        ${renderWaveformChartSvg({
+          title: 'Network Throughput · 60s Window',
+          series: [
+            { label: 'Received (Downlink)', data: rxHist, color: '#38bdf8' },
+            { label: 'Transmitted (Uplink)', data: txHist, color: 'var(--accent)' }
+          ],
+          height: 140,
+          suffix: ' B/s'
+        })}
+
+        <section class="card">
+          <div class="card-head">
+            <h2>Network Interfaces</h2>
+            <span class="subtle mono">${network.length} interfaces reported</span>
+          </div>
+          ${network.length ? `
+            <div class="table-wrap">
+              <table class="table">
+                <thead><tr><th>Interface</th><th>Received</th><th>Sent</th><th>Total</th></tr></thead>
+                <tbody>
+                  ${network.map(n => `
+                    <tr>
+                      <td class="mono"><b>${escapeHtml(n.name)}</b></td>
+                      <td>↓ ${formatBytes(n.rx_bytes)}</td>
+                      <td>↑ ${formatBytes(n.tx_bytes)}</td>
+                      <td><b>${formatBytes(n.rx_bytes + n.tx_bytes)}</b></td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : empty('No interfaces available', 'The device did not expose /proc/net/dev to ADB.')}
+        </section>
+      `,
+
+      'data-usage': () => `
+        ${renderWaveformChartSvg({
+          title: 'Cumulative Network Traffic · 60s Trend',
+          series: [
+            { label: 'Cumulative Downlink', data: hist.map(h => h.rx ?? 0), color: '#38bdf8' },
+            { label: 'Cumulative Uplink', data: hist.map(h => h.tx ?? 0), color: 'var(--accent)' }
+          ],
+          height: 140,
+          suffix: ' bytes'
+        })}
+
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h2>Interface Data Counters</h2>
+              <div class="subtle">Cumulative bytes reported by Android kernel since device boot</div>
+            </div>
+          </div>
+          ${network.length ? `
+            <div class="table-wrap">
+              <table class="table">
+                <thead><tr><th>Interface</th><th>Received</th><th>Transmitted</th><th>Total</th></tr></thead>
+                <tbody>
+                  ${network.map(n => `
+                    <tr>
+                      <td class="mono"><b>${escapeHtml(n.name)}</b></td>
+                      <td>↓ ${formatBytes(n.rx_bytes)}</td>
+                      <td>↑ ${formatBytes(n.tx_bytes)}</td>
+                      <td><b>${formatBytes(n.rx_bytes + n.tx_bytes)}</b></td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : empty('No data counters', 'Kernel byte counters unavailable.')}
+        </section>
+      `,
+
+      power: () => `
+        <div class="sensors-stat-grid">
+          ${renderBigStatCard({
+            iconCode: 'e145',
+            title: 'BATTERY LEVEL',
+            heroVal: val(s.battery_pct, '%'),
+            heroUnit: '',
+            subtitle: val(s.battery_status),
+            leftStat: `PEAK ${peak(battHist)}%`,
+            rightStat: `AVG ${avg(battHist).toFixed(0)}%`,
+            data: battHist,
+            maxVal: 100,
+            dottedRatio: 0.5,
+            color: 'var(--accent)'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e186',
+            title: 'TEMPERATURE',
+            heroVal: val(s.battery_temp_c, ' °C'),
+            heroUnit: '',
+            subtitle: s.battery_health ? `Health code: ${s.battery_health}` : 'Battery thermal zone',
+            leftStat: 'THERMAL',
+            rightStat: `${val(s.battery_temp_c, '°C')}`,
+            data: tempHist,
+            maxVal: Math.max(60, ...tempHist),
+            dottedRatio: 0.4,
+            color: '#fbbf24'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e145',
+            title: 'VOLTAGE',
+            heroVal: s.battery_voltage_mv ? `${(s.battery_voltage_mv / 1000).toFixed(2)}` : 'Unavailable',
+            heroUnit: s.battery_voltage_mv ? 'V' : '',
+            subtitle: `Plugged: ${val(s.battery_plugged)}`,
+            leftStat: 'CHARGER',
+            rightStat: val(s.battery_plugged),
+            data: battHist,
+            maxVal: 100,
+            dottedRatio: 0.5,
+            color: 'var(--accent)'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e101',
+            title: 'UPTIME',
+            heroVal: `${uptimeHours}h ${uptimeMins}m`,
+            heroUnit: '',
+            subtitle: 'Since last boot',
+            leftStat: 'POWER',
+            rightStat: 'ACTIVE',
+            data: battHist,
+            maxVal: 100,
+            dottedRatio: 0.3,
+            color: 'var(--accent)'
+          })}
+        </div>
+
+        ${renderWaveformChartSvg({
+          title: 'Battery Level & Thermal History · 60s Window',
+          series: [
+            { label: 'Charge %', data: battHist, color: 'var(--accent)' },
+            { label: 'Temperature (°C)', data: tempHist, color: '#fbbf24' }
+          ],
+          height: 140,
+          benchmarkVal: 50
+        })}
+      `,
+
+      bluetooth: () => `
+        <div class="sensors-stat-grid">
+          ${renderBigStatCard({
+            iconCode: 'e14f',
+            title: 'BLUETOOTH RADIO',
+            heroVal: onOff(s.bluetooth_enabled),
+            heroUnit: '',
+            subtitle: 'Android global Bluetooth setting',
+            leftStat: 'RADIO',
+            rightStat: s.bluetooth_enabled ? 'ONLINE' : 'OFFLINE',
+            data: [s.bluetooth_enabled ? 1 : 0, s.bluetooth_enabled ? 1 : 0],
+            maxVal: 1,
+            dottedRatio: 0.5,
+            color: 'var(--accent)'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e14f',
+            title: 'ADAPTER STATE',
+            heroVal: s.bluetooth_enabled ? 'Enabled' : 'Disabled',
+            heroUnit: '',
+            subtitle: 'Host Bluetooth controller',
+            leftStat: 'STATE',
+            rightStat: s.bluetooth_enabled ? 'ACTIVE' : 'IDLE',
+            data: [s.bluetooth_enabled ? 1 : 0, s.bluetooth_enabled ? 1 : 0],
+            maxVal: 1,
+            dottedRatio: 0.5,
+            color: 'var(--accent)'
+          })}
+        </div>
+
+        <section class="card">
+          <div class="card-head">
+            <h2>Bluetooth Status</h2>
+            <span class="chip">SETTINGS INTEGRATION</span>
+          </div>
+          <div class="notice">
+            Bluetooth telemetry queries Android global wireless settings. Connected peripheral telemetry requires active Bluetooth pairing services.
+          </div>
+        </section>
+      `,
+
+      temperature: () => {
+        const maxTemp = temps.length ? Math.max(...temps.map(x => Number(x.temp_c)).filter(Number.isFinite)) : (s.battery_temp_c || 0);
+        return `
+          <div class="sensors-stat-grid">
+            ${renderBigStatCard({
+              iconCode: 'e186',
+              title: 'HIGHEST TEMP',
+              heroVal: `${maxTemp.toFixed(1)}`,
+              heroUnit: '°C',
+              subtitle: 'Warmest kernel thermal zone',
+              leftStat: `AVG ${avg(tempHist).toFixed(0)}°C`,
+              rightStat: `PEAK ${peak(tempHist).toFixed(0)}°C`,
+              data: tempHist,
+              maxVal: Math.max(70, ...tempHist),
+              dottedRatio: 0.45,
+              color: maxTemp >= 60 ? '#f87171' : maxTemp >= 45 ? '#fbbf24' : 'var(--accent)'
+            })}
+            ${renderBigStatCard({
+              iconCode: 'e145',
+              title: 'BATTERY TEMP',
+              heroVal: val(s.battery_temp_c, ' °C'),
+              heroUnit: '',
+              subtitle: 'Integrated battery sensor',
+              leftStat: 'BATTERY',
+              rightStat: `${val(s.battery_temp_c, '°C')}`,
+              data: tempHist,
+              maxVal: Math.max(60, ...tempHist),
+              dottedRatio: 0.4,
+              color: '#38bdf8'
+            })}
+            ${renderBigStatCard({
+              iconCode: 'e186',
+              title: 'THERMAL ZONES',
+              heroVal: `${temps.length}`,
+              heroUnit: 'zones',
+              subtitle: 'Accessible /sys/class/thermal',
+              leftStat: 'KERNEL',
+              rightStat: `${temps.length} ZONES`,
+              data: Array(tempHist.length).fill(temps.length),
+              maxVal: temps.length || 1,
+              dottedRatio: 0.9,
+              color: 'var(--accent)'
+            })}
+            ${renderBigStatCard({
+              iconCode: 'e085',
+              title: 'REGISTERED SENSORS',
+              heroVal: `${sensors.length}`,
+              heroUnit: 'sensors',
+              subtitle: 'Dumpsys sensorservice inventory',
+              leftStat: 'HARDWARE',
+              rightStat: `${sensors.length} REPORTERS`,
+              data: Array(tempHist.length).fill(sensors.length),
+              maxVal: sensors.length || 1,
+              dottedRatio: 0.9,
+              color: '#a78bfa'
+            })}
+          </div>
+
+          ${renderWaveformChartSvg({
+            title: 'Thermal History · 60s Window',
+            series: [{ label: 'Thermal Zone History', data: tempHist, color: '#fbbf24' }],
+            height: 140,
+            suffix: ' °C',
+            benchmarkVal: 45
+          })}
+
+          <section class="card">
+            <div class="card-head">
+              <div>
+                <h2>Thermal Zones</h2>
+                <div class="subtle">Read from accessible Android kernel thermal zones</div>
+              </div>
+            </div>
+            ${temps.length ? `
+              <div class="thermal-grid">
+                ${temps.map(t => {
+                  const val = Number(t.temp_c) || 0;
+                  const status = val >= 60 ? 'hot' : val >= 45 ? 'warm' : 'normal';
+                  const statusText = val >= 60 ? 'HIGH' : val >= 45 ? 'WARM' : 'NORMAL';
+                  return `
+                    <div class="thermal-zone-card">
+                      <div class="stat-card-title">${escapeHtml(t.name)}</div>
+                      <div class="metric-value">${val.toFixed(1)} °C</div>
+                      <div><span class="thermal-badge ${status}">${statusText}</span></div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            ` : empty('Thermal readings unavailable', 'Android did not expose current thermal zone values.')}
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <h2>Registered Sensors</h2>
+              <span class="chip">${sensors.length} reported</span>
+            </div>
+            ${sensors.length ? `
+              <div class="sensor-tags">
+                ${sensors.map(name => `<span class="chip">${escapeHtml(name)}</span>`).join('')}
+              </div>
+            ` : state.sensorInventoryLoading ? empty('Loading sensor inventory', 'Android sensor metadata is being read once for this device.') : empty('Sensor inventory unavailable', 'The device does not expose its sensor list through dumpsys sensorservice.')}
+          </section>
+        `;
+      }
     };
-    const cards = {
-      'top-apps': topAppsCard,
-      cpu: () => `<section class="card sensor-cpu-head"><div class="card-head"><div><h2>CPU</h2><div class="subtle mono">${escapeHtml(val(s.cpu_model))} · ${s.cpu_cores || '—'} cores · ${escapeHtml(val(t.cpu_abi))}</div></div><span class="chip">ANDROID LIVE</span></div></section><div class="grid metrics">${sensorStat('CPU load',currentCpu == null ? 'Unavailable' : `${currentCpu.toFixed(1)}%`,`${s.cpu_cores || '—'} cores`,['cpu'],currentCpu)}${sensorStat('Core frequency',s.cpu_frequencies_mhz?.length ? `${(Math.max(...s.cpu_frequencies_mhz)/1000).toFixed(2)} GHz` : 'Unavailable',s.cpu_frequencies_mhz?.length ? `Min ${(Math.min(...s.cpu_frequencies_mhz)/1000).toFixed(2)} GHz` : 'Scaling frequency unavailable',[])}${sensorStat('Online cores',s.cpu_cores || 'Unavailable','Reported by /proc/cpuinfo',[])}${sensorStat('Uptime',s.uptime_secs ? `${Math.floor(s.uptime_secs/3600)}h ${Math.floor(s.uptime_secs%3600/60)}m` : 'Unavailable','Since device boot',[])}</div>${sensorChart('Utilization · 60 second window',['cpu'],['Total'])}${sensorChart('Per-core utilization',Array.from({length:s.cpu_cores||0},(_,i)=>`cpu${i}`),Array.from({length:s.cpu_cores||0},(_,i)=>`Core ${i}`))}${topAppsCard()}`,
-      ram: () => `<div class="grid metrics">${metric('Total RAM',kb(s.mem_total_kb),'Android kernel memory',null)}${metric('Available',kb(s.mem_available_kb),'Memory available to apps',usage == null ? null : 100-usage)}${metric('In use',usage == null ? 'Unavailable' : `${usage.toFixed(1)}%`,'Calculated from MemAvailable',usage)}${metric('Swap',s.swap_total_kb == null ? 'Unavailable' : `${kb(s.swap_total_kb - (s.swap_free_kb || 0))} / ${kb(s.swap_total_kb)}`,'Used / total',null)}</div><div class="grid two">${sensorChart('RAM utilization',['ram'],['RAM'])}${sensorChart('Swap utilization',['swap'],['Swap'])}</div>`,
-      gpu: () => `<div class="grid two">${card('Graphics renderer',`<div class="kv"><div><small>OpenGL renderer</small><b>${escapeHtml(val(s.gpu_renderer))}</b></div><div><small>Platform</small><b>${escapeHtml(val(s.gpu_platform))}</b></div></div>`)}${card('Graphics telemetry',empty('GPU load unavailable','Android does not provide a standard unprivileged ADB interface for live GPU load and temperature. Renderer and platform identifiers are shown when exposed by the device.'))}</div>`,
-      storage: () => `<div class="grid metrics">${metric('Internal used',totalStorage != null && freeStorage != null ? `${(totalStorage-freeStorage).toFixed(1)} GB` : 'Unavailable',totalStorage != null ? `${freeStorage.toFixed(1)} GB available of ${totalStorage.toFixed(1)} GB` : 'Device storage telemetry unavailable',storageUsage)}${metric('Shared storage',s.storage_shared_total_kb != null ? `${((s.storage_shared_total_kb-s.storage_shared_free_kb)/1024/1024).toFixed(1)} GB` : 'Unavailable',s.storage_shared_total_kb != null ? `${(s.storage_shared_free_kb/1024/1024).toFixed(1)} GB free` : 'No shared storage telemetry',null)}</div>${sensorChart('Storage utilization',['storage'],['Used'])}${sensorChart('Disk throughput',['diskReadRate','diskWriteRate'],['Read','Write'],' B/s')}`,
-      wifi: () => `<div class="grid two">${sensorChart('Network throughput',['rxRate','txRate'],['Received','Sent'],' B/s')}${card('Wireless status',`<div class="kv"><div><small>Wi-Fi radio</small><b>${onOff(s.wifi_enabled)}</b></div><div><small>Interfaces</small><b>${network.length}</b></div></div>`)}${card('Network interfaces',network.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Interface</th><th>Received</th><th>Sent</th></tr></thead><tbody>${network.map(n=>`<tr><td>${escapeHtml(n.name)}</td><td>${bytes(n.rx_bytes)}</td><td>${bytes(n.tx_bytes)}</td></tr>`).join('')}</tbody></table></div>` : empty('Network counters unavailable','The device did not expose /proc/net/dev to the ADB shell.'))}</div>`,
-      'data-usage': () => `${sensorChart('Cumulative interface traffic',['rx','tx'],['Received','Transmitted'],' bytes')}<section class="card"><div class="card-head"><div><h2>Interface data counters</h2><div class="subtle">Cumulative bytes reported by Android since boot; includes system traffic.</div></div></div>${network.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Interface</th><th>Received</th><th>Transmitted</th><th>Total</th></tr></thead><tbody>${network.map(n=>`<tr><td>${escapeHtml(n.name)}</td><td>${bytes(n.rx_bytes)}</td><td>${bytes(n.tx_bytes)}</td><td>${bytes(n.rx_bytes+n.tx_bytes)}</td></tr>`).join('')}</tbody></table></div>` : empty('Data counters unavailable','Android did not expose interface byte counters.')}</section>`,
-      power: () => `<div class="grid metrics">${metric('Battery',val(s.battery_pct,'%'),escapeHtml(val(s.battery_status)),s.battery_pct)}${metric('Battery temperature',val(s.battery_temp_c,' °C'),escapeHtml(val(s.battery_health ? `Health code ${s.battery_health}` : null)),null)}${metric('Voltage',s.battery_voltage_mv == null ? 'Unavailable' : `${(s.battery_voltage_mv/1000).toFixed(2)} V`,escapeHtml(val(s.battery_plugged)),null)}${metric('Uptime',s.uptime_secs ? `${Math.floor(s.uptime_secs/3600)}h ${Math.floor(s.uptime_secs%3600/60)}m` : 'Unavailable','Since last boot',null)}</div><div class="grid two">${sensorChart('Battery level',['battery'],['Charge'])}${sensorChart('Battery temperature',['temp'],['Temperature'],' °C')}</div>`,
-      bluetooth: () => `<section class="card"><div class="card-head"><h2>Bluetooth radio</h2></div><div class="grid metrics">${metric('State',onOff(s.bluetooth_enabled),'Android global Bluetooth setting',null)}${metric('Adapter',s.bluetooth_enabled == null ? 'Unavailable' : s.bluetooth_enabled ? 'Enabled' : 'Disabled','Radio state',null)}</div></section>`,
-      temperature: () => `${sensorChart('Temperature history',['temp'],['Warmest sensor'],' °C')}<section class="card"><div class="card-head"><div><h2>Thermal sensors</h2><div class="subtle">Read from accessible Android kernel thermal zones.</div></div></div>${temps.length ? `<div class="photo-grid">${temps.map(x=>`<article class="list-item"><div class="list-title">${escapeHtml(x.name)}</div><div class="metric-value">${escapeHtml(x.temp_c.toFixed(1))} °C</div></article>`).join('')}</div>` : empty('Thermal readings unavailable','Android did not expose current thermal zone values.')}</section><section class="card"><div class="card-head"><h2>Registered sensors</h2><span class="chip">${sensors.length} reported</span></div>${sensors.length ? `<div class="sensor-tags">${sensors.map(name=>`<span class="chip">${escapeHtml(name)}</span>`).join('')}</div>` : state.sensorInventoryLoading ? empty('Loading sensor inventory','Android sensor metadata is being read once for this device.') : empty('Sensor inventory unavailable','The device does not expose its sensor list through dumpsys sensorservice.')}</section>`
-    };
-    const overviewCards = () => `<div class="grid metrics sensor-stats">${sensorStat('CPU',currentCpu == null ? 'Unavailable' : `${currentCpu.toFixed(1)}%`,`${s.cpu_cores || '—'} cores · ${escapeHtml(val(s.cpu_model))}`,['cpu'],currentCpu)}${sensorStat('RAM',usage == null ? 'Unavailable' : `${usage.toFixed(1)}%`,`${kb(usedMemoryKb)} / ${kb(s.mem_total_kb)}`,['ram'],usage)}${sensorStat('Swap',s.swap_total_kb ? `${(100*(s.swap_total_kb-s.swap_free_kb)/s.swap_total_kb).toFixed(1)}%` : 'Unavailable',`${kb(s.swap_total_kb ? s.swap_total_kb-s.swap_free_kb : null)} / ${kb(s.swap_total_kb)}`,['swap'])}${sensorStat('Storage',storageUsage == null ? 'Unavailable' : `${storageUsage.toFixed(1)}%`,`${freeStorage == null ? '—' : freeStorage.toFixed(1)} GB free · ${totalStorage == null ? '—' : totalStorage.toFixed(1)} GB`,['storage'],storageUsage)}</div>${sensorChart('Utilization · 60 second window',['cpu'],['CPU'])}<div class="grid two">${sensorChart('Memory allocation',['ram','swap'],['RAM','Swap'])}${sensorChart('Network throughput',['rxRate','txRate'],['Received','Sent'],' B/s')}</div><div class="grid two">${card('Connectivity',`<div class="kv"><div><small>Wi-Fi</small><b>${onOff(s.wifi_enabled)}</b></div><div><small>Bluetooth</small><b>${onOff(s.bluetooth_enabled)}</b></div><div><small>Interfaces</small><b>${network.length}</b></div><div><small>Data transferred</small><b>${bytes(network.reduce((n,x)=>n+x.rx_bytes+x.tx_bytes,0))}</b></div></div>`)}${card('Thermals & sensors',`<div class="kv"><div><small>Temperature sensors</small><b>${temps.length || 'Unavailable'}</b></div><div><small>Registered sensors</small><b>${sensors.length || 'Unavailable'}</b></div><div><small>Battery temperature</small><b>${val(s.battery_temp_c,' °C')}</b></div><div><small>GPU renderer</small><b>${escapeHtml(val(s.gpu_renderer))}</b></div></div>`)}</div>${topAppsCard()}`;
-    const active = state.sensorsView in cards ? cards[state.sensorsView]() : overviewCards();
-    content.innerHTML = `<section class="sensor-toolbar"><div><h2>Device sensors</h2><span class="subtle">Live readings from Android system services and kernel interfaces</span></div><button class="button" data-refresh>${icon('e145')} Refresh</button></section><nav class="sensor-nav" aria-label="Sensor categories">${sections.map(([key,label])=>`<button class="sensor-tab ${state.sensorsView===key?'active':''}" data-sensor-view="${key}">${escapeHtml(label)}</button>`).join('')}</nav><div class="sensor-panel">${active}</div>`;
-    const filter = $('#sensor-app-filter'), sort = $('#sensor-app-sort');
-    if (filter) filter.oninput = () => { state.sensorFilter = filter.value; renderSensors(); const next = $('#sensor-app-filter'); next.focus(); next.setSelectionRange(next.value.length, next.value.length); };
-    if (sort) sort.onchange = () => { state.sensorSort = sort.value; renderSensors(); };
+
+    const activeView = state.sensorsView in views ? views[state.sensorsView]() : views.overview();
+
+    content.innerHTML = `
+      <div class="sensors-shell">
+        <aside class="sensors-sidebar">
+          <div class="sensors-sidebar-title">
+            <span>TELEMETRY</span>
+            <span class="chip compact">ADB</span>
+          </div>
+          <nav class="sensors-subnav" aria-label="Sensor subtabs">
+            ${subtabs.map(([id, label, iconCode]) => `
+              <button class="sensors-subtab-btn ${state.sensorsView === id ? 'active' : ''}" data-sensor-view="${id}">
+                <span class="icon">${icon(iconCode)}</span>
+                <span>${escapeHtml(label)}</span>
+              </button>
+            `).join('')}
+          </nav>
+          <div class="sensors-sidebar-footer">
+            <div class="live-pulse-badge">
+              <div class="live-pulse-dot" style="${state.sensorsCadence === 0 ? 'background:var(--dim);box-shadow:none;animation:none;' : ''}"></div>
+              <span>${state.sensorsCadence === 0 ? 'PAUSED' : 'LIVE 60S'}</span>
+            </div>
+            <label class="sensor-cadence-label" for="sensor-cadence">Cadence</label>
+            <select class="input sensor-cadence-select" id="sensor-cadence">
+              <option value="1000" ${state.sensorsCadence === 1000 ? 'selected' : ''}>1s (Fast)</option>
+              <option value="2000" ${state.sensorsCadence === 2000 ? 'selected' : ''}>2s (Standard)</option>
+              <option value="5000" ${state.sensorsCadence === 5000 ? 'selected' : ''}>5s (Low power)</option>
+              <option value="0" ${state.sensorsCadence === 0 ? 'selected' : ''}>Paused</option>
+            </select>
+          </div>
+        </aside>
+        <section class="sensors-main">
+          ${activeView}
+        </section>
+      </div>
+    `;
+
+    // Event wiring
+    const filter = $('#sensor-app-filter');
+    const sort = $('#sensor-app-sort');
+    const cadence = $('#sensor-cadence');
+
+    if (filter) {
+      filter.oninput = () => {
+        state.sensorFilter = filter.value;
+        renderSensors();
+        const next = $('#sensor-app-filter');
+        if (next) {
+          next.focus();
+          next.setSelectionRange(next.value.length, next.value.length);
+        }
+      };
+    }
+    if (sort) {
+      sort.onchange = () => {
+        state.sensorSort = sort.value;
+        renderSensors();
+      };
+    }
+    if (cadence) {
+      cadence.onchange = () => {
+        state.sensorsCadence = Number(cadence.value);
+        clearTimeout(state.sensorTimer);
+        if (state.sensorsCadence > 0) {
+          state.sensorTimer = setTimeout(pollSensors, state.sensorsCadence);
+        }
+        renderSensors();
+      };
+    }
+
     if (state.sensorsView === 'temperature' && !state.sensorInventoryLoaded && !state.sensorInventoryLoading && state.serial) {
       state.sensorInventoryLoading = true;
       const serial = state.serial;
       invokeOrFail('adb_data', { serial, section: 'sensor_inventory', path: null }).then(names => {
-        if (state.serial === serial) { state.sensorInventory = names; state.sensorInventoryLoaded = true; }
+        if (state.serial === serial) {
+          state.sensorInventory = names;
+          state.sensorInventoryLoaded = true;
+        }
       }).catch(error => toast(String(error), true)).finally(() => {
         state.sensorInventoryLoading = false;
-        if (state.tab === 'sensors' && state.sensorsView === 'temperature' && state.serial === serial) renderSensors();
+        if (state.tab === 'sensors' && state.sensorsView === 'temperature' && state.serial === serial) {
+          renderSensors();
+        }
       });
     }
+
     clearTimeout(state.sensorTimer);
-    if (state.tab === 'sensors' && !document.hidden) state.sensorTimer = setTimeout(async () => {
-      if (state.sensorBusy || state.tab !== 'sensors' || document.hidden) return;
-      state.sensorBusy = true;
-      try { await loadData('sensors'); if (state.tab === 'sensors' && !document.activeElement?.matches('#sensor-app-filter')) renderSensors(); }
-      finally { state.sensorBusy = false; }
-    }, 10000);
+    if (state.tab === 'sensors' && !document.hidden && state.sensorsCadence > 0) {
+      state.sensorTimer = setTimeout(pollSensors, state.sensorsCadence);
+    }
   }
   async function refreshCurrent() { if (state.tab === 'overview' || state.tab === 'storage') await refreshTelemetry(); else await renderTab(); }
 

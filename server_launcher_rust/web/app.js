@@ -54,6 +54,27 @@
     }
   }
 
+  let currentLoadToken = 0;
+
+  function showPageLoading(title = '') {
+    const pageName = title || tabNames[state.tab] || 'Section';
+    content.innerHTML = `
+      <div class="page-loading-wrapper">
+        <div class="page-loading-card">
+          <div class="loading-brand-container">
+            <img src="./icon.png" alt="Server Launcher Logo" class="loading-brand-logo" onerror="this.style.display='none'; const fb = document.getElementById('page-loading-fallback'); if (fb) fb.style.display='flex';" />
+            <div id="page-loading-fallback" class="loading-brand-fallback icon">&#xe153;</div>
+            <div class="loading-ring-pulse"></div>
+          </div>
+          <div class="loading-text-group">
+            <h3 class="loading-heading">Loading ${escapeHtml(pageName)}</h3>
+            <p class="loading-subtext">Communicating with Android Device via ADB Bridge…</p>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function selectTab(tab) {
     if (!tabNames[tab]) return;
     clearInterval(state.screenTimer); state.screenTimer = null;
@@ -61,6 +82,9 @@
     clearTimeout(state.sensorTimer); state.sensorTimer = null;
     $('#page-title').textContent = tabNames[tab]; $('#eyebrow').textContent = `ANDROID DEVICE / ${tab.toUpperCase()}`;
     updateHeaderTelemetryControls();
+    if (tab !== 'overview') {
+      showPageLoading(tabNames[tab]);
+    }
     void renderTab();
   }
   async function refreshDevices() {
@@ -106,10 +130,16 @@
   }
   async function renderTab() {
     if (!state.device) return;
-    if (state.tab === 'overview') { content.innerHTML = overview(); return; }
-    if (tabKinds[state.tab]) await loadData(tabKinds[state.tab], state.path);
-    if (!state.device) return;
-    switch (state.tab) {
+    const loadToken = ++currentLoadToken;
+    const targetTab = state.tab;
+    if (targetTab === 'overview') { content.innerHTML = overview(); return; }
+    if (tabKinds[targetTab]) {
+      showPageLoading(tabNames[targetTab]);
+      await loadData(tabKinds[targetTab], state.path);
+      if (loadToken !== currentLoadToken || state.tab !== targetTab) return;
+    }
+    if (!state.device || state.tab !== targetTab) return;
+    switch (targetTab) {
       case 'screen': return renderScreen();
       case 'messages': return renderMessages();
       case 'calls': return renderCalls();
@@ -298,7 +328,14 @@
                   ${cachedSrc ? `
                     <img src="${cachedSrc}" alt="${escapeHtml(p.name)}">
                   ` : `
-                    <div class="loading-card"><div class="spinner"></div><div style="margin-top:10px;">Loading high-resolution photo from device…</div></div>
+                    <div class="page-loading-card" style="padding:24px 32px; max-width:320px;">
+                      <div class="loading-brand-container" style="width:68px; height:68px; margin-bottom:14px;">
+                        <img src="./icon.png" alt="Loading" class="loading-brand-logo" style="width:46px; height:46px;" onerror="this.style.display='none';" />
+                        <div class="loading-ring-pulse"></div>
+                      </div>
+                      <div class="loading-heading" style="font-size:14px;">Loading photo…</div>
+                      <div class="loading-subtext">Fetching original bytes from Android storage</div>
+                    </div>
                   `}
                 </div>
                 ${state.photosLightboxIndex < filtered.length - 1 ? `
@@ -551,9 +588,9 @@
   function renderStorage() {
     const rows = state.data || [], t = state.telemetry || {};
     content.innerHTML = `<div class="grid metrics">${metric('Internal used', t.storage_internal_total_gb != null ? `${(t.storage_internal_total_gb-(t.storage_internal_free_gb??0)).toFixed(1)} GB` : 'Unavailable', t.storage_internal_total_gb != null ? `${(t.storage_internal_free_gb??0).toFixed(1)} GB free of ${t.storage_internal_total_gb.toFixed(1)} GB` : 'No storage telemetry', t.storage_internal_total_gb != null ? 100*(1-t.storage_internal_free_gb/t.storage_internal_total_gb) : null)}${metric('Shared storage', t.storage_sdcard_total_gb != null ? `${(t.storage_sdcard_total_gb-(t.storage_sdcard_free_gb??0)).toFixed(1)} GB` : 'Unavailable', t.storage_sdcard_total_gb != null ? `${(t.storage_sdcard_free_gb??0).toFixed(1)} GB free` : 'No shared storage telemetry', null)}</div><section class="card"><div class="card-head"><div><h2>File browser</h2><div class="subtle mono" style="margin-top:5px">${escapeHtml(state.path)}</div></div><button class="button" data-refresh>${icon("e145")} Refresh</button></div><form id="path-form" class="toolbar"><input id="file-path" class="input" value="${escapeHtml(state.path)}"><button class="button primary">Go to path</button><button type="button" class="button" id="file-up">Parent folder</button></form><div class="table-wrap"><table class="table"><thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Modified</th><th></th></tr></thead><tbody>${rows.length ? rows.map((f,i) => `<tr><td><button class="file-open" data-file-index="${i}">${f.directory?icon("e0d7"):icon("e0cc")} ${escapeHtml(f.name)}</button></td><td>${f.directory?'Folder':'File'}</td><td>${f.bytes ? `${(f.bytes/1024).toFixed(1)} KB` : '—'}</td><td>${escapeHtml(f.modified)}</td><td><button class="button danger" data-action="delete_file" data-value="${escapeHtml(state.path.replace(/\/$/, '')+'/'+f.name)}">Delete</button></td></tr>`).join('') : `<tr><td colspan="5">${empty('Folder is empty', 'Try another folder path.')}</td></tr>`}</tbody></table></div></section>`;
-    $('#path-form').onsubmit = (e) => { e.preventDefault(); state.path = $('#file-path').value.trim() || '/sdcard'; void renderTab(); };
-    $('#file-up').onclick = () => { state.path = state.path.replace(/\/$/, '').split('/').slice(0,-1).join('/') || '/'; void renderTab(); };
-    document.querySelectorAll('[data-file-index]').forEach(b => b.onclick = () => { const f = rows[Number(b.dataset.fileIndex)]; if (f.directory) { state.path = `${state.path.replace(/\/$/, '')}/${f.name}`; void renderTab(); } });
+    $('#path-form').onsubmit = (e) => { e.preventDefault(); state.path = $('#file-path').value.trim() || '/sdcard'; showPageLoading('Folder'); void renderTab(); };
+    $('#file-up').onclick = () => { state.path = state.path.replace(/\/$/, '').split('/').slice(0,-1).join('/') || '/'; showPageLoading('Folder'); void renderTab(); };
+    document.querySelectorAll('[data-file-index]').forEach(b => b.onclick = () => { const f = rows[Number(b.dataset.fileIndex)]; if (f.directory) { state.path = `${state.path.replace(/\/$/, '')}/${f.name}`; showPageLoading('Folder'); void renderTab(); } });
   }
   function renderApps() {
     const rows = state.data || [];
@@ -3099,12 +3136,22 @@
     }
   }
   async function refreshCurrent() {
-    if (state.tab === 'overview' || state.tab === 'storage') {
-      await refreshTelemetry();
-    } else if (state.tab === 'sensors') {
-      await pollSensors(true);
-    } else {
-      await renderTab();
+    const btn = $('#refresh');
+    if (btn) btn.classList.add('refreshing');
+    try {
+      if (state.tab === 'overview') {
+        await refreshTelemetry();
+      } else if (state.tab === 'storage') {
+        showPageLoading(tabNames[state.tab]);
+        await refreshTelemetry();
+      } else if (state.tab === 'sensors') {
+        await pollSensors(true);
+      } else {
+        showPageLoading(tabNames[state.tab]);
+        await renderTab();
+      }
+    } finally {
+      if (btn) btn.classList.remove('refreshing');
     }
   }
 

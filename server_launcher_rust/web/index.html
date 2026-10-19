@@ -60,7 +60,21 @@
             <button class="button primary" data-action="scrcpy"><span class="icon">&#xe0b9;</span> Open scrcpy</button>
           </div>
         </header>
-        <section id="content" class="content"><div class="loading-card"><span class="spinner"></span><p>Looking for Android devices…</p></div></section>
+        <section id="content" class="content">
+          <div class="page-loading-wrapper">
+            <div class="page-loading-card">
+              <div class="loading-brand-container">
+                <img src="./icon.png" alt="Server Launcher Logo" class="loading-brand-logo" onerror="this.style.display='none'; const fb = document.getElementById('init-loading-fallback'); if (fb) fb.style.display='flex';" />
+                <div id="init-loading-fallback" class="loading-brand-fallback icon">&#xe153;</div>
+                <div class="loading-ring-pulse"></div>
+              </div>
+              <div class="loading-text-group">
+                <h3 class="loading-heading">Connecting to ADB</h3>
+                <p class="loading-subtext">Initializing Android Cockpit environment…</p>
+              </div>
+            </div>
+          </div>
+        </section>
         <div id="toast" class="toast" role="status"></div>
       </main>
     </div>

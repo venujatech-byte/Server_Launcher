@@ -7,7 +7,24 @@
   const tabKinds = { messages: 'messages', calls: 'calls', photos: 'photos', notifications: 'notifications', sensors: 'sensors', apps: 'apps', storage: 'files', wireless: 'endpoints' };
   const icon = (code) => `<span class="icon" aria-hidden="true">&#x${code};</span>`;
   const escapeHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const val = (v, suffix = '') => v == null || v === '' ? 'Unavailable' : `${v}${suffix}`;
+  const val = (v, suffix = '', digits = 1) => {
+    if (v == null || v === '') return 'Unavailable';
+    if (typeof v === 'number') {
+      if (!Number.isFinite(v)) return 'Unavailable';
+      return `${Number.isInteger(v) ? v : v.toFixed(digits)}${suffix}`;
+    }
+    const str = String(v).trim();
+    if (!str) return 'Unavailable';
+    const parsed = Number(str);
+    if (!Number.isNaN(parsed) && str.includes('.')) {
+      return `${parsed.toFixed(digits)}${suffix}`;
+    }
+    const cleaned = str.replace(/\b(\d+)\.(\d{3,})\b/g, (_, intPart, decPart) => {
+      const num = Number(`${intPart}.${decPart}`);
+      return Number.isFinite(num) ? num.toFixed(digits) : `${intPart}.${decPart.slice(0, digits)}`;
+    });
+    return `${cleaned}${suffix}`;
+  };
   const invokeOrFail = (...args) => { if (!invoke) throw new Error('Open this page inside the Server Launcher Tauri window.'); return invoke(...args); };
 
   function toast(message, error = false) {
@@ -151,19 +168,23 @@
     content.innerHTML=`<div class="grid two"><section class="card"><div class="card-head"><h2>Power and navigation</h2></div><div class="toolbar"><button class="button" data-action="key_power">Power / Wake</button><button class="button" data-action="key_back">Back</button><button class="button" data-action="key_home">Home</button><button class="button" data-action="key_recents">Recents</button><button class="button" data-action="key_volume_down">Volume −</button><button class="button" data-action="key_volume_up">Volume +</button></div></section><section class="card"><div class="card-head"><h2>Restart device</h2></div><div class="stack"><div class="notice">Recovery and bootloader restart the device outside Android. The device may disconnect until it boots again.</div><div class="toolbar"><button class="button danger" data-action="reboot" data-value="system">System</button><button class="button" data-action="reboot" data-value="recovery">Recovery</button><button class="button" data-action="reboot" data-value="bootloader">Bootloader</button><button class="button" data-action="reboot" data-value="fastboot">Fastboot</button></div></div></section></div>`;
   }
   function formatRate(value) {
-    if (value == null || !Number.isFinite(value)) return '0 B/s';
+    if (value == null || !Number.isFinite(Number(value))) return '0 B/s';
+    const num = Number(value);
     const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
-    let n = Math.abs(value), i = 0;
+    let n = Math.abs(num), i = 0;
     while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-    return `${(value < 0 ? -1 : 1 * n).toFixed(i ? 1 : 0)} ${units[i]}`;
+    const sign = num < 0 ? '-' : '';
+    return `${sign}${n.toFixed(i ? 1 : 0)} ${units[i]}`;
   }
 
   function formatBytes(value) {
-    if (value == null || !Number.isFinite(value)) return '0 B';
+    if (value == null || !Number.isFinite(Number(value))) return '0 B';
+    const num = Number(value);
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let n = Math.abs(value), i = 0;
+    let n = Math.abs(num), i = 0;
     while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-    return `${(value < 0 ? -1 : 1 * n).toFixed(i ? 1 : 0)} ${units[i]}`;
+    const sign = num < 0 ? '-' : '';
+    return `${sign}${n.toFixed(i ? 1 : 0)} ${units[i]}`;
   }
 
   function recordSensorSample(s) {
@@ -184,14 +205,14 @@
       if (c.name === 'cpu') {
         const oldTotal = previous?.cpuCounters?.cpu?.total, oldIdle = previous?.cpuCounters?.cpu?.idle;
         if (oldTotal != null && c.total > oldTotal && c.idle >= oldIdle) {
-          procCpu = 100 * (1 - (c.idle - oldIdle) / (c.total - oldTotal));
+          procCpu = Number((100 * (1 - (c.idle - oldIdle) / (c.total - oldTotal))).toFixed(1));
         }
         continue;
       }
       if (!previous) continue;
       const old = (previous.cpuCounters || {})[c.name];
       if (old && c.total > old.total && c.idle >= old.idle) {
-        cores[c.name] = 100 * (1 - (c.idle - old.idle) / (c.total - old.total));
+        cores[c.name] = Number((100 * (1 - (c.idle - old.idle) / (c.total - old.total))).toFixed(1));
       }
     }
     const socketTotal = Number(s.socket_total) || 0;
@@ -204,14 +225,17 @@
 
     state.sensorHistory.push({
       at: now,
-      cpu: s.cpu_usage_pct ?? procCpu ?? 0,
-      ram: mem ?? 0,
-      swap: s.swap_total_kb ? 100 * (s.swap_total_kb - (s.swap_free_kb || 0)) / s.swap_total_kb : 0,
-      storage: diskTotal && diskFree != null ? 100 * (diskTotal - diskFree) / diskTotal : 0,
-      rx, tx, rxRate, txRate,
-      diskReadRate, diskWriteRate,
-      battery: s.battery_pct ?? 0,
-      temp: temps.length ? Math.max(...temps.map(x => Number(x.temp_c)).filter(Number.isFinite)) : (s.battery_temp_c ?? 0),
+      cpu: Number((s.cpu_usage_pct ?? procCpu ?? 0).toFixed(1)),
+      ram: Number((mem ?? 0).toFixed(1)),
+      swap: Number((s.swap_total_kb ? 100 * (s.swap_total_kb - (s.swap_free_kb || 0)) / s.swap_total_kb : 0).toFixed(1)),
+      storage: Number((diskTotal && diskFree != null ? 100 * (diskTotal - diskFree) / diskTotal : 0).toFixed(1)),
+      rx, tx,
+      rxRate: Number(rxRate.toFixed(1)),
+      txRate: Number(txRate.toFixed(1)),
+      diskReadRate: Number(diskReadRate.toFixed(1)),
+      diskWriteRate: Number(diskWriteRate.toFixed(1)),
+      battery: Number((s.battery_pct ?? 0).toFixed(0)),
+      temp: Number((temps.length ? Math.max(...temps.map(x => Number(x.temp_c)).filter(Number.isFinite)) : (s.battery_temp_c ?? 0)).toFixed(1)),
       cores,
       cpuCounters: Object.fromEntries((s.cpu_counters || []).map(c => [c.name, { total: c.total, idle: c.idle }])),
       diskRead, diskWrite,
@@ -223,7 +247,7 @@
   function renderSparklineSvg(data = [], maxVal = 100, dottedRatio = 0.5, color = 'var(--accent)') {
     const pointsData = (data.length === 1 ? [data[0], data[0]] : data).map(v => Number(v)).filter(Number.isFinite);
     if (pointsData.length < 2) {
-      return `<svg class="stat-card-spark" viewBox="0 0 100 32" preserveAspectRatio="none"><line x1="0" y1="16" x2="100" y2="16" stroke="rgba(255,255,255,0.06)" stroke-width="1"/></svg>`;
+      return `<svg class="stat-card-spark" viewBox="0 0 100 48" preserveAspectRatio="none"><line x1="0" y1="24" x2="100" y2="24" stroke="rgba(255,255,255,0.06)" stroke-width="1.5"/></svg>`;
     }
     const max = Math.max(maxVal || 1, ...pointsData);
     const min = Math.min(0, ...pointsData);
@@ -233,26 +257,26 @@
     const pts = pointsData.map((v, i) => {
       const x = (i * stepX).toFixed(1);
       const norm = Math.max(0.02, Math.min(0.96, (v - min) / range));
-      const y = (31 - norm * 29).toFixed(1);
+      const y = (46 - norm * 42).toFixed(1);
       return `${x},${y}`;
     }).join(' ');
 
     const gradId = 'spk-' + Math.random().toString(36).slice(2, 7);
     const dottedLine = dottedRatio != null
-      ? `<line x1="0" y1="${(31 - Math.max(0.05, Math.min(0.95, dottedRatio)) * 29).toFixed(1)}" x2="100" y2="${(31 - Math.max(0.05, Math.min(0.95, dottedRatio)) * 29).toFixed(1)}" stroke="${color}" stroke-opacity="0.4" stroke-dasharray="3,3" stroke-width="1"/>`
+      ? `<line x1="0" y1="${(46 - Math.max(0.05, Math.min(0.95, dottedRatio)) * 42).toFixed(1)}" x2="100" y2="${(46 - Math.max(0.05, Math.min(0.95, dottedRatio)) * 42).toFixed(1)}" stroke="${color}" stroke-opacity="0.4" stroke-dasharray="3,3" stroke-width="1.2"/>`
       : '';
 
     return `
-      <svg class="stat-card-spark" viewBox="0 0 100 32" preserveAspectRatio="none" aria-hidden="true">
+      <svg class="stat-card-spark" viewBox="0 0 100 48" preserveAspectRatio="none" aria-hidden="true">
         <defs>
           <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="${color}" stop-opacity="0.35"/>
+            <stop offset="0%" stop-color="${color}" stop-opacity="0.38"/>
             <stop offset="100%" stop-color="${color}" stop-opacity="0.02"/>
           </linearGradient>
         </defs>
         ${dottedLine}
-        <polygon points="0,32 ${pts} 100,32" fill="url(#${gradId})"/>
-        <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+        <polygon points="0,48 ${pts} 100,48" fill="url(#${gradId})"/>
+        <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
       </svg>
     `;
   }
@@ -278,18 +302,18 @@
 
   function renderDualNetworkSvg(txHistory = [], rxHistory = [], peakVal = 0, accentColor = 'var(--accent)') {
     const n = Math.max(txHistory.length, rxHistory.length);
-    const h = 130, w = 500;
+    const h = 190, w = 600;
     if (n < 2) {
       return `<div class="chart-empty">Collecting network telemetry samples…</div>`;
     }
     const maxV = Math.max(peakVal || 0, ...txHistory, ...rxHistory, 1024);
-    const stepX = (w - 20) / (n - 1);
-    const yBase = h - 14;
-    const yTop = 14;
+    const stepX = (w - 24) / (n - 1);
+    const yBase = h - 18;
+    const yTop = 16;
     const graphH = yBase - yTop;
 
     const toPoints = (series) => series.map((v, i) => {
-      const x = (10 + i * stepX).toFixed(1);
+      const x = (12 + i * stepX).toFixed(1);
       const norm = Math.max(0.02, Math.min(0.94, (Number(v) || 0) / maxV));
       const y = (yBase - norm * graphH).toFixed(1);
       return `${x},${y}`;
@@ -301,49 +325,49 @@
     const txPoly = txPts.join(' ');
     const rxPoly = rxPts.join(' ');
 
-    const txArea = `10,${yBase} ${txPoly} ${10 + (txHistory.length - 1) * stepX},${yBase}`;
-    const rxArea = `10,${yBase} ${rxPoly} ${10 + (rxHistory.length - 1) * stepX},${yBase}`;
+    const txArea = `12,${yBase} ${txPoly} ${12 + (txHistory.length - 1) * stepX},${yBase}`;
+    const rxArea = `12,${yBase} ${rxPoly} ${12 + (rxHistory.length - 1) * stepX},${yBase}`;
 
     const gradTx = 'dnet-tx-' + Math.random().toString(36).slice(2, 7);
     const gradRx = 'dnet-rx-' + Math.random().toString(36).slice(2, 7);
     const yPeak = (yTop + graphH * 0.28).toFixed(1);
 
     return `
-      <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Network throughput history" preserveAspectRatio="none" style="width:100%;height:130px;display:block;">
+      <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Network throughput history" preserveAspectRatio="none" style="width:100%;height:${h}px;display:block;">
         <defs>
           <linearGradient id="${gradTx}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="${accentColor}" stop-opacity="0.32"/>
+            <stop offset="0%" stop-color="${accentColor}" stop-opacity="0.36"/>
             <stop offset="100%" stop-color="${accentColor}" stop-opacity="0.02"/>
           </linearGradient>
           <linearGradient id="${gradRx}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.18"/>
+            <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.22"/>
             <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.01"/>
           </linearGradient>
         </defs>
-        <line x1="10" y1="${yBase}" x2="${w - 10}" y2="${yBase}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
-        <line x1="10" y1="${yPeak}" x2="${w - 10}" y2="${yPeak}" stroke="${accentColor}" stroke-opacity="0.45" stroke-dasharray="5,4" stroke-width="1.2"/>
+        <line x1="12" y1="${yBase}" x2="${w - 12}" y2="${yBase}" stroke="rgba(255,255,255,0.08)" stroke-width="1.2"/>
+        <line x1="12" y1="${yPeak}" x2="${w - 12}" y2="${yPeak}" stroke="${accentColor}" stroke-opacity="0.5" stroke-dasharray="6,4" stroke-width="1.4"/>
         <polygon points="${rxArea}" fill="url(#${gradRx})"/>
-        <polyline points="${rxPoly}" fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="${rxPoly}" fill="none" stroke="#38bdf8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
         <polygon points="${txArea}" fill="url(#${gradTx})"/>
-        <polyline points="${txPoly}" fill="none" stroke="${accentColor}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="${txPoly}" fill="none" stroke="${accentColor}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     `;
   }
 
   function renderSocketsChartSvg(tcpHistory = [], udpHistory = [], accentColor = 'var(--accent)') {
     const n = Math.max(tcpHistory.length, udpHistory.length);
-    const h = 130, w = 350;
+    const h = 190, w = 450;
     if (n < 2) {
       return `<div class="chart-empty">Collecting socket telemetry…</div>`;
     }
     const maxV = Math.max(10, ...tcpHistory, ...udpHistory);
-    const stepX = (w - 20) / (n - 1);
-    const yBase = h - 14;
-    const yTop = 14;
+    const stepX = (w - 24) / (n - 1);
+    const yBase = h - 18;
+    const yTop = 16;
     const graphH = yBase - yTop;
 
     const toPoints = (series) => series.map((v, i) => {
-      const x = (10 + i * stepX).toFixed(1);
+      const x = (12 + i * stepX).toFixed(1);
       const norm = Math.max(0.04, Math.min(0.92, (Number(v) || 0) / maxV));
       const y = (yBase - norm * graphH).toFixed(1);
       return `${x},${y}`;
@@ -355,30 +379,30 @@
     const tcpPoly = tcpPts.join(' ');
     const udpPoly = udpPts.join(' ');
 
-    const tcpArea = `10,${yBase} ${tcpPoly} ${10 + (tcpHistory.length - 1) * stepX},${yBase}`;
+    const tcpArea = `12,${yBase} ${tcpPoly} ${12 + (tcpHistory.length - 1) * stepX},${yBase}`;
     const gradTcp = 'sock-tcp-' + Math.random().toString(36).slice(2, 7);
     const yMid = (yTop + graphH * 0.45).toFixed(1);
 
     return `
-      <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Sockets history" preserveAspectRatio="none" style="width:100%;height:130px;display:block;">
+      <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Sockets history" preserveAspectRatio="none" style="width:100%;height:${h}px;display:block;">
         <defs>
           <linearGradient id="${gradTcp}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="${accentColor}" stop-opacity="0.32"/>
+            <stop offset="0%" stop-color="${accentColor}" stop-opacity="0.36"/>
             <stop offset="100%" stop-color="${accentColor}" stop-opacity="0.02"/>
           </linearGradient>
         </defs>
-        <line x1="10" y1="${yBase}" x2="${w - 10}" y2="${yBase}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
-        <line x1="10" y1="${yMid}" x2="${w - 10}" y2="${yMid}" stroke="${accentColor}" stroke-opacity="0.35" stroke-dasharray="4,4" stroke-width="1.2"/>
+        <line x1="12" y1="${yBase}" x2="${w - 12}" y2="${yBase}" stroke="rgba(255,255,255,0.08)" stroke-width="1.2"/>
+        <line x1="12" y1="${yMid}" x2="${w - 12}" y2="${yMid}" stroke="${accentColor}" stroke-opacity="0.4" stroke-dasharray="5,4" stroke-width="1.4"/>
         <polygon points="${tcpArea}" fill="url(#${gradTcp})"/>
-        <polyline points="${tcpPoly}" fill="none" stroke="${accentColor}" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
-        <polyline points="${udpPoly}" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4,3"/>
+        <polyline points="${tcpPoly}" fill="none" stroke="${accentColor}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="${udpPoly}" fill="none" stroke="#94a3b8" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5,4"/>
       </svg>
     `;
   }
 
-  function renderWaveformChartSvg({ title, series = [], height = 140, suffix = '%', benchmarkVal = null }) {
+  function renderWaveformChartSvg({ title, series = [], height = 200, suffix = '%', benchmarkVal = null }) {
     const n = Math.max(...series.map(s => s.data?.length || 0));
-    const w = 700, h = height;
+    const w = 800, h = height;
     if (n < 2) {
       return `
         <section class="card sensors-waveform-card">
@@ -394,10 +418,10 @@
     if (maxV === minV) maxV = minV + 1;
     const range = maxV - minV;
 
-    const yBase = h - 14;
-    const yTop = 14;
+    const yBase = h - 18;
+    const yTop = 16;
     const graphH = yBase - yTop;
-    const stepX = (w - 20) / (n - 1);
+    const stepX = (w - 24) / (n - 1);
 
     const legend = series.map((s, idx) => `
       <span class="chart-legend-item">
@@ -408,33 +432,33 @@
 
     const gridLines = [0.25, 0.5, 0.75].map(ratio => {
       const y = (yBase - ratio * graphH).toFixed(1);
-      return `<line x1="10" y1="${y}" x2="${w - 10}" y2="${y}" stroke="rgba(255,255,255,0.06)" stroke-dasharray="4,4" stroke-width="1"/>`;
+      return `<line x1="12" y1="${y}" x2="${w - 12}" y2="${y}" stroke="rgba(255,255,255,0.06)" stroke-dasharray="5,5" stroke-width="1"/>`;
     }).join('');
 
     const benchmarkLine = benchmarkVal != null
-      ? `<line x1="10" y1="${(yBase - Math.max(0.05, Math.min(0.95, (benchmarkVal - minV) / range)) * graphH).toFixed(1)}" x2="${w - 10}" y2="${(yBase - Math.max(0.05, Math.min(0.95, (benchmarkVal - minV) / range)) * graphH).toFixed(1)}" stroke="var(--accent)" stroke-opacity="0.45" stroke-dasharray="6,4" stroke-width="1.2"/>`
+      ? `<line x1="12" y1="${(yBase - Math.max(0.05, Math.min(0.95, (benchmarkVal - minV) / range)) * graphH).toFixed(1)}" x2="${w - 12}" y2="${(yBase - Math.max(0.05, Math.min(0.95, (benchmarkVal - minV) / range)) * graphH).toFixed(1)}" stroke="var(--accent)" stroke-opacity="0.5" stroke-dasharray="6,4" stroke-width="1.4"/>`
       : '';
 
     const paths = series.map((s, idx) => {
       const d = s.data || [];
       const pts = d.map((v, i) => {
-        const x = (10 + i * stepX).toFixed(1);
+        const x = (12 + i * stepX).toFixed(1);
         const norm = Math.max(0.02, Math.min(0.98, ((Number(v) || 0) - minV) / range));
         const y = (yBase - norm * graphH).toFixed(1);
         return `${x},${y}`;
       });
       const poly = pts.join(' ');
-      const area = `10,${yBase} ${poly} ${10 + (d.length - 1) * stepX},${yBase}`;
+      const area = `12,${yBase} ${poly} ${12 + (d.length - 1) * stepX},${yBase}`;
       const gradId = 'wf-grad-' + idx + '-' + Math.random().toString(36).slice(2, 6);
       return `
         <defs>
           <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="${s.color || 'var(--accent)'}" stop-opacity="${s.fillOpacity ?? 0.28}"/>
+            <stop offset="0%" stop-color="${s.color || 'var(--accent)'}" stop-opacity="${s.fillOpacity ?? 0.32}"/>
             <stop offset="100%" stop-color="${s.color || 'var(--accent)'}" stop-opacity="0.01"/>
           </linearGradient>
         </defs>
         <polygon points="${area}" fill="url(#${gradId})"/>
-        <polyline points="${poly}" fill="none" stroke="${s.color || 'var(--accent)'}" stroke-width="${s.strokeWidth || 2.0}" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="${poly}" fill="none" stroke="${s.color || 'var(--accent)'}" stroke-width="${s.strokeWidth || 2.5}" stroke-linecap="round" stroke-linejoin="round"/>
       `;
     }).join('');
 
@@ -446,7 +470,7 @@
         </div>
         <div class="waveform-chart-box">
           <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(title)}" preserveAspectRatio="none" style="width:100%;height:${h}px;display:block;">
-            <line x1="10" y1="${yBase}" x2="${w - 10}" y2="${yBase}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+            <line x1="12" y1="${yBase}" x2="${w - 12}" y2="${yBase}" stroke="rgba(255,255,255,0.08)" stroke-width="1.2"/>
             ${gridLines}
             ${benchmarkLine}
             ${paths}
@@ -496,24 +520,27 @@
       ['temperature', 'Temperature', 'e186']
     ];
 
-    const kb = (value) => value == null ? 'Unavailable' : `${(value / 1024 / 1024).toFixed(1)} GB`;
+    const kb = (value) => {
+      if (value == null || !Number.isFinite(Number(value))) return 'Unavailable';
+      return `${(Number(value) / 1024 / 1024).toFixed(2)} GB`;
+    };
     const onOff = (value) => value == null ? 'Unavailable' : value ? 'On' : 'Off';
     const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
     const peak = (arr) => arr.length ? Math.max(...arr) : 0;
 
-    const currentCpu = s.cpu_usage_pct ?? state.sensorHistory.at(-1)?.cpu ?? 0;
+    const currentCpu = Number(s.cpu_usage_pct ?? state.sensorHistory.at(-1)?.cpu ?? 0);
     const memUsage = s.mem_total_kb && s.mem_available_kb != null ? (100 * (s.mem_total_kb - s.mem_available_kb) / s.mem_total_kb) : 0;
     const usedMemoryKb = s.mem_total_kb && s.mem_available_kb != null ? s.mem_total_kb - s.mem_available_kb : 0;
     const swapUsage = s.swap_total_kb ? (100 * (s.swap_total_kb - (s.swap_free_kb || 0)) / s.swap_total_kb) : 0;
     const usedSwapKb = s.swap_total_kb ? s.swap_total_kb - (s.swap_free_kb || 0) : 0;
 
-    const totalStorageGb = s.storage_internal_total_kb == null ? (t.storage_internal_total_gb || 0) : s.storage_internal_total_kb / 1024 / 1024;
-    const freeStorageGb = s.storage_internal_free_kb == null ? (t.storage_internal_free_gb || 0) : s.storage_internal_free_kb / 1024 / 1024;
+    const totalStorageGb = s.storage_internal_total_kb == null ? (Number(t.storage_internal_total_gb) || 0) : Number(s.storage_internal_total_kb) / 1024 / 1024;
+    const freeStorageGb = s.storage_internal_free_kb == null ? (Number(t.storage_internal_free_gb) || 0) : Number(s.storage_internal_free_kb) / 1024 / 1024;
     const usedStorageGb = Math.max(0, totalStorageGb - freeStorageGb);
     const storageUsage = totalStorageGb > 0 ? (100 * usedStorageGb / totalStorageGb) : 0;
 
-    const sharedTotalGb = (s.storage_shared_total_kb || 0) / 1024 / 1024;
-    const sharedFreeGb = (s.storage_shared_free_kb || 0) / 1024 / 1024;
+    const sharedTotalGb = (Number(s.storage_shared_total_kb) || 0) / 1024 / 1024;
+    const sharedFreeGb = (Number(s.storage_shared_free_kb) || 0) / 1024 / 1024;
     const sharedUsedGb = Math.max(0, sharedTotalGb - sharedFreeGb);
 
     const network = s.network_interfaces || [];
@@ -522,34 +549,34 @@
     const sensors = state.sensorInventoryLoaded ? state.sensorInventory : (s.sensor_names || []);
 
     const hist = state.sensorHistory;
-    const cpuHist = hist.map(h => h.cpu ?? 0);
-    const ramHist = hist.map(h => h.ram ?? 0);
-    const swapHist = hist.map(h => h.swap ?? 0);
-    const storageHist = hist.map(h => h.storage ?? 0);
-    const rxHist = hist.map(h => h.rxRate ?? 0);
-    const txHist = hist.map(h => h.txRate ?? 0);
-    const readHist = hist.map(h => h.diskReadRate ?? 0);
-    const writeHist = hist.map(h => h.diskWriteRate ?? 0);
-    const tcpHist = hist.map(h => h.socketTcp ?? 0);
-    const udpHist = hist.map(h => h.socketUdp ?? 0);
-    const battHist = hist.map(h => h.battery ?? 0);
-    const tempHist = hist.map(h => h.temp ?? 0);
+    const cpuHist = hist.map(h => Number(h.cpu) || 0);
+    const ramHist = hist.map(h => Number(h.ram) || 0);
+    const swapHist = hist.map(h => Number(h.swap) || 0);
+    const storageHist = hist.map(h => Number(h.storage) || 0);
+    const rxHist = hist.map(h => Number(h.rxRate) || 0);
+    const txHist = hist.map(h => Number(h.txRate) || 0);
+    const readHist = hist.map(h => Number(h.diskReadRate) || 0);
+    const writeHist = hist.map(h => Number(h.diskWriteRate) || 0);
+    const tcpHist = hist.map(h => Number(h.socketTcp) || 0);
+    const udpHist = hist.map(h => Number(h.socketUdp) || 0);
+    const battHist = hist.map(h => Number(h.battery) || 0);
+    const tempHist = hist.map(h => Number(h.temp) || 0);
 
     const latest = hist.at(-1) || {};
-    const currRxRate = latest.rxRate ?? 0;
-    const currTxRate = latest.txRate ?? 0;
+    const currRxRate = Number(latest.rxRate) || 0;
+    const currTxRate = Number(latest.txRate) || 0;
     const netPeakRate = Math.max(1024, ...rxHist, ...txHist);
     const totRx = network.reduce((acc, iface) => acc + (Number(iface.rx_bytes) || 0), 0);
     const totTx = network.reduce((acc, iface) => acc + (Number(iface.tx_bytes) || 0), 0);
     const avgRxRate = avg(rxHist);
     const avgTxRate = avg(txHist);
 
-    const socketTotal = latest.socketTotal || s.socket_total || 0;
-    const socketTcp = latest.socketTcp || s.socket_tcp || 0;
-    const socketUdp = latest.socketUdp || s.socket_udp || 0;
+    const socketTotal = Number(latest.socketTotal || s.socket_total || 0);
+    const socketTcp = Number(latest.socketTcp || s.socket_tcp || 0);
+    const socketUdp = Number(latest.socketUdp || s.socket_udp || 0);
 
     const freqGhz = s.cpu_frequencies_mhz?.length ? (Math.max(...s.cpu_frequencies_mhz) / 1000).toFixed(2) : '2.00';
-    const minFreqMhz = s.cpu_frequencies_mhz?.length ? Math.min(...s.cpu_frequencies_mhz) : 0;
+    const minFreqMhz = s.cpu_frequencies_mhz?.length ? (Math.min(...s.cpu_frequencies_mhz) / 1000).toFixed(2) : '1.00';
     const uptimeHours = s.uptime_secs ? Math.floor(s.uptime_secs / 3600) : 0;
     const uptimeMins = s.uptime_secs ? Math.floor((s.uptime_secs % 3600) / 60) : 0;
 
@@ -592,7 +619,7 @@
                   <tr>
                     <td class="mono"><b>${escapeHtml(p.name)}</b></td>
                     <td><span class="chip">${p.pids.length} pids</span></td>
-                    <td><b>${p.cpu.toFixed(1)}%</b></td>
+                    <td><b>${Number(p.cpu).toFixed(1)}%</b></td>
                     <td>${formatBytes(p.memory * 1024)}</td>
                   </tr>
                 `).join('')}
@@ -666,7 +693,7 @@
             <div class="speed-head-row">
               <div>
                 <div class="stat-card-title">OVERALL SPEED</div>
-                <div class="subtle" style="margin-top:2px">Interface total · peak ${formatRate(netPeakRate)}</div>
+                <div class="subtle" style="margin-top:4px">Interface total · peak ${formatRate(netPeakRate)}</div>
               </div>
               <div class="speed-rates-pill">
                 <span class="speed-rate-item down"><span class="rate-arrow">↓</span> Down <b>${formatRate(currRxRate)}</b></span>
@@ -701,7 +728,7 @@
               <strong>${socketTotal}</strong>
               <span>open sockets</span>
             </div>
-            <div class="chart-legend" style="margin-bottom:6px">
+            <div class="chart-legend" style="margin-bottom:8px">
               <span class="chart-legend-item"><i style="background:var(--accent)"></i>TCP ${socketTcp}</span>
               <span class="chart-legend-item"><i style="background:#94a3b8"></i>UDP ${socketUdp}</span>
             </div>
@@ -718,6 +745,36 @@
             </div>
           </section>
         </div>
+
+        <div class="grid two">
+          <section class="card">
+            <div class="card-head">
+              <h2>Connectivity & Radio</h2>
+              <span class="chip">HARDWARE</span>
+            </div>
+            <div class="kv">
+              <div><small>Wi-Fi Radio</small><b>${onOff(s.wifi_enabled)}</b></div>
+              <div><small>Bluetooth Radio</small><b>${onOff(s.bluetooth_enabled)}</b></div>
+              <div><small>Active Interfaces</small><b>${network.length}</b></div>
+              <div><small>Total Transferred</small><b>${formatBytes(network.reduce((acc, iface) => acc + (Number(iface.rx_bytes) || 0) + (Number(iface.tx_bytes) || 0), 0))}</b></div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <h2>Thermals & Hardware</h2>
+              <span class="chip">SENSORS</span>
+            </div>
+            <div class="kv">
+              <div><small>Thermal Zones</small><b>${temps.length || 'Unavailable'}</b></div>
+              <div><small>Registered Sensors</small><b>${sensors.length || 'Unavailable'}</b></div>
+              <div><small>Battery Temperature</small><b>${val(s.battery_temp_c, ' °C', 1)}</b></div>
+              <div><small>Graphics Renderer</small><b>${escapeHtml(val(s.gpu_renderer))}</b></div>
+            </div>
+          </section>
+        </div>
+
+        ${topAppsTable()}
       `,
 
       'top-apps': topAppsTable,
@@ -752,7 +809,7 @@
             title: 'FREQUENCY',
             heroVal: freqGhz,
             heroUnit: 'GHz',
-            subtitle: `Min ${(minFreqMhz / 1000).toFixed(2)} GHz`,
+            subtitle: `Min ${minFreqMhz} GHz`,
             leftStat: 'SCALING',
             rightStat: `${freqGhz} GHz`,
             data: cpuHist,
@@ -791,7 +848,7 @@
         ${renderWaveformChartSvg({
           title: 'CPU Utilization · 60s Window',
           series: [{ label: 'Total CPU', data: cpuHist, color: 'var(--accent)' }],
-          height: 140,
+          height: 200,
           benchmarkVal: 50
         })}
 
@@ -803,9 +860,9 @@
           <div class="cores-grid">
             ${Array.from({ length: s.cpu_cores || 0 }, (_, i) => {
               const coreKey = `cpu${i}`;
-              const coreHist = hist.map(h => h.cores?.[coreKey] ?? 0);
+              const coreHist = hist.map(h => Number(h.cores?.[coreKey]) || 0);
               const val = coreHist.at(-1) ?? 0;
-              const f = s.cpu_frequencies_mhz?.[i] ? `${(s.cpu_frequencies_mhz[i] / 1000).toFixed(2)} GHz` : 'Online';
+              const f = s.cpu_frequencies_mhz?.[i] ? `${(Number(s.cpu_frequencies_mhz[i]) / 1000).toFixed(2)} GHz` : 'Online';
               return `
                 <div class="core-card">
                   <div class="core-card-head">
@@ -828,7 +885,7 @@
           ${renderBigStatCard({
             iconCode: 'e085',
             title: 'TOTAL RAM',
-            heroVal: `${((s.mem_total_kb || 0) / 1024 / 1024).toFixed(2)}`,
+            heroVal: kb(s.mem_total_kb).replace(' GB', ''),
             heroUnit: 'GB',
             subtitle: 'Android kernel memory',
             leftStat: 'TOTAL',
@@ -841,7 +898,7 @@
           ${renderBigStatCard({
             iconCode: 'e085',
             title: 'AVAILABLE',
-            heroVal: `${((s.mem_available_kb || 0) / 1024 / 1024).toFixed(2)}`,
+            heroVal: kb(s.mem_available_kb).replace(' GB', ''),
             heroUnit: 'GB',
             subtitle: `${(100 - memUsage).toFixed(1)}% free memory`,
             leftStat: 'FREE',
@@ -883,11 +940,24 @@
           title: 'Memory Utilization · 60s Window',
           series: [
             { label: 'RAM', data: ramHist, color: 'var(--accent)' },
-            { label: 'Swap', data: swapHist, color: '#a78bfa', strokeWidth: 1.8 }
+            { label: 'Swap', data: swapHist, color: '#a78bfa', strokeWidth: 2.0 }
           ],
-          height: 150,
+          height: 200,
           benchmarkVal: 80
         })}
+
+        <section class="card">
+          <div class="card-head">
+            <h2>Memory Allocation & Swappiness</h2>
+            <span class="chip">KERNEL</span>
+          </div>
+          <div class="kv">
+            <div><small>Total Kernel Memory</small><b>${kb(s.mem_total_kb)}</b></div>
+            <div><small>Available to Apps</small><b>${kb(s.mem_available_kb)}</b></div>
+            <div><small>Swap Partition</small><b>${kb(s.swap_total_kb)}</b></div>
+            <div><small>Swap Used</small><b>${kb(usedSwapKb)} (${swapUsage.toFixed(1)}%)</b></div>
+          </div>
+        </section>
 
         ${topAppsTable()}
       `,
@@ -896,14 +966,14 @@
         <div class="sensors-stat-grid">
           <article class="sensors-stat-card">
             <div class="stat-card-title"><span class="icon">${icon('e0f7')}</span><span>OPENGL RENDERER</span></div>
-            <div class="stat-card-hero"><span class="stat-hero-val" style="font-size:18px">${escapeHtml(val(s.gpu_renderer))}</span></div>
+            <div class="stat-card-hero"><span class="stat-hero-val" style="font-size:22px">${escapeHtml(val(s.gpu_renderer))}</span></div>
             <div class="stat-card-sub">Hardware graphics pipeline</div>
             <div class="stat-card-range"><span>DRIVER</span><span>LIVE</span></div>
             <div class="stat-card-spark">${renderSparklineSvg([100, 100], 100, 0.5, 'var(--accent)')}</div>
           </article>
           <article class="sensors-stat-card">
             <div class="stat-card-title"><span class="icon">${icon('e181')}</span><span>GRAPHICS PLATFORM</span></div>
-            <div class="stat-card-hero"><span class="stat-hero-val" style="font-size:18px">${escapeHtml(val(s.gpu_platform))}</span></div>
+            <div class="stat-card-hero"><span class="stat-hero-val" style="font-size:22px">${escapeHtml(val(s.gpu_platform))}</span></div>
             <div class="stat-card-sub">API & Vulkan integration</div>
             <div class="stat-card-range"><span>OPENGL ES</span><span>COMPLIANT</span></div>
             <div class="stat-card-spark">${renderSparklineSvg([100, 100], 100, 0.5, 'var(--accent)')}</div>
@@ -912,7 +982,7 @@
 
         <section class="card">
           <div class="card-head">
-            <h2>Graphics Telemetry</h2>
+            <h2>Graphics Subsystem Architecture</h2>
             <span class="chip">ADB LIMITS</span>
           </div>
           <div class="notice">
@@ -952,7 +1022,7 @@
           ${renderBigStatCard({
             iconCode: 'e186',
             title: 'READ RATE',
-            heroVal: formatRate(latest.diskReadRate ?? 0),
+            heroVal: formatRate(Number(latest.diskReadRate) || 0),
             heroUnit: '',
             subtitle: 'Disk read throughput',
             leftStat: `AVG ${formatRate(avg(readHist))}`,
@@ -965,7 +1035,7 @@
           ${renderBigStatCard({
             iconCode: 'e186',
             title: 'WRITE RATE',
-            heroVal: formatRate(latest.diskWriteRate ?? 0),
+            heroVal: formatRate(Number(latest.diskWriteRate) || 0),
             heroUnit: '',
             subtitle: 'Disk write throughput',
             leftStat: `AVG ${formatRate(avg(writeHist))}`,
@@ -983,9 +1053,22 @@
             { label: 'Read Throughput', data: readHist, color: 'var(--accent)' },
             { label: 'Write Throughput', data: writeHist, color: '#a78bfa' }
           ],
-          height: 140,
+          height: 200,
           suffix: ' B/s'
         })}
+
+        <section class="card">
+          <div class="card-head">
+            <h2>Partitions & Storage Mounts</h2>
+            <span class="chip">STATFS</span>
+          </div>
+          <div class="kv">
+            <div><small>Internal Used Space</small><b>${usedStorageGb.toFixed(1)} GB / ${totalStorageGb.toFixed(1)} GB (${storageUsage.toFixed(1)}%)</b></div>
+            <div><small>Internal Available</small><b>${freeStorageGb.toFixed(1)} GB</b></div>
+            <div><small>Shared Emulated Storage</small><b>${sharedUsedGb.toFixed(1)} GB / ${sharedTotalGb.toFixed(1)} GB</b></div>
+            <div><small>Disk Counter Samples</small><b>${s.disk_counters?.length || 0} block devices</b></div>
+          </div>
+        </section>
       `,
 
       wifi: () => `
@@ -1050,7 +1133,7 @@
             { label: 'Received (Downlink)', data: rxHist, color: '#38bdf8' },
             { label: 'Transmitted (Uplink)', data: txHist, color: 'var(--accent)' }
           ],
-          height: 140,
+          height: 200,
           suffix: ' B/s'
         })}
 
@@ -1069,7 +1152,7 @@
                       <td class="mono"><b>${escapeHtml(n.name)}</b></td>
                       <td>↓ ${formatBytes(n.rx_bytes)}</td>
                       <td>↑ ${formatBytes(n.tx_bytes)}</td>
-                      <td><b>${formatBytes(n.rx_bytes + n.tx_bytes)}</b></td>
+                      <td><b>${formatBytes(Number(n.rx_bytes) + Number(n.tx_bytes))}</b></td>
                     </tr>
                   `).join('')}
                 </tbody>
@@ -1080,13 +1163,68 @@
       `,
 
       'data-usage': () => `
+        <div class="sensors-stat-grid">
+          ${renderBigStatCard({
+            iconCode: 'e119',
+            title: 'TOTAL TRANSFERRED',
+            heroVal: formatBytes(totRx + totTx),
+            heroUnit: '',
+            subtitle: 'Combined interface traffic',
+            leftStat: 'RX + TX',
+            rightStat: 'TOTAL',
+            data: hist.map(h => Number(h.rx) + Number(h.tx)),
+            maxVal: Math.max(1024, ...(hist.map(h => Number(h.rx) + Number(h.tx)))),
+            dottedRatio: 0.5,
+            color: 'var(--accent)'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e119',
+            title: 'TOTAL RECEIVED',
+            heroVal: formatBytes(totRx),
+            heroUnit: '',
+            subtitle: 'Cumulative downlink bytes',
+            leftStat: 'RECEIVED',
+            rightStat: 'ALL IFACES',
+            data: hist.map(h => Number(h.rx) || 0),
+            maxVal: Math.max(1024, ...(hist.map(h => Number(h.rx) || 0))),
+            dottedRatio: 0.5,
+            color: '#38bdf8'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e119',
+            title: 'TOTAL SENT',
+            heroVal: formatBytes(totTx),
+            heroUnit: '',
+            subtitle: 'Cumulative uplink bytes',
+            leftStat: 'SENT',
+            rightStat: 'ALL IFACES',
+            data: hist.map(h => Number(h.tx) || 0),
+            maxVal: Math.max(1024, ...(hist.map(h => Number(h.tx) || 0))),
+            dottedRatio: 0.5,
+            color: '#a78bfa'
+          })}
+          ${renderBigStatCard({
+            iconCode: 'e1ae',
+            title: 'ACTIVE INTERFACES',
+            heroVal: `${network.length}`,
+            heroUnit: 'ifaces',
+            subtitle: 'Reported by Linux kernel',
+            leftStat: 'KERNEL',
+            rightStat: 'NETWORKS',
+            data: Array(hist.length).fill(network.length),
+            maxVal: network.length || 1,
+            dottedRatio: 0.9,
+            color: 'var(--accent)'
+          })}
+        </div>
+
         ${renderWaveformChartSvg({
           title: 'Cumulative Network Traffic · 60s Trend',
           series: [
-            { label: 'Cumulative Downlink', data: hist.map(h => h.rx ?? 0), color: '#38bdf8' },
-            { label: 'Cumulative Uplink', data: hist.map(h => h.tx ?? 0), color: 'var(--accent)' }
+            { label: 'Cumulative Downlink', data: hist.map(h => Number(h.rx) || 0), color: '#38bdf8' },
+            { label: 'Cumulative Uplink', data: hist.map(h => Number(h.tx) || 0), color: 'var(--accent)' }
           ],
-          height: 140,
+          height: 200,
           suffix: ' bytes'
         })}
 
@@ -1107,7 +1245,7 @@
                       <td class="mono"><b>${escapeHtml(n.name)}</b></td>
                       <td>↓ ${formatBytes(n.rx_bytes)}</td>
                       <td>↑ ${formatBytes(n.tx_bytes)}</td>
-                      <td><b>${formatBytes(n.rx_bytes + n.tx_bytes)}</b></td>
+                      <td><b>${formatBytes(Number(n.rx_bytes) + Number(n.tx_bytes))}</b></td>
                     </tr>
                   `).join('')}
                 </tbody>
@@ -1122,10 +1260,10 @@
           ${renderBigStatCard({
             iconCode: 'e145',
             title: 'BATTERY LEVEL',
-            heroVal: val(s.battery_pct, '%'),
+            heroVal: val(s.battery_pct, '%', 0),
             heroUnit: '',
             subtitle: val(s.battery_status),
-            leftStat: `PEAK ${peak(battHist)}%`,
+            leftStat: `PEAK ${peak(battHist).toFixed(0)}%`,
             rightStat: `AVG ${avg(battHist).toFixed(0)}%`,
             data: battHist,
             maxVal: 100,
@@ -1135,11 +1273,11 @@
           ${renderBigStatCard({
             iconCode: 'e186',
             title: 'TEMPERATURE',
-            heroVal: val(s.battery_temp_c, ' °C'),
+            heroVal: val(s.battery_temp_c, ' °C', 1),
             heroUnit: '',
-            subtitle: s.battery_health ? `Health code: ${s.battery_health}` : 'Battery thermal zone',
+            subtitle: s.battery_health ? `Health code: ${s.battery_health}` : 'Battery thermal sensor',
             leftStat: 'THERMAL',
-            rightStat: `${val(s.battery_temp_c, '°C')}`,
+            rightStat: `${val(s.battery_temp_c, '°C', 1)}`,
             data: tempHist,
             maxVal: Math.max(60, ...tempHist),
             dottedRatio: 0.4,
@@ -1148,7 +1286,7 @@
           ${renderBigStatCard({
             iconCode: 'e145',
             title: 'VOLTAGE',
-            heroVal: s.battery_voltage_mv ? `${(s.battery_voltage_mv / 1000).toFixed(2)}` : 'Unavailable',
+            heroVal: s.battery_voltage_mv ? `${(Number(s.battery_voltage_mv) / 1000).toFixed(2)}` : 'Unavailable',
             heroUnit: s.battery_voltage_mv ? 'V' : '',
             subtitle: `Plugged: ${val(s.battery_plugged)}`,
             leftStat: 'CHARGER',
@@ -1179,9 +1317,22 @@
             { label: 'Charge %', data: battHist, color: 'var(--accent)' },
             { label: 'Temperature (°C)', data: tempHist, color: '#fbbf24' }
           ],
-          height: 140,
+          height: 200,
           benchmarkVal: 50
         })}
+
+        <section class="card">
+          <div class="card-head">
+            <h2>Battery Health & Status Details</h2>
+            <span class="chip">DUMPSYS</span>
+          </div>
+          <div class="kv">
+            <div><small>Charging State</small><b>${val(s.battery_status)}</b></div>
+            <div><small>Power Source</small><b>${val(s.battery_plugged)}</b></div>
+            <div><small>Voltage</small><b>${s.battery_voltage_mv ? `${(Number(s.battery_voltage_mv) / 1000).toFixed(2)} V` : 'Unavailable'}</b></div>
+            <div><small>Health Rating</small><b>${val(s.battery_health ? `Good (code ${s.battery_health})` : 'Normal')}</b></div>
+          </div>
+        </section>
       `,
 
       bluetooth: () => `
@@ -1216,7 +1367,7 @@
 
         <section class="card">
           <div class="card-head">
-            <h2>Bluetooth Status</h2>
+            <h2>Bluetooth Status & Radio Controllers</h2>
             <span class="chip">SETTINGS INTEGRATION</span>
           </div>
           <div class="notice">
@@ -1226,7 +1377,7 @@
       `,
 
       temperature: () => {
-        const maxTemp = temps.length ? Math.max(...temps.map(x => Number(x.temp_c)).filter(Number.isFinite)) : (s.battery_temp_c || 0);
+        const maxTemp = Number(temps.length ? Math.max(...temps.map(x => Number(x.temp_c)).filter(Number.isFinite)) : (Number(s.battery_temp_c) || 0));
         return `
           <div class="sensors-stat-grid">
             ${renderBigStatCard({
@@ -1245,11 +1396,11 @@
             ${renderBigStatCard({
               iconCode: 'e145',
               title: 'BATTERY TEMP',
-              heroVal: val(s.battery_temp_c, ' °C'),
+              heroVal: val(s.battery_temp_c, ' °C', 1),
               heroUnit: '',
               subtitle: 'Integrated battery sensor',
               leftStat: 'BATTERY',
-              rightStat: `${val(s.battery_temp_c, '°C')}`,
+              rightStat: `${val(s.battery_temp_c, '°C', 1)}`,
               data: tempHist,
               maxVal: Math.max(60, ...tempHist),
               dottedRatio: 0.4,
@@ -1286,7 +1437,7 @@
           ${renderWaveformChartSvg({
             title: 'Thermal History · 60s Window',
             series: [{ label: 'Thermal Zone History', data: tempHist, color: '#fbbf24' }],
-            height: 140,
+            height: 200,
             suffix: ' °C',
             benchmarkVal: 45
           })}
@@ -1334,37 +1485,37 @@
     const activeView = state.sensorsView in views ? views[state.sensorsView]() : views.overview();
 
     content.innerHTML = `
-      <div class="sensors-shell">
-        <aside class="sensors-sidebar">
-          <div class="sensors-sidebar-title">
-            <span>TELEMETRY</span>
-            <span class="chip compact">ADB</span>
-          </div>
-          <nav class="sensors-subnav" aria-label="Sensor subtabs">
+      <div class="sensors-container">
+        <header class="sensors-topbar">
+          <nav class="sensors-subnav-horizontal" aria-label="Sensor subtabs">
             ${subtabs.map(([id, label, iconCode]) => `
-              <button class="sensors-subtab-btn ${state.sensorsView === id ? 'active' : ''}" data-sensor-view="${id}">
+              <button class="sensors-subtab-pill ${state.sensorsView === id ? 'active' : ''}" data-sensor-view="${id}">
                 <span class="icon">${icon(iconCode)}</span>
                 <span>${escapeHtml(label)}</span>
               </button>
             `).join('')}
           </nav>
-          <div class="sensors-sidebar-footer">
+          <div class="sensors-topbar-controls">
             <div class="live-pulse-badge">
               <div class="live-pulse-dot" style="${state.sensorsCadence === 0 ? 'background:var(--dim);box-shadow:none;animation:none;' : ''}"></div>
               <span>${state.sensorsCadence === 0 ? 'PAUSED' : 'LIVE 60S'}</span>
             </div>
-            <label class="sensor-cadence-label" for="sensor-cadence">Cadence</label>
-            <select class="input sensor-cadence-select" id="sensor-cadence">
-              <option value="1000" ${state.sensorsCadence === 1000 ? 'selected' : ''}>1s (Fast)</option>
-              <option value="2000" ${state.sensorsCadence === 2000 ? 'selected' : ''}>2s (Standard)</option>
-              <option value="5000" ${state.sensorsCadence === 5000 ? 'selected' : ''}>5s (Low power)</option>
-              <option value="0" ${state.sensorsCadence === 0 ? 'selected' : ''}>Paused</option>
-            </select>
+            <div class="cadence-control-group">
+              <label class="sensor-cadence-label" for="sensor-cadence">Cadence</label>
+              <select class="input sensor-cadence-select" id="sensor-cadence">
+                <option value="1000" ${state.sensorsCadence === 1000 ? 'selected' : ''}>1s (Fast)</option>
+                <option value="2000" ${state.sensorsCadence === 2000 ? 'selected' : ''}>2s (Standard)</option>
+                <option value="5000" ${state.sensorsCadence === 5000 ? 'selected' : ''}>5s (Low power)</option>
+                <option value="0" ${state.sensorsCadence === 0 ? 'selected' : ''}>Paused</option>
+              </select>
+            </div>
+            <button class="button tonal compact-refresh-btn" data-refresh title="Refresh telemetry">${icon('e145')} Refresh</button>
           </div>
-        </aside>
-        <section class="sensors-main">
+        </header>
+
+        <main class="sensors-view-main">
           ${activeView}
-        </section>
+        </main>
       </div>
     `;
 

@@ -154,133 +154,129 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 .kv small { display: block; color: var(--dim); font: 600 10px Inter, 'Cantarell', 'Noto Sans', system-ui, sans-serif; text-transform: uppercase; }
 .kv b { display: block; margin-top: 6px; font-size: 12px; overflow-wrap: anywhere; }
 /* ══════════════════════════════════════════════════════════════════════════ */
-/* SENSORS & TELEMETRY SUITE: Split Layout & High-Fidelity Charts            */
+/* SENSORS & TELEMETRY SUITE: Horizontal Topbar & High-Fidelity Dashboard    */
 /* ══════════════════════════════════════════════════════════════════════════ */
-.content:has(.sensors-shell) {
-  overflow: hidden;
-  padding: 10px 12px;
+.sensors-container {
   display: flex;
   flex-direction: column;
+  gap: 16px;
+  width: 100%;
 }
 
-.sensors-shell {
-  display: grid;
-  grid-template-columns: 195px minmax(0, 1fr);
-  gap: 12px;
-  height: 100%;
-  min-height: 0;
-  align-items: stretch;
-}
-
-.sensors-sidebar {
+/* Horizontal Top Navigation Bar */
+.sensors-topbar {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 10px 8px;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  height: 100%;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-}
-
-.sensors-sidebar-title {
-  font: 700 9.5px ui-monospace, monospace;
-  color: #94a3b8;
-  letter-spacing: 0.8px;
-  text-transform: uppercase;
-  padding: 4px 8px 8px;
+  padding: 8px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14);
 }
 
-.sensors-subnav {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.sensors-subtab-btn {
+.sensors-subnav-horizontal {
   display: flex;
   align-items: center;
-  gap: 9px;
-  width: 100%;
-  min-height: 32px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 0;
-  background: transparent;
-  color: #94a3b8;
-  font: 500 12.5px Inter, system-ui, sans-serif;
-  cursor: pointer;
-  text-align: left;
-  transition: all 0.12s ease;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+  padding: 2px 0;
 }
 
-.sensors-subtab-btn:hover {
+.sensors-subnav-horizontal::-webkit-scrollbar {
+  display: none;
+}
+
+.sensors-subtab-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
   background: var(--surface2);
-  color: var(--text);
+  color: #94a3b8;
+  font: 600 13px Inter, system-ui, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+  user-select: none;
 }
 
-.sensors-subtab-btn.active {
+.sensors-subtab-pill:hover {
+  background: color-mix(in srgb, var(--surface2), #ffffff 10%);
+  color: #f1f5f9;
+  border-color: color-mix(in srgb, var(--line), #ffffff 15%);
+}
+
+.sensors-subtab-pill.active {
   background: var(--accent);
   color: #080c14;
-  font-weight: 650;
-  box-shadow: 0 2px 10px color-mix(in srgb, var(--accent), transparent 60%);
+  border-color: var(--accent);
+  font-weight: 750;
+  box-shadow: 0 2px 14px color-mix(in srgb, var(--accent), transparent 50%);
 }
 
-.sensors-subtab-btn .icon {
-  font-size: 14px;
+.sensors-subtab-pill .icon {
+  font-size: 15px;
   color: var(--dim);
-  width: 18px;
 }
 
-.sensors-subtab-btn.active .icon {
+.sensors-subtab-pill.active .icon {
   color: #080c14;
 }
 
-.sensors-sidebar-footer {
-  margin-top: auto;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
+.sensors-topbar-controls {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.cadence-control-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .sensor-cadence-label {
-  font: 600 9px ui-monospace, monospace;
+  font: 700 10px ui-monospace, monospace;
   color: var(--dim);
-  letter-spacing: 0.5px;
+  letter-spacing: 0.6px;
   text-transform: uppercase;
 }
 
 .sensor-cadence-select {
-  padding: 5px 8px;
-  min-height: 30px;
-  font-size: 11px;
+  padding: 5px 10px;
+  min-height: 32px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
 }
 
 .live-pulse-badge {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font: 600 10px ui-monospace, monospace;
-  color: #e2e8f0;
-  padding: 4px 6px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--surface2), transparent 40%);
+  gap: 7px;
+  font: 700 11px ui-monospace, monospace;
+  color: #f1f5f9;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface2), transparent 30%);
+  border: 1px solid var(--line);
 }
 
 .live-pulse-dot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--green);
-  box-shadow: 0 0 6px var(--green);
+  box-shadow: 0 0 8px var(--green);
   animation: pulse-glow 2s infinite;
 }
 
@@ -289,94 +285,96 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   50% { opacity: 0.45; transform: scale(0.85); }
 }
 
-.sensors-main {
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--surface2) transparent;
+.compact-refresh-btn {
+  padding: 6px 12px;
+  min-height: 32px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+}
+
+.sensors-view-main {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-right: 2px;
+  gap: 16px;
+  width: 100%;
 }
 
 /* 4 Big Stat Cards Grid */
 .sensors-stat-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 9px;
+  gap: 14px;
 }
 
 .sensors-stat-card {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 13px 12px;
+  border-radius: 12px;
+  padding: 18px 20px;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.16);
+  min-height: 175px;
 }
 
 .stat-card-title {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font: 600 9.5px ui-monospace, monospace;
+  gap: 8px;
+  font: 700 11.5px ui-monospace, monospace;
   color: #94a3b8;
-  letter-spacing: 0.6px;
+  letter-spacing: 0.8px;
   text-transform: uppercase;
 }
 
 .stat-card-title .icon {
   color: var(--accent);
-  font-size: 12px;
+  font-size: 16px;
 }
 
 .stat-card-hero {
   display: flex;
   align-items: baseline;
-  gap: 2px;
-  margin: 7px 0 2px;
+  gap: 4px;
+  margin: 10px 0 4px;
 }
 
 .stat-hero-val {
-  font-size: 26px;
-  font-weight: 700;
+  font-size: 34px;
+  font-weight: 800;
   color: #f1f5f9;
-  letter-spacing: -0.6px;
+  letter-spacing: -0.8px;
   line-height: 1.1;
 }
 
 .stat-hero-unit {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 16px;
+  font-weight: 600;
   color: var(--dim);
 }
 
 .stat-card-sub {
-  font: 500 10px ui-monospace, monospace;
+  font: 500 12px ui-monospace, monospace;
   color: #94a3b8;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin-bottom: 7px;
+  margin-bottom: 10px;
 }
 
 .stat-card-range {
   display: flex;
   justify-content: space-between;
-  font: 600 8.5px ui-monospace, monospace;
+  font: 600 10.5px ui-monospace, monospace;
   color: var(--dim);
-  margin-bottom: 5px;
+  margin-bottom: 8px;
 }
 
 .stat-card-spark {
   width: 100%;
-  height: 32px;
+  height: 48px;
   margin-top: auto;
   overflow: visible;
   display: block;
@@ -385,79 +383,86 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 /* Overview Split Row: Overall Speed (64%) & Connection Stats (36%) */
 .sensors-overview-split {
   display: grid;
-  grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr);
-  gap: 9px;
+  grid-template-columns: minmax(0, 1.8fr) minmax(0, 1.2fr);
+  gap: 14px;
   align-items: stretch;
 }
 
 .overall-speed-card {
   display: flex;
   flex-direction: column;
+  padding: 20px 22px;
+  border-radius: 12px;
 }
 
 .speed-head-row {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 10px;
+  gap: 14px;
 }
 
 .speed-rates-pill {
   display: flex;
-  gap: 10px;
+  gap: 16px;
   align-items: center;
 }
 
 .speed-rate-item {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font: 600 11px ui-monospace, monospace;
+  gap: 6px;
+  font: 700 13.5px ui-monospace, monospace;
   color: #f1f5f9;
 }
 
 .speed-rate-item.down .rate-arrow {
   color: #38bdf8;
+  font-size: 15px;
+  font-weight: 800;
 }
 
 .speed-rate-item.up .rate-arrow {
   color: var(--accent);
+  font-size: 15px;
+  font-weight: 800;
 }
 
 .speed-chart-box {
   background: #090f19;
-  border-radius: 8px;
-  margin: 10px 0;
-  padding: 2px;
+  border-radius: 10px;
+  margin: 14px 0;
+  padding: 4px;
   position: relative;
 }
 
 .speed-footer-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  padding-top: 8px;
+  gap: 14px;
+  padding-top: 14px;
   border-top: 1px solid var(--line);
 }
 
 .speed-footer-stat-col small {
   display: block;
-  font: 600 8.5px ui-monospace, monospace;
+  font: 700 10.5px ui-monospace, monospace;
   color: var(--dim);
   text-transform: uppercase;
-  margin-bottom: 3px;
+  margin-bottom: 4px;
+  letter-spacing: 0.8px;
 }
 
 .speed-footer-stat-col strong {
   display: block;
-  font-size: 14.5px;
-  font-weight: 700;
+  font-size: 18px;
+  font-weight: 800;
   color: #f1f5f9;
 }
 
 .speed-footer-stat-col span {
   display: block;
-  font: 500 10.5px ui-monospace, monospace;
+  font: 600 12px ui-monospace, monospace;
   color: #cbd5e1;
 }
 
@@ -465,41 +470,44 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 .conn-stats-card {
   display: flex;
   flex-direction: column;
+  padding: 20px 22px;
+  border-radius: 12px;
 }
 
 .conn-stats-hero {
   display: flex;
   align-items: baseline;
-  gap: 5px;
-  margin: 4px 0 8px;
+  gap: 6px;
+  margin: 6px 0 10px;
 }
 
 .conn-stats-hero strong {
-  font-size: 22px;
-  font-weight: 700;
+  font-size: 30px;
+  font-weight: 800;
   color: #f1f5f9;
 }
 
 .conn-stats-hero span {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--muted);
+  font-weight: 500;
 }
 
 .conn-interface-chips {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  margin-top: 8px;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 .conn-iface-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 5px 8px;
-  border-radius: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
   background: var(--well);
-  font: 500 11px ui-monospace, monospace;
+  font: 600 12.5px ui-monospace, monospace;
   color: #cbd5e1;
 }
 
@@ -507,40 +515,42 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 .sensors-waveform-card {
   display: flex;
   flex-direction: column;
+  padding: 20px 22px;
+  border-radius: 12px;
 }
 
 .waveform-chart-box {
   background: #090f19;
-  border-radius: 8px;
-  padding: 4px;
-  margin: 8px 0 4px;
+  border-radius: 10px;
+  padding: 6px;
+  margin: 12px 0 6px;
 }
 
 .waveform-time-axis {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  font: 500 9px ui-monospace, monospace;
+  font: 600 11px ui-monospace, monospace;
   color: var(--dim);
-  margin-top: 4px;
+  margin-top: 8px;
 }
 
 .waveform-time-axis span:nth-child(2) { text-align: center; }
 .waveform-time-axis span:nth-child(3) { text-align: center; }
 .waveform-time-axis span:nth-child(4) { text-align: center; }
-.waveform-time-axis span:last-child { text-align: right; color: #e2e8f0; font-weight: 600; }
+.waveform-time-axis span:last-child { text-align: right; color: #e2e8f0; font-weight: 700; }
 
 /* Per-Core Grid */
 .cores-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
 }
 
 .core-card {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 9px 10px;
+  border-radius: 10px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
 }
@@ -549,47 +559,49 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  font: 600 10px ui-monospace, monospace;
+  font: 600 12px ui-monospace, monospace;
 }
 
 .core-card-head b {
   color: #f1f5f9;
-  font-size: 13px;
+  font-size: 18px;
+  font-weight: 800;
 }
 
 .core-card-sub {
-  font: 500 9.5px ui-monospace, monospace;
+  font: 500 11px ui-monospace, monospace;
   color: var(--dim);
-  margin: 3px 0 6px;
+  margin: 4px 0 8px;
 }
 
 /* Thermal zones card grid */
 .thermal-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
 }
 
 .thermal-zone-card {
   background: var(--well);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px;
+  border-radius: 10px;
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 .thermal-zone-card .metric-value {
-  font-size: 18px;
-  margin-top: 2px;
+  font-size: 24px;
+  font-weight: 800;
+  margin-top: 4px;
 }
 
 .thermal-badge {
   display: inline-block;
-  padding: 2px 7px;
+  padding: 3px 10px;
   border-radius: 999px;
-  font: 600 10px ui-monospace, monospace;
+  font: 700 11px ui-monospace, monospace;
 }
 
 .thermal-badge.normal {
@@ -607,36 +619,21 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   color: #f87171;
 }
 
-.sensor-tags { display: flex; flex-wrap: wrap; gap: 6px; }
-.sensor-tags .chip { max-width: 100%; overflow-wrap: anywhere; }
-.sensor-sort { width: auto; min-width: 115px; }
+.sensor-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.sensor-tags .chip { font-size: 12px; padding: 4px 10px; max-width: 100%; overflow-wrap: anywhere; }
+.sensor-sort { width: auto; min-width: 130px; }
 
-@media (max-width: 960px) {
-  .sensors-shell {
-    grid-template-columns: 1fr;
-  }
-  .sensors-sidebar {
-    height: auto;
-    max-height: 180px;
-  }
-  .sensors-subnav {
-    display: flex;
-    flex-direction: row;
-    overflow-x: auto;
-    gap: 4px;
-    padding-bottom: 4px;
-  }
-  .sensors-subtab-btn {
-    white-space: nowrap;
-    width: auto;
-  }
-  .sensors-sidebar-footer {
-    display: none;
-  }
+@media (max-width: 1100px) {
   .sensors-stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .sensors-overview-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .sensors-stat-grid {
     grid-template-columns: 1fr;
   }
 }

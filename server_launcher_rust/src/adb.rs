@@ -425,7 +425,8 @@ pub fn query_telemetry(serial: &str) -> AdbDeviceTelemetry {
                 telem.battery_pct = val.trim().parse::<f32>().ok();
             } else if let Some(val) = line.strip_prefix("temperature:") {
                 if let Ok(t) = val.trim().parse::<f32>() {
-                    telem.battery_temp_c = Some(t / 10.0);
+                    let temp = if t.abs() > 150.0 { t / 10.0 } else { t };
+                    telem.battery_temp_c = Some((temp * 10.0).round() / 10.0);
                 }
             } else if let Some(val) = line.strip_prefix("status:") {
                 telem.battery_status = match val.trim() {
@@ -466,11 +467,11 @@ pub fn query_telemetry(serial: &str) -> AdbDeviceTelemetry {
                 let free_kb = parts[3].parse::<f32>().unwrap_or(0.0);
                 let mount = parts[5];
                 if mount.starts_with("/data") && telem.storage_internal_total_gb.is_none() {
-                    telem.storage_internal_total_gb = Some(total_kb / (1024.0 * 1024.0));
-                    telem.storage_internal_free_gb = Some(free_kb / (1024.0 * 1024.0));
+                    telem.storage_internal_total_gb = Some((total_kb / (1024.0 * 1024.0) * 10.0).round() / 10.0);
+                    telem.storage_internal_free_gb = Some((free_kb / (1024.0 * 1024.0) * 10.0).round() / 10.0);
                 } else if (mount.contains("sdcard") || mount.contains("emulated")) && telem.storage_sdcard_total_gb.is_none() {
-                    telem.storage_sdcard_total_gb = Some(total_kb / (1024.0 * 1024.0));
-                    telem.storage_sdcard_free_gb = Some(free_kb / (1024.0 * 1024.0));
+                    telem.storage_sdcard_total_gb = Some((total_kb / (1024.0 * 1024.0) * 10.0).round() / 10.0);
+                    telem.storage_sdcard_free_gb = Some((free_kb / (1024.0 * 1024.0) * 10.0).round() / 10.0);
                 }
             }
         }
@@ -579,7 +580,11 @@ echo __UPTIME__; cat /proc/uptime
             if columns.len() < 9 {
                 return None;
             }
-            let cpu_pct = columns[8].trim_end_matches('%').parse::<f32>().ok();
+            let cpu_pct = columns[8]
+                .trim_end_matches('%')
+                .parse::<f32>()
+                .ok()
+                .map(|p| (p * 10.0).round() / 10.0);
             Some(AdbSensorProcess {
                 pid,
                 name: columns.get(11..).unwrap_or(&[]).join(" ").trim().to_string(),
@@ -602,7 +607,7 @@ echo __UPTIME__; cat /proc/uptime
             let idle = columns.iter().find_map(|part| {
                 part.strip_suffix("%idle")?.parse::<f32>().ok()
             })?;
-            (total > 0.0).then_some(((total - idle) / total * 100.0).clamp(0.0, 100.0))
+            (total > 0.0).then_some((((total - idle) / total * 100.0).clamp(0.0, 100.0) * 10.0).round() / 10.0)
         });
 
     let network_interfaces = section("NETDEV")
@@ -654,6 +659,7 @@ echo __UPTIME__; cat /proc/uptime
         if temp_c.abs() > 200.0 {
             temp_c /= 1000.0;
         }
+        temp_c = (temp_c * 10.0).round() / 10.0;
         Some(AdbTemperatureSensor {
             name: if name.trim().is_empty() { "Thermal zone" } else { name.trim() }.to_string(),
             temp_c,
@@ -750,7 +756,10 @@ echo __UPTIME__; cat /proc/uptime
         battery_status,
         battery_temp_c: battery_value("temperature:")
             .and_then(|value| value.parse::<f32>().ok())
-            .map(|value| value / 10.0),
+            .map(|value| {
+                let temp = if value.abs() > 150.0 { value / 10.0 } else { value };
+                (temp * 10.0).round() / 10.0
+            }),
         wifi_enabled: parse_toggle("WIFI"),
         bluetooth_enabled: parse_toggle("BLUETOOTH"),
         network_interfaces,

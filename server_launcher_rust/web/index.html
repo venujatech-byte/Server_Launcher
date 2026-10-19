@@ -37,7 +37,28 @@
       <main class="main">
         <header class="topbar">
           <div><div id="eyebrow" class="eyebrow">DEVICE OVERVIEW</div><h1 id="page-title">Overview</h1></div>
-          <div class="top-actions"><span id="device-model" class="device-chip">No device selected</span><button class="icon-button" id="refresh" title="Refresh current view" aria-label="Refresh"><span class="icon">&#xe145;</span></button><button class="button primary" data-action="scrcpy"><span class="icon">&#xe0b9;</span> Open scrcpy</button></div>
+          <div class="top-actions">
+            <div id="sensors-header-controls" class="sensors-header-controls" style="display: none;">
+              <div class="live-pulse-badge">
+                <div class="live-pulse-dot" id="header-pulse-dot"></div>
+                <span id="header-pulse-text">LIVE 60S</span>
+              </div>
+              <div class="cadence-control-group">
+                <label class="sensor-cadence-label" for="sensor-cadence">Cadence</label>
+                <select class="input sensor-cadence-select" id="sensor-cadence">
+                  <option value="1000">1s (Fast)</option>
+                  <option value="2000" selected>2s (Standard)</option>
+                  <option value="5000">5s (Low power)</option>
+                  <option value="0">Paused</option>
+                </select>
+              </div>
+            </div>
+            <button class="button tonal refresh-topbar-btn" id="refresh" title="Refresh current view" aria-label="Refresh">
+              <span class="icon">&#xe145;</span><span>Refresh</span>
+            </button>
+            <span id="device-model" class="device-chip">No device selected</span>
+            <button class="button primary" data-action="scrcpy"><span class="icon">&#xe0b9;</span> Open scrcpy</button>
+          </div>
         </header>
         <section id="content" class="content"><div class="loading-card"><span class="spinner"></span><p>Looking for Android devices…</p></div></section>
         <div id="toast" class="toast" role="status"></div>

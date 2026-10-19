@@ -32,12 +32,35 @@
     clearTimeout(state.toastTimer); state.toastTimer = setTimeout(() => { el.className = 'toast'; }, 3300);
   }
   function setConnection(ok, label) { const el = $('#connection-state'); el.className = `connection ${ok ? 'online' : 'offline'}`; el.lastElementChild.textContent = label; }
+  function updateHeaderTelemetryControls() {
+    const ctrl = $('#sensors-header-controls');
+    if (!ctrl) return;
+    if (state.tab === 'sensors') {
+      ctrl.style.display = 'inline-flex';
+      const cadence = $('#sensor-cadence');
+      if (cadence) cadence.value = String(state.sensorsCadence);
+      const dot = $('#header-pulse-dot');
+      const txt = $('#header-pulse-text');
+      if (dot) {
+        dot.style.background = state.sensorsCadence === 0 ? 'var(--dim)' : 'var(--green)';
+        dot.style.boxShadow = state.sensorsCadence === 0 ? 'none' : '0 0 8px var(--green)';
+        dot.style.animation = state.sensorsCadence === 0 ? 'none' : 'pulse-glow 2s infinite';
+      }
+      if (txt) {
+        txt.textContent = state.sensorsCadence === 0 ? 'PAUSED' : 'LIVE 60S';
+      }
+    } else {
+      ctrl.style.display = 'none';
+    }
+  }
+
   function selectTab(tab) {
     if (!tabNames[tab]) return;
     clearInterval(state.screenTimer); state.screenTimer = null;
     state.tab = tab; document.querySelectorAll('.nav-item').forEach((n) => n.classList.toggle('active', n.dataset.tab === tab));
     clearTimeout(state.sensorTimer); state.sensorTimer = null;
     $('#page-title').textContent = tabNames[tab]; $('#eyebrow').textContent = `ANDROID DEVICE / ${tab.toUpperCase()}`;
+    updateHeaderTelemetryControls();
     void renderTab();
   }
   async function refreshDevices() {
@@ -487,8 +510,8 @@
     `;
   }
 
-  async function pollSensors() {
-    if (state.sensorBusy || state.tab !== 'sensors' || document.hidden || state.sensorsCadence === 0) return;
+  async function pollSensors(force = false) {
+    if (state.sensorBusy || state.tab !== 'sensors' || (!force && (document.hidden || state.sensorsCadence === 0))) return;
     state.sensorBusy = true;
     try {
       await loadData('sensors');
@@ -1486,32 +1509,14 @@
 
     content.innerHTML = `
       <div class="sensors-container">
-        <header class="sensors-topbar">
-          <nav class="sensors-subnav-horizontal" aria-label="Sensor subtabs">
-            ${subtabs.map(([id, label, iconCode]) => `
-              <button class="sensors-subtab-pill ${state.sensorsView === id ? 'active' : ''}" data-sensor-view="${id}">
-                <span class="icon">${icon(iconCode)}</span>
-                <span>${escapeHtml(label)}</span>
-              </button>
-            `).join('')}
-          </nav>
-          <div class="sensors-topbar-controls">
-            <div class="live-pulse-badge">
-              <div class="live-pulse-dot" style="${state.sensorsCadence === 0 ? 'background:var(--dim);box-shadow:none;animation:none;' : ''}"></div>
-              <span>${state.sensorsCadence === 0 ? 'PAUSED' : 'LIVE 60S'}</span>
-            </div>
-            <div class="cadence-control-group">
-              <label class="sensor-cadence-label" for="sensor-cadence">Cadence</label>
-              <select class="input sensor-cadence-select" id="sensor-cadence">
-                <option value="1000" ${state.sensorsCadence === 1000 ? 'selected' : ''}>1s (Fast)</option>
-                <option value="2000" ${state.sensorsCadence === 2000 ? 'selected' : ''}>2s (Standard)</option>
-                <option value="5000" ${state.sensorsCadence === 5000 ? 'selected' : ''}>5s (Low power)</option>
-                <option value="0" ${state.sensorsCadence === 0 ? 'selected' : ''}>Paused</option>
-              </select>
-            </div>
-            <button class="button tonal compact-refresh-btn" data-refresh title="Refresh telemetry">${icon('e145')} Refresh</button>
-          </div>
-        </header>
+        <nav class="sensors-subnav-bar" aria-label="Sensor subtabs">
+          ${subtabs.map(([id, label, iconCode]) => `
+            <button class="sensors-subtab-pill ${state.sensorsView === id ? 'active' : ''}" data-sensor-view="${id}">
+              <span class="icon">${icon(iconCode)}</span>
+              <span>${escapeHtml(label)}</span>
+            </button>
+          `).join('')}
+        </nav>
 
         <main class="sensors-view-main">
           ${activeView}
@@ -1519,10 +1524,11 @@
       </div>
     `;
 
+    updateHeaderTelemetryControls();
+
     // Event wiring
     const filter = $('#sensor-app-filter');
     const sort = $('#sensor-app-sort');
-    const cadence = $('#sensor-cadence');
 
     if (filter) {
       filter.oninput = () => {
@@ -1538,16 +1544,6 @@
     if (sort) {
       sort.onchange = () => {
         state.sensorSort = sort.value;
-        renderSensors();
-      };
-    }
-    if (cadence) {
-      cadence.onchange = () => {
-        state.sensorsCadence = Number(cadence.value);
-        clearTimeout(state.sensorTimer);
-        if (state.sensorsCadence > 0) {
-          state.sensorTimer = setTimeout(pollSensors, state.sensorsCadence);
-        }
         renderSensors();
       };
     }
@@ -1573,7 +1569,15 @@
       state.sensorTimer = setTimeout(pollSensors, state.sensorsCadence);
     }
   }
-  async function refreshCurrent() { if (state.tab === 'overview' || state.tab === 'storage') await refreshTelemetry(); else await renderTab(); }
+  async function refreshCurrent() {
+    if (state.tab === 'overview' || state.tab === 'storage') {
+      await refreshTelemetry();
+    } else if (state.tab === 'sensors') {
+      await pollSensors(true);
+    } else {
+      await renderTab();
+    }
+  }
 
   document.addEventListener('click', async (event) => {
     const sensorTab = event.target.closest('[data-sensor-view]'); if (sensorTab) { state.sensorsView=sensorTab.dataset.sensorView; renderSensors(); return; }
@@ -1590,6 +1594,17 @@
   });
   $('#device-select').addEventListener('change', async e => { state.serial=e.target.value; state.telemetry=null; await refreshDevices(); });
   $('#refresh').addEventListener('click', () => void refreshCurrent());
+  const headerCadence = $('#sensor-cadence');
+  if (headerCadence) {
+    headerCadence.addEventListener('change', () => {
+      state.sensorsCadence = Number(headerCadence.value);
+      updateHeaderTelemetryControls();
+      clearTimeout(state.sensorTimer);
+      if (state.sensorsCadence > 0) {
+        state.sensorTimer = setTimeout(pollSensors, state.sensorsCadence);
+      }
+    });
+  }
   document.addEventListener('visibilitychange', () => { if(document.hidden){clearInterval(state.screenTimer);state.screenTimer=null;clearTimeout(state.sensorTimer);state.sensorTimer=null;} else if(state.tab==='screen'&&state.serial) selectTab('screen'); else if(state.tab==='sensors'&&state.serial) void renderTab(); });
   (async () => {
     if (!invoke) { content.innerHTML=`<div class="card empty"><b>Tauri runtime is unavailable</b><span>Launch the Android cockpit from Server Launcher.</span></div>`; return; }

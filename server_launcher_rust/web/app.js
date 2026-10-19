@@ -2285,8 +2285,6 @@
             </div>
           </section>
         </div>
-
-        ${topAppsTable()}
       `,
 
       'top-apps': topAppsTable,
@@ -2364,32 +2362,28 @@
           benchmarkVal: 50
         })}
 
-        <section class="card">
-          <div class="card-head">
-            <h2>Per-Core Telemetry</h2>
-            <span class="subtle mono">${s.cpu_cores || 0} physical/logical cores</span>
-          </div>
-          <div class="cores-grid">
-            ${Array.from({ length: s.cpu_cores || 0 }, (_, i) => {
-              const coreKey = `cpu${i}`;
-              const coreHist = hist.map(h => Number(h.cores?.[coreKey]) || 0);
-              const val = coreHist.at(-1) ?? 0;
-              const f = s.cpu_frequencies_mhz?.[i] ? `${(Number(s.cpu_frequencies_mhz[i]) / 1000).toFixed(2)} GHz` : 'Online';
-              return `
-                <div class="core-card">
-                  <div class="core-card-head">
-                    <span>Core ${i}</span>
-                    <b>${val.toFixed(0)}%</b>
-                  </div>
-                  <div class="core-card-sub">${f}</div>
-                  ${renderSparklineSvg(coreHist, 100, 0.5, 'var(--accent)')}
+        <div class="cores-section-header">
+          <h2>Per-Core Telemetry</h2>
+          <span class="subtle mono">${s.cpu_cores || 0} physical/logical cores</span>
+        </div>
+        <div class="cores-grid">
+          ${Array.from({ length: s.cpu_cores || 0 }, (_, i) => {
+            const coreKey = `cpu${i}`;
+            const coreHist = hist.map(h => Number(h.cores?.[coreKey]) || 0);
+            const val = coreHist.at(-1) ?? 0;
+            const f = s.cpu_frequencies_mhz?.[i] ? `${(Number(s.cpu_frequencies_mhz[i]) / 1000).toFixed(2)} GHz` : 'Online';
+            return `
+              <article class="card core-card">
+                <div class="core-card-head">
+                  <span class="core-name">Core ${i}</span>
+                  <b class="core-val">${val.toFixed(0)}%</b>
                 </div>
-              `;
-            }).join('')}
-          </div>
-        </section>
-
-        ${topAppsTable()}
+                <div class="core-card-sub">${f}</div>
+                <div class="core-card-chart">${renderSparklineSvg(coreHist, 100, 0.5, 'var(--accent)')}</div>
+              </article>
+            `;
+          }).join('')}
+        </div>
       `,
 
       ram: () => `
@@ -2470,8 +2464,6 @@
             <div><small>Swap Used</small><b>${kb(usedSwapKb)} (${swapUsage.toFixed(1)}%)</b></div>
           </div>
         </section>
-
-        ${topAppsTable()}
       `,
 
       gpu: () => `

@@ -1140,20 +1140,52 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 .waveform-time-axis span:nth-child(4) { text-align: center; }
 .waveform-time-axis span:last-child { text-align: right; color: #e2e8f0; font-weight: 700; }
 
-/* Per-Core Grid */
+/* Per-Core Section & Grid */
+.cores-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 18px 0 10px;
+  padding: 0 2px;
+}
+
+.cores-section-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #f1f5f9;
+  letter-spacing: -0.2px;
+}
+
 .cores-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
 }
 
 .core-card {
   background: var(--surface);
   border: none;
-  border-radius: 10px;
-  padding: 12px 14px;
+  border-radius: 12px;
+  padding: 16px 18px;
   display: flex;
   flex-direction: column;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.16);
+  min-width: 0;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.core-card:hover {
+  background: var(--surface2);
+}
+
+.card .core-card {
+  background: var(--well);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+
+.card .core-card:hover {
+  background: color-mix(in srgb, var(--well) 85%, var(--surface2));
 }
 
 .core-card-head {
@@ -1161,18 +1193,31 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   justify-content: space-between;
   align-items: baseline;
   font: 600 12px ui-monospace, monospace;
+  color: var(--muted);
 }
 
+.core-card-head .core-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.core-card-head .core-val,
 .core-card-head b {
   color: #f1f5f9;
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 800;
+  letter-spacing: -0.5px;
 }
 
 .core-card-sub {
-  font: 500 11px ui-monospace, monospace;
+  font: 500 11.5px ui-monospace, monospace;
   color: var(--dim);
-  margin: 4px 0 8px;
+  margin: 4px 0 12px;
+}
+
+.core-card-chart {
+  margin-top: auto;
 }
 
 /* Thermal zones card grid */

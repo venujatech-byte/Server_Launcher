@@ -2,8 +2,8 @@
   const invoke = window.__TAURI__?.core?.invoke;
   const $ = (selector) => document.querySelector(selector);
   const content = $('#content');
-  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', screenTimer: null, toastTimer: null, lastTelemetry: 0, topAppsSelectedPid: 14120, topAppsExpandedGroups: new Set(), topAppsAppsExpanded: true, topAppsBgExpanded: true, topAppsSort: 'mem', topAppsSortDesc: true, topAppsSearch: '' };
-  const tabNames = { overview: 'Overview', screen: 'Screen share', messages: 'Messages', calls: 'Calls', photos: 'Photos', notifications: 'Notifications', sensors: 'Sensors', storage: 'Storage', apps: 'Apps', clipboard: 'Clipboard', terminal: 'Terminal', wireless: 'Wireless debugging', firmware: 'Device controls' };
+  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', screenTimer: null, toastTimer: null, lastTelemetry: 0, topAppsSelectedPid: 14120, topAppsExpandedGroups: new Set(), topAppsAppsExpanded: true, topAppsBgExpanded: true, topAppsSort: 'mem', topAppsSortDesc: true, topAppsSearch: '', photosAlbum: 'all', photosSearch: '', photosDensity: 'comfortable', photosSelected: new Set(), photosSelectionMode: false, photosLightboxIndex: null, photosCache: {}, customSubtab: 'boot', customRootStatus: null, customFastbootDevices: null, customDensityVal: '', customAnimScale: '0.5' };
+  const tabNames = { overview: 'Overview', screen: 'Screen share', messages: 'Messages', calls: 'Calls', photos: 'Photos', notifications: 'Notifications', sensors: 'Sensors', storage: 'Storage', apps: 'Apps', clipboard: 'Clipboard', terminal: 'Terminal', wireless: 'Wireless debugging', firmware: 'Customization & Boot' };
   const tabKinds = { messages: 'messages', calls: 'calls', photos: 'photos', notifications: 'notifications', sensors: 'sensors', apps: 'apps', storage: 'files', wireless: 'endpoints' };
   const icon = (code) => `<span class="icon" aria-hidden="true">&#x${code};</span>`;
   const escapeHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -154,8 +154,395 @@
   }
   function renderPhotos() {
     const rows = state.data || [];
-    content.innerHTML = `<section class="card"><div class="card-head"><div><h2>Camera roll</h2><div class="subtle" style="margin-top:5px">${rows.length} items · Preview downloads one image only when requested</div></div><button class="button" data-refresh>${icon("e145")} Refresh</button></div>${rows.length ? `<div class="photo-grid">${rows.map((p,i) => `<article class="photo-card"><div id="photo-preview-${i}" class="photo-preview">${icon("e0f7")}</div><strong title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</strong><div class="list-meta">${escapeHtml(p.size)} · ${escapeHtml(p.date)}</div><div class="photo-actions"><button class="button" data-view-photo="${i}">Preview</button><button class="button success" data-action="download_photo" data-value="${escapeHtml(p.path)}">Save</button><button class="button danger" data-action="delete_photo" data-value="${escapeHtml(p.path)}">Delete</button></div></article>`).join('')}</div>` : empty('No photos found', 'No images were returned from the device camera folders.')}</section>`;
-    document.querySelectorAll('[data-view-photo]').forEach(btn => btn.onclick = async () => { const p = rows[Number(btn.dataset.viewPhoto)], slot = $(`#photo-preview-${btn.dataset.viewPhoto}`); btn.disabled = true; try { const src = await invokeOrFail('adb_photo_preview', { serial: state.serial, path: p.path }); slot.innerHTML = `<img alt="${escapeHtml(p.name)}" src="${src}">`; } catch (e) { toast(String(e), true); } finally { btn.disabled = false; } });
+    const q = (state.photosSearch || '').trim().toLowerCase();
+    const album = state.photosAlbum || 'all';
+
+    const getAlbum = (p) => {
+      const path = (p.path || '').toLowerCase();
+      const name = (p.name || '').toLowerCase();
+      if (path.includes('/screenshots/') || name.includes('screenshot')) return 'screenshots';
+      if (path.includes('/download')) return 'downloads';
+      if (path.includes('/dcim/') || path.includes('/camera/')) return 'camera';
+      return 'other';
+    };
+
+    const counts = {
+      all: rows.length,
+      camera: rows.filter(p => getAlbum(p) === 'camera').length,
+      screenshots: rows.filter(p => getAlbum(p) === 'screenshots').length,
+      downloads: rows.filter(p => getAlbum(p) === 'downloads').length,
+    };
+
+    const filtered = rows.filter(p => {
+      if (album === 'camera' && getAlbum(p) !== 'camera') return false;
+      if (album === 'screenshots' && getAlbum(p) !== 'screenshots') return false;
+      if (album === 'downloads' && getAlbum(p) !== 'downloads') return false;
+      if (q && !((p.name || '').toLowerCase().includes(q) || (p.path || '').toLowerCase().includes(q))) return false;
+      return true;
+    });
+
+    const isSelected = (path) => state.photosSelected.has(path);
+    const density = state.photosDensity || 'comfortable';
+
+    content.innerHTML = `
+      <div class="photos-page">
+        <!-- Top Header Card -->
+        <header class="photos-header-card">
+          <div class="photos-header-info">
+            <h2>${icon("e0f7")} Camera Roll & Gallery</h2>
+            <div class="photos-header-sub">${filtered.length} photos displayed · ${rows.length} total on device</div>
+          </div>
+          <div class="photos-header-actions">
+            <button class="button tonal" id="photo-upload-btn">${icon("e0cc")} Push Photo to Device</button>
+            <button class="button" data-refresh>${icon("e145")} Refresh</button>
+          </div>
+        </header>
+
+        <!-- Filter & Search Toolbar -->
+        <div class="photos-filter-bar">
+          <div class="photos-albums">
+            <button class="album-pill ${album === 'all' ? 'active' : ''}" data-album="all">${icon("e0d7")} All (${counts.all})</button>
+            <button class="album-pill ${album === 'camera' ? 'active' : ''}" data-album="camera">${icon("e0f7")} Camera (${counts.camera})</button>
+            <button class="album-pill ${album === 'screenshots' ? 'active' : ''}" data-album="screenshots">${icon("e14f")} Screenshots (${counts.screenshots})</button>
+            <button class="album-pill ${album === 'downloads' ? 'active' : ''}" data-album="downloads">${icon("e0cc")} Downloads (${counts.downloads})</button>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div class="photos-search-wrap">
+              <span class="icon" style="position:absolute; left:9px; color:#64748b; font-size:14px; pointer-events:none;">&#xe14c;</span>
+              <input id="photos-search-input" class="photos-search-input" type="search" placeholder="Search photos..." value="${escapeHtml(state.photosSearch)}">
+            </div>
+
+            <div class="density-toggle">
+              <button class="density-btn ${density === 'compact' ? 'active' : ''}" data-density="compact" title="Compact density">Compact</button>
+              <button class="density-btn ${density === 'comfortable' ? 'active' : ''}" data-density="comfortable" title="Comfortable density">Medium</button>
+              <button class="density-btn ${density === 'large' ? 'active' : ''}" data-density="large" title="Large cards">Large</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Photo Grid -->
+        ${filtered.length > 0 ? `
+          <div class="photo-grid density-${density} ${state.photosSelected.size > 0 ? 'selection-mode' : ''}">
+            ${filtered.map((p, idx) => {
+              const selected = isSelected(p.path);
+              const cachedSrc = state.photosCache[p.path];
+              const ext = (p.name.split('.').pop() || 'JPG').toUpperCase();
+              return `
+                <article class="photo-card ${selected ? 'selected' : ''}" data-photo-path="${escapeHtml(p.path)}">
+                  <div class="photo-select-box" data-photo-select="${escapeHtml(p.path)}" title="Select photo">
+                    ${selected ? icon("e10b") : ''}
+                  </div>
+                  <div class="photo-thumb-container" data-photo-view="${idx}">
+                    ${cachedSrc ? `
+                      <img class="photo-thumb-img" src="${cachedSrc}" alt="${escapeHtml(p.name)}" loading="lazy">
+                    ` : `
+                      <div class="photo-thumb-placeholder" id="thumb-holder-${idx}">
+                        ${icon("e0f7")}
+                        <span>${escapeHtml(ext)}</span>
+                      </div>
+                    `}
+                    <div class="photo-quick-overlay">
+                      <button class="photo-overlay-btn" data-overlay-view="${idx}">${icon("e14f")} View</button>
+                      <button class="photo-overlay-btn" data-overlay-save="${escapeHtml(p.path)}">${icon("e0cc")} Save</button>
+                      <button class="photo-overlay-btn danger" data-overlay-del="${escapeHtml(p.path)}">${icon("e048")} Del</button>
+                    </div>
+                  </div>
+                  <div class="photo-details">
+                    <div class="photo-title" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>
+                    <div class="photo-meta-row">
+                      <span>${escapeHtml(p.size)}</span>
+                      <span>${escapeHtml(p.date)}</span>
+                    </div>
+                  </div>
+                </article>
+              `;
+            }).join('')}
+          </div>
+        ` : empty('No photos found', rows.length === 0 ? 'No photos returned from /sdcard/DCIM or MediaStore. Click "Push Photo to Device" to transfer images to the camera roll.' : 'No photos match your filter or search query.')}
+
+        <!-- Floating Bulk Selection Bar -->
+        ${state.photosSelected.size > 0 ? `
+          <div class="photo-floating-bar">
+            <span class="photo-selected-count">${state.photosSelected.size} selected</span>
+            <button class="button success tonal" id="bulk-download-btn">${icon("e0cc")} Save Selected</button>
+            <button class="button danger tonal" id="bulk-delete-btn">${icon("e048")} Delete Selected</button>
+            <button class="button tonal" id="bulk-clear-btn">Deselect All</button>
+          </div>
+        ` : ''}
+
+        <!-- Lightbox Modal -->
+        ${state.photosLightboxIndex !== null && filtered[state.photosLightboxIndex] ? (() => {
+          const p = filtered[state.photosLightboxIndex];
+          const cachedSrc = state.photosCache[p.path];
+          return `
+            <div class="photo-lightbox" id="photo-lightbox-modal">
+              <div class="lightbox-topbar">
+                <div class="lightbox-title-box">
+                  ${icon("e0f7")}
+                  <span class="lightbox-filename">${escapeHtml(p.name)}</span>
+                  <span class="lightbox-counter">${state.photosLightboxIndex + 1} / ${filtered.length}</span>
+                </div>
+                <div class="lightbox-actions">
+                  <button class="button tonal" id="lightbox-save-btn">${icon("e0cc")} Download to PC</button>
+                  <button class="button danger tonal" id="lightbox-del-btn">${icon("e048")} Delete</button>
+                  <button class="button" id="lightbox-close-btn">✕ Close</button>
+                </div>
+              </div>
+
+              <div class="lightbox-stage">
+                ${state.photosLightboxIndex > 0 ? `
+                  <button class="lightbox-nav-btn prev" id="lightbox-prev-btn" title="Previous photo (←)">‹</button>
+                ` : ''}
+                <div id="lightbox-img-container" style="display:grid; place-items:center; width:100%; height:100%;">
+                  ${cachedSrc ? `
+                    <img src="${cachedSrc}" alt="${escapeHtml(p.name)}">
+                  ` : `
+                    <div class="loading-card"><div class="spinner"></div><div style="margin-top:10px;">Loading high-resolution photo from device…</div></div>
+                  `}
+                </div>
+                ${state.photosLightboxIndex < filtered.length - 1 ? `
+                  <button class="lightbox-nav-btn next" id="lightbox-next-btn" title="Next photo (→)">›</button>
+                ` : ''}
+              </div>
+
+              <div class="lightbox-footer">
+                <span class="mono">${escapeHtml(p.path)}</span>
+                <span>${escapeHtml(p.size)} · ${escapeHtml(p.date)} · Press ← / → to navigate, Esc to exit</span>
+              </div>
+            </div>
+          `;
+        })() : ''}
+      </div>
+    `;
+
+    // 1. Search input
+    const searchInput = $('#photos-search-input');
+    if (searchInput) {
+      searchInput.oninput = (e) => {
+        state.photosSearch = e.target.value;
+        renderPhotos();
+        const fresh = $('#photos-search-input');
+        if (fresh) { fresh.focus(); fresh.setSelectionRange(fresh.value.length, fresh.value.length); }
+      };
+    }
+
+    // 2. Album pills
+    document.querySelectorAll('[data-album]').forEach(btn => {
+      btn.onclick = () => {
+        state.photosAlbum = btn.dataset.album;
+        renderPhotos();
+      };
+    });
+
+    // 3. Density toggle
+    document.querySelectorAll('[data-density]').forEach(btn => {
+      btn.onclick = () => {
+        state.photosDensity = btn.dataset.density;
+        renderPhotos();
+      };
+    });
+
+    // 4. Push / Upload photo
+    const uploadBtn = $('#photo-upload-btn');
+    if (uploadBtn) {
+      uploadBtn.onclick = async () => {
+        try {
+          const filePath = await action('pick_file', 'jpg,jpeg,png,webp');
+          if (filePath) {
+            toast('Pushing photo to /sdcard/DCIM/Camera/...');
+            await action('push_photo', filePath);
+            toast('Photo pushed and scanned into gallery!');
+            await loadData('photos');
+            renderPhotos();
+          }
+        } catch (err) {
+          if (!String(err).includes('cancelled')) toast(String(err), true);
+        }
+      };
+    }
+
+    // 5. Lightbox open
+    document.querySelectorAll('[data-photo-view], [data-overlay-view]').forEach(el => {
+      el.onclick = async (e) => {
+        e.stopPropagation();
+        const idx = Number(el.dataset.photoView ?? el.dataset.overlayView);
+        state.photosLightboxIndex = idx;
+        renderPhotos();
+        const targetPhoto = filtered[idx];
+        if (targetPhoto && !state.photosCache[targetPhoto.path]) {
+          try {
+            const src = await invokeOrFail('adb_photo_preview', { serial: state.serial, path: targetPhoto.path });
+            state.photosCache[targetPhoto.path] = src;
+            const container = $('#lightbox-img-container');
+            if (container && state.photosLightboxIndex === idx) {
+              container.innerHTML = `<img src="${src}" alt="${escapeHtml(targetPhoto.name)}">`;
+            }
+          } catch (err) {
+            toast('Failed to load image preview: ' + err, true);
+          }
+        }
+      };
+    });
+
+    // 6. Selection checkbox
+    document.querySelectorAll('[data-photo-select]').forEach(box => {
+      box.onclick = (e) => {
+        e.stopPropagation();
+        const path = box.dataset.photoSelect;
+        if (state.photosSelected.has(path)) {
+          state.photosSelected.delete(path);
+        } else {
+          state.photosSelected.add(path);
+        }
+        renderPhotos();
+      };
+    });
+
+    // 7. Overlay save / delete
+    document.querySelectorAll('[data-overlay-save]').forEach(btn => {
+      btn.onclick = async (e) => {
+        e.stopPropagation();
+        const path = btn.dataset.overlaySave;
+        await action('download_photo', path);
+      };
+    });
+
+    document.querySelectorAll('[data-overlay-del]').forEach(btn => {
+      btn.onclick = async (e) => {
+        e.stopPropagation();
+        const path = btn.dataset.overlayDel;
+        if (confirm(`Are you sure you want to delete this photo from your device?\n${path}`)) {
+          await action('delete_photo', path);
+          delete state.photosCache[path];
+          state.photosSelected.delete(path);
+          await loadData('photos');
+          renderPhotos();
+        }
+      };
+    });
+
+    // 8. Bulk action bar
+    const bulkDownload = $('#bulk-download-btn');
+    if (bulkDownload) {
+      bulkDownload.onclick = async () => {
+        const paths = Array.from(state.photosSelected);
+        toast(`Saving ${paths.length} photos to PC Downloads...`);
+        for (const p of paths) {
+          try { await action('download_photo', p); } catch {}
+        }
+        toast(`Exported ${paths.length} photos!`);
+      };
+    }
+
+    const bulkDelete = $('#bulk-delete-btn');
+    if (bulkDelete) {
+      bulkDelete.onclick = async () => {
+        const paths = Array.from(state.photosSelected);
+        if (confirm(`Permanently delete ${paths.length} selected photos from your device?`)) {
+          for (const p of paths) {
+            try {
+              await action('delete_photo', p);
+              delete state.photosCache[p];
+            } catch {}
+          }
+          state.photosSelected.clear();
+          toast(`Deleted ${paths.length} photos.`);
+          await loadData('photos');
+          renderPhotos();
+        }
+      };
+    }
+
+    const bulkClear = $('#bulk-clear-btn');
+    if (bulkClear) {
+      bulkClear.onclick = () => {
+        state.photosSelected.clear();
+        renderPhotos();
+      };
+    }
+
+    // 9. Lightbox controls
+    const lightboxModal = $('#photo-lightbox-modal');
+    if (lightboxModal && state.photosLightboxIndex !== null) {
+      const curPhoto = filtered[state.photosLightboxIndex];
+      const closeLb = () => { state.photosLightboxIndex = null; renderPhotos(); };
+
+      const closeBtn = $('#lightbox-close-btn');
+      if (closeBtn) closeBtn.onclick = closeLb;
+
+      const prevBtn = $('#lightbox-prev-btn');
+      if (prevBtn) {
+        prevBtn.onclick = () => {
+          if (state.photosLightboxIndex > 0) {
+            state.photosLightboxIndex--;
+            renderPhotos();
+            const prevP = filtered[state.photosLightboxIndex];
+            if (prevP && !state.photosCache[prevP.path]) {
+              invokeOrFail('adb_photo_preview', { serial: state.serial, path: prevP.path }).then(src => {
+                state.photosCache[prevP.path] = src;
+                const container = $('#lightbox-img-container');
+                if (container) container.innerHTML = `<img src="${src}" alt="${escapeHtml(prevP.name)}">`;
+              });
+            }
+          }
+        };
+      }
+
+      const nextBtn = $('#lightbox-next-btn');
+      if (nextBtn) {
+        nextBtn.onclick = () => {
+          if (state.photosLightboxIndex < filtered.length - 1) {
+            state.photosLightboxIndex++;
+            renderPhotos();
+            const nextP = filtered[state.photosLightboxIndex];
+            if (nextP && !state.photosCache[nextP.path]) {
+              invokeOrFail('adb_photo_preview', { serial: state.serial, path: nextP.path }).then(src => {
+                state.photosCache[nextP.path] = src;
+                const container = $('#lightbox-img-container');
+                if (container) container.innerHTML = `<img src="${src}" alt="${escapeHtml(nextP.name)}">`;
+              });
+            }
+          }
+        };
+      }
+
+      const saveBtn = $('#lightbox-save-btn');
+      if (saveBtn) {
+        saveBtn.onclick = () => action('download_photo', curPhoto.path);
+      }
+
+      const delBtn = $('#lightbox-del-btn');
+      if (delBtn) {
+        delBtn.onclick = async () => {
+          if (confirm(`Delete ${curPhoto.name} from device?`)) {
+            await action('delete_photo', curPhoto.path);
+            delete state.photosCache[curPhoto.path];
+            state.photosSelected.delete(curPhoto.path);
+            closeLb();
+            await loadData('photos');
+            renderPhotos();
+          }
+        };
+      }
+
+      const keyHandler = (e) => {
+        if (state.photosLightboxIndex === null) {
+          window.removeEventListener('keydown', keyHandler);
+          return;
+        }
+        if (e.key === 'Escape') {
+          closeLb();
+        } else if (e.key === 'ArrowLeft' && prevBtn) {
+          prevBtn.click();
+        } else if (e.key === 'ArrowRight' && nextBtn) {
+          nextBtn.click();
+        }
+      };
+      if (window.__photoKeyHandler) window.removeEventListener('keydown', window.__photoKeyHandler);
+      window.__photoKeyHandler = keyHandler;
+      window.addEventListener('keydown', keyHandler);
+    }
   }
   function renderNotifications() {
     const rows = state.data || [];
@@ -187,8 +574,666 @@
     content.innerHTML=`<div class="grid two"><section class="card"><div class="card-head"><div><h2>Wireless debugging</h2><div class="subtle" style="margin-top:5px">Switch the selected USB device to ADB over TCP/IP.</div></div></div><div class="stack"><div class="notice">Enabling TCP/IP debugging exposes ADB on the local network until you switch back to USB or reboot. Use this only on a trusted network.</div><div class="toolbar"><button class="button primary" data-action="wireless_on">Enable TCP/IP · 5555</button><button class="button" data-action="wireless_off">Switch back to USB</button><button id="endpoint-refresh" class="button">Refresh addresses</button></div></div></section><section class="card"><div class="card-head"><h2>Device network addresses</h2></div><div class="stack">${rows.length?rows.map(e=>`<article class="list-item"><div class="list-title">${escapeHtml(e.label)}</div><div class="mono muted" style="margin-top:5px">${escapeHtml(e.ip)} · ${escapeHtml(e.interface)}</div></article>`).join(''):empty('No network addresses', 'Connect the device to a network and refresh addresses.')}</div></section></div>`;
     $('#endpoint-refresh').onclick=()=>void renderTab();
   }
-  function renderFirmware() {
-    content.innerHTML=`<div class="grid two"><section class="card"><div class="card-head"><h2>Power and navigation</h2></div><div class="toolbar"><button class="button" data-action="key_power">Power / Wake</button><button class="button" data-action="key_back">Back</button><button class="button" data-action="key_home">Home</button><button class="button" data-action="key_recents">Recents</button><button class="button" data-action="key_volume_down">Volume −</button><button class="button" data-action="key_volume_up">Volume +</button></div></section><section class="card"><div class="card-head"><h2>Restart device</h2></div><div class="stack"><div class="notice">Recovery and bootloader restart the device outside Android. The device may disconnect until it boots again.</div><div class="toolbar"><button class="button danger" data-action="reboot" data-value="system">System</button><button class="button" data-action="reboot" data-value="recovery">Recovery</button><button class="button" data-action="reboot" data-value="bootloader">Bootloader</button><button class="button" data-action="reboot" data-value="fastboot">Fastboot</button></div></div></section></div>`;
+  async function renderFirmware() {
+    const subtab = state.customSubtab || 'boot';
+    const t = state.telemetry || {};
+
+    let subtabHtml = '';
+
+    if (subtab === 'boot') {
+      subtabHtml = `
+        <div class="boot-modes-grid">
+          <div class="boot-mode-card">
+            <div class="boot-mode-top">
+              <span class="icon" style="color:var(--accent); font-size:18px;">&#xe145;</span>
+              <span class="boot-mode-title">System Reboot</span>
+            </div>
+            <p class="boot-mode-desc">Standard graceful restart of Android OS and running services.</p>
+            <button class="boot-mode-btn system" data-reboot-target="system">${icon("e145")} Reboot System</button>
+          </div>
+
+          <div class="boot-mode-card">
+            <div class="boot-mode-top">
+              <span class="icon" style="color:#38bdf8; font-size:18px;">&#xe048;</span>
+              <span class="boot-mode-title">Recovery Mode</span>
+            </div>
+            <p class="boot-mode-desc">Reboot to TWRP, OrangeFox, or Stock Recovery for flashing ROMs, wiping caches, or factory resets.</p>
+            <button class="boot-mode-btn recovery" data-reboot-target="recovery">${icon("e048")} Boot Recovery</button>
+          </div>
+
+          <div class="boot-mode-card">
+            <div class="boot-mode-top">
+              <span class="icon" style="color:#fbbf24; font-size:18px;">&#xe0cc;</span>
+              <span class="boot-mode-title">Bootloader / Fastboot</span>
+            </div>
+            <p class="boot-mode-desc">Enter low-level Fastboot mode for partition flashing (boot, recovery, vbmeta) and unlocking.</p>
+            <button class="boot-mode-btn bootloader" data-reboot-target="bootloader">${icon("e0cc")} Bootloader (Fastboot)</button>
+          </div>
+
+          <div class="boot-mode-card">
+            <div class="boot-mode-top">
+              <span class="icon" style="color:#c084fc; font-size:18px;">&#xe14f;</span>
+              <span class="boot-mode-title">Fastbootd (Dynamic Partitions)</span>
+            </div>
+            <p class="boot-mode-desc">Userspace fastboot mode on Android 10+ for resizing and flashing dynamic logical partitions.</p>
+            <button class="boot-mode-btn fastbootd" data-reboot-target="fastboot">${icon("e14f")} Reboot Fastbootd</button>
+          </div>
+
+          <div class="boot-mode-card">
+            <div class="boot-mode-top">
+              <span class="icon" style="color:#f87171; font-size:18px;">&#xe000;</span>
+              <span class="boot-mode-title">EDL Mode (Qualcomm 9008)</span>
+            </div>
+            <p class="boot-mode-desc">Emergency Download mode for unbricking and deep raw flashing on Qualcomm Snapdragon chipsets.</p>
+            <button class="boot-mode-btn edl" data-reboot-target="edl">${icon("e000")} Reboot EDL (9008)</button>
+          </div>
+
+          <div class="boot-mode-card">
+            <div class="boot-mode-top">
+              <span class="icon" style="color:#60a5fa; font-size:18px;">&#xe0b9;</span>
+              <span class="boot-mode-title">Sideload Mode</span>
+            </div>
+            <p class="boot-mode-desc">Directly enter Recovery ADB Sideload state for applying unsigned or signed firmware update zips.</p>
+            <button class="boot-mode-btn sideload" data-reboot-target="sideload">${icon("e0b9")} Reboot Sideload</button>
+          </div>
+
+          <div class="boot-mode-card">
+            <div class="boot-mode-top">
+              <span class="icon" style="color:#fb923c; font-size:18px;">&#xe11b;</span>
+              <span class="boot-mode-title">Safe Mode</span>
+            </div>
+            <p class="boot-mode-desc">Boots the system with all third-party applications suppressed to diagnose bootloops and crashes.</p>
+            <button class="boot-mode-btn safemode" data-reboot-target="safemode">${icon("e11b")} Boot Safe Mode</button>
+          </div>
+
+          <div class="boot-mode-card">
+            <div class="boot-mode-top">
+              <span class="icon" style="color:#fca5a5; font-size:18px;">&#xe14c;</span>
+              <span class="boot-mode-title">Power Off / Shutdown</span>
+            </div>
+            <p class="boot-mode-desc">Cleanly power down the Android device hardware without initiating a reboot sequence.</p>
+            <button class="boot-mode-btn poweroff" id="power-off-btn">${icon("e14c")} Power Off Device</button>
+          </div>
+        </div>
+
+        <section class="card" style="margin-top:16px;">
+          <div class="card-head">
+            <div>
+              <h3>Hardware & Navigation Emulation</h3>
+              <span class="subtle">Inject hardware button events over the ADB bridge</span>
+            </div>
+          </div>
+          <div class="toolbar" style="margin-top:10px;">
+            <button class="button" data-action="key_power">${icon("e14c")} Power / Wake</button>
+            <button class="button" data-action="key_volume_up">${icon("e145")} Vol +</button>
+            <button class="button" data-action="key_volume_down">${icon("e145")} Vol −</button>
+            <button class="button tonal" data-action="key_home">${icon("e101")} Home</button>
+            <button class="button tonal" data-action="key_back">${icon("e048")} Back</button>
+            <button class="button tonal" data-action="key_recents">${icon("e14f")} Recents</button>
+          </div>
+        </section>
+      `;
+    } else if (subtab === 'root') {
+      const rootStatus = state.customRootStatus;
+      const isRooted = rootStatus ? rootStatus.includes('ROOTED') : t.is_rooted;
+
+      subtabHtml = `
+        <div class="root-banner">
+          <div>
+            <div style="display:flex; align-items:center; gap:10px;">
+              <span class="root-status-pill ${isRooted ? 'rooted' : 'unrooted'}">
+                ● ${isRooted ? 'DEVICE ROOTED (UID 0)' : 'STOCK / UNROOTED'}
+              </span>
+              <span class="chip mono">SELinux: ${escapeHtml(t.selinux || 'Enforcing')}</span>
+            </div>
+            <div style="margin-top:6px; color:#cbd5e1; font-size:13px;">
+              ${rootStatus ? escapeHtml(rootStatus) : 'Click "Run Root Verification" to detect active su binary, Magisk, KernelSU, or APatch modules.'}
+            </div>
+          </div>
+          <button class="button primary" id="run-root-check-btn">${icon("e145")} Run Root Verification</button>
+        </div>
+
+        <div class="tool-grid" style="margin-top:16px;">
+          <div class="tool-panel">
+            <div class="tool-panel-head">
+              <span class="tool-panel-title">${icon("e048")} SELinux Runtime State</span>
+              <span class="chip mono" id="selinux-live-chip">${escapeHtml(t.selinux || 'Enforcing')}</span>
+            </div>
+            <p class="tool-panel-desc">Switch SELinux enforcement without restarting. Permissive mode logs AVC denials without blocking root operations or system modifications.</p>
+            <div class="tool-action-row">
+              <button class="button tonal" id="selinux-permissive-btn">Set Permissive (0)</button>
+              <button class="button" id="selinux-enforcing-btn">Set Enforcing (1)</button>
+            </div>
+          </div>
+
+          <div class="tool-panel">
+            <div class="tool-panel-head">
+              <span class="tool-panel-title">${icon("e0d7")} Partition Remount (RW)</span>
+            </div>
+            <p class="tool-panel-desc">Remount Android <code>/system</code>, <code>/vendor</code>, and <code>/product</code> partitions as Read-Write to allow replacing system files, fonts, or boot animations.</p>
+            <div class="tool-action-row">
+              <button class="button warning" id="remount-system-btn">${icon("e0cc")} Remount /system as RW</button>
+            </div>
+          </div>
+
+          <div class="tool-panel" style="grid-column: 1 / -1;">
+            <div class="tool-panel-head">
+              <span class="tool-panel-title">${icon("e14f")} Superuser Root Shell (su -c)</span>
+              <span class="subtle mono">uid=0(root) gid=0(root)</span>
+            </div>
+            <p class="tool-panel-desc">Execute privileged commands with superuser credentials. Output is captured below.</p>
+            <div class="preset-pills" style="margin-bottom:8px;">
+              <span style="font-size:11px; color:#64748b; align-self:center;">Quick Commands:</span>
+              <button class="preset-pill" data-su-preset="id">id</button>
+              <button class="preset-pill" data-su-preset="magisk -v">magisk -v</button>
+              <button class="preset-pill" data-su-preset="ls -la /data/adb">ls -la /data/adb</button>
+              <button class="preset-pill" data-su-preset="mount | grep system">grep system mount</button>
+              <button class="preset-pill" data-su-preset="dmesg | tail -n 25">kernel dmesg</button>
+            </div>
+            <form id="su-shell-form" class="tool-action-row">
+              <input id="su-shell-input" class="input mono" placeholder="su -c id" autocomplete="off">
+              <button class="button primary">Run Root Command</button>
+            </form>
+            <pre id="su-shell-output" class="console" style="min-height:160px; margin-top:8px;">Ready for root shell execution.</pre>
+          </div>
+        </div>
+      `;
+    } else if (subtab === 'firmware') {
+      subtabHtml = `
+        <div class="tool-grid">
+          <div class="tool-panel" style="grid-column: 1 / -1;">
+            <div class="tool-panel-head">
+              <span class="tool-panel-title">${icon("e0cc")} Fastboot Device Bus</span>
+              <button class="button tonal" id="scan-fastboot-btn">${icon("e145")} Scan Fastboot Devices</button>
+            </div>
+            <p class="tool-panel-desc">Check if any connected devices are running in Bootloader, Fastboot, or Fastbootd mode.</p>
+            <div id="fastboot-scan-result" class="mono" style="padding:10px 14px; background:var(--well); border:1px solid var(--line); border-radius:8px; font-size:12px; color:#38bdf8;">
+              ${state.customFastbootDevices || 'Click "Scan Fastboot Devices" to query connected fastboot interfaces.'}
+            </div>
+          </div>
+
+          <div class="tool-panel">
+            <div class="tool-panel-head">
+              <span class="tool-panel-title">${icon("e0cc")} Sideload OTA Firmware</span>
+            </div>
+            <p class="tool-panel-desc">Flash official or custom OTA update zip archives onto the device via <code>adb sideload update.zip</code>. The device must be in Recovery Sideload mode.</p>
+            <div class="tool-action-row">
+              <input id="ota-file-path" class="input mono" placeholder="Path to update.zip..." readonly>
+              <button class="button tonal" id="browse-ota-btn">Browse .zip</button>
+            </div>
+            <button class="button primary" id="flash-ota-btn" style="margin-top:4px;">${icon("e145")} Begin OTA Sideload</button>
+          </div>
+
+          <div class="tool-panel">
+            <div class="tool-panel-head">
+              <span class="tool-panel-title">${icon("e14f")} Fastboot Partition Flasher</span>
+            </div>
+            <p class="tool-panel-desc">Flash kernel, ramdisk, recovery, or AVB meta partition images (<code>boot.img</code>, <code>recovery.img</code>, <code>vbmeta.img</code>) in fastboot mode.</p>
+            <div style="display:flex; gap:8px;">
+              <select id="fastboot-partition-select" class="input" style="width:140px;">
+                <option value="boot">boot</option>
+                <option value="init_boot">init_boot</option>
+                <option value="recovery">recovery</option>
+                <option value="vbmeta">vbmeta</option>
+                <option value="vendor_boot">vendor_boot</option>
+                <option value="dtbo">dtbo</option>
+                <option value="system">system</option>
+              </select>
+              <input id="fastboot-img-path" class="input mono" placeholder="Path to image (.img)..." readonly>
+              <button class="button tonal" id="browse-fastboot-img-btn">Browse</button>
+            </div>
+            <button class="button warning" id="flash-fastboot-btn" style="margin-top:4px;">${icon("e0cc")} Flash to Partition</button>
+          </div>
+
+          <div class="tool-panel" style="grid-column: 1 / -1;">
+            <div class="tool-panel-head">
+              <span class="tool-panel-title">${icon("e11b")} Diagnostic Bugreport Generator</span>
+              <button class="button success" id="gen-bugreport-btn">${icon("e0cc")} Generate Bugreport ZIP</button>
+            </div>
+            <p class="tool-panel-desc">Produces a complete system state dump including kernel log ring buffer, tombstone crashes, ANR logs, package metadata, and dumpsys telemetry saved to your PC <code>~/Downloads/</code> directory.</p>
+          </div>
+        </div>
+      `;
+    } else if (subtab === 'backup') {
+      subtabHtml = `
+        <div class="tool-grid">
+          <div class="tool-panel">
+            <div class="tool-panel-head">
+              <span class="tool-panel-title">${icon("e0d7")} Full Device Backup (.ab)</span>
+            </div>
+            <p class="tool-panel-desc">Creates an Android backup archive (including installed APKs, shared media, and app configurations). The file will be placed in your PC Downloads folder.</p>
+            <div class="notice" style="font-size:12px;">You will need to unlock your phone and tap "Back up my data" on the screen prompt to authorize the backup.</div>
+            <button class="button primary" id="full-backup-btn" style="margin-top:4px;">${icon("e0cc")} Initiate Full Backup</button>
+          </div>
+
+          <div class="tool-panel">
+            <div class="tool-panel-head">
+              <span class="tool-panel-title">${icon("e14f")} Single Application Backup</span>
+            </div>
+            <p class="tool-panel-desc">Export a single application's APK and data to an encrypted or plain <code>.ab</code> file.</p>
+            <div class="tool-action-row">
+              <input id="backup-app-pkg" class="input mono" placeholder="Package name (e.g. com.whatsapp)">
+              <button class="button tonal" id="backup-app-btn">Backup App</button>
+            </div>
+          </div>
+
+          <div class="tool-panel">
+            <div class="tool-panel-head">
+              <span class="tool-panel-title">${icon("e048")} Live Partition Dumper (Root)</span>
+            </div>
+            <p class="tool-panel-desc">Extract raw flash block devices directly from <code>/dev/block/by-name/</code> into a pristine <code>.img</code> file on your computer.</p>
+            <div class="preset-pills" style="margin-bottom:6px;">
+              <span style="font-size:11px; color:#64748b; align-self:center;">Presets:</span>
+              <button class="preset-pill" data-part-preset="boot">boot</button>
+              <button class="preset-pill" data-part-preset="init_boot">init_boot</button>
+              <button class="preset-pill" data-part-preset="recovery">recovery</button>
+              <button class="preset-pill" data-part-preset="vbmeta">vbmeta</button>
+              <button class="preset-pill" data-part-preset="vendor_boot">vendor_boot</button>
+            </div>
+            <div class="tool-action-row">
+              <input id="dump-partition-name" class="input mono" placeholder="Partition name (e.g. boot)">
+              <button class="button warning" id="dump-partition-btn">Dump to PC</button>
+            </div>
+          </div>
+
+          <div class="tool-panel">
+            <div class="tool-panel-head">
+              <span class="tool-panel-title">${icon("e145")} Restore Android Backup</span>
+            </div>
+            <p class="tool-panel-desc">Restore an existing <code>.ab</code> archive back onto the connected Android device.</p>
+            <div class="tool-action-row">
+              <input id="restore-ab-path" class="input mono" placeholder="Select backup file (.ab)..." readonly>
+              <button class="button tonal" id="browse-restore-ab-btn">Browse .ab</button>
+            </div>
+            <button class="button success" id="execute-restore-btn" style="margin-top:4px;">${icon("e145")} Restore to Device</button>
+          </div>
+        </div>
+      `;
+    } else if (subtab === 'tweaks') {
+      subtabHtml = `
+        <div class="tool-grid">
+          <div class="tool-panel">
+            <div class="tool-panel-head">
+              <span class="tool-panel-title">${icon("e14f")} Display Density (DPI)</span>
+              <span class="chip mono">Current: ${escapeHtml(t.screen_dpi || 'Stock')}</span>
+            </div>
+            <p class="tool-panel-desc">Adjust UI scaling and density live via WindowManager without requiring a reboot.</p>
+            <div class="preset-pills" style="margin-bottom:6px;">
+              <span style="font-size:11px; color:#64748b; align-self:center;">Presets:</span>
+              <button class="preset-pill" data-dpi-val="320">320 (Compact)</button>
+              <button class="preset-pill" data-dpi-val="360">360 (Small)</button>
+              <button class="preset-pill" data-dpi-val="400">400 (Default)</button>
+              <button class="preset-pill" data-dpi-val="440">440 (Large)</button>
+              <button class="preset-pill" data-dpi-val="560">560 (Tablet)</button>
+            </div>
+            <div class="tool-action-row">
+              <input id="custom-dpi-input" class="input mono" placeholder="Enter DPI (e.g. 380)" value="${escapeHtml(state.customDensityVal)}">
+              <button class="button primary" id="apply-dpi-btn">Apply DPI</button>
+              <button class="button tonal" id="reset-dpi-btn">Reset</button>
+            </div>
+          </div>
+
+          <div class="tool-panel">
+            <div class="tool-panel-head">
+              <span class="tool-panel-title">${icon("e145")} Snappy Animation Scales</span>
+            </div>
+            <p class="tool-panel-desc">Speed up window animations, transitions, and animator durations across the entire system UI.</p>
+            <div class="preset-pills" style="margin-bottom:10px;">
+              <button class="preset-pill ${state.customAnimScale === '0.25' ? 'active' : ''}" data-anim-val="0.25">0.25x (Lightning)</button>
+              <button class="preset-pill ${state.customAnimScale === '0.5' ? 'active' : ''}" data-anim-val="0.5">0.5x (Snappy)</button>
+              <button class="preset-pill ${state.customAnimScale === '1.0' ? 'active' : ''}" data-anim-val="1.0">1.0x (Stock)</button>
+              <button class="preset-pill ${state.customAnimScale === '0.0' ? 'active' : ''}" data-anim-val="0.0">0.0x (Instant / Off)</button>
+            </div>
+            <button class="button tonal" id="apply-fast-anim-btn">${icon("e145")} Set 0.5x Snappy Speed</button>
+          </div>
+
+          <div class="tool-panel" style="grid-column: 1 / -1;">
+            <div class="tool-panel-head">
+              <span class="tool-panel-title">${icon("e0cc")} Screen Resolution (WindowManager)</span>
+              <span class="chip mono">Native: ${escapeHtml(t.screen_res || 'Default')}</span>
+            </div>
+            <p class="tool-panel-desc">Force custom render resolutions for gaming, battery optimization, or performance testing.</p>
+            <div class="preset-pills" style="margin-bottom:8px;">
+              <button class="preset-pill" data-res-val="1080x2400">1080x2400 (FHD+)</button>
+              <button class="preset-pill" data-res-val="1440x3200">1440x3200 (QHD+)</button>
+              <button class="preset-pill" data-res-val="720x1600">720x1600 (HD+ 720p)</button>
+              <button class="preset-pill" data-res-val="reset">Reset Native</button>
+            </div>
+            <div class="tool-action-row" style="max-width:480px;">
+              <input id="custom-res-input" class="input mono" placeholder="1080x2400 or reset">
+              <button class="button primary" id="apply-res-btn">Set Resolution</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    content.innerHTML = `
+      <div class="custom-suite">
+        <nav class="custom-subnav">
+          <button class="custom-subtab-btn ${subtab === 'boot' ? 'active' : ''}" data-custom-tab="boot">${icon("e145")} Power & Boot Modes</button>
+          <button class="custom-subtab-btn ${subtab === 'root' ? 'active' : ''}" data-custom-tab="root">${icon("e048")} Root & Superuser</button>
+          <button class="custom-subtab-btn ${subtab === 'firmware' ? 'active' : ''}" data-custom-tab="firmware">${icon("e0cc")} Firmware & Fastboot</button>
+          <button class="custom-subtab-btn ${subtab === 'backup' ? 'active' : ''}" data-custom-tab="backup">${icon("e0d7")} Backup & Restore</button>
+          <button class="custom-subtab-btn ${subtab === 'tweaks' ? 'active' : ''}" data-custom-tab="tweaks">${icon("e14f")} System Tweaks</button>
+        </nav>
+        ${subtabHtml}
+      </div>
+    `;
+
+    document.querySelectorAll('[data-custom-tab]').forEach(btn => {
+      btn.onclick = () => {
+        state.customSubtab = btn.dataset.customTab;
+        renderFirmware();
+      };
+    });
+
+    document.querySelectorAll('[data-reboot-target]').forEach(btn => {
+      btn.onclick = async () => {
+        const target = btn.dataset.rebootTarget;
+        if (confirm(`Reboot device into ${target.toUpperCase()} mode? The device may briefly disconnect.`)) {
+          await action('reboot', target);
+        }
+      };
+    });
+
+    const powerOffBtn = $('#power-off-btn');
+    if (powerOffBtn) {
+      powerOffBtn.onclick = async () => {
+        if (confirm('Power off the Android device hardware?')) {
+          await action('shell', 'reboot -p');
+          toast('Power off command sent.');
+        }
+      };
+    }
+
+    const runRootCheckBtn = $('#run-root-check-btn');
+    if (runRootCheckBtn) {
+      runRootCheckBtn.onclick = async () => {
+        toast('Checking root status and superuser binaries...');
+        try {
+          const res = await action('root_check');
+          state.customRootStatus = res;
+          renderFirmware();
+        } catch (err) {
+          toast(String(err), true);
+        }
+      };
+    }
+
+    const selinuxPermBtn = $('#selinux-permissive-btn');
+    if (selinuxPermBtn) {
+      selinuxPermBtn.onclick = async () => {
+        try {
+          await action('set_selinux', '0');
+          const chip = $('#selinux-live-chip');
+          if (chip) chip.textContent = 'Permissive';
+        } catch (e) { toast(String(e), true); }
+      };
+    }
+
+    const selinuxEnfBtn = $('#selinux-enforcing-btn');
+    if (selinuxEnfBtn) {
+      selinuxEnfBtn.onclick = async () => {
+        try {
+          await action('set_selinux', '1');
+          const chip = $('#selinux-live-chip');
+          if (chip) chip.textContent = 'Enforcing';
+        } catch (e) { toast(String(e), true); }
+      };
+    }
+
+    const remountBtn = $('#remount-system-btn');
+    if (remountBtn) {
+      remountBtn.onclick = async () => {
+        try {
+          const res = await action('remount_system');
+          toast(res || 'Remount command completed');
+        } catch (e) { toast(String(e), true); }
+      };
+    }
+
+    document.querySelectorAll('[data-su-preset]').forEach(btn => {
+      btn.onclick = () => {
+        const input = $('#su-shell-input');
+        if (input) { input.value = btn.dataset.suPreset; input.focus(); }
+      };
+    });
+
+    const suForm = $('#su-shell-form');
+    if (suForm) {
+      suForm.onsubmit = async (e) => {
+        e.preventDefault();
+        const cmd = $('#su-shell-input').value.trim();
+        if (!cmd) return;
+        const out = $('#su-shell-output');
+        out.textContent = `# su -c "${cmd}"\nExecuting with UID 0...`;
+        try {
+          const res = await action('shell', `su -c "${cmd}"`);
+          out.textContent = `# su -c "${cmd}"\n${res || '(no output / completed)'}`;
+        } catch (err) {
+          out.textContent = `# su -c "${cmd}"\nError: ${err}`;
+        }
+      };
+    }
+
+    const scanFastbootBtn = $('#scan-fastboot-btn');
+    if (scanFastbootBtn) {
+      scanFastbootBtn.onclick = async () => {
+        try {
+          const res = await action('fastboot_devices');
+          state.customFastbootDevices = res;
+          const box = $('#fastboot-scan-result');
+          if (box) box.textContent = res;
+        } catch (err) { toast(String(err), true); }
+      };
+    }
+
+    const browseOtaBtn = $('#browse-ota-btn');
+    if (browseOtaBtn) {
+      browseOtaBtn.onclick = async () => {
+        try {
+          const p = await action('pick_file', 'zip');
+          if (p) $('#ota-file-path').value = p;
+        } catch {}
+      };
+    }
+
+    const flashOtaBtn = $('#flash-ota-btn');
+    if (flashOtaBtn) {
+      flashOtaBtn.onclick = async () => {
+        const p = $('#ota-file-path').value.trim();
+        if (!p) { toast('Please browse and select an OTA .zip file first.', true); return; }
+        if (confirm(`Begin ADB sideload of:\n${p}\n\nEnsure device is in Recovery Sideload mode!`)) {
+          toast('Starting OTA sideload, please wait...');
+          try {
+            const res = await action('sideload_ota', p);
+            toast(res || 'OTA Sideload complete!');
+          } catch (err) { toast(String(err), true); }
+        }
+      };
+    }
+
+    const browseFastbootImgBtn = $('#browse-fastboot-img-btn');
+    if (browseFastbootImgBtn) {
+      browseFastbootImgBtn.onclick = async () => {
+        try {
+          const p = await action('pick_file', 'img');
+          if (p) $('#fastboot-img-path').value = p;
+        } catch {}
+      };
+    }
+
+    const flashFastbootBtn = $('#flash-fastboot-btn');
+    if (flashFastbootBtn) {
+      flashFastbootBtn.onclick = async () => {
+        const part = $('#fastboot-partition-select').value;
+        const img = $('#fastboot-img-path').value.trim();
+        if (!img) { toast('Please select an image file (.img) to flash.', true); return; }
+        if (confirm(`Flash image:\n${img}\n\nTo partition [${part}] in fastboot mode?`)) {
+          toast(`Flashing ${part}...`);
+          try {
+            const res = await action('fastboot_flash', part, img);
+            toast(res || `Fastboot flash to ${part} finished!`);
+          } catch (err) { toast(String(err), true); }
+        }
+      };
+    }
+
+    const bugreportBtn = $('#gen-bugreport-btn');
+    if (bugreportBtn) {
+      bugreportBtn.onclick = async () => {
+        toast('Generating comprehensive bugreport (this may take 20-30 seconds)...');
+        try {
+          const res = await action('bugreport');
+          toast(res || 'Bugreport saved to Downloads folder!');
+        } catch (err) { toast(String(err), true); }
+      };
+    }
+
+    const fullBackupBtn = $('#full-backup-btn');
+    if (fullBackupBtn) {
+      fullBackupBtn.onclick = async () => {
+        try {
+          const res = await action('backup_full');
+          toast(res || 'Backup started - check phone display!');
+        } catch (err) { toast(String(err), true); }
+      };
+    }
+
+    const backupAppBtn = $('#backup-app-btn');
+    if (backupAppBtn) {
+      backupAppBtn.onclick = async () => {
+        const pkg = $('#backup-app-pkg').value.trim();
+        if (!pkg) { toast('Enter a package name (e.g. com.example.app)', true); return; }
+        try {
+          const res = await action('backup_app', pkg);
+          toast(res || 'App backup started!');
+        } catch (err) { toast(String(err), true); }
+      };
+    }
+
+    document.querySelectorAll('[data-part-preset]').forEach(btn => {
+      btn.onclick = () => {
+        const input = $('#dump-partition-name');
+        if (input) { input.value = btn.dataset.partPreset; input.focus(); }
+      };
+    });
+
+    const dumpPartBtn = $('#dump-partition-btn');
+    if (dumpPartBtn) {
+      dumpPartBtn.onclick = async () => {
+        const part = $('#dump-partition-name').value.trim();
+        if (!part) { toast('Enter or select a partition name to dump', true); return; }
+        toast(`Dumping /dev/block/by-name/${part} to PC Downloads...`);
+        try {
+          const res = await action('dump_partition', part);
+          toast(res || `Partition ${part} dumped successfully!`);
+        } catch (err) { toast(String(err), true); }
+      };
+    }
+
+    const browseRestoreBtn = $('#browse-restore-ab-btn');
+    if (browseRestoreBtn) {
+      browseRestoreBtn.onclick = async () => {
+        try {
+          const p = await action('pick_file', 'ab');
+          if (p) $('#restore-ab-path').value = p;
+        } catch {}
+      };
+    }
+
+    const executeRestoreBtn = $('#execute-restore-btn');
+    if (executeRestoreBtn) {
+      executeRestoreBtn.onclick = async () => {
+        const p = $('#restore-ab-path').value.trim();
+        if (!p) { toast('Browse and select an .ab backup file first', true); return; }
+        if (confirm(`Restore backup archive:\n${p}\n\nConfirm prompt on phone screen when prompted.`)) {
+          try {
+            const res = await action('restore_backup', p);
+            toast(res || 'Restore command sent!');
+          } catch (err) { toast(String(err), true); }
+        }
+      };
+    }
+
+    document.querySelectorAll('[data-dpi-val]').forEach(btn => {
+      btn.onclick = () => {
+        const input = $('#custom-dpi-input');
+        if (input) input.value = btn.dataset.dpiVal;
+      };
+    });
+
+    const applyDpiBtn = $('#apply-dpi-btn');
+    if (applyDpiBtn) {
+      applyDpiBtn.onclick = async () => {
+        const val = $('#custom-dpi-input').value.trim();
+        if (!val) return;
+        state.customDensityVal = val;
+        try {
+          await action('set_density', val);
+          toast(`Display density set to ${val} DPI`);
+        } catch (err) { toast(String(err), true); }
+      };
+    }
+
+    const resetDpiBtn = $('#reset-dpi-btn');
+    if (resetDpiBtn) {
+      resetDpiBtn.onclick = async () => {
+        try {
+          await action('set_density', 'reset');
+          toast('Display density reset to default stock value');
+        } catch (err) { toast(String(err), true); }
+      };
+    }
+
+    document.querySelectorAll('[data-anim-val]').forEach(btn => {
+      btn.onclick = async () => {
+        const scale = btn.dataset.animVal;
+        state.customAnimScale = scale;
+        try {
+          await action('set_animations', scale);
+          toast(`Animation scales set to ${scale}x`);
+          renderFirmware();
+        } catch (err) { toast(String(err), true); }
+      };
+    });
+
+    const applyFastAnimBtn = $('#apply-fast-anim-btn');
+    if (applyFastAnimBtn) {
+      applyFastAnimBtn.onclick = async () => {
+        state.customAnimScale = '0.5';
+        try {
+          await action('set_animations', '0.5');
+          toast('Applied 0.5x snappy animation scales');
+          renderFirmware();
+        } catch (err) { toast(String(err), true); }
+      };
+    }
+
+    document.querySelectorAll('[data-res-val]').forEach(btn => {
+      btn.onclick = () => {
+        const input = $('#custom-res-input');
+        if (input) input.value = btn.dataset.resVal;
+      };
+    });
+
+    const applyResBtn = $('#apply-res-btn');
+    if (applyResBtn) {
+      applyResBtn.onclick = async () => {
+        const v = $('#custom-res-input').value.trim();
+        if (!v) return;
+        try {
+          if (v === 'reset') {
+            await action('shell', 'wm size reset');
+            toast('Screen resolution reset to native');
+          } else {
+            await action('shell', `wm size ${v}`);
+            toast(`Screen resolution set to ${v}`);
+          }
+        } catch (err) { toast(String(err), true); }
+      };
+    }
   }
   function formatRate(value) {
     if (value == null || !Number.isFinite(Number(value))) return '0 B/s';

@@ -147,6 +147,121 @@ async fn adb_action(
             "wireless_off" => crate::adb::reset_to_usb(&serial),
             "dnd_on" => crate::adb::toggle_dnd(Some(&serial), true),
             "dnd_off" => crate::adb::toggle_dnd(Some(&serial), false),
+            "pick_file" => {
+                let mut dialog = rfd::FileDialog::new();
+                if !value.is_empty() {
+                    let exts: Vec<&str> = value.split(',').map(|s| s.trim()).collect();
+                    dialog = dialog.add_filter("Files", &exts);
+                }
+                match dialog.pick_file() {
+                    Some(p) => Ok(p.to_string_lossy().to_string()),
+                    None => Err("File selection cancelled".to_string()),
+                }
+            },
+            "sideload_ota" => crate::adb::sideload_ota(&serial, std::path::Path::new(&value)),
+            "fastboot_flash" => crate::adb::fastboot_flash(&value, std::path::Path::new(&extra)),
+            "fastboot_devices" => {
+                let devs = crate::adb::list_fastboot_devices();
+                if devs.is_empty() {
+                    Ok("No fastboot devices detected. (Device must be in bootloader/fastboot mode)".into())
+                } else {
+                    Ok(format!("Connected fastboot devices: {}", devs.join(", ")))
+                }
+            },
+            "bugreport" => {
+                let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+                let dest = std::path::PathBuf::from(home).join("Downloads").join(format!("bugreport_{}.zip", serial.replace([':', '.'], "_")));
+                crate::adb::generate_bugreport(&serial, &dest).map(|_| format!("Bugreport saved to {}", dest.display()))
+            },
+            "root_check" => {
+                let id_out = crate::adb::adb_cmd(Some(&serial), &["shell", "su", "-c", "id"]).unwrap_or_default();
+                let magisk = crate::adb::adb_cmd(Some(&serial), &["shell", "which", "magisk"]).unwrap_or_default();
+                let ksu = crate::adb::adb_cmd(Some(&serial), &["shell", "ls", "/data/adb/ksu"]).unwrap_or_default();
+                let apatch = crate::adb::adb_cmd(Some(&serial), &["shell", "ls", "/data/adb/ap"]).unwrap_or_default();
+                let selinux = crate::adb::adb_cmd(Some(&serial), &["shell", "getenforce"]).unwrap_or_else(|_| "Unknown".into());
+                let is_root = id_out.contains("uid=0");
+                let mgr = if !magisk.is_empty() && !magisk.contains("not found") {
+                    "Magisk"
+                } else if !ksu.is_empty() && !ksu.contains("No such") {
+                    "KernelSU"
+                } else if !apatch.is_empty() && !apatch.contains("No such") {
+                    "APatch"
+                } else if is_root {
+                    "su binary"
+                } else {
+                    "None (Stock)"
+                };
+                Ok(format!("Status: {} | Superuser: {} | SELinux: {}", if is_root { "ROOTED (UID 0)" } else { "UNROOTED" }, mgr, selinux.trim()))
+            },
+            "remount_system" => {
+                crate::adb::adb_cmd(Some(&serial), &["remount"])
+                    .or_else(|_| crate::adb::adb_cmd(Some(&serial), &["shell", "su", "-c", "mount -o rw,remount /"]))
+                    .map(|out| if out.trim().is_empty() { "Remounted /system as Read-Write".into() } else { out })
+            },
+            "set_selinux" => {
+                let mode = if value == "0" || value.to_lowercase().contains("permissive") { "0" } else { "1" };
+                crate::adb::adb_cmd(Some(&serial), &["shell", "su", "-c", &format!("setenforce {}", mode)])
+                    .map(|_| format!("SELinux set to {}", if mode == "0" { "Permissive (0)" } else { "Enforcing (1)" }))
+            },
+            "backup_full" => {
+                let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+                let dest = std::path::PathBuf::from(home).join("Downloads").join(format!("backup_{}.ab", serial.replace([':', '.'], "_")));
+                let dest_str = dest.to_string_lossy().to_string();
+                crate::adb::adb_cmd(Some(&serial), &["backup", "-apk", "-shared", "-all", "-f", &dest_str])
+                    .map(|_| format!("Full backup initiated. Saved to {}. (Confirm on device)", dest.display()))
+            },
+            "backup_app" => {
+                let pkg = value.trim();
+                let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+                let dest = std::path::PathBuf::from(home).join("Downloads").join(format!("backup_{}_{}.ab", pkg, serial.replace([':', '.'], "_")));
+                let dest_str = dest.to_string_lossy().to_string();
+                crate::adb::adb_cmd(Some(&serial), &["backup", "-apk", pkg, "-f", &dest_str])
+                    .map(|_| format!("App backup initiated for {}. Saved to {}", pkg, dest.display()))
+            },
+            "restore_backup" => {
+                crate::adb::adb_cmd(Some(&serial), &["restore", &value])
+                    .map(|_| "Backup restore command sent. Confirm restore prompt on phone screen.".into())
+            },
+            "dump_partition" => {
+                let part = value.trim();
+                let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+                let dest = std::path::PathBuf::from(home).join("Downloads").join(format!("{}_{}.img", part, serial.replace([':', '.'], "_")));
+                let dest_str = dest.to_string_lossy().to_string();
+                let block = format!("/dev/block/by-name/{}", part);
+                crate::adb::adb_cmd(Some(&serial), &["shell", "su", "-c", &format!("dd if={} of=/sdcard/dump_{}.img bs=4M", block, part)])?;
+                crate::adb::adb_cmd(Some(&serial), &["pull", &format!("/sdcard/dump_{}.img", part), &dest_str])?;
+                let _ = crate::adb::adb_cmd(Some(&serial), &["shell", "rm", "-f", &format!("/sdcard/dump_{}.img", part)]);
+                Ok(format!("Partition '{}' dumped successfully to {}", part, dest.display()))
+            },
+            "set_density" => {
+                let dpi = value.trim();
+                if dpi == "reset" || dpi.is_empty() {
+                    crate::adb::adb_cmd(Some(&serial), &["shell", "wm", "density", "reset"])
+                        .map(|_| "Display density reset to default".into())
+                } else {
+                    crate::adb::adb_cmd(Some(&serial), &["shell", "wm", "density", dpi])
+                        .map(|_| format!("Display density set to {} DPI", dpi))
+                }
+            },
+            "set_animations" => {
+                let scale = if value.trim().is_empty() { "0.5" } else { value.trim() };
+                let _ = crate::adb::adb_cmd(Some(&serial), &["shell", "settings", "put", "global", "window_animation_scale", scale]);
+                let _ = crate::adb::adb_cmd(Some(&serial), &["shell", "settings", "put", "global", "transition_animation_scale", scale]);
+                let _ = crate::adb::adb_cmd(Some(&serial), &["shell", "settings", "put", "global", "animator_duration_scale", scale]);
+                Ok(format!("Animation scales set to {}x", scale))
+            },
+            "push_photo" => {
+                let host_path = std::path::Path::new(&value);
+                let fname = if extra.is_empty() {
+                    host_path.file_name().and_then(|n| n.to_str()).unwrap_or("photo.jpg")
+                } else {
+                    &extra
+                };
+                let dest_device = format!("/sdcard/DCIM/Camera/{}", fname);
+                crate::adb::adb_cmd(Some(&serial), &["push", &value, &dest_device])?;
+                let _ = crate::adb::adb_cmd(Some(&serial), &["shell", "am", "broadcast", "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE", "-d", &format!("file://{}", dest_device)]);
+                Ok(format!("Uploaded photo to {}", dest_device))
+            },
             _ => Err("Unsupported ADB action".to_string()),
         }
     })

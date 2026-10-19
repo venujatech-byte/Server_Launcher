@@ -1329,17 +1329,26 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   user-select: none;
 }
 
+.android-power-presets-grid,
 .power-presets-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 12px;
+  gap: 12px;
+  margin-top: 10px;
 }
 
+@media (max-width: 800px) {
+  .android-power-presets-grid,
+  .power-presets-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.android-power-preset-card,
 .power-preset-card {
   background: #0a0f1d;
   border-radius: 8px;
-  padding: 12px;
+  padding: 14px;
   display: flex;
   flex-direction: column;
   cursor: pointer;
@@ -1348,10 +1357,13 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   user-select: none;
 }
 
+.android-power-preset-card:hover,
 .power-preset-card:hover {
   background: #0f182c;
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
+.android-power-preset-card.active,
 .power-preset-card.active {
   background: rgba(53, 132, 228, 0.14);
   border: 1.5px solid var(--accent);
@@ -1359,24 +1371,29 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   box-shadow: 0 0 12px color-mix(in srgb, var(--accent), transparent 70%);
 }
 
+.preset-card-top,
 .power-preset-top {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 6px;
 }
 
+.preset-card-top b,
 .power-preset-top b {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   color: #f1f5f9;
 }
 
+.preset-active-chip,
 .power-preset-badge {
   background: rgba(53, 132, 228, 0.28);
   color: #e2e8f0;
-  font: 700 8px ui-monospace, monospace;
-  padding: 2px 5px;
-  border-radius: 3px;
+  font: 700 8.5px ui-monospace, monospace;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(53, 132, 228, 0.4);
 }
 
 .power-preset-sub {
@@ -1386,21 +1403,27 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   line-height: 1.3;
 }
 
+.preset-gov-badge,
 .power-preset-gov {
   background: #0e1424;
   border-radius: 4px;
   padding: 4px 8px;
-  font: 500 9px ui-monospace, monospace;
+  font: 600 9px ui-monospace, monospace;
   display: inline-flex;
   align-items: center;
   gap: 4px;
   width: fit-content;
+  color: #94a3b8;
+  margin-top: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
 }
 
+.preset-gov-badge small,
 .power-preset-gov small {
   color: #64748b;
 }
 
+.preset-gov-badge b,
 .power-preset-gov b {
   color: #f1f5f9;
   font-weight: 700;
@@ -1472,45 +1495,53 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   padding-top: 12px;
 }
 
+.android-power-alloc-list,
 .power-alloc-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
+.android-power-alloc-item,
 .power-alloc-item {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
 }
 
+.android-power-alloc-labels,
 .power-alloc-labels {
   display: flex;
   justify-content: space-between;
-  font: 600 10.5px ui-monospace, monospace;
+  font: 600 11px ui-monospace, monospace;
 }
 
+.android-power-alloc-labels span,
 .power-alloc-labels span {
   color: #94a3b8;
 }
 
+.android-power-alloc-labels b,
 .power-alloc-labels b {
   color: #f1f5f9;
   font-weight: 700;
 }
 
+.android-power-alloc-bar,
 .power-alloc-bar {
   width: 100%;
-  height: 3.5px;
+  height: 4px;
   background: #121c2a;
   border-radius: 2px;
   overflow: hidden;
 }
 
+.android-power-alloc-fill,
 .power-alloc-fill {
   height: 100%;
   background: var(--accent);
   border-radius: 2px;
+  transition: width 0.3s ease;
 }
 
 

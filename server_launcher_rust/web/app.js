@@ -2833,303 +2833,232 @@
       power: () => {
         const batPct = Number(s.battery_pct != null ? s.battery_pct : 100);
         const acOnline = s.battery_plugged === 'AC' || s.battery_plugged === 'USB' || s.battery_plugged === 'Wireless' || s.battery_status === 'Full' || s.battery_status === 'Charging';
-        const isCharging = acOnline && s.battery_status === 'Charging';
-        const isDischarging = !acOnline || s.battery_status === 'Discharging';
 
-        const voltageMv = Number(s.battery_voltage_mv) || 4180;
+        const voltageMv = Number(s.battery_voltage_mv) || 4390;
         const voltageV = (voltageMv / 1000).toFixed(2);
-        const tempC = Number(s.battery_temp_c) || 28.0;
+        const voltageHist = hist.map(h => h.voltage ? (Number(h.voltage) / 1000) : Number(voltageV));
+        if (voltageHist.length < 2) voltageHist.push(Number(voltageV));
 
-        // Health & capacities
-        const batHealthCode = s.battery_health ? String(s.battery_health) : '2';
-        const batHealthPct = batHealthCode === '2' ? '55.3%' : (s.battery_health || 'Optimal');
-        const fullWh = 25.9;
-        const designWh = 46.9;
-        const remainingWh = ((batPct / 100) * fullWh).toFixed(1);
+        const tempC = Number(s.battery_temp_c) || 31.2;
+        const healthText = s.battery_health === '2' ? 'Good' : (s.battery_health || 'Good');
 
-        // Mode & Time
-        const modeStr = acOnline ? (batPct >= 99 ? 'Mains Bypass' : 'AC Charging') : 'Discharging';
-        let timeStr = 'Fully Charged';
-        if (isCharging) {
-          const remMins = Math.round(((100 - batPct) / 100) * 80);
-          timeStr = `${Math.floor(remMins / 60)}h ${remMins % 60}m to full`;
-        } else if (isDischarging) {
-          const remMins = Math.round((batPct / 100) * 320);
-          timeStr = `${Math.floor(remMins / 60)}h ${remMins % 60}m rem`;
-        }
-
-        // Cycle count & condition
-        const cyclesVal = 0; // Fresh pack
-        const lifeLabel = cyclesVal === 0 ? '1000 (New)' : `${1000 - cyclesVal} rem`;
-        const condLabel = 'Optimal';
-
-        // Load allocation estimates
-        const currentCpu = Number(s.cpu_usage_pct) || 16;
+        // Mobile Android power draw estimates
+        const currentCpu = Number(s.cpu_usage_pct) || 14;
         const numCores = s.cpu_cores || 8;
-        const cpuW = Math.max(1.2, (currentCpu / 100) * (numCores * 0.45) + 1.8);
-        const gpuW = 1.7;
-        const dispW = 1.4;
-        const storageW = 2.8;
-        const usbW = 1.8;
-        const kbdW = 0.3;
-        const mbW = 1.6;
-        const totalWatts = cpuW + gpuW + dispW + storageW + usbW + kbdW + mbW;
+        const cpuW = Math.max(0.6, (currentCpu / 100) * (numCores * 0.35) + 0.4);
+        const gpuW = Math.max(0.3, (currentCpu / 100) * 0.8 + 0.2);
+        const dispW = 1.2;
+        const cellW = 0.5;
+        const radioW = (s.wifi_enabled ? 0.35 : 0.05) + (s.bluetooth_enabled ? 0.15 : 0.02);
+        const storageW = Math.max(0.2, (s.disk_counters?.length || 1) * 0.15);
+        const osW = 0.4;
+        const totalWatts = cpuW + gpuW + dispW + cellW + radioW + storageW + osW;
 
-        if (!state.powerHist) state.powerHist = [11.2, 12.0, 10.8, 12.5, 13.4, 11.9, 12.8, totalWatts];
+        if (!state.powerHist) state.powerHist = [3.2, 3.5, 3.1, 3.8, 3.4, 3.6, totalWatts];
         state.powerHist.push(totalWatts);
         if (state.powerHist.length > 25) state.powerHist.shift();
 
-        const badgeStr = acOnline ? (batPct >= 99 ? 'Bypass active' : `Charging (${Math.round(batPct)}%)`) : 'Battery active';
         const activePreset = state.powerPreset || 'balanced';
 
         return `
-          <div class="power-dashboard-layout">
-            <!-- Left Column: Primary Cell & Governor -->
-            <div class="power-col-left">
-              <!-- Card 1: Primary Battery Telemetry -->
-              <section class="card power-cell-card">
-                <div class="card-head">
-                  <div class="power-cell-title">
-                    <span class="icon">${icon('e145')}</span>
-                    <span>PRIMARY CELL TELEMETRY // BAT1 (COMPAL PABAS0241231)</span>
-                  </div>
-                  <div class="power-healthy-pill">
-                    <span class="power-dot"></span>
-                    <span>HEALTHY</span>
-                  </div>
-                </div>
-
-                <!-- 3 Metric Cards in row -->
-                <div class="power-metrics-grid">
-                  <!-- Metric 1: State of Charge -->
-                  <div class="power-metric-card">
-                    <div class="power-metric-head">
-                      <span class="icon">${icon('e145')}</span>
-                      <span>State of Charge</span>
-                    </div>
-                    <div class="power-metric-hero">
-                      <b>${Math.round(batPct)}</b><small>%</small>
-                    </div>
-                    <div class="power-progress-bar">
-                      <div class="power-progress-fill" style="width: ${Math.max(5, Math.min(100, batPct))}%"></div>
-                    </div>
-                    <div class="power-meta-rows">
-                      <div class="power-meta-row"><small>Mode</small><b>${modeStr}</b></div>
-                      <div class="power-meta-row"><small>Time</small><b class="accent-text">${timeStr}</b></div>
-                    </div>
-                  </div>
-
-                  <!-- Metric 2: Remaining vs Design -->
-                  <div class="power-metric-card">
-                    <div class="power-metric-head">
-                      <span class="icon">${icon('e186')}</span>
-                      <span>Remaining vs Design</span>
-                    </div>
-                    <div class="power-metric-hero">
-                      <b>${remainingWh}</b><small>/ ${fullWh} Wh</small>
-                    </div>
-                    <div class="power-progress-bar">
-                      <div class="power-progress-fill" style="width: ${Math.max(5, Math.min(100, (Number(remainingWh) / fullWh) * 100))}%"></div>
-                    </div>
-                    <div class="power-meta-rows">
-                      <div class="power-meta-row"><small>Health</small><b>${batHealthPct}</b></div>
-                      <div class="power-meta-row"><small>Design</small><b>${designWh} Wh</b></div>
-                    </div>
-                  </div>
-
-                  <!-- Metric 3: Lifecycle Endurance -->
-                  <div class="power-metric-card">
-                    <div class="power-metric-head">
-                      <span class="icon">${icon('e145')}</span>
-                      <span>Lifecycle Endurance</span>
-                    </div>
-                    <div class="power-metric-hero">
-                      <b>Fresh</b><small>pack</small>
-                    </div>
-                    <div class="power-progress-bar">
-                      <div class="power-progress-fill" style="width: 5%"></div>
-                    </div>
-                    <div class="power-meta-rows">
-                      <div class="power-meta-row"><small>Lifespan</small><b>${lifeLabel}</b></div>
-                      <div class="power-meta-row"><small>Condition</small><b>${condLabel}</b></div>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Row of 4 Sub-chips -->
-                <div class="power-chips-row">
-                  <div class="power-chip-tile">
-                    <small>Terminal Potential</small>
-                    <b>${voltageV} V</b>
-                  </div>
-                  <div class="power-chip-tile">
-                    <small>Chemistry Stack</small>
-                    <b>Li-ion</b>
-                  </div>
-                  <div class="power-chip-tile">
-                    <small>Operating Temp</small>
-                    <b>${tempC.toFixed(1)} °C</b>
-                  </div>
-                  <div class="power-chip-tile">
-                    <small>AC Adapter State</small>
-                    <b>${modeStr}</b>
-                  </div>
-                </div>
-              </section>
-
-              <!-- Card 2: THERMAL & POWER GOVERNOR PRESET -->
-              <section class="card power-governor-card">
-                <div class="card-head">
-                  <div class="power-cell-title">
-                    <span class="icon">${icon('e181')}</span>
-                    <span>THERMAL & POWER GOVERNOR PRESET</span>
-                  </div>
-                  <div class="power-active-gov-pill">
-                    <span>ACTIVE: ${activePreset === 'quiet' ? 'powersave' : activePreset === 'turbo' ? 'performance' : 'schedutil'}</span>
-                    <span class="power-dot"></span>
-                  </div>
-                </div>
-
-                <!-- 3 Preset Cards in row -->
-                <div class="power-presets-grid">
-                  <!-- Preset 1: Quiet / Eco -->
-                  <div class="power-preset-card ${activePreset === 'quiet' ? 'active' : ''}" data-power-preset="quiet">
-                    <div class="power-preset-top">
-                      <b>Quiet / Eco</b>
-                      ${activePreset === 'quiet' ? '<span class="power-preset-badge">ACTIVE</span>' : ''}
-                    </div>
-                    <div class="power-preset-sub">Continuous PL1 Cap (4.5W)</div>
-                    <div class="power-preset-gov"><small>GOV:</small> <b>powersave</b></div>
-                  </div>
-
-                  <!-- Preset 2: Balanced -->
-                  <div class="power-preset-card ${activePreset === 'balanced' ? 'active' : ''}" data-power-preset="balanced">
-                    <div class="power-preset-top">
-                      <b>Balanced</b>
-                      ${activePreset === 'balanced' ? '<span class="power-preset-badge">ACTIVE</span>' : ''}
-                    </div>
-                    <div class="power-preset-sub">Optimized Dynamic (6W)</div>
-                    <div class="power-preset-gov"><small>GOV:</small> <b>schedutil</b></div>
-                  </div>
-
-                  <!-- Preset 3: Turbo Boost -->
-                  <div class="power-preset-card ${activePreset === 'turbo' ? 'active' : ''}" data-power-preset="turbo">
-                    <div class="power-preset-top">
-                      <b>Turbo Boost</b>
-                      ${activePreset === 'turbo' ? '<span class="power-preset-badge">ACTIVE</span>' : ''}
-                    </div>
-                    <div class="power-preset-sub">Peak Burst TDP (8W)</div>
-                    <div class="power-preset-gov"><small>GOV:</small> <b>performance</b></div>
-                  </div>
-                </div>
-              </section>
-            </div>
-
-            <!-- Right Column: Live Telemetry & Load Allocation -->
-            <div class="power-col-right">
-              <section class="card power-live-card">
-                <div class="card-head">
-                  <div class="power-cell-title">
-                    <span class="icon">${icon('e145')}</span>
-                    <span>LIVE TELEMETRY</span>
-                  </div>
-                  <span class="power-live-dot"></span>
-                </div>
-
-                <!-- Combined System Draw -->
-                <div class="power-draw-section">
-                  <div class="power-draw-head">
-                    <span class="subtle mono">Combined System Draw</span>
-                    <span class="power-draw-badge">${badgeStr}</span>
-                  </div>
-                  <div class="power-draw-hero">
-                    <b>${totalWatts.toFixed(1)}</b><small>W</small>
-                  </div>
-                </div>
-
-                <!-- Realtime Smooth Waveform -->
-                ${renderLivePowerWaveformSvg(state.powerHist, totalWatts, 76)}
-
-                <!-- Load Allocation Breakdown -->
-                <div class="power-alloc-head">
-                  <small>LOAD ALLOCATION</small>
-                  <small>ESTIMATED</small>
-                </div>
-
-                <div class="power-alloc-list">
-                  <div class="power-alloc-item">
-                    <div class="power-alloc-labels">
-                      <span>CPU Package (PL0/1)</span>
-                      <b>${cpuW.toFixed(1)} W</b>
-                    </div>
-                    <div class="power-alloc-bar">
-                      <div class="power-alloc-fill" style="width:${Math.min(100, (cpuW / 6.0) * 100)}%"></div>
-                    </div>
-                  </div>
-
-                  <div class="power-alloc-item">
-                    <div class="power-alloc-labels">
-                      <span>Graphics Subsystem (GPU)</span>
-                      <b>${gpuW.toFixed(1)} W</b>
-                    </div>
-                    <div class="power-alloc-bar">
-                      <div class="power-alloc-fill" style="width:${Math.min(100, (gpuW / 4.0) * 100)}%"></div>
-                    </div>
-                  </div>
-
-                  <div class="power-alloc-item">
-                    <div class="power-alloc-labels">
-                      <span>eDP Panel & Backlight</span>
-                      <b>${dispW.toFixed(1)} W</b>
-                    </div>
-                    <div class="power-alloc-bar">
-                      <div class="power-alloc-fill" style="width:${Math.min(100, (dispW / 3.0) * 100)}%"></div>
-                    </div>
-                  </div>
-
-                  <div class="power-alloc-item">
-                    <div class="power-alloc-labels">
-                      <span>Drives & Storage (HDD/NVMe)</span>
-                      <b>${storageW.toFixed(1)} W</b>
-                    </div>
-                    <div class="power-alloc-bar">
-                      <div class="power-alloc-fill" style="width:${Math.min(100, (storageW / 5.0) * 100)}%"></div>
-                    </div>
-                  </div>
-
-                  <div class="power-alloc-item">
-                    <div class="power-alloc-labels">
-                      <span>USB Ports & Peripherals</span>
-                      <b>${usbW.toFixed(1)} W</b>
-                    </div>
-                    <div class="power-alloc-bar">
-                      <div class="power-alloc-fill" style="width:${Math.min(100, (usbW / 4.0) * 100)}%"></div>
-                    </div>
-                  </div>
-
-                  <div class="power-alloc-item">
-                    <div class="power-alloc-labels">
-                      <span>Keyboard & System Lights</span>
-                      <b>${kbdW.toFixed(1)} W</b>
-                    </div>
-                    <div class="power-alloc-bar">
-                      <div class="power-alloc-fill" style="width:${Math.min(100, (kbdW / 1.0) * 100)}%"></div>
-                    </div>
-                  </div>
-
-                  <div class="power-alloc-item">
-                    <div class="power-alloc-labels">
-                      <span>Motherboard Logic & RAM</span>
-                      <b>${mbW.toFixed(1)} W</b>
-                    </div>
-                    <div class="power-alloc-bar">
-                      <div class="power-alloc-fill" style="width:${Math.min(100, (mbW / 3.0) * 100)}%"></div>
-                    </div>
-                  </div>
-                </div>
-              </section>
-            </div>
+          <div class="sensors-stat-grid">
+            ${renderBigStatCard({
+              iconCode: 'e145',
+              title: 'BATTERY LEVEL',
+              heroVal: val(s.battery_pct, '%', 0),
+              heroUnit: '',
+              subtitle: `${val(s.battery_status)} · ${val(s.battery_plugged)}`,
+              leftStat: `PEAK ${peak(battHist).toFixed(0)}%`,
+              rightStat: `AVG ${avg(battHist).toFixed(0)}%`,
+              data: battHist,
+              maxVal: 100,
+              dottedRatio: 0.5,
+              color: 'var(--accent)'
+            })}
+            ${renderBigStatCard({
+              iconCode: 'e181',
+              title: 'TERMINAL VOLTAGE',
+              heroVal: voltageV,
+              heroUnit: 'V',
+              subtitle: `${s.battery_voltage_mv ? `${s.battery_voltage_mv} mV` : 'Nominal potential'}`,
+              leftStat: 'CHEMISTRY',
+              rightStat: `${s.battery_technology || 'Li-ion'}`,
+              data: voltageHist,
+              maxVal: Math.max(5.0, ...voltageHist),
+              dottedRatio: 0.5,
+              color: '#38bdf8'
+            })}
+            ${renderBigStatCard({
+              iconCode: 'e186',
+              title: 'TEMPERATURE',
+              heroVal: val(s.battery_temp_c, ' °C', 1),
+              heroUnit: '',
+              subtitle: 'Battery thermal zone',
+              leftStat: 'HEALTH',
+              rightStat: healthText,
+              data: tempHist,
+              maxVal: Math.max(60, ...tempHist),
+              dottedRatio: 0.4,
+              color: '#fbbf24'
+            })}
+            ${renderBigStatCard({
+              iconCode: 'e145',
+              title: 'ESTIMATED DRAW',
+              heroVal: totalWatts.toFixed(1),
+              heroUnit: 'W',
+              subtitle: acOnline ? (batPct >= 99 ? 'Mains bypass' : 'Fast charging') : 'Battery discharging',
+              leftStat: 'SOURCE',
+              rightStat: val(s.battery_plugged),
+              data: state.powerHist,
+              maxVal: Math.max(8, ...state.powerHist),
+              dottedRatio: 0.35,
+              color: '#a78bfa'
+            })}
           </div>
+
+          ${renderWaveformChartSvg({
+            title: 'Battery Level & Real-time Power History · 60s Window',
+            series: [
+              { label: 'Charge Level (%)', data: battHist, color: 'var(--accent)' },
+              { label: 'Temperature (°C)', data: tempHist, color: '#fbbf24' },
+              { label: 'Estimated Draw (W)', data: state.powerHist, color: '#a78bfa' }
+            ],
+            height: 200,
+            suffix: '%',
+            benchmarkVal: 50
+          })}
+
+          <div class="grid two">
+            <section class="card">
+              <div class="card-head">
+                <h2>Android Battery Subsystem</h2>
+                <span class="chip">DUMPSYS BATTERY</span>
+              </div>
+              <div class="kv">
+                <div><small>Charging State</small><b>${val(s.battery_status)}</b></div>
+                <div><small>Power Source</small><b>${val(s.battery_plugged)}</b></div>
+                <div><small>Terminal Voltage</small><b>${voltageV} V (${s.battery_voltage_mv || 4390} mV)</b></div>
+                <div><small>Battery Temperature</small><b>${val(s.battery_temp_c, ' °C', 1)}</b></div>
+                <div><small>Battery Health</small><b>${healthText}</b></div>
+                <div><small>Battery Chemistry</small><b>${s.battery_technology || 'Li-ion'}</b></div>
+                <div><small>Device Uptime</small><b>${uptimeHours}h ${uptimeMins}m</b></div>
+                <div><small>Charger Connected</small><b>${acOnline ? 'Yes' : 'No'}</b></div>
+              </div>
+            </section>
+
+            <section class="card">
+              <div class="card-head">
+                <h2>Android Subsystem Power Draw</h2>
+                <span class="chip">ESTIMATED</span>
+              </div>
+              <div class="android-power-alloc-list">
+                <div class="android-power-alloc-item">
+                  <div class="android-power-alloc-labels">
+                    <span>SoC & CPU Cores</span>
+                    <b>${cpuW.toFixed(1)} W</b>
+                  </div>
+                  <div class="android-power-alloc-bar">
+                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (cpuW / totalWatts) * 100)}%"></div>
+                  </div>
+                </div>
+
+                <div class="android-power-alloc-item">
+                  <div class="android-power-alloc-labels">
+                    <span>GPU Pipeline (Adreno/Mali)</span>
+                    <b>${gpuW.toFixed(1)} W</b>
+                  </div>
+                  <div class="android-power-alloc-bar">
+                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (gpuW / totalWatts) * 100)}%"></div>
+                  </div>
+                </div>
+
+                <div class="android-power-alloc-item">
+                  <div class="android-power-alloc-labels">
+                    <span>Display Panel & Touch Digitizer</span>
+                    <b>${dispW.toFixed(1)} W</b>
+                  </div>
+                  <div class="android-power-alloc-bar">
+                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (dispW / totalWatts) * 100)}%"></div>
+                  </div>
+                </div>
+
+                <div class="android-power-alloc-item">
+                  <div class="android-power-alloc-labels">
+                    <span>Cellular Modem & RF Baseband</span>
+                    <b>${cellW.toFixed(1)} W</b>
+                  </div>
+                  <div class="android-power-alloc-bar">
+                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (cellW / totalWatts) * 100)}%"></div>
+                  </div>
+                </div>
+
+                <div class="android-power-alloc-item">
+                  <div class="android-power-alloc-labels">
+                    <span>Wi-Fi & Bluetooth Connectivity</span>
+                    <b>${radioW.toFixed(1)} W</b>
+                  </div>
+                  <div class="android-power-alloc-bar">
+                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (radioW / totalWatts) * 100)}%"></div>
+                  </div>
+                </div>
+
+                <div class="android-power-alloc-item">
+                  <div class="android-power-alloc-labels">
+                    <span>Storage Flash & eMMC/UFS I/O</span>
+                    <b>${storageW.toFixed(1)} W</b>
+                  </div>
+                  <div class="android-power-alloc-bar">
+                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (storageW / totalWatts) * 100)}%"></div>
+                  </div>
+                </div>
+
+                <div class="android-power-alloc-item">
+                  <div class="android-power-alloc-labels">
+                    <span>Android Framework & System</span>
+                    <b>${osW.toFixed(1)} W</b>
+                  </div>
+                  <div class="android-power-alloc-bar">
+                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (osW / totalWatts) * 100)}%"></div>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <section class="card" style="margin-top: 14px;">
+            <div class="card-head">
+              <h2>Android CPU Governor & Power Profile</h2>
+              <span class="chip">ACTIVE: ${activePreset === 'quiet' ? 'powersave' : activePreset === 'turbo' ? 'performance' : 'schedutil'}</span>
+            </div>
+            <div class="android-power-presets-grid">
+              <div class="android-power-preset-card ${activePreset === 'quiet' ? 'active' : ''}" data-power-preset="quiet">
+                <div class="preset-card-top">
+                  <b>Battery Saver / Eco</b>
+                  ${activePreset === 'quiet' ? '<span class="preset-active-chip">ACTIVE</span>' : ''}
+                </div>
+                <p class="subtle">Prioritize battery longevity & reduce peak thermal throttling</p>
+                <div class="preset-gov-badge">GOV: powersave</div>
+              </div>
+
+              <div class="android-power-preset-card ${activePreset === 'balanced' ? 'active' : ''}" data-power-preset="balanced">
+                <div class="preset-card-top">
+                  <b>Balanced (Dynamic)</b>
+                  ${activePreset === 'balanced' ? '<span class="preset-active-chip">ACTIVE</span>' : ''}
+                </div>
+                <p class="subtle">Optimal frequency scaling governor for fluid Android UI</p>
+                <div class="preset-gov-badge">GOV: schedutil</div>
+              </div>
+
+              <div class="android-power-preset-card ${activePreset === 'turbo' ? 'active' : ''}" data-power-preset="turbo">
+                <div class="preset-card-top">
+                  <b>Performance / Turbo</b>
+                  ${activePreset === 'turbo' ? '<span class="preset-active-chip">ACTIVE</span>' : ''}
+                </div>
+                <p class="subtle">Lock higher frequencies for gaming and intensive workloads</p>
+                <div class="preset-gov-badge">GOV: performance</div>
+              </div>
+            </div>
+          </section>
         `;
       },
 

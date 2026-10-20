@@ -1537,6 +1537,8 @@
 
     state.sensorHistory.push({
       at: now,
+      powerAttribution: s.power_attribution || [],
+      powerAttributionSecs: s.power_attribution_secs,
       cpu: Number((s.cpu_usage_pct ?? procCpu ?? 0).toFixed(1)),
       ram: Number((mem ?? 0).toFixed(1)),
       swap: Number((s.swap_total_kb ? 100 * (s.swap_total_kb - (s.swap_free_kb || 0)) / s.swap_total_kb : 0).toFixed(1)),
@@ -3905,44 +3907,28 @@
         }
         const lifeCond = cycles == null ? 'Optimal (BMS)' : (cycles < 200 ? 'Fresh pack (Optimal)' : (cycles < 500 ? 'Normal endurance' : (cycles < 800 ? 'Aged cell' : 'High cycle count')));
 
-        // Average power over the same on-battery window as the charge attribution.
-        const attribution = (s.power_attribution || []).filter(a => Number.isFinite(Number(a.mah)) && Number(a.mah) >= 0)
-          .sort((a, b) => Number(b.mah) - Number(a.mah));
-        const attrTotal = attribution.reduce((sum, a) => sum + Number(a.mah), 0);
-        const attrSeconds = Number(s.power_attribution_secs);
+        const historyAttribution = (s.power_attribution || []).filter(a => a.mah != null && Number.isFinite(Number(a.mah)) && Number(a.mah) >= 0);
+        const previousPower = hist.length > 1 ? hist[hist.length - 2] : null;
+        const elapsedPower = Number(s.power_attribution_secs) - Number(previousPower?.powerAttributionSecs);
+        const oldPower = new Map((previousPower?.powerAttribution || []).map(a => [a.label, Number(a.mah)]));
+        // A reset or missing component invalidates the interval; keep the historical fallback.
+        const intervalPower = !acOnline && previousPower?.powerAttributionSecs != null && elapsedPower > 0
+          && historyAttribution.every(a => oldPower.has(a.label) && Number(a.mah) >= oldPower.get(a.label))
+          && oldPower.size === historyAttribution.length;
+        const attribution = historyAttribution.map(a => ({ ...a, mah: Number(a.mah) - (intervalPower ? oldPower.get(a.label) : 0) }))
+          .sort((a, b) => b.mah - a.mah);
+        const attrTotal = attribution.reduce((sum, a) => sum + a.mah, 0);
+        const attrSeconds = intervalPower ? elapsedPower : Number(s.power_attribution_secs);
         const attrWattsPerMah = Number.isFinite(attrSeconds) && attrSeconds > 0 && Number.isFinite(voltageMv) && voltageMv > 0
           ? (voltageMv / 1000) * 3.6 / attrSeconds : null;
         const formatAttrWatts = mah => attrWattsPerMah == null ? 'Unavailable' : `${(mah * attrWattsPerMah).toFixed(3)} W`;
-
-        // Charge/discharge rate. Prefer the fuel-gauge current; the fallbacks are
-        // labelled estimates because unrooted devices do not expose current_now.
-        let drawWatts = 0.0;
-        let drawSub = 'Mains bypass · 0 mA drain';
-        let drawSide = '0 mA';
-        const drawIsEstimated = s.battery_current_ua == null && !isFull;
-
-        if (s.battery_current_ua != null && s.battery_current_ua !== 0) {
-          const curA = Math.abs(Number(s.battery_current_ua)) / 1_000_000;
-          drawWatts = curA * nominalV;
-          if (isCharging) {
-            drawSub = `Charging (${s.battery_plugged || 'USB'})`;
-            drawSide = `+${drawWatts.toFixed(1)} W`;
-          } else {
-            drawSub = 'Battery discharging';
-            drawSide = `-${drawWatts.toFixed(1)} W`;
-          }
-        } else if (isFull) {
-          drawSub = 'Mains bypass · 0 mA net draw';
-          drawSide = 'Bypass';
-        } else if (isCharging) {
-          drawWatts = Math.max(2.5, ((100 - batPct) / 100) * 8 + 2.0);
-          drawSub = `Fast charging (${s.battery_plugged || 'USB'}) · estimated`;
-          drawSide = `+${drawWatts.toFixed(1)} W`;
-        } else {
-          drawWatts = attribution.length && attrWattsPerMah != null ? attrTotal * attrWattsPerMah : null;
-          drawSub = drawWatts == null ? 'Unavailable · no timed battery history' : 'Estimated average over on-battery history';
-          drawSide = drawWatts == null ? 'Unavailable' : `${drawWatts.toFixed(1)} W avg`;
-        }
+        const missingSectors = ['CPU', 'GPU', 'Screen', 'Wi-Fi', 'Cell standby', 'Bluetooth', 'GPS', 'Sensors', 'Camera', 'Flashlight', 'Audio', 'Video', 'Storage']
+          .filter(label => !historyAttribution.some(a => a.label.toLowerCase() === label.toLowerCase()));
+        const liveBatteryWatts = s.battery_current_ua != null && Number.isFinite(Number(s.battery_current_ua)) && voltageMv > 0
+          ? Math.abs(Number(s.battery_current_ua)) * voltageMv / 1e9 : null;
+        const drawWatts = liveBatteryWatts;
+        const drawSub = liveBatteryWatts == null ? 'Battery current or voltage unavailable' : 'Live battery current × voltage';
+        const drawSide = liveBatteryWatts == null ? 'Unavailable' : `${(Number(s.battery_current_ua) / 1000).toFixed(0)} mA`;
 
         if (!state.powerHist) state.powerHist = [];
         if (drawWatts != null) state.powerHist.push(drawWatts);
@@ -3997,7 +3983,7 @@
             })}
             ${renderBigStatCard({
               iconCode: 'e145',
-              title: 'ESTIMATED DRAW',
+              title: 'NET BATTERY POWER',
               heroVal: drawWatts == null ? '—' : drawWatts.toFixed(1),
               heroUnit: 'W',
               subtitle: drawSub,
@@ -4133,8 +4119,12 @@
             <section class="card">
               <div class="card-head">
                 <h2>Android Power Attribution</h2>
-                <span class="chip">BATTERYSTATS · AVG W</span>
+                <span class="chip">${acOnline ? 'HISTORY · PLUGGED IN' : intervalPower ? 'INTERVAL · AVG W' : 'HISTORY · AVG W'}</span>
               </div>
+              <div class="android-power-alloc-labels" style="margin-bottom: 12px;">
+                <span>Live net battery power</span><b>${liveBatteryWatts == null ? 'Unavailable' : `${liveBatteryWatts.toFixed(3)} W`}</b>
+              </div>
+              <p class="subtle">${acOnline ? 'Plugged in: Android pauses on-battery attribution. Unplug to collect new subsystem samples. Net battery power excludes power supplied directly by the charger.' : 'Subsystem watts use the latest on-battery interval when available; otherwise the recorded history.'}</p>
               ${attribution.length ? `
                 <div class="android-power-alloc-list">
                   ${attribution.map(a => `
@@ -4149,8 +4139,9 @@
                     </div>
                   `).join('')}
                 </div>
-                <p class="subtle" style="margin-top: 10px;">${attrWattsPerMah == null ? 'Average watts unavailable: battery duration or voltage is missing.' : `Estimated average power over ${attrSeconds.toFixed(3)} seconds on battery since the statistics reset, using the current battery voltage. Total attributed: ${formatAttrWatts(attrTotal)}. This is not instantaneous power.`}</p>
+                <p class="subtle" style="margin-top: 10px;">${attrWattsPerMah == null ? 'Average watts unavailable: battery duration or voltage is missing.' : `Estimated average power over ${attrSeconds.toFixed(3)} seconds ${intervalPower ? 'between samples' : 'on battery since the statistics reset'}, using the current battery voltage. Total attributed: ${formatAttrWatts(attrTotal)}. This is not instantaneous power.`}</p>
               ` : empty('No power attribution history', 'Android has no batterystats drain history yet — it accumulates after the device has been on battery.')}
+              ${missingSectors.length ? `<p class="subtle" style="margin-top: 12px;">Not reported separately: ${missingSectors.join(', ')}. Missing readings do not mean zero power.</p>` : ''}
             </section>
           </div>
 

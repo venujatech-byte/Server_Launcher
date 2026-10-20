@@ -539,6 +539,56 @@ pub fn query_telemetry(serial: &str) -> AdbDeviceTelemetry {
     telem
 }
 
+// Prefer global component totals; older Android versions report CPU/GPS only inside UID rows.
+fn parse_power_attribution(text: &str) -> Vec<AdbPowerAttribution> {
+    fn label(name: &str) -> &str {
+        match name {
+            "cpu" | "Cpu" => "CPU",
+            "wifi" | "Wifi" => "Wi-Fi",
+            "radio" => "Cell standby",
+            "gps" | "gnss" | "Gps" => "GPS",
+            "sensor" | "sensors" => "Sensors",
+            "bluetooth" => "Bluetooth",
+            "camera" => "Camera",
+            "flashlight" => "Flashlight",
+            "audio" => "Audio",
+            "video" => "Video",
+            "screen" => "Screen",
+            other => other,
+        }
+    }
+    let mut totals = std::collections::BTreeMap::<String, f32>::new();
+    let mut uid_totals = std::collections::BTreeMap::<String, f32>::new();
+    for line in text.lines() {
+        let Some((name, rest)) = line.trim().split_once(':') else { continue };
+        if name == "Capacity" { continue; }
+        let Some(mah) = rest.split_whitespace().next().and_then(|v| v.parse::<f32>().ok())
+            .filter(|v| v.is_finite() && *v >= 0.0) else { continue };
+        if name.starts_with("Uid ") {
+            let mut accounted = 0.0;
+            // Ignore the later "Including smearing" block: it redistributes existing power.
+            if let Some((_, components)) = rest.split_once('(') {
+                for component in components.split(')').next().unwrap_or("").split_whitespace() {
+                    let Some((key, value)) = component.split_once('=') else { continue };
+                    let Some(value) = value.parse::<f32>().ok().filter(|v| v.is_finite() && *v >= 0.0) else { continue };
+                    if key == "proportional" { continue; }
+                    *uid_totals.entry(label(key).to_string()).or_default() += value;
+                    accounted += value;
+                }
+            }
+            if mah - accounted > 0.00001 {
+                *uid_totals.entry("Other apps / services".to_string()).or_default() += mah - accounted;
+            }
+        } else {
+            *totals.entry(label(name).to_string()).or_default() += mah;
+        }
+    }
+    for (name, mah) in uid_totals {
+        totals.entry(name).or_insert(mah);
+    }
+    totals.into_iter().map(|(label, mah)| AdbPowerAttribution { label, mah }).collect()
+}
+
 // Android durations may contain days and milliseconds, with or without spaces.
 fn parse_battery_time(line: &str) -> Option<f64> {
     let (_, rest) = line.split_once("Time on battery:")?;
@@ -560,7 +610,22 @@ fn parse_battery_time(line: &str) -> Option<f64> {
 
 #[cfg(test)]
 mod power_time_tests {
-    use super::parse_battery_time;
+    use super::{parse_battery_time, parse_power_attribution};
+
+    #[test]
+    fn includes_uid_components_without_smearing_or_double_counting() {
+        let rows = parse_power_attribution("Capacity: 5000\nUid 1000: 3 ( cpu=2 gps=1 ) Including smearing: 8 ( proportional=5 )\nCPU: 4\nWi-Fi: 0.2\nScreen: 1\nUid 1001: 0.5\nGPU: NaN");
+        let values: std::collections::BTreeMap<_, _> = rows.into_iter().map(|r| (r.label, r.mah)).collect();
+        assert_eq!(values["CPU"], 4.0);
+        assert_eq!(values["GPS"], 1.0);
+        assert_eq!(values["Wi-Fi"], 0.2);
+        assert_eq!(values["Other apps / services"], 0.5);
+        assert!(!values.contains_key("GPU"));
+        assert!(!values.contains_key("Capacity"));
+        let cpu = parse_power_attribution("Uid 0: 1 ( cpu=1 )\nUid u0a10: 2 ( cpu=2 )");
+        assert_eq!(cpu[0].label, "CPU");
+        assert_eq!(cpu[0].mah, 3.0);
+    }
 
     #[test]
     fn parses_battery_realtime_only() {
@@ -582,7 +647,7 @@ echo __MEMINFO__; cat /proc/meminfo
 echo __TOP__; top -b -n 1 -m 120
 echo __BATTERY__; dumpsys battery; cat /sys/class/power_supply/battery/uevent 2>/dev/null; su -c cat /sys/class/power_supply/battery/uevent 2>/dev/null
 battery_stats=$(dumpsys batterystats --charged 2>/dev/null)
-echo __BATTERYSTATS__; printf '%s\n' "$battery_stats" | sed -n '/Estimated power use/,/^$/p' | grep -E '^ +[A-Z][A-Za-z ]+:' | head -n 20
+echo __BATTERYSTATS__; printf '%s\n' "$battery_stats" | sed -n '/Estimated power use/,/^$/p'
 echo __BATTERYSTATS_TIME__; printf '%s\n' "$battery_stats" | grep -m1 -E 'Time on battery:'
 echo __GOVERNOR__; cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null; cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors 2>/dev/null
 echo __NETDEV__; cat /proc/net/dev
@@ -831,16 +896,7 @@ echo __TELEPHONY__; getprop gsm.operator.alpha; getprop gsm.sim.operator.alpha; 
         .or_else(|| battery_value("technology:").map(str::to_string))
         .or_else(|| Some("Li-ion".to_string()));
 
-    // "Capacity: 4980, Typical: 5100, ..." is a summary row, not an attribution entry.
-    let power_attribution = section("BATTERYSTATS")
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("Capacity:"))
-        .filter_map(|line| {
-            let (label, rest) = line.trim().split_once(':')?;
-            let mah = rest.split_whitespace().next()?.parse::<f32>().ok()?;
-            Some(AdbPowerAttribution { label: label.trim().to_string(), mah })
-        })
-        .collect();
+    let power_attribution = parse_power_attribution(section("BATTERYSTATS"));
 
     let power_attribution_secs = parse_battery_time(section("BATTERYSTATS_TIME"));
 

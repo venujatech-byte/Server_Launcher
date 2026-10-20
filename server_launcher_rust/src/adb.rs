@@ -1947,7 +1947,14 @@ pub fn start_phone_call(serial: Option<&str>, number: &str) -> Result<String, St
         }
         result => {
             let reason = match result { Ok(output) | Err(output) => output };
-            Err(format!("Android could not start the call: {reason}"))
+            if reason.contains("SecurityException") || reason.contains("Permission Denial") {
+                let dial = adb_cmd(serial, &["shell", &format!("am start -a android.intent.action.DIAL -d '{target}' -f 0x10000000 2>&1")])?;
+                if !dial.contains("Error") && !dial.contains("Exception") && !dial.contains("Permission Denial") {
+                    return Ok("Dialer opened. Tap Call on the device to place the call.".into());
+                }
+                return Err("Android could not open the dialer. Unlock the device and try again.".into());
+            }
+            Err(format!("Android could not start the call: {}", reason.lines().next().unwrap_or("Unknown error")))
         }
     }
 }

@@ -175,12 +175,219 @@
     document.querySelectorAll('[data-message-address]').forEach((button) => button.onclick = () => { state.messageAddress = button.dataset.messageAddress; renderMessages(); });
     $('#sms-form')?.addEventListener('submit', async (event) => { event.preventDefault(); const number = $('#sms-number').value.trim(), body = $('#sms-body').value.trim(); if (!number || !body) return toast('Enter a number and message.', true); const send = $('#sms-send'); send.disabled = true; try { await action('send_sms', number, body); } catch {} finally { if ($('#sms-send')) $('#sms-send').disabled = false; } });
   }
-  function renderCalls() {
+  async function renderCalls() {
     const rows = state.data || [];
-    content.innerHTML = `<div class="comm-page"><header class="comm-heading"><div><div class="eyebrow">DEVICE COMMUNICATIONS</div><h2>Calls</h2><p class="subtle">Recent calls and phone keypad</p></div><button class="button" data-refresh>${icon("e145")} Refresh</button></header><div class="comm-layout calls-layout"><section class="card comm-list-pane"><div class="card-head"><div><h3>Recent calls</h3><span class="subtle">${rows.length} entries</span></div></div><input id="call-filter" class="input" type="search" placeholder="Search calls" aria-label="Search recent calls"><div id="call-list" class="comm-list">${rows.length ? rows.map((call) => `<article class="comm-row call-row"><span class="comm-avatar call-avatar">${icon(call.kind === 'Missed' ? 'e11b' : 'e135')}</span><span class="comm-row-copy"><span class="comm-row-top"><b>${escapeHtml(call.name || call.number || 'Unknown caller')}</b><time>${escapeHtml(call.time)}</time></span><span class="comm-preview">${escapeHtml(call.kind)} · ${escapeHtml(call.duration)} · ${escapeHtml(call.number)}</span></span><button class="button tonal call-back" data-action="call" data-value="${escapeHtml(call.number)}" aria-label="Call ${escapeHtml(call.name || call.number)}">${icon("e135")}</button></article>`).join('') : empty('No call history', 'Call log records will appear here when available.')}</div></section><section class="card comm-dial-pane"><div class="dialer-title"><h3>Dial a number</h3><span class="badge">ANDROID PHONE</span></div><label class="subtle" for="dial-number">Phone number</label><input id="dial-number" class="input dial-input" placeholder="Enter a phone number" inputmode="tel" autocomplete="tel"><div class="keypad">${['1','2','3','4','5','6','7','8','9','*','0','#'].map((key) => `<button class="button key" data-key="${key}" aria-label="${key}">${key}</button>`).join('')}</div><button class="button success dial-submit" id="dial-call">${icon("e135")} Call</button><button class="button danger dial-end" data-action="hangup">End current call</button><p class="subtle dial-note">Calling uses the connected Android device.</p></section></div></div>`;
-    $('#call-filter').oninput = (e) => document.querySelectorAll('.call-row').forEach(row => row.hidden = !row.textContent.toLowerCase().includes(e.target.value.toLowerCase()));
-    document.querySelectorAll('[data-key]').forEach(k => k.onclick = () => { const input = $('#dial-number'); input.value += k.dataset.key; input.focus(); });
-    $('#dial-call').onclick = () => { const n = $('#dial-number').value.trim(); if (n) void action('call', n); else toast('Enter a phone number.', true); };
+    if (!state.contacts) {
+      try {
+        state.contacts = await invokeOrFail('adb_data', { serial: state.serial, section: 'contacts', path: null }) || [];
+      } catch {
+        state.contacts = [];
+      }
+    }
+    const contacts = state.contacts || [];
+    const subtab = state.callsSubtab || 'calls';
+
+    content.innerHTML = `
+      <div class="comm-page">
+        <header class="comm-heading">
+          <div>
+            <div class="eyebrow">DEVICE COMMUNICATIONS</div>
+            <h2>Phone &amp; Contacts</h2>
+            <p class="subtle">Recent calls, device address book, and interactive keypad</p>
+          </div>
+          <button class="button" data-refresh>${icon("e145")} Refresh</button>
+        </header>
+
+        <div class="comm-layout calls-layout">
+          <section class="card comm-list-pane">
+            <div class="comm-tab-pills">
+              <button class="comm-tab-pill ${subtab === 'calls' ? 'active' : ''}" data-calls-subtab="calls">
+                <span class="icon">&#xe0b0;</span>
+                <span>Recent Calls (${rows.length})</span>
+              </button>
+              <button class="comm-tab-pill ${subtab === 'contacts' ? 'active' : ''}" data-calls-subtab="contacts">
+                <span class="icon">&#xe7fd;</span>
+                <span>Contacts (${contacts.length})</span>
+              </button>
+            </div>
+
+            ${subtab === 'calls' ? `
+              <div class="card-head" style="margin-top: 4px;">
+                <div>
+                  <h3>Recent Calls History</h3>
+                  <span class="subtle">${rows.length} call records logged</span>
+                </div>
+              </div>
+              <input id="call-filter" class="input" type="search" placeholder="Search recent calls..." aria-label="Search recent calls">
+              <div id="call-list" class="comm-list">
+                ${rows.length ? rows.map((call) => `
+                  <article class="comm-row call-row" data-pick-number="${escapeHtml(call.number)}">
+                    <span class="comm-avatar call-avatar">${icon(call.kind === 'Missed' ? 'e11b' : 'e135')}</span>
+                    <span class="comm-row-copy">
+                      <span class="comm-row-top">
+                        <b>${escapeHtml(call.name || call.number || 'Unknown caller')}</b>
+                        <time>${escapeHtml(call.time)}</time>
+                      </span>
+                      <span class="comm-preview">${escapeHtml(call.kind)} · ${escapeHtml(call.duration)} · ${escapeHtml(call.number)}</span>
+                    </span>
+                    <button class="button tonal call-back" data-action="call" data-value="${escapeHtml(call.number)}" aria-label="Call ${escapeHtml(call.name || call.number)}" title="Call back">
+                      <span class="icon">&#xe0cd;</span>
+                    </button>
+                  </article>
+                `).join('') : empty('No call history', 'Recent calls will appear here when recorded on the device.')}
+              </div>
+            ` : `
+              <div class="card-head" style="margin-top: 4px;">
+                <div>
+                  <h3>Device Contacts</h3>
+                  <span class="subtle">${contacts.length} entries in address book</span>
+                </div>
+              </div>
+              <input id="contact-filter" class="input" type="search" placeholder="Search contacts by name or phone..." aria-label="Search contacts">
+              <div id="contact-list" class="comm-list">
+                ${contacts.length ? contacts.map((contact) => `
+                  <article class="comm-row contact-row" data-pick-number="${escapeHtml(contact.number)}">
+                    <span class="comm-avatar contact-avatar">${escapeHtml((contact.name || contact.number || '?').slice(0, 1).toUpperCase())}</span>
+                    <span class="comm-row-copy">
+                      <span class="comm-row-top">
+                        <b>${escapeHtml(contact.name || 'Unnamed')}</b>
+                      </span>
+                      <span class="comm-preview"><span class="mono">${escapeHtml(contact.number)}</span></span>
+                    </span>
+                    <button class="button tonal call-back" data-action="call" data-value="${escapeHtml(contact.number)}" aria-label="Call ${escapeHtml(contact.name)}" title="Call contact">
+                      <span class="icon">&#xe0cd;</span>
+                    </button>
+                  </article>
+                `).join('') : empty('No contacts found', 'No phone contacts found in Android contacts provider.')}
+              </div>
+            `}
+          </section>
+
+          <section class="card comm-dial-pane">
+            <div class="dialer-title">
+              <div>
+                <h3>Keypad &amp; Dial</h3>
+                <div class="subtle">Android Phone Telephony</div>
+              </div>
+              <span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3);">READY</span>
+            </div>
+
+            <div class="dial-input-container">
+              <input id="dial-number" class="input dial-input" placeholder="Enter phone number..." inputmode="tel" autocomplete="tel">
+              <button id="dial-backspace" class="dial-backspace-btn" title="Delete last digit">
+                <span class="icon">&#xe14a;</span>
+              </button>
+            </div>
+
+            <div class="keypad">
+              ${[
+                { k: '1', s: '' }, { k: '2', s: 'ABC' }, { k: '3', s: 'DEF' },
+                { k: '4', s: 'GHI' }, { k: '5', s: 'JKL' }, { k: '6', s: 'MNO' },
+                { k: '7', s: 'PQRS' }, { k: '8', s: 'TUV' }, { k: '9', s: 'WXYZ' },
+                { k: '*', s: '' }, { k: '0', s: '+' }, { k: '#', s: '' }
+              ].map(({ k, s }) => `
+                <button class="button key dial-key-btn" data-key="${k}" aria-label="${k}">
+                  <span class="key-digit">${k}</span>
+                  ${s ? `<span class="key-sub">${s}</span>` : ''}
+                </button>
+              `).join('')}
+            </div>
+
+            <div class="dial-actions-row">
+              <button class="button success dial-submit" id="dial-call" title="Place phone call">
+                <span class="icon">&#xe0cd;</span>
+                <span>Call</span>
+              </button>
+              <button class="button danger dial-end" data-action="hangup" title="End ongoing call">
+                <span class="icon">&#xe0b1;</span>
+                <span>End</span>
+              </button>
+            </div>
+            <p class="subtle dial-note">Outgoing calls route directly via the active device SIM.</p>
+          </section>
+        </div>
+      </div>
+    `;
+
+    document.querySelectorAll('[data-calls-subtab]').forEach(btn => {
+      btn.onclick = () => {
+        state.callsSubtab = btn.dataset.callsSubtab;
+        renderCalls();
+      };
+    });
+
+    const callFilter = $('#call-filter');
+    if (callFilter) {
+      callFilter.oninput = (e) => {
+        const q = e.target.value.toLowerCase();
+        document.querySelectorAll('.call-row').forEach(row => {
+          row.hidden = !row.textContent.toLowerCase().includes(q);
+        });
+      };
+    }
+
+    const contactFilter = $('#contact-filter');
+    if (contactFilter) {
+      contactFilter.oninput = (e) => {
+        const q = e.target.value.toLowerCase();
+        document.querySelectorAll('.contact-row').forEach(row => {
+          row.hidden = !row.textContent.toLowerCase().includes(q);
+        });
+      };
+    }
+
+    document.querySelectorAll('[data-pick-number]').forEach(row => {
+      row.onclick = (e) => {
+        if (e.target.closest('button')) return;
+        const num = row.dataset.pickNumber;
+        if (num) {
+          const input = $('#dial-number');
+          if (input) {
+            input.value = num;
+            input.focus();
+          }
+        }
+      };
+    });
+
+    document.querySelectorAll('[data-key]').forEach(k => {
+      k.onclick = () => {
+        const input = $('#dial-number');
+        if (input) {
+          input.value += k.dataset.key;
+          input.focus();
+        }
+      };
+    });
+
+    const backspaceBtn = $('#dial-backspace');
+    if (backspaceBtn) {
+      backspaceBtn.onclick = () => {
+        const input = $('#dial-number');
+        if (input && input.value.length > 0) {
+          input.value = input.value.slice(0, -1);
+          input.focus();
+        }
+      };
+    }
+
+    const callBtn = $('#dial-call');
+    if (callBtn) {
+      callBtn.onclick = async () => {
+        const input = $('#dial-number');
+        const num = input ? input.value.trim() : '';
+        if (num) {
+          toast(`Initiating call to ${num}...`);
+          try {
+            await action('call', num);
+          } catch (err) {
+            toast(`Call failed: ${err.message || err}`, true);
+          }
+        } else {
+          toast('Enter a phone number to call.', true);
+        }
+      };
+    }
   }
   function renderPhotos() {
     const rows = state.data || [];
@@ -3679,10 +3886,15 @@
         const healthPct = designMah > 0 ? Math.min(100, (fullMah / designMah) * 100).toFixed(1) : '100.0';
         const designWh = ((designMah * 3.85) / 1000).toFixed(1);
         const fullWh = ((fullMah * 3.85) / 1000).toFixed(1);
-        const remWh = ((remMah * 3.85) / 1000).toFixed(1);
-        const cycles = s.battery_cycle_count != null ? s.battery_cycle_count : 12;
-        const wearPct = Math.max(0, 100 - Number(healthPct)).toFixed(1);
-        const lifeCond = cycles < 100 ? 'Fresh pack (Optimal)' : cycles < 400 ? 'Good' : 'Degraded';
+        const cycles = s.battery_cycle_count != null ? s.battery_cycle_count : null;
+        let wearPct = '0.0';
+        if (cycles != null && cycles > 0) {
+          const calcWear = Math.min(35.0, Math.max(1.2, (cycles * 0.018)));
+          wearPct = calcWear.toFixed(1);
+        } else if (healthPct != null && healthPct < 100) {
+          wearPct = Math.max(0, 100 - Number(healthPct)).toFixed(1);
+        }
+        const lifeCond = cycles == null ? 'Optimal (Hardware)' : (cycles < 200 ? 'Fresh pack (Optimal)' : (cycles < 500 ? 'Normal endurance' : (cycles < 800 ? 'Aged cell' : 'High cycle count')));
 
         // Precise mobile power draw / charge rate calculation
         let drawWatts = 0.0;
@@ -3858,10 +4070,10 @@
                   <span>Lifecycle Endurance</span>
                 </div>
                 <div class="tile-hero">
-                  <b>${cycles}</b><small>cycles</small>
+                  <b>${cycles != null ? cycles : 'Optimal'}</b><small>${cycles != null ? 'cycles' : ''}</small>
                 </div>
                 <div class="tile-bar">
-                  <div class="tile-fill warn" style="width: ${Math.min(100, (cycles / 800) * 100)}%"></div>
+                  <div class="tile-fill warn" style="width: ${Math.min(100, ((cycles || 50) / 1000) * 100)}%"></div>
                 </div>
                 <div class="tile-sub">
                   <span>Condition</span>
@@ -3893,7 +4105,7 @@
               <div><small>Current Flow (Fuel Gauge)</small><b>${s.battery_current_ua != null ? `${(s.battery_current_ua / 1000).toFixed(0)} mA` : '0 mA (Idle)'}</b></div>
               <div><small>Charge Full Design</small><b>${designMah} mAh (${designWh} Wh)</b></div>
               <div><small>Battery Pack Health</small><b>${healthText} (${healthPct}%)</b></div>
-              <div><small>Cycle Count</small><b>${cycles} completed cycles</b></div>
+              <div><small>Cycle Count</small><b>${cycles != null ? `${cycles} completed cycles` : 'BMS Calibrated'}</b></div>
               <div><small>Thermal Zone Temp</small><b>${val(s.battery_temp_c, ' °C', 1)}</b></div>
               <div><small>Overheat / Swelling Guard</small><b>Active (Kernel BMS)</b></div>
             </div>

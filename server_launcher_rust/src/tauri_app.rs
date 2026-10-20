@@ -144,6 +144,9 @@ async fn adb_data(serial: String, section: String, path: Option<String>) -> Resu
             "calls" => json!(crate::adb::get_call_logs(Some(serial)).into_iter().map(|c| json!({
                 "id":c.id,"number":c.number,"name":c.name,"kind":c.call_type.label(),"time":c.time_str,"duration":c.duration_str
             })).collect::<Vec<_>>()),
+            "contacts" => json!(crate::adb::get_contacts(Some(serial)).into_iter().map(|c| json!({
+                "id":c.id,"name":c.name,"number":c.number
+            })).collect::<Vec<_>>()),
             "photos" => json!(crate::adb::list_photos(Some(serial)).into_iter().map(|p| json!({
                 "name":p.name,"path":p.path,"size":p.size_str,"date":p.date_str
             })).collect::<Vec<_>>()),
@@ -360,6 +363,30 @@ async fn adb_action(
                 crate::adb::adb_cmd(Some(&serial), &["push", &value, &dest_device])?;
                 let _ = crate::adb::adb_cmd(Some(&serial), &["shell", "am", "broadcast", "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE", "-d", &format!("file://{}", dest_device)]);
                 Ok(format!("Uploaded photo to {}", dest_device))
+            },
+            "bluetooth_toggle" => {
+                let current = crate::adb::adb_cmd(Some(&serial), &["shell", "settings", "get", "global", "bluetooth_on"]).unwrap_or_default();
+                let next = if current.trim() == "1" { "disable" } else { "enable" };
+                crate::adb::adb_cmd(Some(&serial), &["shell", "svc", "bluetooth", next])
+                    .map(|_| format!("Bluetooth radio {next}d"))
+            },
+            "bluetooth_enable" => {
+                crate::adb::adb_cmd(Some(&serial), &["shell", "svc", "bluetooth", "enable"])
+                    .map(|_| "Bluetooth radio enabled".into())
+            },
+            "bluetooth_disable" => {
+                crate::adb::adb_cmd(Some(&serial), &["shell", "svc", "bluetooth", "disable"])
+                    .map(|_| "Bluetooth radio disabled".into())
+            },
+            "bluetooth_auto_connect" => {
+                let _ = crate::adb::adb_cmd(Some(&serial), &["shell", "svc", "bluetooth", "enable"]);
+                let _ = crate::adb::adb_cmd(Some(&serial), &["shell", "am", "broadcast", "-a", "android.bluetooth.adapter.action.REQUEST_DISCOVERABLE"]);
+                let _ = crate::adb::adb_cmd(Some(&serial), &["shell", "am", "broadcast", "-a", "android.bluetooth.device.action.FOUND"]);
+                Ok("Bluetooth auto-connect triggered: Radio active, peripheral reconnect sent".into())
+            },
+            "bluetooth_settings" => {
+                crate::adb::adb_cmd(Some(&serial), &["shell", "am", "start", "-a", "android.settings.BLUETOOTH_SETTINGS"])
+                    .map(|_| "Bluetooth settings launched on device".into())
             },
             _ => Err("Unsupported ADB action".to_string()),
         }

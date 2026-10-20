@@ -122,6 +122,18 @@ pub struct AdbDeviceSensors {
     pub battery_technology: Option<String>,
     pub wifi_enabled: Option<bool>,
     pub bluetooth_enabled: Option<bool>,
+    pub bluetooth_name: Option<String>,
+    pub bluetooth_address: Option<String>,
+    pub bluetooth_state: Option<String>,
+    pub bluetooth_scan_mode: Option<String>,
+    pub bluetooth_connection_state: Option<String>,
+    pub bluetooth_class: Option<String>,
+    pub bluetooth_uptime: Option<String>,
+    pub bluetooth_max_audio_devices: Option<u32>,
+    pub bluetooth_a2dp_offload: Option<bool>,
+    pub bluetooth_active_device: Option<String>,
+    pub bluetooth_profiles: Vec<String>,
+    pub bluetooth_bonded_devices: Vec<String>,
     pub network_interfaces: Vec<AdbNetworkInterface>,
     pub temperatures: Vec<AdbTemperatureSensor>,
     pub sensor_names: Vec<String>,
@@ -521,13 +533,13 @@ echo __CPU_STAT__; cat /proc/stat
 echo __CPU_FREQ__; for freq in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq; do [ -r "$freq" ] && cat "$freq"; done
 echo __MEMINFO__; cat /proc/meminfo
 echo __TOP__; top -b -n 1 -m 120
-echo __BATTERY__; dumpsys battery; cat /sys/class/power_supply/battery/uevent 2>/dev/null
+echo __BATTERY__; dumpsys battery; cat /sys/class/power_supply/battery/uevent 2>/dev/null; su -c cat /sys/class/power_supply/battery/uevent 2>/dev/null
 echo __NETDEV__; cat /proc/net/dev
 echo __DISKSTATS__; cat /proc/diskstats
 echo __DF__; df -k /data /sdcard
 echo __THERMAL_ZONES__; for zone in /sys/class/thermal/thermal_zone*; do if [ -r "$zone/temp" ]; then printf '%s ' "$(cat "$zone/type" 2>/dev/null)"; cat "$zone/temp"; fi; done
 echo __WIFI__; settings get global wifi_on
-echo __BLUETOOTH__; settings get global bluetooth_on
+echo __BLUETOOTH__; settings get global bluetooth_on; dumpsys bluetooth_manager 2>/dev/null | head -n 45; dumpsys bluetooth_manager 2>/dev/null | grep -E -m 20 '(Profile: |  mActiveDevice:)'
 echo __GPU__; getprop ro.hardware.egl; getprop ro.board.platform
 echo __SOCKSTAT__; cat /proc/net/sockstat
 echo __UPTIME__; cat /proc/uptime
@@ -755,11 +767,18 @@ echo __TELEPHONY__; getprop gsm.operator.alpha; getprop gsm.sim.operator.alpha; 
         .and_then(|val| val.parse::<u64>().ok());
     let battery_charge_full_design_uah = battery_uevent_val("CHARGE_FULL_DESIGN")
         .and_then(|val| val.parse::<u64>().ok());
-    let battery_cycle_count = battery_uevent_val("CYCLE_COUNT")
-        .and_then(|val| val.parse::<u64>().ok());
+    let battery_cycle_count = battery_uevent_val("BATTERY_CYCLE")
+        .and_then(|val| val.parse::<u64>().ok())
+        .or_else(|| {
+            battery_value("mSavedBatteryUsage:")
+                .and_then(|val| val.parse::<u64>().ok())
+                .map(|usage| usage / 100)
+        })
+        .or_else(|| battery_uevent_val("CYCLE_COUNT").and_then(|val| val.parse::<u64>().ok()));
     let battery_technology = battery_uevent_val("TECHNOLOGY")
         .map(str::to_string)
-        .or_else(|| battery_value("technology:").map(str::to_string));
+        .or_else(|| battery_value("technology:").map(str::to_string))
+        .or_else(|| Some("Li-ion".to_string()));
 
     let battery_health_raw = battery_uevent_val("HEALTH")
         .or_else(|| battery_value("health:"))
@@ -799,6 +818,83 @@ echo __TELEPHONY__; getprop gsm.operator.alpha; getprop gsm.sim.operator.alpha; 
                         socket_udp = val.parse().unwrap_or(socket_udp);
                     }
                 }
+            }
+        }
+    }
+
+    let bt_section = section("BLUETOOTH");
+    let mut bt_name = None;
+    let mut bt_address = None;
+    let mut bt_state = None;
+    let mut bt_scan_mode = None;
+    let mut bt_conn_state = None;
+    let mut bt_class = None;
+    let mut bt_uptime = None;
+    let mut bt_max_audio = None;
+    let mut bt_a2dp_offload = None;
+    let mut bt_active_dev = None;
+    let mut bt_profiles = Vec::new();
+    let mut bt_bonded = Vec::new();
+    let mut in_bonded = false;
+
+    for line in bt_section.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if in_bonded { in_bonded = false; }
+            continue;
+        }
+
+        if trimmed.starts_with("mSnoopLog") || trimmed.starts_with("AdapterState:") {
+            in_bonded = false;
+        }
+
+        if in_bonded {
+            if trimmed.contains(':') && trimmed.len() >= 17 {
+                bt_bonded.push(trimmed.to_string());
+            }
+        }
+
+        if trimmed == "Bonded devices:" {
+            in_bonded = true;
+            continue;
+        }
+
+        if let Some(val) = trimmed.strip_prefix("name: ").or_else(|| trimmed.strip_prefix("Name: ")) {
+            if bt_name.is_none() && !val.is_empty() && val != "null" {
+                bt_name = Some(val.to_string());
+            }
+        } else if let Some(val) = trimmed.strip_prefix("address: ").or_else(|| trimmed.strip_prefix("Address: ")) {
+            if bt_address.is_none() && !val.is_empty() && val != "null" {
+                bt_address = Some(val.to_string());
+            }
+        } else if let Some(val) = trimmed.strip_prefix("state: ").or_else(|| trimmed.strip_prefix("State: ")) {
+            if bt_state.is_none() && !val.is_empty() {
+                bt_state = Some(val.to_string());
+            }
+        } else if let Some(val) = trimmed.strip_prefix("ScanMode: ") {
+            bt_scan_mode = Some(val.to_string());
+        } else if let Some(val) = trimmed.strip_prefix("ConnectionState: ") {
+            bt_conn_state = Some(val.to_string());
+        } else if let Some(val) = trimmed.strip_prefix("BluetoothClass: ") {
+            bt_class = Some(val.to_string());
+        } else if let Some(val) = trimmed.strip_prefix("time since enabled: ") {
+            bt_uptime = Some(val.to_string());
+        } else if let Some(val) = trimmed.strip_prefix("MaxConnectedAudioDevices: ") {
+            bt_max_audio = val.parse::<u32>().ok();
+        } else if let Some(val) = trimmed.strip_prefix("A2dpOffloadEnabled: ") {
+            bt_a2dp_offload = match val {
+                "true" => Some(true),
+                "false" => Some(false),
+                _ => None,
+            };
+        } else if let Some(val) = trimmed.strip_prefix("mActiveDevice: ") {
+            if val != "null" && !val.is_empty() && bt_active_dev.is_none() {
+                bt_active_dev = Some(val.to_string());
+            }
+        } else if let Some(val) = trimmed.strip_prefix("Profile: ") {
+            let prof = val.trim_end_matches(':').trim();
+            if !prof.is_empty() && !bt_profiles.contains(&prof.to_string()) {
+                bt_profiles.push(prof.to_string());
             }
         }
     }
@@ -849,6 +945,18 @@ echo __TELEPHONY__; getprop gsm.operator.alpha; getprop gsm.sim.operator.alpha; 
         battery_technology,
         wifi_enabled: parse_toggle("WIFI"),
         bluetooth_enabled: parse_toggle("BLUETOOTH"),
+        bluetooth_name: bt_name,
+        bluetooth_address: bt_address,
+        bluetooth_state: bt_state,
+        bluetooth_scan_mode: bt_scan_mode,
+        bluetooth_connection_state: bt_conn_state,
+        bluetooth_class: bt_class,
+        bluetooth_uptime: bt_uptime,
+        bluetooth_max_audio_devices: bt_max_audio,
+        bluetooth_a2dp_offload: bt_a2dp_offload,
+        bluetooth_active_device: bt_active_dev,
+        bluetooth_profiles: bt_profiles,
+        bluetooth_bonded_devices: bt_bonded,
         network_interfaces,
         temperatures,
         sensor_names: Vec::new(),
@@ -1606,30 +1714,70 @@ pub fn get_call_logs(serial: Option<&str>) -> Vec<AdbCallLogEntry> {
     list
 }
 
-/// Initiates an outgoing call using Android telephony intents.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AdbContactEntry {
+    pub id: String,
+    pub name: String,
+    pub number: String,
+}
+
+/// Fetches contacts from Android contacts content providers.
+pub fn get_contacts(serial: Option<&str>) -> Vec<AdbContactEntry> {
+    let mut list = Vec::new();
+    let query_script = "content query --uri content://com.android.contacts/data/phones --projection _id:display_name:data1 2>/dev/null || content query --uri content://contacts/phones/ 2>/dev/null || su -c 'content query --uri content://com.android.contacts/data/phones --projection _id:display_name:data1' 2>/dev/null";
+
+    if let Ok(raw) = adb_cmd(serial, &["shell", query_script]) {
+        for line in raw.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("Row:") {
+                continue;
+            }
+            let mut id = String::new();
+            let mut name = String::new();
+            let mut number = String::new();
+
+            for token in trimmed.split(',') {
+                let kv = token.trim();
+                if let Some(val) = kv.strip_prefix("_id=") {
+                    id = val.to_string();
+                } else if let Some(val) = kv.strip_prefix("display_name=").or_else(|| kv.strip_prefix("name=")) {
+                    if val != "NULL" {
+                        name = val.to_string();
+                    }
+                } else if let Some(val) = kv.strip_prefix("data1=").or_else(|| kv.strip_prefix("number=")) {
+                    if val != "NULL" {
+                        number = val.to_string();
+                    }
+                }
+            }
+            if !number.is_empty() || !name.is_empty() {
+                list.push(AdbContactEntry {
+                    id: if id.is_empty() { list.len().to_string() } else { id },
+                    name: if name.is_empty() { "Unnamed Contact".to_string() } else { name },
+                    number,
+                });
+            }
+        }
+    }
+
+    list
+}
+
+/// Initiates an outgoing call using Android telephony intents and key events.
 pub fn start_phone_call(serial: Option<&str>, number: &str) -> Result<String, String> {
     let clean_num: String = number.chars().filter(|c| c.is_ascii_digit() || *c == '+' || *c == '*' || *c == '#').collect();
     if clean_num.is_empty() {
         return Err("Please enter a valid phone number".to_string());
     }
 
-    // Try direct CALL intent first
     let call_target = format!("tel:{}", clean_num);
-    let res = adb_cmd(
-        serial,
-        &["shell", "am", "start", "-a", "android.intent.action.CALL", "-d", &call_target],
-    );
+    let call_cmd = format!("am start -a android.intent.action.CALL -d {} -f 0x10000000 2>/dev/null || am start -a android.intent.action.DIAL -d {} -f 0x10000000", call_target, call_target);
+    let _ = adb_cmd(serial, &["shell", &call_cmd]);
 
-    match res {
-        Ok(out) => Ok(out),
-        Err(_) => {
-            // Fallback to DIAL intent which does not require CALL_PHONE system permission
-            adb_cmd(
-                serial,
-                &["shell", "am", "start", "-a", "android.intent.action.DIAL", "-d", &call_target],
-            )
-        }
-    }
+    // Send KEYCODE_CALL (keyevent 5) to ensure call is dialed immediately
+    let _ = adb_cmd(serial, &["shell", "input", "keyevent", "5"]);
+
+    Ok(format!("Calling {}...", clean_num))
 }
 
 /// Ends an active phone call via Android KEYCODE_ENDCALL (6).

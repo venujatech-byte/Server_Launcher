@@ -2290,49 +2290,233 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 .file-open:hover { color: var(--accent); }
 tr[hidden], .app-row[hidden] { display: none !important; }
 
-.comm-page { display: grid; gap: 12px; font-family: Inter, 'Cantarell', 'Noto Sans', system-ui, sans-serif; }
-.comm-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 2px 4px; }
+.comm-page { 
+  display: flex; 
+  flex-direction: column; 
+  height: calc(100dvh - 90px); 
+  max-height: calc(100dvh - 90px); 
+  gap: 12px; 
+  font-family: Inter, 'Cantarell', 'Noto Sans', system-ui, sans-serif; 
+  overflow: hidden; 
+}
+.comm-heading { 
+  flex: 0 0 auto; 
+  display: flex; 
+  align-items: center; 
+  justify-content: space-between; 
+  gap: 12px; 
+  padding: 2px 4px; 
+}
 .comm-heading h2 { margin: 0; font-size: 21px; font-weight: 600; }
 .comm-heading p { margin: 4px 0 0; }
-.comm-layout { display: grid; grid-template-columns: minmax(280px, .82fr) minmax(360px, 1.18fr); gap: 10px; align-items: stretch; }
-.messages-layout { min-height: min(660px, calc(100dvh - 180px)); }
-.calls-layout { min-height: min(600px, calc(100dvh - 180px)); grid-template-columns: minmax(300px, 1.08fr) minmax(300px, .92fr); }
-.comm-list-pane, .comm-thread-pane, .comm-dial-pane { min-width: 0; min-height: 0; }
-.comm-list-pane { display: flex; flex-direction: column; gap: 9px; }
-.comm-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--surface2) transparent; }
+.comm-layout { 
+  flex: 1; 
+  min-height: 0; 
+  height: 100%; 
+  display: grid; 
+  grid-template-columns: minmax(280px, .82fr) minmax(360px, 1.18fr); 
+  gap: 10px; 
+  align-items: stretch; 
+  overflow: hidden; 
+}
+.messages-layout { 
+  height: 100%; 
+  min-height: 0; 
+}
+.calls-layout { 
+  height: 100%; 
+  min-height: 0; 
+  grid-template-columns: minmax(300px, 1.08fr) minmax(300px, .92fr); 
+}
+.comm-list-pane, .comm-thread-pane, .comm-dial-pane { 
+  min-width: 0; 
+  min-height: 0; 
+  height: 100%; 
+  overflow: hidden; 
+}
+.comm-list-pane { 
+  display: flex; 
+  flex-direction: column; 
+  gap: 9px; 
+}
+.comm-list-pane .card-head { flex: 0 0 auto; }
+.comm-list-pane #message-filter, 
+.comm-list-pane #call-filter, 
+.comm-list-pane #contact-filter { flex: 0 0 auto; }
+.comm-list { 
+  flex: 1; 
+  min-height: 0; 
+  overflow-y: auto; 
+  overscroll-behavior: contain; 
+  scrollbar-width: thin; 
+  scrollbar-color: var(--surface2) transparent; 
+  padding-right: 4px; 
+}
 .comm-row { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 11px 8px; background: transparent; border: 0; border-radius: 9px; color: var(--text); text-align: left; font: inherit; cursor: pointer; }
 .comm-row:hover, .comm-row.selected { background: var(--surface2); }
 .comm-row.selected { box-shadow: inset 2px 0 var(--accent-strong); }
 .comm-row[hidden] { display: none; }
 .comm-avatar { flex: 0 0 38px; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-size: 15px; font-weight: 650; }
 .call-avatar { background: color-mix(in srgb, var(--green), transparent 88%); color: var(--green); }
+.contact-avatar { background: color-mix(in srgb, var(--accent), transparent 85%); color: var(--accent); }
 .comm-row-copy { flex: 1; min-width: 0; display: grid; gap: 5px; }
 .comm-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .comm-row-top b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
 .comm-row time, .message-bubble time { color: var(--dim); font-size: 10px; white-space: nowrap; }
 .comm-preview { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .call-back { flex: 0 0 34px; width: 34px; min-height: 34px; padding: 0; }
-.comm-thread-pane { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
-.thread-head { display: flex; align-items: center; gap: 10px; padding: 13px 15px; background: var(--surface2); }
+.comm-thread-pane { 
+  display: flex; 
+  flex-direction: column; 
+  padding: 0; 
+  overflow: hidden; 
+}
+.thread-head { 
+  flex: 0 0 auto; 
+  display: flex; 
+  align-items: center; 
+  gap: 10px; 
+  padding: 13px 15px; 
+  background: var(--surface2); 
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05); 
+}
 .thread-head h3, .dialer-title h3 { margin: 0 0 3px; font-size: 14px; font-weight: 600; }
-.message-thread { flex: 1; min-height: 180px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 14px; overflow-y: auto; overscroll-behavior: contain; }
+.message-thread { 
+  flex: 1; 
+  min-height: 0; 
+  display: flex; 
+  flex-direction: column; 
+  align-items: flex-start; 
+  gap: 8px; 
+  padding: 14px; 
+  overflow-y: auto; 
+  overscroll-behavior: contain; 
+  scrollbar-width: thin; 
+  scrollbar-color: var(--surface2) transparent; 
+}
 .message-bubble { max-width: min(82%, 520px); padding: 9px 11px; border-radius: 12px 12px 12px 3px; background: var(--well); }
 .message-bubble.outgoing { align-self: flex-end; border-radius: 12px 12px 3px 12px; background: var(--accent-soft); }
 .message-bubble p { margin: 0; font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .message-bubble time { display: block; margin-top: 5px; text-align: right; }
-.message-composer { display: grid; gap: 6px; padding: 12px; background: var(--surface2); }
+.message-composer { 
+  flex: 0 0 auto; 
+  display: grid; 
+  gap: 6px; 
+  padding: 12px; 
+  background: var(--surface2); 
+  border-top: 1px solid rgba(255, 255, 255, 0.05); 
+}
 .composer-row { display: flex; align-items: flex-end; gap: 8px; }
 .composer-row .input { flex: 1; min-height: 45px; resize: vertical; }
 .thread-empty { flex: 1; display: grid; place-items: center; }
 .thread-empty .empty { min-height: 160px; }
-.comm-dial-pane { display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 10px; padding: clamp(16px, 3vw, 32px); }
-.dialer-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
-.dial-input { min-height: 54px; background: var(--well); font-size: 21px; text-align: center; letter-spacing: .4px; }
+.comm-dial-pane { 
+  display: flex; 
+  flex-direction: column; 
+  align-items: stretch; 
+  justify-content: flex-start; 
+  gap: 12px; 
+  padding: clamp(16px, 2.5vw, 24px); 
+  overflow-y: auto; 
+}
+.dialer-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
+.dial-input-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.dial-input-container .dial-input {
+  width: 100%;
+  padding-right: 48px;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  color: #38bdf8;
+  font-size: 20px;
+  min-height: 50px;
+}
+.dial-backspace-btn {
+  position: absolute;
+  right: 8px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  transition: all 0.15s ease;
+}
+.dial-backspace-btn:hover {
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.12);
+}
 .keypad { gap: 8px; }
-.key { height: clamp(44px, 7vh, 58px); border: 0; border-radius: 10px; background: var(--surface2); font-size: 19px !important; font-weight: 500 !important; }
-.key:hover { background: color-mix(in srgb, var(--surface2), var(--accent-strong) 24%); }
+.dial-key-btn {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 2px !important;
+  line-height: 1 !important;
+  height: clamp(42px, 6vh, 52px);
+  border: 0;
+  border-radius: 10px;
+  background: var(--surface2);
+}
+.dial-key-btn:hover { background: color-mix(in srgb, var(--surface2), var(--accent-strong) 24%); }
+.key-digit {
+  font-size: 18px;
+  font-weight: 700;
+}
+.key-sub {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.8px;
+}
+.dial-actions-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 10px;
+  width: 100%;
+}
 .dial-submit, .dial-end { width: 100%; min-height: 42px; }
 .dial-note { margin: 0; text-align: center; }
+
+.comm-tab-pills {
+  display: flex;
+  gap: 6px;
+  background: var(--surface2);
+  border-radius: 10px;
+  padding: 4px;
+  flex: 0 0 auto;
+}
+.comm-tab-pill {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: 600 12px Inter, system-ui, sans-serif;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.comm-tab-pill:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+.comm-tab-pill.active {
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /* ANDROID CUSTOMIZATION & BOOT SUITE (Rooting, Booting, Firmware, Backup)    */

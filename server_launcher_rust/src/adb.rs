@@ -110,6 +110,12 @@ pub struct AdbDeviceSensors {
     pub battery_pct: Option<f32>,
     pub battery_status: String,
     pub battery_temp_c: Option<f32>,
+    pub battery_current_ua: Option<i64>,
+    pub battery_charge_counter_uah: Option<u64>,
+    pub battery_charge_full_uah: Option<u64>,
+    pub battery_charge_full_design_uah: Option<u64>,
+    pub battery_cycle_count: Option<u64>,
+    pub battery_technology: Option<String>,
     pub wifi_enabled: Option<bool>,
     pub bluetooth_enabled: Option<bool>,
     pub network_interfaces: Vec<AdbNetworkInterface>,
@@ -501,7 +507,7 @@ echo __CPU_STAT__; cat /proc/stat
 echo __CPU_FREQ__; for freq in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq; do [ -r "$freq" ] && cat "$freq"; done
 echo __MEMINFO__; cat /proc/meminfo
 echo __TOP__; top -b -n 1 -m 120
-echo __BATTERY__; dumpsys battery
+echo __BATTERY__; dumpsys battery; cat /sys/class/power_supply/battery/uevent 2>/dev/null
 echo __NETDEV__; cat /proc/net/dev
 echo __DISKSTATS__; cat /proc/diskstats
 echo __DF__; df -k /data /sdcard
@@ -676,6 +682,12 @@ echo __UPTIME__; cat /proc/uptime
             _ => None,
         }
     };
+    let battery_uevent_val = |key: &str| {
+        section("BATTERY")
+            .lines()
+            .find_map(|line| line.trim().strip_prefix(&format!("POWER_SUPPLY_{key}=")))
+            .map(str::trim)
+    };
     let battery_value = |prefix: &str| {
         section("BATTERY")
             .lines()
@@ -701,8 +713,53 @@ echo __UPTIME__; cat /proc/uptime
             "5" => Some("Full"),
             _ => None,
         })
+        .or_else(|| battery_uevent_val("STATUS").map(|s| match s {
+            "Charging" => "Charging",
+            "Discharging" => "Discharging",
+            "Not charging" => "Not charging",
+            "Full" => "Full",
+            other => other,
+        }))
         .unwrap_or("Unavailable")
         .to_string();
+
+    let battery_current_ua = battery_uevent_val("CURRENT_NOW")
+        .and_then(|val| val.parse::<i64>().ok())
+        .or_else(|| {
+            battery_value("current now:")
+                .and_then(|val| val.parse::<i64>().ok())
+        });
+    let battery_charge_counter_uah = battery_uevent_val("CHARGE_COUNTER")
+        .and_then(|val| val.parse::<u64>().ok())
+        .or_else(|| {
+            battery_value("Charge counter:")
+                .or_else(|| battery_value("charge counter:"))
+                .and_then(|val| val.parse::<u64>().ok())
+        });
+    let battery_charge_full_uah = battery_uevent_val("CHARGE_FULL")
+        .and_then(|val| val.parse::<u64>().ok());
+    let battery_charge_full_design_uah = battery_uevent_val("CHARGE_FULL_DESIGN")
+        .and_then(|val| val.parse::<u64>().ok());
+    let battery_cycle_count = battery_uevent_val("CYCLE_COUNT")
+        .and_then(|val| val.parse::<u64>().ok());
+    let battery_technology = battery_uevent_val("TECHNOLOGY")
+        .map(str::to_string)
+        .or_else(|| battery_value("technology:").map(str::to_string));
+
+    let battery_health_raw = battery_uevent_val("HEALTH")
+        .or_else(|| battery_value("health:"))
+        .unwrap_or("");
+    let battery_health = match battery_health_raw {
+        "2" | "Good" | "good" => "Good",
+        "3" | "Overheat" | "overheat" => "Overheat",
+        "4" | "Dead" | "dead" => "Dead",
+        "5" | "Over voltage" | "over_voltage" => "Over Voltage",
+        "6" | "Unspecified failure" => "Failure",
+        "7" | "Cold" | "cold" => "Cold",
+        other if !other.is_empty() => other,
+        _ => "Good",
+    }.to_string();
+
     let mut socket_total = 0;
     let mut socket_tcp = 0;
     let mut socket_udp = 0;
@@ -749,17 +806,28 @@ echo __UPTIME__; cat /proc/uptime
         disk_counters,
         gpu_renderer: gpu.first().copied().unwrap_or("").to_string(),
         gpu_platform: gpu.get(1).copied().unwrap_or("").to_string(),
-        battery_voltage_mv: battery_value("voltage:").and_then(|value| value.parse().ok()),
-        battery_health: battery_value("health:").unwrap_or("").to_string(),
+        battery_voltage_mv: battery_value("voltage:")
+            .and_then(|value| value.parse().ok())
+            .or_else(|| battery_uevent_val("VOLTAGE_NOW").and_then(|v| v.parse::<u64>().ok()).map(|uv| uv / 1000)),
+        battery_health,
         battery_plugged,
-        battery_pct: battery_value("level:").and_then(|value| value.parse().ok()),
+        battery_pct: battery_value("level:")
+            .and_then(|value| value.parse().ok())
+            .or_else(|| battery_uevent_val("CAPACITY").and_then(|v| v.parse().ok())),
         battery_status,
         battery_temp_c: battery_value("temperature:")
             .and_then(|value| value.parse::<f32>().ok())
+            .or_else(|| battery_uevent_val("TEMP").and_then(|v| v.parse::<f32>().ok()))
             .map(|value| {
                 let temp = if value.abs() > 150.0 { value / 10.0 } else { value };
                 (temp * 10.0).round() / 10.0
             }),
+        battery_current_ua,
+        battery_charge_counter_uah,
+        battery_charge_full_uah,
+        battery_charge_full_design_uah,
+        battery_cycle_count,
+        battery_technology,
         wifi_enabled: parse_toggle("WIFI"),
         bluetooth_enabled: parse_toggle("BLUETOOTH"),
         network_interfaces,

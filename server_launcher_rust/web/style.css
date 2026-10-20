@@ -1430,6 +1430,112 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   font-weight: 700;
 }
 
+/* Battery Health Section Styles */
+.power-health-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+@media (max-width: 900px) {
+  .power-health-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 500px) {
+  .power-health-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.power-health-tile {
+  background: #090f19;
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.power-health-tile .tile-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 700 10px ui-monospace, monospace;
+  color: #94a3b8;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.power-health-tile .tile-header .icon {
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.power-health-tile .tile-hero {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.power-health-tile .tile-hero b {
+  font-size: 22px;
+  font-weight: 800;
+  color: #f8fafc;
+  font-family: ui-monospace, monospace;
+  line-height: 1;
+}
+
+.power-health-tile .tile-hero small {
+  font-size: 11.5px;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.power-health-tile .tile-bar {
+  width: 100%;
+  height: 4px;
+  background: #151f30;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.power-health-tile .tile-fill {
+  height: 100%;
+  background: #10b981;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.power-health-tile .tile-fill.accent {
+  background: var(--accent);
+}
+
+.power-health-tile .tile-fill.warn {
+  background: #f59e0b;
+}
+
+.power-health-tile .tile-fill.danger {
+  background: #ef4444;
+}
+
+.power-health-tile .tile-sub {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font: 500 10px ui-monospace, monospace;
+  color: #64748b;
+}
+
+.power-health-tile .tile-sub b {
+  color: #e2e8f0;
+  font-weight: 700;
+}
+
 .power-live-dot {
   width: 6px;
   height: 6px;

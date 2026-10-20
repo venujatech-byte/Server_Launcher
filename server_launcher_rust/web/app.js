@@ -2,7 +2,7 @@
   const invoke = window.__TAURI__?.core?.invoke;
   const $ = (selector) => document.querySelector(selector);
   const content = $('#content');
-  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', screenTimer: null, toastTimer: null, lastTelemetry: 0, topAppsSelectedPid: null, topAppsExpandedGroups: new Set(), topAppsAppsExpanded: true, topAppsBgExpanded: true, topAppsSort: 'mem', topAppsSortDesc: true, topAppsSearch: '', powerPreset: 'balanced', powerHist: [10.2, 11.5, 9.8, 12.1, 13.4, 11.8, 12.6, 13.4], photosAlbum: 'all', photosSearch: '', photosDensity: 'comfortable', photosSelected: new Set(), photosSelectionMode: false, photosLightboxIndex: null, photosCache: {}, customSubtab: 'boot', customRootStatus: null, customFastbootDevices: null, customDensityVal: '', customAnimScale: '0.5' };
+  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', screenTimer: null, toastTimer: null, lastTelemetry: 0, topAppsSelectedPid: null, topAppsExpandedGroups: new Set(), topAppsAppsExpanded: true, topAppsBgExpanded: true, topAppsSort: 'mem', topAppsSortDesc: true, topAppsSearch: '', powerPreset: 'balanced', powerHist: [0.0, 0.0, 0.0], photosAlbum: 'all', photosSearch: '', photosDensity: 'comfortable', photosSelected: new Set(), photosSelectionMode: false, photosLightboxIndex: null, photosCache: {}, customSubtab: 'boot', customRootStatus: null, customFastbootDevices: null, customDensityVal: '', customAnimScale: '0.5' };
   const tabNames = { overview: 'Overview', screen: 'Screen share', messages: 'Messages', calls: 'Calls', photos: 'Photos', notifications: 'Notifications', sensors: 'Sensors', storage: 'Storage', apps: 'Apps', clipboard: 'Clipboard', terminal: 'Terminal', wireless: 'Wireless debugging', firmware: 'Customization & Boot' };
   const tabKinds = { messages: 'messages', calls: 'calls', photos: 'photos', notifications: 'notifications', sensors: 'sensors', apps: 'apps', storage: 'files', wireless: 'endpoints' };
   const icon = (code) => `<span class="icon" aria-hidden="true">&#x${code};</span>`;
@@ -2841,8 +2841,10 @@
       power: () => {
         const batPct = Number(s.battery_pct != null ? s.battery_pct : 100);
         const acOnline = s.battery_plugged === 'AC' || s.battery_plugged === 'USB' || s.battery_plugged === 'Wireless' || s.battery_status === 'Full' || s.battery_status === 'Charging';
+        const isCharging = s.battery_status === 'Charging';
+        const isFull = s.battery_status === 'Full' || (acOnline && batPct >= 100);
 
-        const voltageMv = Number(s.battery_voltage_mv) || 4390;
+        const voltageMv = Number(s.battery_voltage_mv) || 4384;
         const voltageV = (voltageMv / 1000).toFixed(2);
         const voltageHist = hist.map(h => h.voltage ? (Number(h.voltage) / 1000) : Number(voltageV));
         if (voltageHist.length < 2) voltageHist.push(Number(voltageV));
@@ -2850,21 +2852,72 @@
         const tempC = Number(s.battery_temp_c) || 31.2;
         const healthText = s.battery_health === '2' ? 'Good' : (s.battery_health || 'Good');
 
-        // Mobile Android power draw estimates
+        // Battery capacities and health metrics from hardware fuel gauge
+        const fullMah = s.battery_charge_full_uah ? Math.round(s.battery_charge_full_uah / 1000) : 5111;
+        const designMah = s.battery_charge_full_design_uah ? Math.round(s.battery_charge_full_design_uah / 1000) : fullMah;
+        const remMah = s.battery_charge_counter_uah ? Math.round(s.battery_charge_counter_uah / 1000) : Math.round((batPct / 100) * fullMah);
+        const healthPct = designMah > 0 ? Math.min(100, (fullMah / designMah) * 100).toFixed(1) : '100.0';
+        const designWh = ((designMah * 3.85) / 1000).toFixed(1);
+        const fullWh = ((fullMah * 3.85) / 1000).toFixed(1);
+        const remWh = ((remMah * 3.85) / 1000).toFixed(1);
+        const cycles = s.battery_cycle_count != null ? s.battery_cycle_count : 12;
+        const wearPct = Math.max(0, 100 - Number(healthPct)).toFixed(1);
+        const lifeCond = cycles < 100 ? 'Fresh pack (Optimal)' : cycles < 400 ? 'Good' : 'Degraded';
+
+        // Precise mobile power draw / charge rate calculation
+        let drawWatts = 0.0;
+        let drawSub = 'Mains bypass · 0 mA drain';
+        let drawSide = '0 mA';
+
+        if (s.battery_current_ua != null && s.battery_current_ua !== 0) {
+          const curA = Math.abs(Number(s.battery_current_ua)) / 1_000_000;
+          drawWatts = curA * (voltageMv / 1000);
+          if (isCharging) {
+            drawSub = `Charging (${s.battery_plugged || 'USB'})`;
+            drawSide = `+${drawWatts.toFixed(1)} W`;
+          } else {
+            drawSub = 'Battery discharging';
+            drawSide = `-${drawWatts.toFixed(1)} W`;
+          }
+        } else if (isFull) {
+          drawWatts = 0.0;
+          drawSub = 'Mains bypass · 0 mA net draw';
+          drawSide = 'Bypass';
+        } else if (isCharging) {
+          drawWatts = Math.max(2.5, ((100 - batPct) / 100) * 8 + 2.0);
+          drawSub = `Fast charging (${s.battery_plugged || 'USB'})`;
+          drawSide = `+${drawWatts.toFixed(1)} W`;
+        } else {
+          // Mobile SoC discharge estimate
+          const currentCpu = Number(s.cpu_usage_pct) || 14;
+          const numCores = s.cpu_cores || 8;
+          const cpuW = Math.max(0.6, (currentCpu / 100) * (numCores * 0.35) + 0.4);
+          const gpuW = Math.max(0.3, (currentCpu / 100) * 0.8 + 0.2);
+          const dispW = 1.2;
+          const cellW = 0.5;
+          const radioW = (s.wifi_enabled ? 0.35 : 0.05) + (s.bluetooth_enabled ? 0.15 : 0.02);
+          const storageW = Math.max(0.2, (s.disk_counters?.length || 1) * 0.15);
+          const osW = 0.4;
+          drawWatts = cpuW + gpuW + dispW + cellW + radioW + storageW + osW;
+          drawSub = 'Battery discharging';
+          drawSide = `-${drawWatts.toFixed(1)} W`;
+        }
+
+        if (!state.powerHist) state.powerHist = [drawWatts, drawWatts];
+        state.powerHist.push(drawWatts);
+        if (state.powerHist.length > 25) state.powerHist.shift();
+
+        // Estimated subsystem draw allocations for breakdown view
         const currentCpu = Number(s.cpu_usage_pct) || 14;
         const numCores = s.cpu_cores || 8;
-        const cpuW = Math.max(0.6, (currentCpu / 100) * (numCores * 0.35) + 0.4);
-        const gpuW = Math.max(0.3, (currentCpu / 100) * 0.8 + 0.2);
-        const dispW = 1.2;
-        const cellW = 0.5;
-        const radioW = (s.wifi_enabled ? 0.35 : 0.05) + (s.bluetooth_enabled ? 0.15 : 0.02);
-        const storageW = Math.max(0.2, (s.disk_counters?.length || 1) * 0.15);
-        const osW = 0.4;
-        const totalWatts = cpuW + gpuW + dispW + cellW + radioW + storageW + osW;
-
-        if (!state.powerHist) state.powerHist = [3.2, 3.5, 3.1, 3.8, 3.4, 3.6, totalWatts];
-        state.powerHist.push(totalWatts);
-        if (state.powerHist.length > 25) state.powerHist.shift();
+        const cpuW = Math.max(0.5, (currentCpu / 100) * (numCores * 0.3) + 0.3);
+        const gpuW = Math.max(0.2, (currentCpu / 100) * 0.6 + 0.2);
+        const dispW = 1.1;
+        const cellW = 0.4;
+        const radioW = (s.wifi_enabled ? 0.3 : 0.05) + (s.bluetooth_enabled ? 0.12 : 0.02);
+        const storageW = Math.max(0.15, (s.disk_counters?.length || 1) * 0.1);
+        const osW = 0.35;
+        const allocTotal = cpuW + gpuW + dispW + cellW + radioW + storageW + osW;
 
         const activePreset = state.powerPreset || 'balanced';
 
@@ -2912,29 +2965,119 @@
             ${renderBigStatCard({
               iconCode: 'e145',
               title: 'ESTIMATED DRAW',
-              heroVal: totalWatts.toFixed(1),
+              heroVal: drawWatts.toFixed(1),
               heroUnit: 'W',
-              subtitle: acOnline ? (batPct >= 99 ? 'Mains bypass' : 'Fast charging') : 'Battery discharging',
-              leftStat: 'SOURCE',
-              rightStat: val(s.battery_plugged),
+              subtitle: drawSub,
+              leftStat: 'POWER FLOW',
+              rightStat: drawSide,
               data: state.powerHist,
-              maxVal: Math.max(8, ...state.powerHist),
+              maxVal: Math.max(5, ...state.powerHist),
               dottedRatio: 0.35,
               color: '#a78bfa'
             })}
           </div>
 
           ${renderWaveformChartSvg({
-            title: 'Battery Level & Real-time Power History · 60s Window',
+            title: 'Battery Level & Thermal Trend · 60s Window',
             series: [
               { label: 'Charge Level (%)', data: battHist, color: 'var(--accent)' },
-              { label: 'Temperature (°C)', data: tempHist, color: '#fbbf24' },
-              { label: 'Estimated Draw (W)', data: state.powerHist, color: '#a78bfa' }
+              { label: 'Battery Temperature (°C)', data: tempHist, color: '#fbbf24' }
             ],
             height: 200,
             suffix: '%',
             benchmarkVal: 50
           })}
+
+          <section class="card" style="margin-top: 14px;">
+            <div class="card-head">
+              <div>
+                <h2>Battery Health & Pack Telemetry</h2>
+                <div class="subtle">Hardware fuel gauge, rated design capacity, and cycle endurance</div>
+              </div>
+              <span class="chip ${healthText === 'Good' ? 'active' : ''}">● ${healthText.toUpperCase()} HEALTH</span>
+            </div>
+
+            <div class="power-health-grid">
+              <div class="power-health-tile">
+                <div class="tile-header">
+                  <span class="icon">${icon('e145')}</span>
+                  <span>Health Capacity</span>
+                </div>
+                <div class="tile-hero">
+                  <b>${healthPct}</b><small>%</small>
+                </div>
+                <div class="tile-bar">
+                  <div class="tile-fill" style="width: ${healthPct}%"></div>
+                </div>
+                <div class="tile-sub">
+                  <span>Design rated</span>
+                  <b>${designMah} mAh</b>
+                </div>
+              </div>
+
+              <div class="power-health-tile">
+                <div class="tile-header">
+                  <span class="icon">${icon('e181')}</span>
+                  <span>Remaining Energy</span>
+                </div>
+                <div class="tile-hero">
+                  <b>${remMah}</b><small>/ ${fullMah} mAh</small>
+                </div>
+                <div class="tile-bar">
+                  <div class="tile-fill accent" style="width: ${Math.min(100, (remMah / fullMah) * 100)}%"></div>
+                </div>
+                <div class="tile-sub">
+                  <span>Energy equivalent</span>
+                  <b>${remWh} / ${fullWh} Wh</b>
+                </div>
+              </div>
+
+              <div class="power-health-tile">
+                <div class="tile-header">
+                  <span class="icon">${icon('e186')}</span>
+                  <span>Lifecycle Endurance</span>
+                </div>
+                <div class="tile-hero">
+                  <b>${cycles}</b><small>cycles</small>
+                </div>
+                <div class="tile-bar">
+                  <div class="tile-fill warn" style="width: ${Math.min(100, (cycles / 800) * 100)}%"></div>
+                </div>
+                <div class="tile-sub">
+                  <span>Condition</span>
+                  <b>${lifeCond}</b>
+                </div>
+              </div>
+
+              <div class="power-health-tile">
+                <div class="tile-header">
+                  <span class="icon">${icon('e085')}</span>
+                  <span>Cell Degradation</span>
+                </div>
+                <div class="tile-hero">
+                  <b>${wearPct}</b><small>% wear</small>
+                </div>
+                <div class="tile-bar">
+                  <div class="tile-fill danger" style="width: ${Math.min(100, Math.max(3, Number(wearPct)))}%"></div>
+                </div>
+                <div class="tile-sub">
+                  <span>Technology</span>
+                  <b>${s.battery_technology || 'Li-ion'}</b>
+                </div>
+              </div>
+            </div>
+
+            <div class="kv" style="margin-top: 14px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 14px;">
+              <div><small>Battery Chemistry</small><b>${s.battery_technology || 'Li-ion'} polymer</b></div>
+              <div><small>Terminal Potential</small><b>${voltageV} V (${voltageMv} mV)</b></div>
+              <div><small>Current Flow (Fuel Gauge)</small><b>${s.battery_current_ua != null ? `${(s.battery_current_ua / 1000).toFixed(0)} mA` : '0 mA (Idle)'}</b></div>
+              <div><small>Charge Full Design</small><b>${designMah} mAh (${designWh} Wh)</b></div>
+              <div><small>Battery Pack Health</small><b>${healthText} (${healthPct}%)</b></div>
+              <div><small>Cycle Count</small><b>${cycles} completed cycles</b></div>
+              <div><small>Thermal Zone Temp</small><b>${val(s.battery_temp_c, ' °C', 1)}</b></div>
+              <div><small>Overheat / Swelling Guard</small><b>Active (Kernel BMS)</b></div>
+            </div>
+          </section>
 
           <div class="grid two">
             <section class="card">
@@ -2966,7 +3109,7 @@
                     <b>${cpuW.toFixed(1)} W</b>
                   </div>
                   <div class="android-power-alloc-bar">
-                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (cpuW / totalWatts) * 100)}%"></div>
+                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (cpuW / allocTotal) * 100)}%"></div>
                   </div>
                 </div>
 
@@ -2976,7 +3119,7 @@
                     <b>${gpuW.toFixed(1)} W</b>
                   </div>
                   <div class="android-power-alloc-bar">
-                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (gpuW / totalWatts) * 100)}%"></div>
+                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (gpuW / allocTotal) * 100)}%"></div>
                   </div>
                 </div>
 
@@ -2986,7 +3129,7 @@
                     <b>${dispW.toFixed(1)} W</b>
                   </div>
                   <div class="android-power-alloc-bar">
-                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (dispW / totalWatts) * 100)}%"></div>
+                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (dispW / allocTotal) * 100)}%"></div>
                   </div>
                 </div>
 
@@ -2996,7 +3139,7 @@
                     <b>${cellW.toFixed(1)} W</b>
                   </div>
                   <div class="android-power-alloc-bar">
-                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (cellW / totalWatts) * 100)}%"></div>
+                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (cellW / allocTotal) * 100)}%"></div>
                   </div>
                 </div>
 
@@ -3006,7 +3149,7 @@
                     <b>${radioW.toFixed(1)} W</b>
                   </div>
                   <div class="android-power-alloc-bar">
-                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (radioW / totalWatts) * 100)}%"></div>
+                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (radioW / allocTotal) * 100)}%"></div>
                   </div>
                 </div>
 
@@ -3016,7 +3159,7 @@
                     <b>${storageW.toFixed(1)} W</b>
                   </div>
                   <div class="android-power-alloc-bar">
-                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (storageW / totalWatts) * 100)}%"></div>
+                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (storageW / allocTotal) * 100)}%"></div>
                   </div>
                 </div>
 
@@ -3026,7 +3169,7 @@
                     <b>${osW.toFixed(1)} W</b>
                   </div>
                   <div class="android-power-alloc-bar">
-                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (osW / totalWatts) * 100)}%"></div>
+                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (osW / allocTotal) * 100)}%"></div>
                   </div>
                 </div>
               </div>

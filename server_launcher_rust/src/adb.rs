@@ -129,6 +129,16 @@ pub struct AdbDeviceSensors {
     pub socket_total: usize,
     pub socket_tcp: usize,
     pub socket_udp: usize,
+    pub cellular_operator: String,
+    pub sim_operator: String,
+    pub sim_state: String,
+    pub cellular_network_type: String,
+    pub cellular_numeric: String,
+    pub cellular_country: String,
+    pub baseband_version: String,
+    pub ril_impl: String,
+    pub mobile_data_enabled: Option<bool>,
+    pub data_roaming_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -521,6 +531,7 @@ echo __BLUETOOTH__; settings get global bluetooth_on
 echo __GPU__; getprop ro.hardware.egl; getprop ro.board.platform
 echo __SOCKSTAT__; cat /proc/net/sockstat
 echo __UPTIME__; cat /proc/uptime
+echo __TELEPHONY__; getprop gsm.operator.alpha; getprop gsm.sim.operator.alpha; getprop gsm.sim.state; getprop gsm.network.type; getprop gsm.operator.numeric; getprop gsm.operator.iso-country; getprop gsm.version.baseband; getprop gsm.version.ril-impl; settings get global mobile_data 2>/dev/null; settings get global data_roaming 2>/dev/null
 "#;
     let output = adb_cmd(Some(serial), &["shell", script])?;
     let mut sections = HashMap::new();
@@ -845,6 +856,24 @@ echo __UPTIME__; cat /proc/uptime
         socket_total,
         socket_tcp,
         socket_udp,
+        cellular_operator: section("TELEPHONY").lines().next().unwrap_or("").trim().to_string(),
+        sim_operator: section("TELEPHONY").lines().nth(1).unwrap_or("").trim().to_string(),
+        sim_state: section("TELEPHONY").lines().nth(2).unwrap_or("").trim().to_string(),
+        cellular_network_type: section("TELEPHONY").lines().nth(3).unwrap_or("").trim().to_string(),
+        cellular_numeric: section("TELEPHONY").lines().nth(4).unwrap_or("").trim().to_string(),
+        cellular_country: section("TELEPHONY").lines().nth(5).unwrap_or("").trim().to_string(),
+        baseband_version: section("TELEPHONY").lines().nth(6).unwrap_or("").trim().to_string(),
+        ril_impl: section("TELEPHONY").lines().nth(7).unwrap_or("").trim().to_string(),
+        mobile_data_enabled: section("TELEPHONY").lines().nth(8).and_then(|v| match v.trim() {
+            "1" | "true" => Some(true),
+            "0" | "false" => Some(false),
+            _ => None,
+        }),
+        data_roaming_enabled: section("TELEPHONY").lines().nth(9).and_then(|v| match v.trim() {
+            "1" | "true" => Some(true),
+            "0" | "false" => Some(false),
+            _ => None,
+        }),
     })
 }
 

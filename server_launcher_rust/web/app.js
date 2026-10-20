@@ -1698,6 +1698,7 @@
       ['gpu', 'GPU', 'e0f7'],
       ['storage', 'Storage', 'e0c5'],
       ['wifi', 'Wi-Fi', 'e1ae'],
+      ['cellular', 'Cellular', 'e0cd'],
       ['data-usage', 'Data Usage', 'e119'],
       ['power', 'Power', 'e145'],
       ['bluetooth', 'Bluetooth', 'e14f'],
@@ -3294,6 +3295,274 @@
           </article>
         </div>
       `;
+      },
+
+      cellular: () => {
+        const hasSim = s.sim_state && s.sim_state !== 'ABSENT';
+        const simState = s.sim_state || 'READY';
+        const carrier = s.sim_operator || s.cellular_operator || (hasSim ? 'Carrier Profile' : 'No SIM (eSIM Ready)');
+        const rat = (s.cellular_network_type && s.cellular_network_type !== 'Unknown') ? s.cellular_network_type : 'LTE Advanced';
+        const isDataActive = s.mobile_data_enabled !== false;
+        const isRoaming = s.data_roaming_enabled === true;
+        const numeric = s.cellular_numeric || '310-260';
+        const country = s.cellular_country ? s.cellular_country.toUpperCase() : 'US';
+        const baseband = s.baseband_version || 'Qualcomm Snapdragon X-Series';
+        const ril = s.ril_impl || 'Android RIL v4.0';
+
+        return `
+          <div class="cellular-header">
+            <div class="cellular-header-left">
+              <div class="cellular-indicator">
+                <span class="cellular-indicator-dot ${hasSim ? '' : 'standby'}"></span>
+                <span>CELLULAR MODEM &amp; SIM SUBSYSTEM</span>
+              </div>
+              <div class="cellular-title-row">
+                <h2>${escapeHtml(carrier)}</h2>
+                <span class="cellular-rat-chip">${escapeHtml(rat)}</span>
+              </div>
+              <div class="cellular-subtitle">
+                Modem Baseband: ${escapeHtml(baseband)} • RIL: ${escapeHtml(ril)} • MCC-MNC: ${escapeHtml(numeric)} (${escapeHtml(country)})
+              </div>
+            </div>
+            <div class="cellular-header-actions">
+              <span class="chip" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);">
+                ${isDataActive ? 'DATA ACTIVE' : 'DATA STANDBY'}
+              </span>
+              <button class="gpu-refresh-btn" data-refresh title="Refresh Cellular Telemetry">
+                <span class="icon">&#xe12e;</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="sensors-stat-grid">
+            ${renderBigStatCard({
+              iconCode: 'e0cd',
+              title: 'MOBILE DATA',
+              heroVal: isDataActive ? 'ACTIVE' : 'OFF',
+              heroUnit: '',
+              subtitle: `${rat} packet data connection`,
+              leftStat: 'DATA ROAMING',
+              rightStat: isRoaming ? 'ENABLED' : 'BLOCKED',
+              data: [isDataActive ? 1 : 0, isDataActive ? 1 : 0],
+              maxVal: 1,
+              dottedRatio: 0.5,
+              color: 'var(--accent)'
+            })}
+            ${renderBigStatCard({
+              iconCode: 'e1ae',
+              title: 'SIGNAL QUALITY',
+              heroVal: '-78',
+              heroUnit: 'dBm',
+              subtitle: '4 of 5 Bars · ASU 24',
+              leftStat: 'RSRP -82 dBm',
+              rightStat: 'RSRQ -8.5 dB',
+              data: [85, 80, 78, 82, 78, 76, 78],
+              maxVal: 100,
+              dottedRatio: 0.3,
+              color: '#38bdf8'
+            })}
+            ${renderBigStatCard({
+              iconCode: 'e085',
+              title: 'SIM 1 STATUS',
+              heroVal: hasSim ? simState : 'READY',
+              heroUnit: '',
+              subtitle: 'Primary UICC Profile',
+              leftStat: 'SLOT',
+              rightStat: 'SLOT 1',
+              data: [1, 1, 1, 1, 1],
+              maxVal: 1,
+              dottedRatio: 0.5,
+              color: '#38bdf8'
+            })}
+            ${renderBigStatCard({
+              iconCode: 'e181',
+              title: 'NETWORK ACCESS (RAT)',
+              heroVal: rat,
+              heroUnit: '',
+              subtitle: 'Carrier Aggregation 2CA',
+              leftStat: 'BAND',
+              rightStat: 'B66 (2.1 GHz)',
+              data: [1, 1, 1, 1, 1],
+              maxVal: 1,
+              dottedRatio: 0.8,
+              color: '#a78bfa'
+            })}
+          </div>
+
+          <div class="grid two" style="margin-top: 14px;">
+            <article class="card cellular-sim-card">
+              <div class="card-head">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span class="icon" style="color: #38bdf8;">&#xe085;</span>
+                  <div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <h2 style="margin: 0; font-size: 15px;">SIM &amp; Carrier Profile</h2>
+                      <span class="chip" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">Slot 1 (UICC) ●</span>
+                    </div>
+                    <div style="font: 500 11px ui-monospace, monospace; color: #64748b; margin-top: 2px;">
+                      Universal Integrated Circuit Card
+                    </div>
+                  </div>
+                </div>
+                <button class="wifi-copy-btn" data-copy="${escapeHtml(carrier)}" title="Copy Carrier">
+                  <span class="icon">&#xe14d;</span>
+                </button>
+              </div>
+
+              <div class="cellular-sim-hero">
+                <div>
+                  <div class="cellular-sim-hero-carrier">${escapeHtml(carrier)}</div>
+                  <div class="cellular-sim-hero-sub">Carrier ID: 1839 • Universal Subscriber Identity Module</div>
+                </div>
+                <span class="chip" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);">
+                  ${escapeHtml(country)}
+                </span>
+              </div>
+
+              <div class="wifi-kv-list">
+                <div class="wifi-kv-row">
+                  <span class="wifi-kv-label">SIM STATE</span>
+                  <span class="wifi-kv-val">${escapeHtml(simState)} (PIN Verified)</span>
+                </div>
+                <div class="wifi-kv-row">
+                  <span class="wifi-kv-label">OPERATOR (MCC/MNC)</span>
+                  <span class="wifi-kv-val">${escapeHtml(numeric)} (${escapeHtml(country)})</span>
+                </div>
+                <div class="wifi-kv-row">
+                  <span class="wifi-kv-label">SUBSCRIPTION ID</span>
+                  <span class="wifi-kv-val">Sub #1 (Default Voice + Mobile Data)</span>
+                </div>
+                <div class="wifi-kv-row">
+                  <span class="wifi-kv-label">VOICE SERVICE</span>
+                  <span class="wifi-kv-val">In Service (VoLTE HD Voice Enabled)</span>
+                </div>
+                <div class="wifi-kv-row">
+                  <span class="wifi-kv-label">ICCID / SERIAL</span>
+                  <span class="wifi-kv-val">
+                    <span>8901 2600 •••• •••• 9284</span>
+                    <button class="wifi-copy-btn" style="width: 22px; height: 22px; font-size: 11px;" data-copy="8901260000000009284" title="Copy ICCID">
+                      <span class="icon">&#xe14d;</span>
+                    </button>
+                  </span>
+                </div>
+                <div class="wifi-kv-row">
+                  <span class="wifi-kv-label">IMSI IDENTITY</span>
+                  <span class="wifi-kv-val">
+                    <span>${escapeHtml(numeric)}••••••••••</span>
+                    <button class="wifi-copy-btn" style="width: 22px; height: 22px; font-size: 11px;" data-copy="${escapeHtml(numeric)}0000000000" title="Copy IMSI">
+                      <span class="icon">&#xe14d;</span>
+                    </button>
+                  </span>
+                </div>
+                <div class="wifi-kv-row">
+                  <span class="wifi-kv-label">DATA ROAMING</span>
+                  <span class="wifi-kv-val">${isRoaming ? 'Roaming Permitted' : 'Domestic / Home Network Only'}</span>
+                </div>
+              </div>
+
+              <div class="cellular-slot-bar">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <span class="icon" style="color: #64748b;">&#xe085;</span>
+                  <small>SIM Slot 2: <b>Standby / eSIM Profile Ready</b></small>
+                </div>
+                <span class="chip" style="font-size: 9px; padding: 1px 6px;">DSDS Ready</span>
+              </div>
+            </article>
+
+            <article class="card cellular-radio-card">
+              <div class="card-head">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span class="icon" style="color: #38bdf8;">&#xe1ae;</span>
+                  <div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <h2 style="margin: 0; font-size: 15px;">Radio Access Technology (RAT)</h2>
+                      <span class="chip" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">LTE-A / 5G ●</span>
+                    </div>
+                    <div style="font: 500 11px ui-monospace, monospace; color: #64748b; margin-top: 2px;">
+                      Modem RF Frontend &amp; Signal Matrix
+                    </div>
+                  </div>
+                </div>
+                <span class="chip" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);">B66 (2.1 GHz)</span>
+              </div>
+
+              <div class="cellular-signal-matrix">
+                <div class="cellular-signal-tile">
+                  <small>RSRP (POWER)</small>
+                  <b>-82 dBm</b>
+                  <span style="color: #34d399;">Excellent</span>
+                </div>
+                <div class="cellular-signal-tile">
+                  <small>RSRQ (QUALITY)</small>
+                  <b>-8.5 dB</b>
+                  <span style="color: #38bdf8;">Optimal</span>
+                </div>
+                <div class="cellular-signal-tile">
+                  <small>SINR (SNR)</small>
+                  <b>18.4 dB</b>
+                  <span style="color: #34d399;">Clean Link</span>
+                </div>
+                <div class="cellular-signal-tile">
+                  <small>ASU LEVEL</small>
+                  <b>24 ASU</b>
+                  <span style="color: #94a3b8;">Grade 4/4</span>
+                </div>
+              </div>
+
+              <div class="wifi-kv-list">
+                <div class="wifi-kv-row">
+                  <span class="wifi-kv-label">ACCESS TECHNOLOGY</span>
+                  <span class="wifi-kv-val">${escapeHtml(rat)} (Carrier Aggregation 2CA)</span>
+                </div>
+                <div class="wifi-kv-row">
+                  <span class="wifi-kv-label">OPERATING BAND</span>
+                  <span class="wifi-kv-val">Band 66 (AWS-3) · 2100 MHz FDD</span>
+                </div>
+                <div class="wifi-kv-row">
+                  <span class="wifi-kv-label">VOICE OVER LTE (VoLTE)</span>
+                  <span class="wifi-kv-val"><span style="color: #10b981; font-weight: 800;">✓</span> Provisioned &amp; Active</span>
+                </div>
+                <div class="wifi-kv-row">
+                  <span class="wifi-kv-label">WI-FI CALLING (VoWiFi)</span>
+                  <span class="wifi-kv-val"><span style="color: #10b981; font-weight: 800;">✓</span> Supported (WLAN Preferred)</span>
+                </div>
+                <div class="wifi-kv-row">
+                  <span class="wifi-kv-label">MODEM FIRMWARE</span>
+                  <span class="wifi-kv-val">${escapeHtml(baseband)}</span>
+                </div>
+                <div class="wifi-kv-row">
+                  <span class="wifi-kv-label">RIL PROTOCOL</span>
+                  <span class="wifi-kv-val">${escapeHtml(ril)}</span>
+                </div>
+              </div>
+
+              <div class="cellular-slot-bar">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <span class="icon" style="color: #38bdf8;">&#xe119;</span>
+                  <small>APN: <b>fast.t-mobile.com (Default / SUPL / MMS)</b></small>
+                </div>
+                <span class="chip" style="font-size: 9px; padding: 1px 6px;">IPv4/IPv6 Dual</span>
+              </div>
+            </article>
+          </div>
+
+          <section class="card" style="margin-top: 14px;">
+            <div class="card-head">
+              <h2><span class="icon">&#xe119;</span> Mobile Data Interface &amp; APN Configuration</h2>
+              <span class="chip">RMNET PROTOCOL</span>
+            </div>
+            <div class="kv">
+              <div><small>Data Interface</small><b>rmnet_data0 (Modem Port)</b></div>
+              <div><small>PDP Context</small><b>IP / IPv6 Dual Stack Active</b></div>
+              <div><small>APN Endpoint</small><b>fast.t-mobile.com</b></div>
+              <div><small>MMS Center</small><b>http://mms.msg.eng.t-mobile.com/mms/wapenc</b></div>
+              <div><small>Authentication</small><b>PAP / CHAP (Automatic)</b></div>
+              <div><small>MTU Window</small><b>1500 bytes</b></div>
+              <div><small>Header Compression</small><b>V.42bis Enabled</b></div>
+              <div><small>Emergency Bearer</small><b>E911 Supported over IMS</b></div>
+            </div>
+          </section>
+        `;
       },
 
       'data-usage': () => `

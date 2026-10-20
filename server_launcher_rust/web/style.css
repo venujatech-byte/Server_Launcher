@@ -779,19 +779,20 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   width: 100%;
 }
 
-/* Horizontal Subtab Bar - In line with NO horizontal scrolling */
+/* Horizontal Subtab Bar - In line with STRICTLY NO horizontal scrolling */
 .sensors-subnav-bar {
   background: var(--surface);
-  border: none;
+  border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 12px;
-  padding: 6px 8px;
+  padding: 4px 6px;
   display: flex;
   align-items: center;
   width: 100%;
-  gap: 5px;
+  gap: 3px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14);
   box-sizing: border-box;
   overflow: hidden; /* STRICTLY no scrolling */
+  flex-wrap: nowrap;
 }
 
 .sensors-subtab-pill {
@@ -800,23 +801,33 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 8px 6px;
+  gap: 4px;
+  padding: 6px 3px;
   border-radius: 999px;
   border: none;
   background: var(--surface2);
   color: #94a3b8;
-  font: 600 12px Inter, system-ui, sans-serif;
+  font: 600 11px Inter, system-ui, sans-serif;
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.15s ease;
   user-select: none;
 }
 
+.sensors-subtab-pill .icon {
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin: 0;
+}
+
 .sensors-subtab-pill span:not(.icon) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 11px;
 }
 
 .sensors-subtab-pill:hover {
@@ -3500,6 +3511,176 @@ tr[hidden], .app-row[hidden] { display: none !important; }
   align-items: center;
   gap: 5px;
   color: #38bdf8;
+}
+
+/* Cellular & Mobile Data Dashboard */
+.cellular-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 14px;
+}
+
+@media (max-width: 800px) {
+  .cellular-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+.cellular-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cellular-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 700 9px ui-monospace, monospace;
+  color: var(--dim);
+  letter-spacing: 0.8px;
+}
+
+.cellular-indicator-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 8px #10b981;
+}
+
+.cellular-indicator-dot.standby {
+  background: #f59e0b;
+  box-shadow: 0 0 8px #f59e0b;
+}
+
+.cellular-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cellular-title-row h2 {
+  font-size: 20px;
+  font-weight: 800;
+  color: #f1f5f9;
+  letter-spacing: -0.3px;
+  margin: 0;
+}
+
+.cellular-rat-chip {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  font: 700 10px ui-monospace, monospace;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.cellular-subtitle {
+  font: 500 11px ui-monospace, monospace;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.cellular-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Cellular SIM Card & Radio Card */
+.cellular-sim-card, .cellular-radio-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cellular-sim-hero {
+  background: #090f19;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cellular-sim-hero-carrier {
+  font: 800 18px ui-monospace, monospace;
+  color: #f8fafc;
+}
+
+.cellular-sim-hero-sub {
+  font: 500 10.5px ui-monospace, monospace;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.cellular-signal-matrix {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (max-width: 600px) {
+  .cellular-signal-matrix {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.cellular-signal-tile {
+  background: #090f19;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cellular-signal-tile small {
+  font: 700 8.5px ui-monospace, monospace;
+  color: #64748b;
+  letter-spacing: 0.5px;
+}
+
+.cellular-signal-tile b {
+  font: 800 15px ui-monospace, monospace;
+  color: #f1f5f9;
+}
+
+.cellular-signal-tile span {
+  font: 600 9px ui-monospace, monospace;
+}
+
+.cellular-slot-bar {
+  background: #090f19;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  padding: 10px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font: 600 11px ui-monospace, monospace;
+  margin-top: 4px;
+}
+
+.cellular-slot-bar small {
+  color: #94a3b8;
+}
+
+.cellular-slot-bar b {
+  color: #f1f5f9;
 }
 
 @media (max-width: 1050px) {

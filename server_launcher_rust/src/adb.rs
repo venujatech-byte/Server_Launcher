@@ -633,7 +633,13 @@ fn parse_battery_time(line: &str) -> Option<f64> {
 
 #[cfg(test)]
 mod power_time_tests {
-    use super::{parse_android_df_line, parse_battery_time, parse_power_attribution};
+    use super::{parse_android_df_line, parse_battery_time, parse_power_attribution, parse_sensor_inventory};
+
+    #[test]
+    fn reads_sensor_names_and_fingerprint_feature() {
+        let sensors = parse_sensor_inventory("0x0001 (handle=1) BMI270 Accelerometer | vendor\nfeature:android.hardware.fingerprint\n__FEATURES__");
+        assert_eq!(sensors, ["BMI270 Accelerometer", "Fingerprint authentication"]);
+    }
 
     #[test]
     fn parses_android_df_rows_with_emulated_mount_aliases() {
@@ -1166,13 +1172,22 @@ pub fn query_device_sensor_inventory(serial: &str) -> Result<Vec<String>, String
         Some(serial),
         &[
             "shell",
-            "dumpsys sensorservice | sed -n '/Sensor List:/,/Fusion States:/p'",
+            "dumpsys sensorservice | sed -n '/Sensor List:/,/Fusion States:/p'; echo __FEATURES__; pm list features 2>/dev/null | grep -F android.hardware.fingerprint",
         ],
     )?;
-    let sensors = output
+    let sensors = parse_sensor_inventory(&output);
+    cache.lock().map_err(|e| e.to_string())?.insert(serial.to_string(), sensors.clone());
+    Ok(sensors)
+}
+
+fn parse_sensor_inventory(output: &str) -> Vec<String> {
+    output
         .lines()
         .filter_map(|line| {
             let line = line.trim();
+            if line.starts_with("feature:android.hardware.fingerprint") {
+                return Some("Fingerprint authentication".to_string());
+            }
             if line.starts_with("0x") || line.starts_with("Handle ") {
                 let name = line
                     .split_once(')')
@@ -1184,9 +1199,7 @@ pub fn query_device_sensor_inventory(serial: &str) -> Result<Vec<String>, String
                 None
             }
         })
-        .collect::<Vec<_>>();
-    cache.lock().map_err(|e| e.to_string())?.insert(serial.to_string(), sensors.clone());
-    Ok(sensors)
+        .collect()
 }
 
 fn parse_top_memory_kb(value: &str) -> Option<u64> {

@@ -825,6 +825,9 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 
 /* Horizontal Subtab Bar - In line with STRICTLY NO horizontal scrolling */
 .sensors-subnav-bar {
+  position: sticky;
+  top: -12px;
+  z-index: 30;
   background: var(--surface);
   border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 12px;
@@ -838,6 +841,12 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   overflow: hidden; /* STRICTLY no scrolling */
   flex-wrap: nowrap;
 }
+
+.sensor-inventory-group + .sensor-inventory-group { margin-top: 18px; }
+.sensor-inventory-group h3 { margin: 0 0 8px; color: var(--muted); font-size: 12px; }
+.sensor-inventory-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.sensor-inventory-item { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 11px 12px; border-radius: 9px; background: var(--well); color: var(--text); overflow-wrap: anywhere; }
+.sensor-inventory-item .icon { color: var(--accent); flex: 0 0 auto; }
 
 .sensors-subtab-pill {
   flex: 1 1 0;

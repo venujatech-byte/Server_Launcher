@@ -8,7 +8,7 @@
     if (!target?.closest('.files-menu-wrap')) document.querySelector('.files-options:not([hidden])')?.setAttribute('hidden', '');
     if (!target?.closest('.files-context-menu')) document.querySelector('.files-context-menu')?.remove();
   });
-  const tabNames = { overview: 'Overview', screen: 'Screen share', messages: 'Messages', calls: 'Calls', photos: 'Photos', notifications: 'Notifications', sensors: 'Sensors', storage: 'Files', apps: 'Apps', clipboard: 'Clipboard', terminal: 'Terminal', wireless: 'Wireless debugging', firmware: 'Customization & Boot' };
+  const tabNames = { overview: 'Overview', screen: 'Screen share', messages: 'Messages', calls: 'Calls', photos: 'Photos', notifications: 'Notifications', sensors: 'Diagnosis', 'hardware-sensors': 'Sensors', storage: 'Files', apps: 'Apps', clipboard: 'Clipboard', terminal: 'Terminal', wireless: 'Wireless debugging', firmware: 'Customization & Boot' };
   const tabKinds = { messages: 'messages', calls: 'calls', photos: 'photos', notifications: 'notifications', sensors: 'sensors', apps: 'apps', storage: 'files', wireless: 'endpoints' };
   const icon = (code) => `<span class="icon" aria-hidden="true">&#x${code};</span>`;
   const escapeHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -181,6 +181,7 @@
       case 'photos': return renderPhotos();
       case 'notifications': return renderNotifications();
       case 'sensors': return renderSensors();
+      case 'hardware-sensors': return renderHardwareSensors();
       case 'storage': return renderStorage();
       case 'apps': return renderApps();
       case 'clipboard': return renderClipboard();
@@ -2120,6 +2121,34 @@
         state.sensorTimer = setTimeout(pollSensors, state.sensorsCadence);
       }
     }
+  }
+
+  function renderHardwareSensors() {
+    if (!state.sensorInventoryLoaded) {
+      content.innerHTML = `<section class="card">${state.sensorInventoryLoading ? 'Reading Android sensor list…' : 'Loading Android sensor list…'}</section>`;
+      if (!state.sensorInventoryLoading && state.serial) {
+        state.sensorInventoryLoading = true;
+        const serial = state.serial;
+        invokeOrFail('adb_data', { serial, section: 'sensor_inventory', path: null }).then((names) => {
+          if (state.serial === serial) { state.sensorInventory = names; state.sensorInventoryLoaded = true; }
+        }).catch((error) => toast(String(error), true)).finally(() => {
+          state.sensorInventoryLoading = false;
+          if (state.tab === 'hardware-sensors' && state.serial === serial) renderHardwareSensors();
+        });
+      }
+      return;
+    }
+    const category = (name) => /fingerprint/i.test(name) ? 'Biometrics'
+      : /(accelerometer|gyroscope|magnetometer|rotation|gravity|linear acceleration|step counter|step detector)/i.test(name) ? 'Motion & orientation'
+      : /(ambient light|proximity|pressure|temperature|humidity)/i.test(name) ? 'Environment'
+      : /(heart|health)/i.test(name) ? 'Health' : 'Other';
+    const groups = new Map();
+    for (const name of state.sensorInventory) {
+      const kind = category(name);
+      if (!groups.has(kind)) groups.set(kind, []);
+      groups.get(kind).push(name);
+    }
+    content.innerHTML = `<section class="card"><div class="card-head"><div><h2>Hardware sensors</h2><span class="subtle">${state.sensorInventory.length} reported by Android</span></div></div>${groups.size ? [...groups].map(([kind, names]) => `<section class="sensor-inventory-group"><h3>${escapeHtml(kind)}</h3><div class="sensor-inventory-list">${names.map((name) => `<div class="sensor-inventory-item"><span class="icon">&#xe186;</span>${escapeHtml(name)}</div>`).join('')}</div></section>`).join('') : empty('No sensor inventory available', 'Android SensorService did not report hardware sensors.')}</section>`;
   }
 
   function renderSensors() {
@@ -4494,7 +4523,9 @@
         }
       }).catch(error => toast(String(error), true)).finally(() => {
         state.sensorInventoryLoading = false;
-        if (state.tab === 'sensors' && state.sensorsView === 'temperature' && state.serial === serial) {
+        if (state.tab === 'hardware-sensors' && state.serial === serial) {
+          renderHardwareSensors();
+        } else if (state.tab === 'sensors' && state.sensorsView === 'temperature' && state.serial === serial) {
           renderSensors();
         }
       });

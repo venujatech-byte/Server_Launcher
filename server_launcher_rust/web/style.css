@@ -486,6 +486,7 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 .files-entry:hover, .files-entry.selected { background: var(--surface); border-color: var(--surface2); }
 .files-entry-icon { display: grid; place-items: center; width: min(var(--file-icon-size, 92px), 100%); height: var(--file-icon-size, 92px); border-radius: 12px; font-size: calc(var(--file-icon-size, 92px) * .64); overflow: hidden; }
 .files-entry-icon.folder { color: #4c9af0; }
+.files-entry-icon.folder > .icon { font-size: inherit; }
 .files-entry-icon.file { color: var(--muted); }
 .files-entry-icon img { width: 100%; height: 100%; object-fit: cover; }
 .files-entry-name { width: 100%; overflow: hidden; color: var(--text); font-size: 12px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
@@ -2348,9 +2349,9 @@ tr[hidden], .app-row[hidden] { display: none !important; }
 .comm-page { 
   display: flex; 
   flex-direction: column; 
-  height: calc(100dvh - 90px); 
-  max-height: calc(100dvh - 90px); 
-  gap: 12px; 
+  height: calc(100dvh - 90px);
+  max-height: calc(100dvh - 90px);
+  gap: 14px;
   font-family: Inter, 'Cantarell', 'Noto Sans', system-ui, sans-serif; 
   overflow: hidden; 
 }
@@ -2369,8 +2370,8 @@ tr[hidden], .app-row[hidden] { display: none !important; }
   min-height: 0; 
   height: 100%; 
   display: grid; 
-  grid-template-columns: minmax(280px, .82fr) minmax(360px, 1.18fr); 
-  gap: 10px; 
+  grid-template-columns: minmax(320px, .88fr) minmax(440px, 1.32fr);
+  gap: 14px;
   align-items: stretch; 
   overflow: hidden; 
 }
@@ -2381,8 +2382,10 @@ tr[hidden], .app-row[hidden] { display: none !important; }
 .calls-layout { 
   height: 100%; 
   min-height: 0; 
-  grid-template-columns: minmax(300px, 1.08fr) minmax(300px, .92fr); 
+  grid-template-columns: minmax(340px, 1.08fr) minmax(380px, .92fr);
 }
+.calls-layout .comm-dial-pane { height: auto; align-self: start; }
+.comm-page .card { box-shadow: none; }
 .comm-list-pane, .comm-thread-pane, .comm-dial-pane { 
   min-width: 0; 
   min-height: 0; 
@@ -2407,8 +2410,8 @@ tr[hidden], .app-row[hidden] { display: none !important; }
   scrollbar-color: var(--surface2) transparent; 
   padding-right: 4px; 
 }
-.comm-row { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 11px 8px; background: transparent; border: 0; border-radius: 9px; color: var(--text); text-align: left; font: inherit; cursor: pointer; }
-.comm-row:hover, .comm-row.selected { background: var(--surface2); }
+.comm-row { display: flex; align-items: center; gap: 11px; width: 100%; min-width: 0; padding: 12px 9px; background: transparent; border: 0; border-radius: 9px; color: var(--text); text-align: left; font: inherit; cursor: pointer; transition: background-color .14s, color .14s; }
+.comm-row:hover, .comm-row.selected { background: color-mix(in srgb, var(--surface2), var(--text) 5%); }
 .comm-row.selected { box-shadow: inset 2px 0 var(--accent-strong); }
 .comm-row[hidden] { display: none; }
 .comm-avatar { flex: 0 0 38px; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-size: 15px; font-weight: 650; }
@@ -2416,9 +2419,9 @@ tr[hidden], .app-row[hidden] { display: none !important; }
 .contact-avatar { background: color-mix(in srgb, var(--accent), transparent 85%); color: var(--accent); }
 .comm-row-copy { flex: 1; min-width: 0; display: grid; gap: 5px; }
 .comm-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
-.comm-row-top b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
-.comm-row time, .message-bubble time { color: var(--dim); font-size: 10px; white-space: nowrap; }
-.comm-preview { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.comm-row-top b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
+.comm-row time, .message-bubble time { color: var(--dim); font-size: 11px; white-space: nowrap; }
+.comm-preview { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .call-back { flex: 0 0 34px; width: 34px; min-height: 34px; padding: 0; }
 .comm-thread-pane { 
   display: flex; 
@@ -2431,7 +2434,7 @@ tr[hidden], .app-row[hidden] { display: none !important; }
   display: flex; 
   align-items: center; 
   gap: 10px; 
-  padding: 13px 15px; 
+  padding: 15px 17px;
   background: var(--surface2); 
   border-bottom: 1px solid rgba(255, 255, 255, 0.05); 
 }
@@ -2449,15 +2452,15 @@ tr[hidden], .app-row[hidden] { display: none !important; }
   scrollbar-width: thin; 
   scrollbar-color: var(--surface2) transparent; 
 }
-.message-bubble { max-width: min(82%, 520px); padding: 9px 11px; border-radius: 12px 12px 12px 3px; background: var(--well); }
+.message-bubble { box-sizing: border-box; max-width: min(86%, 620px); padding: 11px 13px; border-radius: 12px 12px 12px 3px; background: var(--well); }
 .message-bubble.outgoing { align-self: flex-end; border-radius: 12px 12px 3px 12px; background: var(--accent-soft); }
-.message-bubble p { margin: 0; font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.message-bubble p { margin: 0; font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .message-bubble time { display: block; margin-top: 5px; text-align: right; }
 .message-composer { 
   flex: 0 0 auto; 
   display: grid; 
   gap: 6px; 
-  padding: 12px; 
+  padding: 14px 16px;
   background: var(--surface2); 
   border-top: 1px solid rgba(255, 255, 255, 0.05); 
 }
@@ -2470,7 +2473,7 @@ tr[hidden], .app-row[hidden] { display: none !important; }
   flex-direction: column; 
   align-items: stretch; 
   justify-content: flex-start; 
-  gap: 12px; 
+  gap: 14px;
   padding: clamp(16px, 2.5vw, 24px); 
   overflow-y: auto; 
 }
@@ -2487,7 +2490,7 @@ tr[hidden], .app-row[hidden] { display: none !important; }
 .call-control-avatar { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 34px; border-radius: 50%; background: var(--surface2); color: var(--accent); }
 .call-control-copy { display: grid; gap: 3px; min-width: 0; flex: 1; }
 .call-control-copy b { font-size: 12px; }
-.call-control-copy span { color: var(--muted); font-size: 10px; }
+.call-control-copy span { color: var(--muted); font-size: 11px; }
 .call-control-window .button { min-height: 32px; padding: 0 10px; }
 .dial-input-container {
   position: relative;
@@ -2501,8 +2504,8 @@ tr[hidden], .app-row[hidden] { display: none !important; }
   font-family: 'JetBrains Mono', monospace;
   font-weight: 700;
   color: #38bdf8;
-  font-size: 20px;
-  min-height: 50px;
+  font-size: 22px;
+  min-height: 54px;
 }
 .dial-backspace-btn {
   position: absolute;
@@ -2536,14 +2539,14 @@ tr[hidden], .app-row[hidden] { display: none !important; }
 }
 .dial-key-btn:hover { background: color-mix(in srgb, var(--surface2), var(--accent-strong) 24%); }
 .key-digit {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
 }
 .key-sub {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--muted);
-  letter-spacing: 0.8px;
+  letter-spacing: 0.5px;
 }
 .dial-actions-row {
   display: grid;
@@ -2568,7 +2571,7 @@ tr[hidden], .app-row[hidden] { display: none !important; }
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 8px 12px;
+  padding: 10px 12px;
   border-radius: 8px;
   border: none;
   background: transparent;
@@ -2583,8 +2586,29 @@ tr[hidden], .app-row[hidden] { display: none !important; }
 }
 .comm-tab-pill.active {
   background: var(--surface);
-  color: var(--accent);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  color: var(--text);
+}
+
+body.communications-style .nav-item.active { background: var(--surface2); color: var(--text); box-shadow: none; }
+body.communications-style .nav-item.active > .icon { color: var(--text); }
+body.communications-style .button.primary { color: #101a2a; }
+body.communications-style button { box-shadow: none !important; }
+
+.installed-app-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 8px; padding: 4px 2px 2px; }
+.apps-card { box-shadow: none; }
+.installed-app-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; padding: 10px 12px; border-radius: 9px; background: var(--well); }
+.installed-app-package { min-width: 0; overflow: hidden; color: var(--text); font: 12px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.installed-app-actions { display: flex; flex: 0 0 auto; gap: 7px; }
+.installed-app-actions .button { min-height: 34px; padding: 6px 11px; }
+.installed-app-empty { padding: 22px 8px; }
+
+@media (max-width: 760px) {
+  body.communications-style .content { padding-right: 14px; padding-left: 14px; }
+  body.communications-style .topbar { padding-right: 16px; padding-left: 16px; }
+  .call-control-window { flex-wrap: wrap; }
+  .call-control-copy { flex-basis: calc(100% - 50px); }
+  .call-control-window .button { flex: 1; }
+  .installed-app-list { grid-template-columns: 1fr; }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -3943,10 +3967,12 @@ tr[hidden], .app-row[hidden] { display: none !important; }
   .grid.metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .screen-layout { grid-template-columns: 1fr; }
   .screen-phone img { max-width: min(65vw, 420px); }
-  .comm-layout, .calls-layout { grid-template-columns: minmax(0, 1fr); }
+  .comm-page { height: auto; max-height: none; overflow: visible; }
+  .comm-layout, .calls-layout { flex: 0 0 auto; height: auto; grid-template-columns: minmax(0, 1fr); align-content: start; overflow: visible; }
   .messages-layout, .calls-layout { min-height: 0; }
-  .comm-list-pane { max-height: 38vh; }
-  .comm-thread-pane { min-height: 48vh; }
+  .comm-list-pane { height: auto; max-height: 38vh; }
+  .comm-thread-pane { height: auto; min-height: 48vh; }
+  .comm-dial-pane { height: auto; }
 }
 @media (max-width: 760px) {
   .shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }

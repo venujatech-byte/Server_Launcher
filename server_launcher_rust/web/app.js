@@ -84,7 +84,8 @@
     if (!tabNames[tab]) return;
     if (tab !== 'photos') { state.photosObserver?.disconnect(); state.photosObserver = null; }
     clearInterval(state.screenTimer); state.screenTimer = null;
-    state.tab = tab; document.querySelectorAll('.nav-item').forEach((n) => n.classList.toggle('active', n.dataset.tab === tab));
+    state.tab = tab; document.body.classList.toggle('communications-style', ['messages', 'calls', 'apps'].includes(tab)); document.querySelectorAll('.nav-item').forEach((n) => n.classList.toggle('active', n.dataset.tab === tab));
+    if (window.innerWidth <= 760) document.querySelector(`.nav-item[data-tab="${tab}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     clearTimeout(state.sensorTimer); state.sensorTimer = null;
     $('#page-title').textContent = tabNames[tab]; $('#eyebrow').textContent = `ANDROID DEVICE / ${tab.toUpperCase()}`;
     updateHeaderTelemetryControls();
@@ -1023,7 +1024,7 @@
   }
   function renderApps() {
     const rows = state.data || [];
-    content.innerHTML = `<section class="card apps-card"><div class="apps-sticky"><div class="card-head"><div><h2>Installed apps</h2><div class="subtle" style="margin-top:5px">${rows.length} user apps</div></div><button class="button" data-refresh>${icon("e145")} Refresh</button></div><div class="toolbar"><input id="app-filter" class="input" placeholder="Filter package name"></div></div><div class="table-wrap"><table class="table"><thead><tr><th>Package</th><th>Actions</th></tr></thead><tbody>${rows.map((a,i)=>`<tr class="app-row"><td class="mono">${escapeHtml(a.name)}</td><td><button class="button tonal" data-action="launch_app" data-value="${escapeHtml(a.name)}">Open</button> <button class="button danger" data-action="stop_app" data-value="${escapeHtml(a.name)}">Force stop</button></td></tr>`).join('') || `<tr><td colspan="2">${empty('No apps returned', 'Could not read the user app list.')}</td></tr>`}</tbody></table></div></section>`;
+    content.innerHTML = `<section class="card apps-card"><div class="apps-sticky"><div class="card-head"><div><h2>Installed apps</h2><div class="subtle" style="margin-top:5px">${rows.length} user apps</div></div><button class="button" data-refresh>${icon("e145")} Refresh</button></div><div class="toolbar"><input id="app-filter" class="input" placeholder="Filter package name" aria-label="Filter installed apps"></div></div>${rows.length ? `<div class="installed-app-list">${rows.map((a) => `<article class="app-row installed-app-row"><code class="installed-app-package" title="${escapeHtml(a.name)}">${escapeHtml(a.name)}</code><div class="installed-app-actions"><button class="button tonal" data-action="launch_app" data-value="${escapeHtml(a.name)}">Open</button><button class="button danger" data-action="stop_app" data-value="${escapeHtml(a.name)}">Force stop</button></div></article>`).join('')}</div>` : `<div class="installed-app-empty">${empty('No apps returned', 'Could not read the user app list.')}</div>`}</section>`;
     $('#app-filter').oninput = e => document.querySelectorAll('.app-row').forEach(r => r.hidden = !r.textContent.toLowerCase().includes(e.target.value.toLowerCase()));
   }
   async function renderClipboard() {
@@ -4632,9 +4633,7 @@
       state.sensorTimer = null;
     } else {
       void syncTheme();
-      if (state.tab === 'screen' && state.serial) selectTab('screen');
-      else if (state.tab === 'sensors' && state.serial) void renderTab();
-      else if (['messages', 'calls'].includes(state.tab) && state.serial) selectTab(state.tab);
+      if (state.tab === 'sensors' && state.serial) void pollSensors(true);
     }
   });
 
@@ -4651,14 +4650,5 @@
       await refreshDevices();
     } catch(e) { toast(String(e), true); }
 
-    setInterval(async () => {
-      if (document.hidden) return;
-      void syncTheme();
-      const old = state.serial;
-      await refreshDevices();
-      if (state.serial === old && !['screen','sensors'].includes(state.tab) && Date.now() - state.lastTelemetry > 30000) {
-        await refreshTelemetry();
-      }
-    }, 4000);
   })();
 })();

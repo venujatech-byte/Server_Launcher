@@ -271,6 +271,16 @@ pub fn adb_cmd(serial: Option<&str>, args: &[&str]) -> Result<String, String> {
     }
 }
 
+fn parse_android_df_line(line: &str) -> Option<(String, u64, u64)> {
+    let fields: Vec<&str> = line.split_whitespace().collect();
+    if fields.len() < 6 { return None; }
+    Some((
+        fields.last()?.to_string(),
+        fields.get(1)?.parse().ok()?,
+        fields.get(3)?.parse().ok()?,
+    ))
+}
+
 /// Parses output from `adb devices -l` and returns all attached devices.
 pub fn list_devices() -> Vec<AdbDeviceInfo> {
     let mut devices = Vec::new();
@@ -504,20 +514,17 @@ pub fn query_telemetry(serial: &str) -> AdbDeviceTelemetry {
     }
     telem.is_rooted = adb_cmd(Some(serial), &["shell", "su", "-c", "id"]).map(|s| s.contains("uid=0")).unwrap_or(false);
 
-    // 5. Partition storage metrics via df -k /data /sdcard
-    if let Ok(df_raw) = adb_cmd(Some(serial), &["shell", "df", "-k", "/data", "/sdcard"]) {
-        for line in df_raw.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 6 {
-                let total_kb = parts[1].parse::<f32>().unwrap_or(0.0);
-                let free_kb = parts[3].parse::<f32>().unwrap_or(0.0);
-                let mount = parts[5];
+    // Query each mount independently; Samsung df may fail the whole multi-path request.
+    for path in ["/data", "/storage/emulated/0", "/sdcard"] {
+        if let Ok(df_raw) = adb_cmd(Some(serial), &["shell", "df", "-k", path]) {
+            for line in df_raw.lines() {
+                let Some((mount, total_kb, free_kb)) = parse_android_df_line(line) else { continue; };
                 if mount.starts_with("/data") && telem.storage_internal_total_gb.is_none() {
-                    telem.storage_internal_total_gb = Some((total_kb / (1024.0 * 1024.0) * 10.0).round() / 10.0);
-                    telem.storage_internal_free_gb = Some((free_kb / (1024.0 * 1024.0) * 10.0).round() / 10.0);
-                } else if (mount.contains("sdcard") || mount.contains("emulated")) && telem.storage_sdcard_total_gb.is_none() {
-                    telem.storage_sdcard_total_gb = Some((total_kb / (1024.0 * 1024.0) * 10.0).round() / 10.0);
-                    telem.storage_sdcard_free_gb = Some((free_kb / (1024.0 * 1024.0) * 10.0).round() / 10.0);
+                    telem.storage_internal_total_gb = Some((total_kb as f32 / (1024.0 * 1024.0) * 10.0).round() / 10.0);
+                    telem.storage_internal_free_gb = Some((free_kb as f32 / (1024.0 * 1024.0) * 10.0).round() / 10.0);
+                } else if mount.starts_with("/storage/emulated") && telem.storage_sdcard_total_gb.is_none() {
+                    telem.storage_sdcard_total_gb = Some((total_kb as f32 / (1024.0 * 1024.0) * 10.0).round() / 10.0);
+                    telem.storage_sdcard_free_gb = Some((free_kb as f32 / (1024.0 * 1024.0) * 10.0).round() / 10.0);
                 }
             }
         }
@@ -626,7 +633,20 @@ fn parse_battery_time(line: &str) -> Option<f64> {
 
 #[cfg(test)]
 mod power_time_tests {
-    use super::{parse_battery_time, parse_power_attribution};
+    use super::{parse_android_df_line, parse_battery_time, parse_power_attribution};
+
+    #[test]
+    fn parses_android_df_rows_with_emulated_mount_aliases() {
+        assert_eq!(
+            parse_android_df_line("/dev/block/dm-61 237828076 201474160 36222844 85% /data/user/0"),
+            Some(("/data/user/0".into(), 237828076, 36222844))
+        );
+        assert_eq!(
+            parse_android_df_line("/dev/fuse 234000000 190000000 44000000 82% /storage/emulated"),
+            Some(("/storage/emulated".into(), 234000000, 44000000))
+        );
+        assert_eq!(parse_android_df_line("Filesystem 1K-blocks Used Available Use% Mounted on"), None);
+    }
 
     #[test]
     fn includes_uid_components_without_smearing_or_double_counting() {
@@ -676,7 +696,7 @@ echo __BATTERYSTATS_TIME__; printf '%s\n' "$battery_stats" | grep -m1 -E 'Time o
 echo __GOVERNOR__; cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null; cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors 2>/dev/null
 echo __NETDEV__; cat /proc/net/dev
 echo __DISKSTATS__; cat /proc/diskstats
-echo __DF__; df -k /data /sdcard
+echo __DF__; df -k /data 2>/dev/null; df -k /storage/emulated/0 2>/dev/null; df -k /sdcard 2>/dev/null
 echo __THERMAL_ZONES__; for zone in /sys/class/thermal/thermal_zone*; do if [ -r "$zone/temp" ]; then printf '%s ' "$(cat "$zone/type" 2>/dev/null)"; cat "$zone/temp"; fi; done
 echo __WIFI__; settings get global wifi_on
 echo __BLUETOOTH__; settings get global bluetooth_on; dumpsys bluetooth_manager 2>/dev/null | sed -n '1,/^AdapterState:/p'; dumpsys bluetooth_manager 2>/dev/null | grep -E -m 20 '(Profile: |  mActiveDevice:)'
@@ -812,17 +832,11 @@ echo __TELEPHONY__; getprop gsm.operator.alpha; getprop gsm.sim.operator.alpha; 
     let mut storage_internal = None;
     let mut storage_shared = None;
     for line in section("DF").lines() {
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        if fields.len() < 6 {
-            continue;
-        }
-        let total = fields[1].parse::<u64>().ok();
-        let free = fields[3].parse::<u64>().ok();
-        let mount = fields.last().copied().unwrap_or("");
+        let Some((mount, total, free)) = parse_android_df_line(line) else { continue; };
         if mount.starts_with("/data") && storage_internal.is_none() {
-            storage_internal = total.zip(free);
+            storage_internal = Some((total, free));
         } else if mount.starts_with("/storage/emulated") && storage_shared.is_none() {
-            storage_shared = total.zip(free);
+            storage_shared = Some((total, free));
         }
     }
 

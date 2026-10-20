@@ -2139,9 +2139,18 @@
             <span class="tm-count-pill">${allGroups.length ? (appsGroups.length + bgGroups.length) : 117} processes</span>
           </div>
           <div class="tm-toolbar-right">
-            <button class="tm-end-task-btn ${state.topAppsSelectedPid ? 'active' : 'disabled'}" id="tm-btn-end-task" ${!state.topAppsSelectedPid ? 'disabled' : ''}>
-              ✕ ${state.topAppsSelectedPid ? `End task (PID ${state.topAppsSelectedPid})` : 'End task'}
-            </button>
+            <div class="tm-actions-row">
+              <button class="tm-end-task-btn ${state.topAppsSelectedPid ? 'active' : 'disabled'}" id="tm-btn-end-task" ${!state.topAppsSelectedPid ? 'disabled' : ''}>
+                ✕ ${state.topAppsSelectedPid ? `End task (PID ${state.topAppsSelectedPid})` : 'End task'}
+              </button>
+              <select class="tm-interval-select" id="tm-refresh-cadence">
+                <option value="1000" ${state.sensorsCadence === 1000 ? 'selected' : ''}>⏱ 1s (High)</option>
+                <option value="2000" ${state.sensorsCadence === 2000 ? 'selected' : ''}>⏱ 2s (Fast)</option>
+                <option value="5000" ${state.sensorsCadence === 5000 ? 'selected' : ''}>⏱ 5s (Default)</option>
+                <option value="10000" ${state.sensorsCadence === 10000 ? 'selected' : ''}>⏱ 10s (Low)</option>
+                <option value="0" ${state.sensorsCadence === 0 ? 'selected' : ''}>⏱ Paused</option>
+              </select>
+            </div>
             <div class="tm-search-wrap">
               <svg class="tm-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="11" cy="11" r="8"></circle>
@@ -2150,13 +2159,6 @@
               <input class="tm-search-input" id="sensor-app-filter" value="${escapeHtml(state.topAppsSearch || state.sensorFilter || '')}" placeholder="Search by name or PID...">
               ${(state.topAppsSearch || state.sensorFilter) ? `<button class="tm-search-clear" id="sensor-app-filter-clear">✕</button>` : ''}
             </div>
-            <select class="tm-interval-select" id="tm-refresh-cadence">
-              <option value="1000" ${state.sensorsCadence === 1000 ? 'selected' : ''}>⏱ 1s (High)</option>
-              <option value="2000" ${state.sensorsCadence === 2000 ? 'selected' : ''}>⏱ 2s (Fast)</option>
-              <option value="5000" ${state.sensorsCadence === 5000 ? 'selected' : ''}>⏱ 5s (Default)</option>
-              <option value="10000" ${state.sensorsCadence === 10000 ? 'selected' : ''}>⏱ 10s (Low)</option>
-              <option value="0" ${state.sensorsCadence === 0 ? 'selected' : ''}>⏱ Paused</option>
-            </select>
           </div>
         </div>
 

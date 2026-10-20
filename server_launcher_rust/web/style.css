@@ -1834,6 +1834,13 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   justify-content: flex-end;
 }
 
+.tm-actions-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .tm-end-task-btn {
   height: 28px;
   min-height: 28px;

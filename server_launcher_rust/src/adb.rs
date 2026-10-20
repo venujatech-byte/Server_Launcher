@@ -1216,7 +1216,7 @@ pub fn query_device_sensor_inventory(serial: &str) -> Result<Vec<String>, String
         Some(serial),
         &[
             "shell",
-            "dumpsys sensorservice | sed -n '/Sensor List:/,/Fusion States:/p'; echo __FEATURES__; pm list features 2>/dev/null | grep -F android.hardware.fingerprint",
+            "dumpsys sensorservice | sed -n '/Sensor List:/,/Fusion States:/p'; echo __FEATURES__; pm list features 2>/dev/null | grep -F android.hardware.fingerprint || true",
         ],
     )?;
     let sensors = parse_sensor_inventory(&output);

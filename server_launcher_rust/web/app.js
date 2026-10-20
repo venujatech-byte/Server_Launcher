@@ -2295,16 +2295,6 @@
       return !bgKeywords.some(kw => nameLower.includes(kw));
     }
 
-    function isGpuApp(name) {
-      const s = String(name || '').toLowerCase();
-      return s.includes('chrome') || s.includes('firefox') || s.includes('edge') || s.includes('brave')
-        || s.includes('code') || s.includes('electron') || s.includes('xorg') || s.includes('wayland')
-        || s.includes('mutter') || s.includes('kwin') || s.includes('gnome-shell') || s.includes('steam')
-        || s.includes('obs') || s.includes('vlc') || s.includes('mpv') || s.includes('blender')
-        || s.includes('server_launcher') || s.includes('gl') || s.includes('gpu') || s.includes('webkit')
-        || s.includes('youtube') || s.includes('launcher');
-    }
-
     function getAppBaseName(rawName) {
       let clean = String(rawName || 'Unknown').trim();
       if (clean.includes('/')) clean = clean.split('/').pop();
@@ -2344,27 +2334,30 @@
     }
 
     function formatTmDisk(rate) {
-      if (rate < 50000) return '0 MB/s';
-      return (rate / (1024 * 1024)).toFixed(1) + ' MB/s';
-    }
-
-    function formatTmNet(rate) {
-      if (rate <= 0) return '0 Mbps';
+      if (rate == null || !Number.isFinite(rate)) return '—';
       if (rate < 1024) return Math.round(rate) + ' B/s';
       if (rate < 1024 * 1024) return (rate / 1024).toFixed(1) + ' KB/s';
       return (rate / (1024 * 1024)).toFixed(1) + ' MB/s';
     }
 
-    function formatTmGpu(gpu) {
-      if (gpu < 0.05) return '0%';
-      if (gpu < 10.0) return gpu.toFixed(1) + '%';
-      return Math.round(gpu) + '%';
+    function formatTmNetworkBytes(bytes) {
+      if (bytes == null || !Number.isFinite(bytes)) return '—';
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      if (bytes < 1024 ** 3) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+      return `${(bytes / (1024 ** 3)).toFixed(1)} GB`;
     }
 
-    function getTmGpuHeat(gpu) {
-      if (gpu < 0.1) return 'heat-0';
-      if (gpu < 2.0) return 'heat-1';
-      if (gpu < 10.0) return 'heat-2';
+    function formatTmGpuMemory(bytes) {
+      if (bytes == null || !Number.isFinite(bytes)) return '—';
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function getTmGpuHeat(bytes) {
+      if (bytes < 16 * 1024 * 1024) return 'heat-0';
+      if (bytes < 64 * 1024 * 1024) return 'heat-1';
+      if (bytes < 256 * 1024 * 1024) return 'heat-2';
       return 'heat-3';
     }
 
@@ -2375,8 +2368,10 @@
       name: p.name,
       cpu: Number(p.cpu_usage ?? p.cpu_pct ?? p.cpu ?? 0),
       mem: Number(p.memory_bytes ?? ((p.memory_kb ?? p.memory ?? 0) * 1024)),
-      disk: Number(p.disk_rate_bps ?? p.disk_rate ?? 0),
-      net: Number(p.net_rate_bps ?? p.net_rate ?? 0),
+      disk: p.disk_rate_bps == null ? null : Number(p.disk_rate_bps),
+      networkBytes: p.network_bytes == null ? null : Number(p.network_bytes),
+      gpuMemoryBytes: p.gpu_memory_bytes == null ? null : Number(p.gpu_memory_bytes),
+      uid: p.uid == null ? null : Number(p.uid),
       status: p.status || 'running'
     }));
 
@@ -2397,7 +2392,6 @@
 
     const normFactor = Math.max(1, s.cpu_cores || 8);
     const totalSystemCpu = Number(s.cpu_usage_pct ?? state.sensorHistory.at(-1)?.cpu ?? 0);
-    const totalGpuPct = Number(s.gpus?.[0]?.load_pct ?? 0);
     const sysWatts = Number(s.power_watts ?? 0);
 
     const allGroups = [];
@@ -2405,20 +2399,17 @@
       grp.children.sort((a, b) => b.cpu - a.cpu || b.mem - a.mem || a.pid - b.pid);
       const sumCpu = grp.children.reduce((acc, c) => acc + c.cpu, 0);
       const sumMem = grp.children.reduce((acc, c) => acc + c.mem, 0);
-      const sumDiskRate = grp.children.reduce((acc, c) => acc + c.disk, 0);
-      const sumNetRate = grp.children.reduce((acc, c) => acc + c.net, 0);
+      const sumDiskRate = grp.children.reduce((acc, c) => acc + (c.disk || 0), 0);
+      const diskAvailable = grp.children.some(c => c.disk != null);
+      const networkByUid = new Map(grp.children.filter(c => c.uid != null && c.networkBytes != null).map(c => [c.uid, c.networkBytes]));
+      const sumNetworkBytes = networkByUid.size ? [...networkByUid.values()].reduce((sum, bytes) => sum + bytes, 0) : null;
+      const gpuAvailable = grp.children.some(c => c.gpuMemoryBytes != null);
+      const sumGpuMemory = gpuAvailable ? grp.children.reduce((sum, c) => sum + (c.gpuMemoryBytes || 0), 0) : null;
       const pids = grp.children.map(c => c.pid);
       const normCpu = sumCpu / normFactor;
 
-      let sumGpu = 0;
-      if (totalGpuPct > 0.1 && (isGpuApp(grp.displayName) || grp.isApp)) {
-        const share = Math.min(1, Math.max(0, sumCpu / Math.max(1, totalSystemCpu)));
-        sumGpu = Math.min(100, Math.max(0, totalGpuPct * share));
-      }
-
       const groupCpuFrac = Math.min(1, Math.max(0, normCpu / 100));
       const sumPowerWatts = (sysWatts * 0.75 * groupCpuFrac)
-        + (sumGpu > 0 ? sysWatts * 0.2 * (sumGpu / 100) : 0)
         + Math.min(2, sumDiskRate / 100000000);
 
       let powerRating = 'Very low';
@@ -2438,8 +2429,9 @@
         normCpu,
         sumMem,
         sumDiskRate,
-        sumNetRate,
-        sumGpu,
+        diskAvailable,
+        sumNetworkBytes,
+        sumGpuMemory,
         sumPowerWatts,
         powerRating,
         pids
@@ -2466,9 +2458,9 @@
       } else if (sortCol === 'disk') {
         res = a.sumDiskRate - b.sumDiskRate;
       } else if (sortCol === 'net') {
-        res = a.sumNetRate - b.sumNetRate;
+        res = (a.sumNetworkBytes || 0) - (b.sumNetworkBytes || 0);
       } else if (sortCol === 'gpu') {
-        res = a.sumGpu - b.sumGpu;
+        res = (a.sumGpuMemory || 0) - (b.sumGpuMemory || 0);
       } else if (sortCol === 'power') {
         res = a.sumPowerWatts - b.sumPowerWatts;
       }
@@ -2482,7 +2474,10 @@
     const headerMem = memUsage != null ? Math.round(memUsage) + '%' : '—';
     const headerDisk = '—';
     const headerNet = '—';
-    const headerGpu = s.gpus?.[0]?.load_pct != null ? Math.round(totalGpuPct) + '%' : '—';
+    const gpuGroups = allGroups.filter(group => group.sumGpuMemory != null);
+    const headerGpu = gpuGroups.length
+      ? formatTmGpuMemory(gpuGroups.reduce((sum, group) => sum + group.sumGpuMemory, 0))
+      : '—';
     const headerPower = s.power_watts != null ? `${sysWatts} W` : '—';
 
     function renderGroupRow(grp) {
@@ -2492,7 +2487,7 @@
 
       const cpuHeat = getTmCpuHeat(grp.normCpu);
       const memHeat = getTmMemHeat(grp.sumMem);
-      const gpuHeat = getTmGpuHeat(grp.sumGpu);
+      const gpuHeat = getTmGpuHeat(grp.sumGpuMemory || 0);
 
       let pwrHtml = '';
       if (grp.powerRating === 'Very low') {
@@ -2529,13 +2524,13 @@
             <span class="tm-heat-block ${memHeat}">${formatTmMem(grp.sumMem)}</span>
           </div>
           <div class="tm-cell col-metric">
-            <span class="tm-heat-block heat-0">${formatTmDisk(grp.sumDiskRate)}</span>
+            <span class="tm-heat-block heat-0">${formatTmDisk(grp.diskAvailable ? grp.sumDiskRate : null)}</span>
           </div>
           <div class="tm-cell col-metric">
-            <span class="tm-heat-block heat-0">${formatTmNet(grp.sumNetRate)}</span>
+            <span class="tm-heat-block heat-0">${formatTmNetworkBytes(grp.sumNetworkBytes)}</span>
           </div>
           <div class="tm-cell col-metric">
-            <span class="tm-heat-block ${gpuHeat}">${formatTmGpu(grp.sumGpu)}</span>
+            <span class="tm-heat-block ${gpuHeat}">${formatTmGpuMemory(grp.sumGpuMemory)}</span>
           </div>
           <div class="tm-cell col-metric">
             <div class="tm-pwr-cell">${pwrHtml}</div>
@@ -2563,10 +2558,10 @@
                 <span class="tm-heat-block heat-0">${formatTmDisk(child.disk)}</span>
               </div>
               <div class="tm-cell col-metric">
-                <span class="tm-heat-block heat-0">${formatTmNet(child.net)}</span>
+                <span class="tm-heat-block heat-0" title="Network usage is tracked by Android per app UID">—</span>
               </div>
               <div class="tm-cell col-metric">
-                <span class="tm-heat-block heat-0">0%</span>
+                <span class="tm-heat-block heat-0">${formatTmGpuMemory(child.gpuMemoryBytes)}</span>
               </div>
               <div class="tm-cell col-metric">
                 <div class="tm-pwr-cell"><span class="tm-pwr-very-low">Very low</span></div>
@@ -2631,11 +2626,11 @@
               </div>
               <div class="tm-header-cell col-metric ${sortCol === 'net' ? 'sorted' : ''}" data-sort="net">
                 <div class="tm-header-top-val">${headerNet}</div>
-                <div class="tm-header-bottom-label">Network <span class="tm-sort-arrow">${sortCol === 'net' ? (sortDesc ? '↓' : '↑') : ''}</span></div>
+                <div class="tm-header-bottom-label">Data used <span class="tm-sort-arrow">${sortCol === 'net' ? (sortDesc ? '↓' : '↑') : ''}</span></div>
               </div>
               <div class="tm-header-cell col-metric ${sortCol === 'gpu' ? 'sorted' : ''}" data-sort="gpu">
                 <div class="tm-header-top-val">${headerGpu}</div>
-                <div class="tm-header-bottom-label">GPU <span class="tm-sort-arrow">${sortCol === 'gpu' ? (sortDesc ? '↓' : '↑') : ''}</span></div>
+                <div class="tm-header-bottom-label">GPU mem <span class="tm-sort-arrow">${sortCol === 'gpu' ? (sortDesc ? '↓' : '↑') : ''}</span></div>
               </div>
               <div class="tm-header-cell col-metric ${sortCol === 'power' ? 'sorted' : ''}" data-sort="power">
                 <div class="tm-header-top-val">${headerPower}</div>

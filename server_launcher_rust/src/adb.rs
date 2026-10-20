@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
 pub struct AdbDeviceInfo {
@@ -52,10 +53,14 @@ pub struct AdbDeviceTelemetry {
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct AdbSensorProcess {
     pub pid: u32,
+    pub uid: Option<u32>,
     pub name: String,
     pub cpu_pct: Option<f32>,
     pub memory: String,
     pub memory_kb: Option<u64>,
+    pub disk_rate_bps: Option<f64>,
+    pub network_bytes: Option<u64>,
+    pub gpu_memory_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -668,7 +673,7 @@ fn parse_battery_time(line: &str) -> Option<f64> {
 
 #[cfg(test)]
 mod power_time_tests {
-    use super::{parse_android_df_line, parse_battery_time, parse_power_attribution, parse_sensor_inventory, parse_sensor_readings, parse_sim_slots};
+    use super::{parse_android_df_line, parse_battery_time, parse_power_attribution, parse_sensor_inventory, parse_sensor_readings, parse_sim_slots, process_disk_rates};
 
     #[test]
     fn parses_sim_slots_from_android_property_lists() {
@@ -739,6 +744,14 @@ mod power_time_tests {
             assert_eq!(parse_battery_time(value), None);
         }
     }
+
+    #[test]
+    fn computes_process_disk_rate_from_counter_deltas() {
+        let mut counters = std::collections::HashMap::from([(42, (100, 200))]);
+        assert!(process_disk_rates("test-device", &counters).is_empty());
+        counters.insert(42, (1100, 1200));
+        assert!(process_disk_rates("test-device", &counters).get(&42).is_some_and(|rate| *rate > 0.0));
+    }
 }
 
 /// Reads Android hardware and resource sensor data in one device shell session.
@@ -749,6 +762,10 @@ echo __CPU_STAT__; cat /proc/stat
 echo __CPU_FREQ__; for freq in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq; do [ -r "$freq" ] && cat "$freq"; done
 echo __MEMINFO__; cat /proc/meminfo
 echo __TOP__; top -b -n 1 -m 120
+echo __PROCESS_UID__; ps -A -o UID,PID
+echo __PROC_IO__; su -c 'top -b -n 1 -m 120 | while read -r pid rest; do case "$pid" in ""|*[!0-9]*) continue;; esac; r=0; w=0; while read -r key value; do case "$key" in read_bytes:) r=$value;; write_bytes:) w=$value;; esac; done 2>/dev/null < "/proc/$pid/io"; echo "$pid $r $w"; done' 2>/dev/null
+echo __GPU_MEM__; su -c 'gpu_proc=/sys/kernel/debug/kgsl/proc; [ -d "$gpu_proc" ] || gpu_proc=/d/kgsl/proc; [ -d "$gpu_proc" ] || exit 0; echo AVAILABLE; for d in "$gpu_proc"/*; do [ -r "$d/mem" ] || continue; echo "GPU_PID ${d##*/}"; cat "$d/mem"; done' 2>/dev/null
+echo __NET_UID__; dumpsys netstats detail 2>/dev/null | awk '/ident=.*uid=/ {uid=""; for(i=1;i<=NF;i++) if($i ~ /^uid=/) {split($i,a,"="); uid=a[2]}} /st=.*rb=.*tb=/ && uid ~ /^[0-9]+$/ {rb=0;tb=0;for(i=1;i<=NF;i++){if($i~/^rb=/){split($i,a,"=");rb=a[2]} if($i~/^tb=/){split($i,a,"=");tb=a[2]}} total[uid]+=rb+tb} END {for(uid in total) print uid,total[uid]}'
 echo __BATTERY__; dumpsys battery; cat /sys/class/power_supply/battery/uevent 2>/dev/null; su -c cat /sys/class/power_supply/battery/uevent 2>/dev/null
 battery_stats=$(dumpsys batterystats --charged 2>/dev/null)
 echo __BATTERYSTATS__; printf '%s\n' "$battery_stats" | sed -n '/Estimated power use/,/^$/p'
@@ -825,6 +842,42 @@ echo __TELEPHONY__; getprop gsm.operator.alpha; getprop gsm.sim.operator.alpha; 
         .map(|khz| khz / 1000)
         .collect();
 
+    let uid_by_pid: HashMap<u32, u32> = section("PROCESS_UID")
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            Some((fields.next()?.parse().ok()?, fields.next()?.parse().ok()?))
+        })
+        .collect();
+    let network_by_uid: HashMap<u32, u64> = section("NET_UID")
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            Some((fields.next()?.parse().ok()?, fields.next()?.parse().ok()?))
+        })
+        .collect();
+    let disk_counters_by_pid: HashMap<u32, (u64, u64)> = section("PROC_IO")
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            Some((fields.next()?.parse().ok()?, (fields.next()?.parse().ok()?, fields.next()?.parse().ok()?)))
+        })
+        .collect();
+    let disk_rates_by_pid = process_disk_rates(serial, &disk_counters_by_pid);
+    let gpu_section = section("GPU_MEM");
+    let gpu_data_available = gpu_section.lines().any(|line| line.trim() == "AVAILABLE");
+    let mut gpu_memory_by_pid = HashMap::<u32, u64>::new();
+    let mut gpu_pid = None;
+    for line in gpu_section.lines() {
+        let line = line.trim();
+        if let Some(pid) = line.strip_prefix("GPU_PID ").and_then(|pid| pid.parse::<u32>().ok()) {
+            gpu_pid = Some(pid);
+        } else if let (Some(pid), Some(bytes)) = (gpu_pid, line.split_whitespace().nth(2).and_then(|value| value.parse::<u64>().ok())) {
+            *gpu_memory_by_pid.entry(pid).or_default() += bytes;
+        }
+    }
+
     let top_processes = section("TOP")
         .lines()
         .filter_map(|line| {
@@ -840,12 +893,16 @@ echo __TELEPHONY__; getprop gsm.operator.alpha; getprop gsm.sim.operator.alpha; 
                 .map(|p| (p * 10.0).round() / 10.0);
             Some(AdbSensorProcess {
                 pid,
+                uid: uid_by_pid.get(&pid).copied(),
                 name: columns.get(11..).unwrap_or(&[]).join(" ").trim().to_string(),
                 cpu_pct,
                 memory: columns.get(5).copied().unwrap_or("").to_string(),
                 memory_kb: columns
                     .get(5)
                     .and_then(|value| parse_top_memory_kb(value)),
+                disk_rate_bps: disk_rates_by_pid.get(&pid).copied(),
+                network_bytes: uid_by_pid.get(&pid).and_then(|uid| network_by_uid.get(uid)).copied(),
+                gpu_memory_bytes: gpu_data_available.then(|| gpu_memory_by_pid.get(&pid).copied().unwrap_or(0)),
             })
         })
         .filter(|process| !process.name.is_empty() && !process.name.starts_with("top ") && !process.name.starts_with("sh "))
@@ -1310,6 +1367,24 @@ fn parse_top_memory_kb(value: &str) -> Option<u64> {
         .parse::<f64>()
         .ok()
         .map(|value| (value * multiplier) as u64)
+}
+
+fn process_disk_rates(serial: &str, counters: &HashMap<u32, (u64, u64)>) -> HashMap<u32, f64> {
+    static PREVIOUS: OnceLock<Mutex<HashMap<(String, u32), (u64, Instant)>>> = OnceLock::new();
+    let previous = PREVIOUS.get_or_init(|| Mutex::new(HashMap::new()));
+    let now = Instant::now();
+    let mut previous = previous.lock().unwrap_or_else(|error| error.into_inner());
+    previous.retain(|(device, pid), _| device != serial || counters.contains_key(pid));
+    counters.iter().filter_map(|(&pid, &(read, written))| {
+        let total = read.saturating_add(written);
+        let key = (serial.to_string(), pid);
+        let rate = previous.get(&key).and_then(|(old_total, old_time)| {
+            let elapsed = now.duration_since(*old_time).as_secs_f64();
+            (elapsed > 0.0 && total >= *old_total).then_some((total - old_total) as f64 / elapsed)
+        });
+        previous.insert(key, (total, now));
+        rate.map(|rate| (pid, rate))
+    }).collect()
 }
 
 fn parse_getprop_line(line: &str) -> Option<(&str, &str)> {

@@ -58,6 +58,8 @@ fn adb_theme_info() -> AdbThemeInfo {
         } else if let Some(c) = crate::theme::parse_hex_color(acc_str) {
             palette.apply_accent(c);
         }
+    } else {
+        palette.apply_accent(crate::theme::current_gtk4_accent_color());
     }
 
     if let Ok(theme_id) = std::env::var("SERVER_LAUNCHER_ADB_THEME") {

@@ -72,6 +72,14 @@ pub struct AdbDiskCounters {
     pub written_sectors: u64,
 }
 
+/// One row of `dumpsys batterystats` power attribution. `mah` is charge drained
+/// since the last full charge, which is the unit the platform reports in.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct AdbPowerAttribution {
+    pub label: String,
+    pub mah: f32,
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct AdbNetworkInterface {
     pub name: String,
@@ -120,6 +128,12 @@ pub struct AdbDeviceSensors {
     pub battery_charge_full_design_uah: Option<u64>,
     pub battery_cycle_count: Option<u64>,
     pub battery_technology: Option<String>,
+    pub cpu_governor: Option<String>,
+    pub cpu_available_governors: Vec<String>,
+    /// Platform power attribution; empty when batterystats has no history yet.
+    pub power_attribution: Vec<AdbPowerAttribution>,
+    /// Seconds covered by the batterystats window, used to turn mAh into watts.
+    pub power_attribution_secs: Option<f64>,
     pub wifi_enabled: Option<bool>,
     pub bluetooth_enabled: Option<bool>,
     pub bluetooth_name: Option<String>,
@@ -525,6 +539,39 @@ pub fn query_telemetry(serial: &str) -> AdbDeviceTelemetry {
     telem
 }
 
+// Android durations may contain days and milliseconds, with or without spaces.
+fn parse_battery_time(line: &str) -> Option<f64> {
+    let (_, rest) = line.split_once("Time on battery:")?;
+    let (duration, _) = rest.split_once('(')?;
+    let mut rest = duration.trim();
+    let mut seconds = 0.0;
+    while !rest.is_empty() {
+        let end = rest.find(|c: char| !c.is_ascii_digit())?;
+        let value = rest[..end].parse::<u64>().ok()? as f64;
+        rest = &rest[end..];
+        let (unit, scale) = [("ms", 0.001), ("d", 86400.0), ("h", 3600.0), ("m", 60.0), ("s", 1.0)]
+            .into_iter()
+            .find(|(unit, _)| rest.starts_with(unit))?;
+        seconds += value * scale;
+        rest = rest[unit.len()..].trim_start();
+    }
+    (seconds.is_finite() && seconds > 0.0).then_some(seconds)
+}
+
+#[cfg(test)]
+mod power_time_tests {
+    use super::parse_battery_time;
+
+    #[test]
+    fn parses_battery_realtime_only() {
+        assert_eq!(parse_battery_time("Time on battery: 3s 872ms (0.1%) realtime, 1s (100%) uptime"), Some(3.872));
+        assert_eq!(parse_battery_time("Time on battery: 1d2h3m4s5ms (10%) realtime"), Some(93784.005));
+        for value in ["", "Time on battery: 0ms (0%) realtime", "Time on battery: unknown (0%)", "Time on battery: 1x (0%)"] {
+            assert_eq!(parse_battery_time(value), None);
+        }
+    }
+}
+
 /// Reads Android hardware and resource sensor data in one device shell session.
 pub fn query_device_sensors(serial: &str) -> Result<AdbDeviceSensors, String> {
     let script = r#"
@@ -534,6 +581,10 @@ echo __CPU_FREQ__; for freq in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling
 echo __MEMINFO__; cat /proc/meminfo
 echo __TOP__; top -b -n 1 -m 120
 echo __BATTERY__; dumpsys battery; cat /sys/class/power_supply/battery/uevent 2>/dev/null; su -c cat /sys/class/power_supply/battery/uevent 2>/dev/null
+battery_stats=$(dumpsys batterystats --charged 2>/dev/null)
+echo __BATTERYSTATS__; printf '%s\n' "$battery_stats" | sed -n '/Estimated power use/,/^$/p' | grep -E '^ +[A-Z][A-Za-z ]+:' | head -n 20
+echo __BATTERYSTATS_TIME__; printf '%s\n' "$battery_stats" | grep -m1 -E 'Time on battery:'
+echo __GOVERNOR__; cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null; cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors 2>/dev/null
 echo __NETDEV__; cat /proc/net/dev
 echo __DISKSTATS__; cat /proc/diskstats
 echo __DF__; df -k /data /sdcard
@@ -780,6 +831,26 @@ echo __TELEPHONY__; getprop gsm.operator.alpha; getprop gsm.sim.operator.alpha; 
         .or_else(|| battery_value("technology:").map(str::to_string))
         .or_else(|| Some("Li-ion".to_string()));
 
+    // "Capacity: 4980, Typical: 5100, ..." is a summary row, not an attribution entry.
+    let power_attribution = section("BATTERYSTATS")
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("Capacity:"))
+        .filter_map(|line| {
+            let (label, rest) = line.trim().split_once(':')?;
+            let mah = rest.split_whitespace().next()?.parse::<f32>().ok()?;
+            Some(AdbPowerAttribution { label: label.trim().to_string(), mah })
+        })
+        .collect();
+
+    let power_attribution_secs = parse_battery_time(section("BATTERYSTATS_TIME"));
+
+    let governor_lines: Vec<&str> = section("GOVERNOR").lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let cpu_governor = governor_lines.first().map(|s| s.to_string());
+    let cpu_available_governors = governor_lines
+        .get(1)
+        .map(|s| s.split_whitespace().map(str::to_string).collect())
+        .unwrap_or_default();
+
     let battery_health_raw = battery_uevent_val("HEALTH")
         .or_else(|| battery_value("health:"))
         .unwrap_or("");
@@ -943,6 +1014,10 @@ echo __TELEPHONY__; getprop gsm.operator.alpha; getprop gsm.sim.operator.alpha; 
         battery_charge_full_design_uah,
         battery_cycle_count,
         battery_technology,
+        cpu_governor,
+        cpu_available_governors,
+        power_attribution,
+        power_attribution_secs,
         wifi_enabled: parse_toggle("WIFI"),
         bluetooth_enabled: parse_toggle("BLUETOOTH"),
         bluetooth_name: bt_name,

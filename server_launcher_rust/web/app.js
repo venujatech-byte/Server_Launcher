@@ -3871,39 +3871,59 @@
         const isCharging = s.battery_status === 'Charging';
         const isFull = s.battery_status === 'Full' || (acOnline && batPct >= 100);
 
-        const voltageMv = Number(s.battery_voltage_mv) || 4384;
-        const voltageV = (voltageMv / 1000).toFixed(2);
-        const voltageHist = hist.map(h => h.voltage ? (Number(h.voltage) / 1000) : Number(voltageV));
-        if (voltageHist.length < 2) voltageHist.push(Number(voltageV));
+        // Voltage is always reported by dumpsys battery; only synthesize for the sparkline pad.
+        const hasVoltage = s.battery_voltage_mv != null;
+        const voltageMv = Number(s.battery_voltage_mv) || 0;
+        const voltageV = hasVoltage ? (voltageMv / 1000).toFixed(2) : null;
+        const voltageHist = hist.map(h => h.voltage ? (Number(h.voltage) / 1000) : Number(voltageV) || 0);
+        if (voltageHist.length < 2) voltageHist.push(Number(voltageV) || 0);
 
-        const tempC = Number(s.battery_temp_c) || 31.2;
         const healthText = s.battery_health === '2' ? 'Good' : (s.battery_health || 'Good');
 
-        // Battery capacities and health metrics from hardware fuel gauge
-        const fullMah = s.battery_charge_full_uah ? Math.round(s.battery_charge_full_uah / 1000) : 5111;
-        const designMah = s.battery_charge_full_design_uah ? Math.round(s.battery_charge_full_design_uah / 1000) : fullMah;
+        // Capacity sources, best first: fuel-gauge uevent (root only), then the
+        // platform's learned design capacity, then an estimate flagged as such.
+        const learnedMah = Number(s.battery_design_capacity_mah) || 0;
+        const fullMah = s.battery_charge_full_uah ? Math.round(s.battery_charge_full_uah / 1000) : (learnedMah || Math.round(batPct ? 5100 : 0));
+        const designMah = s.battery_charge_full_design_uah ? Math.round(s.battery_charge_full_design_uah / 1000) : (learnedMah || fullMah);
+        // Root gives CHARGE_COUNTER; otherwise the platform's "Charge counter" line.
         const remMah = s.battery_charge_counter_uah ? Math.round(s.battery_charge_counter_uah / 1000) : Math.round((batPct / 100) * fullMah);
+        const capacityIsEstimated = !s.battery_charge_full_design_uah && !learnedMah;
+        // Nominal cell voltage for the mAh -> Wh conversion; measured terminal potential when available.
+        const nominalV = hasVoltage ? voltageMv / 1000 : 3.85;
+        const wh = (mah) => ((mah * nominalV) / 1000).toFixed(1);
+        const designWh = wh(designMah), fullWh = wh(fullMah), remWh = wh(remMah);
         const healthPct = designMah > 0 ? Math.min(100, (fullMah / designMah) * 100).toFixed(1) : '100.0';
-        const designWh = ((designMah * 3.85) / 1000).toFixed(1);
-        const fullWh = ((fullMah * 3.85) / 1000).toFixed(1);
         const cycles = s.battery_cycle_count != null ? s.battery_cycle_count : null;
-        let wearPct = '0.0';
-        if (cycles != null && cycles > 0) {
-          const calcWear = Math.min(35.0, Math.max(1.2, (cycles * 0.018)));
-          wearPct = calcWear.toFixed(1);
-        } else if (healthPct != null && healthPct < 100) {
-          wearPct = Math.max(0, 100 - Number(healthPct)).toFixed(1);
-        }
-        const lifeCond = cycles == null ? 'Optimal (Hardware)' : (cycles < 200 ? 'Fresh pack (Optimal)' : (cycles < 500 ? 'Normal endurance' : (cycles < 800 ? 'Aged cell' : 'High cycle count')));
 
-        // Precise mobile power draw / charge rate calculation
+        // Wear is derived from measured capacity loss when we have a design figure,
+        // else from cycle count. Both are approximations, labelled as such in the UI.
+        let wearPct = '0.0';
+        if (Number(healthPct) < 100) {
+          wearPct = Math.max(0, 100 - Number(healthPct)).toFixed(1);
+        } else if (cycles != null && cycles > 0) {
+          wearPct = Math.min(35.0, cycles / 2500 * 100).toFixed(1);
+        }
+        const lifeCond = cycles == null ? 'Optimal (BMS)' : (cycles < 200 ? 'Fresh pack (Optimal)' : (cycles < 500 ? 'Normal endurance' : (cycles < 800 ? 'Aged cell' : 'High cycle count')));
+
+        // Average power over the same on-battery window as the charge attribution.
+        const attribution = (s.power_attribution || []).filter(a => Number.isFinite(Number(a.mah)) && Number(a.mah) >= 0)
+          .sort((a, b) => Number(b.mah) - Number(a.mah));
+        const attrTotal = attribution.reduce((sum, a) => sum + Number(a.mah), 0);
+        const attrSeconds = Number(s.power_attribution_secs);
+        const attrWattsPerMah = Number.isFinite(attrSeconds) && attrSeconds > 0 && Number.isFinite(voltageMv) && voltageMv > 0
+          ? (voltageMv / 1000) * 3.6 / attrSeconds : null;
+        const formatAttrWatts = mah => attrWattsPerMah == null ? 'Unavailable' : `${(mah * attrWattsPerMah).toFixed(3)} W`;
+
+        // Charge/discharge rate. Prefer the fuel-gauge current; the fallbacks are
+        // labelled estimates because unrooted devices do not expose current_now.
         let drawWatts = 0.0;
         let drawSub = 'Mains bypass · 0 mA drain';
         let drawSide = '0 mA';
+        const drawIsEstimated = s.battery_current_ua == null && !isFull;
 
         if (s.battery_current_ua != null && s.battery_current_ua !== 0) {
           const curA = Math.abs(Number(s.battery_current_ua)) / 1_000_000;
-          drawWatts = curA * (voltageMv / 1000);
+          drawWatts = curA * nominalV;
           if (isCharging) {
             drawSub = `Charging (${s.battery_plugged || 'USB'})`;
             drawSide = `+${drawWatts.toFixed(1)} W`;
@@ -3912,46 +3932,27 @@
             drawSide = `-${drawWatts.toFixed(1)} W`;
           }
         } else if (isFull) {
-          drawWatts = 0.0;
           drawSub = 'Mains bypass · 0 mA net draw';
           drawSide = 'Bypass';
         } else if (isCharging) {
           drawWatts = Math.max(2.5, ((100 - batPct) / 100) * 8 + 2.0);
-          drawSub = `Fast charging (${s.battery_plugged || 'USB'})`;
+          drawSub = `Fast charging (${s.battery_plugged || 'USB'}) · estimated`;
           drawSide = `+${drawWatts.toFixed(1)} W`;
         } else {
-          // Mobile SoC discharge estimate
-          const currentCpu = Number(s.cpu_usage_pct) || 14;
-          const numCores = s.cpu_cores || 8;
-          const cpuW = Math.max(0.6, (currentCpu / 100) * (numCores * 0.35) + 0.4);
-          const gpuW = Math.max(0.3, (currentCpu / 100) * 0.8 + 0.2);
-          const dispW = 1.2;
-          const cellW = 0.5;
-          const radioW = (s.wifi_enabled ? 0.35 : 0.05) + (s.bluetooth_enabled ? 0.15 : 0.02);
-          const storageW = Math.max(0.2, (s.disk_counters?.length || 1) * 0.15);
-          const osW = 0.4;
-          drawWatts = cpuW + gpuW + dispW + cellW + radioW + storageW + osW;
-          drawSub = 'Battery discharging';
-          drawSide = `-${drawWatts.toFixed(1)} W`;
+          drawWatts = attribution.length && attrWattsPerMah != null ? attrTotal * attrWattsPerMah : null;
+          drawSub = drawWatts == null ? 'Unavailable · no timed battery history' : 'Estimated average over on-battery history';
+          drawSide = drawWatts == null ? 'Unavailable' : `${drawWatts.toFixed(1)} W avg`;
         }
 
-        if (!state.powerHist) state.powerHist = [drawWatts, drawWatts];
-        state.powerHist.push(drawWatts);
+        if (!state.powerHist) state.powerHist = [];
+        if (drawWatts != null) state.powerHist.push(drawWatts);
         if (state.powerHist.length > 25) state.powerHist.shift();
 
-        // Estimated subsystem draw allocations for breakdown view
-        const currentCpu = Number(s.cpu_usage_pct) || 14;
-        const numCores = s.cpu_cores || 8;
-        const cpuW = Math.max(0.5, (currentCpu / 100) * (numCores * 0.3) + 0.3);
-        const gpuW = Math.max(0.2, (currentCpu / 100) * 0.6 + 0.2);
-        const dispW = 1.1;
-        const cellW = 0.4;
-        const radioW = (s.wifi_enabled ? 0.3 : 0.05) + (s.bluetooth_enabled ? 0.12 : 0.02);
-        const storageW = Math.max(0.15, (s.disk_counters?.length || 1) * 0.1);
-        const osW = 0.35;
-        const allocTotal = cpuW + gpuW + dispW + cellW + radioW + storageW + osW;
-
-        const activePreset = state.powerPreset || 'balanced';
+        // Governor is read straight from the device; presets reflect that value.
+        const governor = s.cpu_governor || null;
+        const activePreset = !governor ? (state.powerPreset || 'balanced')
+          : governor === 'powersave' ? 'quiet'
+          : governor === 'performance' ? 'turbo' : 'balanced';
 
         return `
           <div class="sensors-stat-grid">
@@ -3997,7 +3998,7 @@
             ${renderBigStatCard({
               iconCode: 'e145',
               title: 'ESTIMATED DRAW',
-              heroVal: drawWatts.toFixed(1),
+              heroVal: drawWatts == null ? '—' : drawWatts.toFixed(1),
               heroUnit: 'W',
               subtitle: drawSub,
               leftStat: 'POWER FLOW',
@@ -4036,14 +4037,14 @@
                   <span>Health Capacity</span>
                 </div>
                 <div class="tile-hero">
-                  <b>${healthPct}</b><small>%</small>
+                  <b>${capacityIsEstimated ? '~' : ''}${healthPct}</b><small>%</small>
                 </div>
                 <div class="tile-bar">
                   <div class="tile-fill" style="width: ${healthPct}%"></div>
                 </div>
                 <div class="tile-sub">
                   <span>Design rated</span>
-                  <b>${designMah} mAh</b>
+                  <b>${designMah} mAh${capacityIsEstimated ? ' (est.)' : ''}</b>
                 </div>
               </div>
 
@@ -4056,7 +4057,7 @@
                   <b>${remMah}</b><small>/ ${fullMah} mAh</small>
                 </div>
                 <div class="tile-bar">
-                  <div class="tile-fill accent" style="width: ${Math.min(100, (remMah / fullMah) * 100)}%"></div>
+                  <div class="tile-fill accent" style="width: ${fullMah > 0 ? Math.min(100, (remMah / fullMah) * 100) : 0}%"></div>
                 </div>
                 <div class="tile-sub">
                   <span>Energy equivalent</span>
@@ -4087,25 +4088,25 @@
                   <span>Cell Degradation</span>
                 </div>
                 <div class="tile-hero">
-                  <b>${wearPct}</b><small>% wear</small>
+                  <b>~${wearPct}</b><small>% wear (est.)</small>
                 </div>
                 <div class="tile-bar">
                   <div class="tile-fill danger" style="width: ${Math.min(100, Math.max(3, Number(wearPct)))}%"></div>
                 </div>
                 <div class="tile-sub">
-                  <span>Technology</span>
-                  <b>${s.battery_technology || 'Li-ion'}</b>
+                  <span>Source</span>
+                  <b>${Number(healthPct) < 100 ? 'Capacity loss' : (cycles != null ? 'Cycle count' : 'No data')}</b>
                 </div>
               </div>
             </div>
 
             <div class="kv" style="margin-top: 14px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 14px;">
-              <div><small>Battery Chemistry</small><b>${s.battery_technology || 'Li-ion'} polymer</b></div>
-              <div><small>Terminal Potential</small><b>${voltageV} V (${voltageMv} mV)</b></div>
-              <div><small>Current Flow (Fuel Gauge)</small><b>${s.battery_current_ua != null ? `${(s.battery_current_ua / 1000).toFixed(0)} mA` : '0 mA (Idle)'}</b></div>
-              <div><small>Charge Full Design</small><b>${designMah} mAh (${designWh} Wh)</b></div>
-              <div><small>Battery Pack Health</small><b>${healthText} (${healthPct}%)</b></div>
-              <div><small>Cycle Count</small><b>${cycles != null ? `${cycles} completed cycles` : 'BMS Calibrated'}</b></div>
+              <div><small>Battery Chemistry</small><b>${val(s.battery_technology)}</b></div>
+              <div><small>Terminal Potential</small><b>${hasVoltage ? `${voltageV} V (${voltageMv} mV)` : 'Unavailable'}</b></div>
+              <div><small>Current Flow (Fuel Gauge)</small><b>${s.battery_current_ua != null ? `${(s.battery_current_ua / 1000).toFixed(0)} mA` : 'Unavailable without root'}</b></div>
+              <div><small>Charge Full Design</small><b>${designMah} mAh (${designWh} Wh)${capacityIsEstimated ? ' (est.)' : ''}</b></div>
+              <div><small>Battery Pack Health</small><b>${healthText}${Number(healthPct) < 100 ? ` (${healthPct}%)` : ''}</b></div>
+              <div><small>Cycle Count</small><b>${cycles != null ? `${cycles} cycles (BMS usage counter)` : 'Unavailable'}</b></div>
               <div><small>Thermal Zone Temp</small><b>${val(s.battery_temp_c, ' °C', 1)}</b></div>
               <div><small>Overheat / Swelling Guard</small><b>Active (Kernel BMS)</b></div>
             </div>
@@ -4120,10 +4121,10 @@
               <div class="kv">
                 <div><small>Charging State</small><b>${val(s.battery_status)}</b></div>
                 <div><small>Power Source</small><b>${val(s.battery_plugged)}</b></div>
-                <div><small>Terminal Voltage</small><b>${voltageV} V (${s.battery_voltage_mv || 4390} mV)</b></div>
+                <div><small>Terminal Voltage</small><b>${hasVoltage ? `${voltageV} V (${voltageMv} mV)` : 'Unavailable'}</b></div>
                 <div><small>Battery Temperature</small><b>${val(s.battery_temp_c, ' °C', 1)}</b></div>
                 <div><small>Battery Health</small><b>${healthText}</b></div>
-                <div><small>Battery Chemistry</small><b>${s.battery_technology || 'Li-ion'}</b></div>
+                <div><small>Battery Chemistry</small><b>${val(s.battery_technology)}</b></div>
                 <div><small>Device Uptime</small><b>${uptimeHours}h ${uptimeMins}m</b></div>
                 <div><small>Charger Connected</small><b>${acOnline ? 'Yes' : 'No'}</b></div>
               </div>
@@ -4131,80 +4132,25 @@
 
             <section class="card">
               <div class="card-head">
-                <h2>Android Subsystem Power Draw</h2>
-                <span class="chip">ESTIMATED</span>
+                <h2>Android Power Attribution</h2>
+                <span class="chip">BATTERYSTATS · AVG W</span>
               </div>
-              <div class="android-power-alloc-list">
-                <div class="android-power-alloc-item">
-                  <div class="android-power-alloc-labels">
-                    <span>SoC & CPU Cores</span>
-                    <b>${cpuW.toFixed(1)} W</b>
-                  </div>
-                  <div class="android-power-alloc-bar">
-                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (cpuW / allocTotal) * 100)}%"></div>
-                  </div>
+              ${attribution.length ? `
+                <div class="android-power-alloc-list">
+                  ${attribution.map(a => `
+                    <div class="android-power-alloc-item">
+                      <div class="android-power-alloc-labels">
+                        <span>${escapeHtml(a.label)}</span>
+                        <b>${formatAttrWatts(Number(a.mah))}</b>
+                      </div>
+                      <div class="android-power-alloc-bar">
+                        <div class="android-power-alloc-fill" style="width: ${attrTotal > 0 ? Math.min(100, (Number(a.mah) / attrTotal) * 100) : 0}%"></div>
+                      </div>
+                    </div>
+                  `).join('')}
                 </div>
-
-                <div class="android-power-alloc-item">
-                  <div class="android-power-alloc-labels">
-                    <span>GPU Pipeline (Adreno/Mali)</span>
-                    <b>${gpuW.toFixed(1)} W</b>
-                  </div>
-                  <div class="android-power-alloc-bar">
-                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (gpuW / allocTotal) * 100)}%"></div>
-                  </div>
-                </div>
-
-                <div class="android-power-alloc-item">
-                  <div class="android-power-alloc-labels">
-                    <span>Display Panel & Touch Digitizer</span>
-                    <b>${dispW.toFixed(1)} W</b>
-                  </div>
-                  <div class="android-power-alloc-bar">
-                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (dispW / allocTotal) * 100)}%"></div>
-                  </div>
-                </div>
-
-                <div class="android-power-alloc-item">
-                  <div class="android-power-alloc-labels">
-                    <span>Cellular Modem & RF Baseband</span>
-                    <b>${cellW.toFixed(1)} W</b>
-                  </div>
-                  <div class="android-power-alloc-bar">
-                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (cellW / allocTotal) * 100)}%"></div>
-                  </div>
-                </div>
-
-                <div class="android-power-alloc-item">
-                  <div class="android-power-alloc-labels">
-                    <span>Wi-Fi & Bluetooth Connectivity</span>
-                    <b>${radioW.toFixed(1)} W</b>
-                  </div>
-                  <div class="android-power-alloc-bar">
-                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (radioW / allocTotal) * 100)}%"></div>
-                  </div>
-                </div>
-
-                <div class="android-power-alloc-item">
-                  <div class="android-power-alloc-labels">
-                    <span>Storage Flash & eMMC/UFS I/O</span>
-                    <b>${storageW.toFixed(1)} W</b>
-                  </div>
-                  <div class="android-power-alloc-bar">
-                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (storageW / allocTotal) * 100)}%"></div>
-                  </div>
-                </div>
-
-                <div class="android-power-alloc-item">
-                  <div class="android-power-alloc-labels">
-                    <span>Android Framework & System</span>
-                    <b>${osW.toFixed(1)} W</b>
-                  </div>
-                  <div class="android-power-alloc-bar">
-                    <div class="android-power-alloc-fill" style="width: ${Math.min(100, (osW / allocTotal) * 100)}%"></div>
-                  </div>
-                </div>
-              </div>
+                <p class="subtle" style="margin-top: 10px;">${attrWattsPerMah == null ? 'Average watts unavailable: battery duration or voltage is missing.' : `Estimated average power over ${attrSeconds.toFixed(3)} seconds on battery since the statistics reset, using the current battery voltage. Total attributed: ${formatAttrWatts(attrTotal)}. This is not instantaneous power.`}</p>
+              ` : empty('No power attribution history', 'Android has no batterystats drain history yet — it accumulates after the device has been on battery.')}
             </section>
           </div>
 

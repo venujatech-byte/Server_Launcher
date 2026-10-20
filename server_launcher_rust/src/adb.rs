@@ -679,7 +679,7 @@ echo __DISKSTATS__; cat /proc/diskstats
 echo __DF__; df -k /data /sdcard
 echo __THERMAL_ZONES__; for zone in /sys/class/thermal/thermal_zone*; do if [ -r "$zone/temp" ]; then printf '%s ' "$(cat "$zone/type" 2>/dev/null)"; cat "$zone/temp"; fi; done
 echo __WIFI__; settings get global wifi_on
-echo __BLUETOOTH__; settings get global bluetooth_on; dumpsys bluetooth_manager 2>/dev/null | head -n 45; dumpsys bluetooth_manager 2>/dev/null | grep -E -m 20 '(Profile: |  mActiveDevice:)'
+echo __BLUETOOTH__; settings get global bluetooth_on; dumpsys bluetooth_manager 2>/dev/null | sed -n '1,/^AdapterState:/p'; dumpsys bluetooth_manager 2>/dev/null | grep -E -m 20 '(Profile: |  mActiveDevice:)'
 echo __GPU__; getprop ro.hardware.egl; getprop ro.board.platform
 echo __SOCKSTAT__; cat /proc/net/sockstat
 echo __UPTIME__; cat /proc/uptime
@@ -1877,11 +1877,18 @@ pub struct AdbContactEntry {
 }
 
 /// Fetches contacts from Android contacts content providers.
-pub fn get_contacts(serial: Option<&str>) -> Vec<AdbContactEntry> {
+pub fn get_contacts(serial: Option<&str>) -> Result<Vec<AdbContactEntry>, String> {
     let mut list = Vec::new();
-    let query_script = "content query --uri content://com.android.contacts/data/phones --projection _id:display_name:data1 2>/dev/null || content query --uri content://contacts/phones/ 2>/dev/null || su -c 'content query --uri content://com.android.contacts/data/phones --projection _id:display_name:data1' 2>/dev/null";
-
-    if let Ok(raw) = adb_cmd(serial, &["shell", query_script]) {
+    let query = "content query --uri content://com.android.contacts/data/phones --projection _id:display_name:data1";
+    let mut raw = adb_cmd(serial, &["shell", &format!("{query} 2>&1")])?;
+    if raw.contains("Exception") || raw.contains("Permission Denial") || raw.contains("Error") {
+        raw = adb_cmd(serial, &["shell", &format!("su -c '{query}' 2>&1")])
+            .map_err(|_| "Contacts access denied by Android. Pairing Bluetooth does not grant contacts access.".to_string())?;
+        if raw.contains("Exception") || raw.contains("denied") || raw.contains("not found") || raw.contains("Error") {
+            return Err("Contacts access denied by Android. This device does not allow ADB to read its address book.".to_string());
+        }
+    }
+    {
         for line in raw.lines() {
             let trimmed = line.trim();
             if !trimmed.starts_with("Row:") {
@@ -1915,24 +1922,47 @@ pub fn get_contacts(serial: Option<&str>) -> Vec<AdbContactEntry> {
         }
     }
 
-    list
+    Ok(list)
 }
 
-/// Initiates an outgoing call using Android telephony intents and key events.
-pub fn start_phone_call(serial: Option<&str>, number: &str) -> Result<String, String> {
-    let clean_num: String = number.chars().filter(|c| c.is_ascii_digit() || *c == '+' || *c == '*' || *c == '#').collect();
-    if clean_num.is_empty() {
-        return Err("Please enter a valid phone number".to_string());
+fn phone_call_uri(number: &str) -> Result<String, String> {
+    let number = number.trim();
+    if number.chars().any(|c| !c.is_ascii_digit() && !"+*# ()-.".contains(c)) {
+        return Err("Phone numbers may contain digits, a leading +, * or #".into());
     }
+    let clean: String = number.chars().filter(|c| c.is_ascii_digit() || "+*#".contains(*c)).collect();
+    if !clean.chars().any(|c| c.is_ascii_digit()) || clean.chars().skip(1).any(|c| c == '+') {
+        return Err("Please enter a valid phone number".into());
+    }
+    Ok(format!("tel:{}", clean.replace('#', "%23")))
+}
 
-    let call_target = format!("tel:{}", clean_num);
-    let call_cmd = format!("am start -a android.intent.action.CALL -d {} -f 0x10000000 2>/dev/null || am start -a android.intent.action.DIAL -d {} -f 0x10000000", call_target, call_target);
-    let _ = adb_cmd(serial, &["shell", &call_cmd]);
+/// Requests a call once; Android may require SIM selection or device-side confirmation.
+pub fn start_phone_call(serial: Option<&str>, number: &str) -> Result<String, String> {
+    let target = phone_call_uri(number)?;
+    let result = adb_cmd(serial, &["shell", &format!("am start -a android.intent.action.CALL -d '{target}' -f 0x10000000 2>&1")]);
+    match result {
+        Ok(output) if !output.contains("Error") && !output.contains("Exception") && !output.contains("Permission Denial") => {
+            Ok("Call requested. Check the device for SIM selection or confirmation.".into())
+        }
+        result => {
+            let reason = match result { Ok(output) | Err(output) => output };
+            Err(format!("Android could not start the call: {reason}"))
+        }
+    }
+}
 
-    // Send KEYCODE_CALL (keyevent 5) to ensure call is dialed immediately
-    let _ = adb_cmd(serial, &["shell", "input", "keyevent", "5"]);
-
-    Ok(format!("Calling {}...", clean_num))
+#[cfg(test)]
+mod call_tests {
+    use super::phone_call_uri;
+    #[test]
+    fn validates_and_encodes_phone_targets() {
+        assert_eq!(phone_call_uri("+94 (77) 123-4567").unwrap(), "tel:+94771234567");
+        assert_eq!(phone_call_uri("*123#").unwrap(), "tel:*123%23");
+        for value in ["", "+", "12+34", "12;reboot", "abc123"] {
+            assert!(phone_call_uri(value).is_err());
+        }
+    }
 }
 
 /// Ends an active phone call via Android KEYCODE_ENDCALL (6).

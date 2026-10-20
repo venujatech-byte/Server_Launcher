@@ -144,7 +144,7 @@ async fn adb_data(serial: String, section: String, path: Option<String>) -> Resu
             "calls" => json!(crate::adb::get_call_logs(Some(serial)).into_iter().map(|c| json!({
                 "id":c.id,"number":c.number,"name":c.name,"kind":c.call_type.label(),"time":c.time_str,"duration":c.duration_str
             })).collect::<Vec<_>>()),
-            "contacts" => json!(crate::adb::get_contacts(Some(serial)).into_iter().map(|c| json!({
+            "contacts" => json!(crate::adb::get_contacts(Some(serial))?.into_iter().map(|c| json!({
                 "id":c.id,"name":c.name,"number":c.number
             })).collect::<Vec<_>>()),
             "photos" => json!(crate::adb::list_photos(Some(serial)).into_iter().map(|p| json!({
@@ -379,10 +379,9 @@ async fn adb_action(
                     .map(|_| "Bluetooth radio disabled".into())
             },
             "bluetooth_auto_connect" => {
-                let _ = crate::adb::adb_cmd(Some(&serial), &["shell", "svc", "bluetooth", "enable"]);
-                let _ = crate::adb::adb_cmd(Some(&serial), &["shell", "am", "broadcast", "-a", "android.bluetooth.adapter.action.REQUEST_DISCOVERABLE"]);
-                let _ = crate::adb::adb_cmd(Some(&serial), &["shell", "am", "broadcast", "-a", "android.bluetooth.device.action.FOUND"]);
-                Ok("Bluetooth auto-connect triggered: Radio active, peripheral reconnect sent".into())
+                crate::adb::adb_cmd(Some(&serial), &["shell", "svc", "bluetooth", "enable"])?;
+                crate::adb::adb_cmd(Some(&serial), &["shell", "am", "start", "-a", "android.settings.BLUETOOTH_SETTINGS"])?;
+                Ok("Bluetooth enabled. Choose an accessory on the device to pair or connect.".into())
             },
             "bluetooth_settings" => {
                 crate::adb::adb_cmd(Some(&serial), &["shell", "am", "start", "-a", "android.settings.BLUETOOTH_SETTINGS"])

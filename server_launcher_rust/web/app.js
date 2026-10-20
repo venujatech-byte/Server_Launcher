@@ -177,15 +177,23 @@
   }
   async function renderCalls() {
     const rows = state.data || [];
-    if (!state.contacts) {
+    if (!state.contacts || state.contactsSerial !== state.serial) {
+      const serial = state.serial;
       try {
-        state.contacts = await invokeOrFail('adb_data', { serial: state.serial, section: 'contacts', path: null }) || [];
-      } catch {
+        const contacts = await invokeOrFail('adb_data', { serial, section: 'contacts', path: null }) || [];
+        if (serial !== state.serial || state.tab !== 'calls') return;
+        state.contacts = contacts;
+        state.contactsSerial = serial;
+        state.contactsError = '';
+      } catch (error) {
+        if (serial !== state.serial || state.tab !== 'calls') return;
         state.contacts = [];
+        state.contactsSerial = serial;
+        state.contactsError = String(error);
       }
     }
     const contacts = state.contacts || [];
-    const subtab = state.callsSubtab || 'calls';
+    const subtab = state.callsSubtab || 'contacts';
 
     content.innerHTML = `
       <div class="comm-page">
@@ -258,7 +266,7 @@
                       <span class="icon">&#xe0cd;</span>
                     </button>
                   </article>
-                `).join('') : empty('No contacts found', 'No phone contacts found in Android contacts provider.')}
+                `).join('') : empty(state.contactsError ? 'Contacts unavailable' : 'No contacts found', state.contactsError || 'No saved phone numbers on this device.')}
               </div>
             `}
           </section>
@@ -303,7 +311,7 @@
                 <span>End</span>
               </button>
             </div>
-            <p class="subtle dial-note">Outgoing calls route directly via the active device SIM.</p>
+            <p class="subtle dial-note">Calls use the device SIM. Android may ask you to select a SIM or confirm.</p>
           </section>
         </div>
       </div>
@@ -377,11 +385,13 @@
         const input = $('#dial-number');
         const num = input ? input.value.trim() : '';
         if (num) {
-          toast(`Initiating call to ${num}...`);
+          callBtn.disabled = true;
           try {
             await action('call', num);
           } catch (err) {
-            toast(`Call failed: ${err.message || err}`, true);
+            // action() already displays the Android error.
+          } finally {
+            callBtn.disabled = false;
           }
         } else {
           toast('Enter a phone number to call.', true);
@@ -4231,9 +4241,15 @@
             <h2>Bluetooth Status & Radio Controllers</h2>
             <span class="chip">SETTINGS INTEGRATION</span>
           </div>
-          <div class="notice">
-            Bluetooth telemetry queries Android global wireless settings. Connected peripheral telemetry requires active Bluetooth pairing services.
+          <div class="kv">
+            <div><small>Adapter</small><b>${escapeHtml(s.bluetooth_name || 'Unavailable')}</b></div>
+            <div><small>Connection</small><b>${escapeHtml(s.bluetooth_connection_state || 'Unavailable')}</b></div>
+            <div><small>Active accessory</small><b>${escapeHtml(s.bluetooth_active_device || 'None reported')}</b></div>
+            <div><small>Scan mode</small><b>${escapeHtml(s.bluetooth_scan_mode || 'Unavailable')}</b></div>
           </div>
+          <p class="subtle">Paired accessories: ${(s.bluetooth_bonded_devices || []).map(escapeHtml).join(', ') || 'None reported'}</p>
+          <p class="subtle">Profiles: ${(s.bluetooth_profiles || []).map(escapeHtml).join(', ') || 'Unavailable'}</p>
+          <button class="button" data-action="bluetooth_auto_connect">Pair / connect on device</button>
         </section>
       `,
 
@@ -4485,6 +4501,7 @@
     }
   }
   async function refreshCurrent() {
+    if (state.tab === 'calls') state.contacts = null;
     const btn = $('#refresh');
     if (btn) btn.classList.add('refreshing');
     try {

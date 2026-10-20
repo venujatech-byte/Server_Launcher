@@ -3242,209 +3242,28 @@
         `;
       },
 
-      storage: () => `
-        <div class="sensors-stat-grid">
-          ${renderBigStatCard({
-            iconCode: 'e0c5',
-            title: 'INTERNAL USED',
-            heroVal: storageUsage.toFixed(1),
-            heroUnit: '%',
-            subtitle: `${freeStorageGb.toFixed(1)} GB free of ${totalStorageGb.toFixed(1)} GB`,
-            leftStat: `FREE ${freeStorageGb.toFixed(1)} GB`,
-            rightStat: `PEAK ${storageUsage.toFixed(0)}%`,
-            data: storageHist,
-            maxVal: 100,
-            dottedRatio: 0.7,
-            color: 'var(--accent)'
-          })}
-          ${renderBigStatCard({
-            iconCode: 'e0c5',
-            title: 'SHARED STORAGE',
-            heroVal: `${sharedUsedGb.toFixed(1)}`,
-            heroUnit: 'GB',
-            subtitle: `${sharedFreeGb.toFixed(1)} GB available`,
-            leftStat: 'SHARED',
-            rightStat: `${sharedTotalGb.toFixed(1)} GB`,
-            data: storageHist,
-            maxVal: 100,
-            dottedRatio: 0.5,
-            color: '#38bdf8'
-          })}
-          ${renderBigStatCard({
-            iconCode: 'e186',
-            title: 'READ RATE',
-            heroVal: formatRate(Number(latest.diskReadRate) || 0),
-            heroUnit: '',
-            subtitle: 'Disk read throughput',
-            leftStat: `AVG ${formatRate(avg(readHist))}`,
-            rightStat: `PEAK ${formatRate(peak(readHist))}`,
-            data: readHist,
-            maxVal: Math.max(1024, ...readHist),
-            dottedRatio: 0.3,
-            color: 'var(--accent)'
-          })}
-          ${renderBigStatCard({
-            iconCode: 'e186',
-            title: 'WRITE RATE',
-            heroVal: formatRate(Number(latest.diskWriteRate) || 0),
-            heroUnit: '',
-            subtitle: 'Disk write throughput',
-            leftStat: `AVG ${formatRate(avg(writeHist))}`,
-            rightStat: `PEAK ${formatRate(peak(writeHist))}`,
-            data: writeHist,
-            maxVal: Math.max(1024, ...writeHist),
-            dottedRatio: 0.3,
-            color: '#a78bfa'
-          })}
-        </div>
-
-        ${renderWaveformChartSvg({
-          title: 'Disk Throughput · 60s Window',
-          series: [
-            { label: 'Read Throughput', data: readHist, color: 'var(--accent)' },
-            { label: 'Write Throughput', data: writeHist, color: '#a78bfa' }
-          ],
-          height: 200,
-          suffix: ' B/s'
-        })}
-
-        <section class="card storage-partition-card">
-          <div class="card-head storage-part-header-wrap">
-            <h2>
-              <span class="icon">&#xe0c5;</span> Physical Partition Map & Topologies
-              <span class="storage-part-title-sub">Storage 1 • /dev/nvme0n1 (GPT GUID Layout)</span>
-            </h2>
-            <div class="storage-part-legend">
-              <span class="storage-part-legend-item"><span class="storage-part-dot root"></span>Root System</span>
-              <span class="storage-part-legend-item"><span class="storage-part-dot data"></span>Basic Data</span>
-              <span class="storage-part-legend-item"><span class="storage-part-dot swap"></span>Swap Space</span>
-              <span class="storage-part-legend-item"><span class="storage-part-dot aux"></span>Reserved / Auxiliary</span>
-            </div>
+      storage: () => {
+        const storageVolumes = [
+          { name: 'Internal data partition', mount: '/data', total: Number(s.storage_internal_total_kb ?? (Number(t.storage_internal_total_gb) * 1024 * 1024)), free: Number(s.storage_internal_free_kb ?? (Number(t.storage_internal_free_gb) * 1024 * 1024)) },
+          { name: 'Shared user storage', mount: '/storage/emulated/0', total: Number(s.storage_shared_total_kb ?? (Number(t.storage_sdcard_total_gb) * 1024 * 1024)), free: Number(s.storage_shared_free_kb ?? (Number(t.storage_sdcard_free_gb) * 1024 * 1024)) }
+        ].filter((volume) => volume.total > 0 && Number.isFinite(volume.free));
+        return `
+          <section class="card">
+            <div class="card-head"><h2>Mounted Android storage</h2><span class="chip">${storageVolumes.length} reported</span></div>
+            <div class="storage-volume-list">${storageVolumes.map((volume) => {
+              const used = Math.max(0, volume.total - volume.free), pct = Math.max(0, Math.min(100, used / volume.total * 100));
+              return `<article class="storage-volume-row"><div class="storage-volume-top"><b>${escapeHtml(volume.name)}</b><span>${(used / 1024 / 1024).toFixed(1)} / ${(volume.total / 1024 / 1024).toFixed(1)} GB</span></div><small>${escapeHtml(volume.mount)} · ${(volume.free / 1024 / 1024).toFixed(1)} GB free</small><div class="progress"><i style="width:${pct}%"></i></div></article>`;
+            }).join('') || empty('Storage data unavailable', 'Android did not return filesystem capacity for /data or shared storage.')}</div>
+          </section>
+          <div class="sensors-stat-grid" style="margin-top:14px">
+            ${renderBigStatCard({ iconCode: 'e186', title: 'READ RATE', heroVal: formatRate(Number(latest.diskReadRate) || 0), heroUnit: '', subtitle: 'Measured from Android block counters', leftStat: `AVG ${formatRate(avg(readHist))}`, rightStat: `PEAK ${formatRate(peak(readHist))}`, data: readHist, maxVal: Math.max(1024, ...readHist), dottedRatio: 0.3, color: 'var(--accent)' })}
+            ${renderBigStatCard({ iconCode: 'e186', title: 'WRITE RATE', heroVal: formatRate(Number(latest.diskWriteRate) || 0), heroUnit: '', subtitle: 'Measured from Android block counters', leftStat: `AVG ${formatRate(avg(writeHist))}`, rightStat: `PEAK ${formatRate(peak(writeHist))}`, data: writeHist, maxVal: Math.max(1024, ...writeHist), dottedRatio: 0.3, color: '#a78bfa' })}
           </div>
-          <div class="storage-part-bar-wrap">
-            <div class="storage-part-bar">
-              <div class="storage-part-block aux" style="width: 2.5%;" title="P1 • EFI System (100 MB)"></div>
-              <div class="storage-part-block aux" style="width: 2.5%;" title="P2 • Microsoft Reserved (16 MB)"></div>
-              <div class="storage-part-block data" style="width: 44%;" title="P3 • Basic Data (126 GB)">
-                <span>P3 • Data (126 GB)</span>
-              </div>
-              <div class="storage-part-block aux" style="width: 2.2%;" title="P4 • Recovery"></div>
-              <div class="storage-part-block aux" style="width: 2.2%;" title="P5 • Misc"></div>
-              <div class="storage-part-block aux" style="width: 2.2%;" title="P6 • Metadata"></div>
-              <div class="storage-part-block root" style="width: 41.5%;" title="P7 • Root / (116 GB)">
-                <span>/ (rootfs - btrfs)</span>
-                <span>86.4 GB USED</span>
-              </div>
-              <div class="storage-part-block swap" style="width: 3.1%;" title="P8 • Linux Swap (7.8 GB)"></div>
-            </div>
-          </div>
-          <div class="storage-part-cols">
-            <div class="storage-part-col">
-              <div class="storage-part-col-header">P1 • EFI SYSTEM</div>
-              <div class="storage-part-col-val">100 MB vfat</div>
-              <div class="storage-part-col-sub">/boot/efi (ESP)</div>
-            </div>
-            <div class="storage-part-col">
-              <div class="storage-part-col-header">P3 • BASIC DATA</div>
-              <div class="storage-part-col-val">117.1 GB ntfs</div>
-              <div class="storage-part-col-sub">Data / Windows C:</div>
-            </div>
-            <div class="storage-part-col">
-              <div class="storage-part-col-header">P7 • ROOT /DEV/NVME0N1P7</div>
-              <div class="storage-part-col-val">116.0 GB btrfs</div>
-              <div class="storage-part-col-sub">Mounted / • 86.4 GB Used</div>
-            </div>
-            <div class="storage-part-col">
-              <div class="storage-part-col-header">P8 • LINUX SWAP</div>
-              <div class="storage-part-col-val">7.8 GB swap</div>
-              <div class="storage-part-col-sub">zram0 / [SWAP] Active</div>
-            </div>
-          </div>
-        </section>
-
-        <div class="grid two" style="margin-top: 14px;">
-          <article class="card storage-drive-card active-monitor">
-            <div class="storage-drive-top">
-              <div class="storage-drive-info">
-                <h3><span class="icon">&#xe0c5;</span> Storage 1 (/dev/nvme0n1) <span class="storage-drive-dot"></span></h3>
-                <small>NVMe SSD • TwinMOS SSD 256.1 GB</small>
-              </div>
-              <div class="storage-drive-badge-wrap">
-                <span class="storage-drive-badge active">ACTIVE MONITOR</span>
-                <span class="storage-drive-part-count">8 PARTITIONS</span>
-              </div>
-            </div>
-            <div class="storage-drive-mount-row">
-              <span>Mount: <b>/boot (ext4)</b></span>
-              <span>0.8 GB / 3.9 GB (20%)</span>
-            </div>
-            <div class="storage-drive-bar-wrap">
-              <div class="storage-drive-bar" style="width: 20%;"></div>
-            </div>
-            <div class="storage-drive-stats">
-              <div class="storage-drive-stat-col">
-                <small>READ RATE</small>
-                <b>${(latest.diskReadRate && Number(latest.diskReadRate) > 0) ? formatRate(Number(latest.diskReadRate)) : '884.3 KB/s'}</b>
-              </div>
-              <div class="storage-drive-stat-col">
-                <small>WRITE RATE</small>
-                <b>${(latest.diskWriteRate && Number(latest.diskWriteRate) > 0) ? formatRate(Number(latest.diskWriteRate)) : '525.9 KB/s'}</b>
-              </div>
-              <div class="storage-drive-stat-col">
-                <small>BUS INTERFACE</small>
-                <b>PCIe Gen3 x4</b>
-              </div>
-            </div>
-          </article>
-
-          <article class="card storage-drive-card">
-            <div class="storage-drive-top">
-              <div class="storage-drive-info">
-                <h3><span class="icon">&#xe0c5;</span> Storage 2 (/dev/sda) <span class="storage-drive-dot inactive"></span></h3>
-                <small>Block Device • ST500LM030-1RK17 500.1 GB</small>
-              </div>
-              <div class="storage-drive-badge-wrap">
-                <span class="storage-drive-badge secondary">DATA STORAGE</span>
-                <span class="storage-drive-part-count">1 PARTITION</span>
-              </div>
-            </div>
-            <div class="storage-drive-mount-row">
-              <span>Mount: <b>.../01DC7315E2DACD90 (fuseblk)</b></span>
-              <span>356.7 GB / 500.1 GB (71%)</span>
-            </div>
-            <div class="storage-drive-bar-wrap">
-              <div class="storage-drive-bar" style="width: 71%;"></div>
-            </div>
-            <div class="storage-drive-stats">
-              <div class="storage-drive-stat-col">
-                <small>READ RATE</small>
-                <b>0 B/s</b>
-              </div>
-              <div class="storage-drive-stat-col">
-                <small>WRITE RATE</small>
-                <b>0 B/s</b>
-              </div>
-              <div class="storage-drive-stat-col">
-                <small>BUS INTERFACE</small>
-                <b>SATA / SCSI</b>
-              </div>
-            </div>
-          </article>
-        </div>
-
-        <section class="card" style="margin-top: 14px;">
-          <div class="card-head">
-            <h2>Partitions & Storage Mounts</h2>
-            <span class="chip">STATFS</span>
-          </div>
-          <div class="kv">
-            <div><small>Internal Used Space</small><b>${usedStorageGb.toFixed(1)} GB / ${totalStorageGb.toFixed(1)} GB (${storageUsage.toFixed(1)}%)</b></div>
-            <div><small>Internal Available</small><b>${freeStorageGb.toFixed(1)} GB</b></div>
-            <div><small>Shared Emulated Storage</small><b>${sharedUsedGb.toFixed(1)} GB / ${sharedTotalGb.toFixed(1)} GB</b></div>
-            <div><small>Disk Counter Samples</small><b>${s.disk_counters?.length || 0} block devices</b></div>
-          </div>
-        </section>
-      `,
+          ${renderWaveformChartSvg({ title: 'Disk Throughput · 60s Window', series: [{ label: 'Read Throughput', data: readHist, color: 'var(--accent)' }, { label: 'Write Throughput', data: writeHist, color: '#a78bfa' }], height: 200, suffix: ' B/s' })}
+          <section class="card"><div class="card-head"><h2>Android block devices</h2><span class="chip">${s.disk_counters?.length || 0} reported</span></div>
+            <div class="storage-device-list">${s.disk_counters?.length ? s.disk_counters.map((device) => `<article class="storage-device-row"><b class="mono">${escapeHtml(device.name)}</b><span>Read ${formatBytes(Number(device.read_sectors) * 512)}</span><span>Written ${formatBytes(Number(device.written_sectors) * 512)}</span></article>`).join('') : empty('Block counters unavailable', 'The device did not expose /proc/diskstats.')}</div>
+          </section>`;
+      },
 
       wifi: () => {
         const activeIface = network[0]?.name || 'wlp2s0';

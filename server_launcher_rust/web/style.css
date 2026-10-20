@@ -3011,6 +3011,273 @@ tr[hidden], .app-row[hidden] { display: none !important; }
   border-color: rgba(56, 189, 248, 0.3);
 }
 
+/* Storage Partition Map & Topology Card */
+.storage-partition-card {
+  margin-top: 14px;
+}
+
+.storage-part-header-wrap {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.storage-part-title-sub {
+  font: 500 11px ui-monospace, monospace;
+  color: #64748b;
+  margin-left: 6px;
+}
+
+.storage-part-legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  font: 600 10px ui-monospace, monospace;
+  color: #94a3b8;
+}
+
+.storage-part-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.storage-part-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+}
+
+.storage-part-dot.root { background: #38bdf8; }
+.storage-part-dot.data { background: #2563eb; }
+.storage-part-dot.swap { background: #60a5fa; }
+.storage-part-dot.aux { background: #1e293b; }
+
+.storage-part-bar-wrap {
+  margin: 16px 0 18px;
+}
+
+.storage-part-bar {
+  width: 100%;
+  height: 38px;
+  background: #090f19;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-sizing: border-box;
+}
+
+.storage-part-block {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  font: 700 10.5px ui-monospace, monospace;
+  color: #f8fafc;
+  border-radius: 3px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.storage-part-block.aux {
+  background: #1e293b;
+  color: #64748b;
+}
+
+.storage-part-block.data {
+  background: #1e40af;
+  color: #bfdbfe;
+}
+
+.storage-part-block.root {
+  background: #0284c7;
+  color: #f0f9ff;
+}
+
+.storage-part-block.swap {
+  background: #3b82f6;
+  color: #eff6ff;
+}
+
+.storage-part-cols {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 760px) {
+  .storage-part-cols {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+}
+
+.storage-part-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.storage-part-col-header {
+  font: 700 9.5px ui-monospace, monospace;
+  color: #64748b;
+  letter-spacing: 0.5px;
+}
+
+.storage-part-col-val {
+  font: 800 17px ui-monospace, monospace;
+  color: #f1f5f9;
+}
+
+.storage-part-col-sub {
+  font: 500 11px ui-monospace, monospace;
+  color: #64748b;
+}
+
+/* Storage Drive Cards */
+.storage-drive-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.storage-drive-card.active-monitor {
+  border-color: rgba(56, 189, 248, 0.4);
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.08);
+}
+
+.storage-drive-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.storage-drive-info h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: #f1f5f9;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.storage-drive-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 8px #38bdf8;
+}
+
+.storage-drive-dot.inactive {
+  background: #64748b;
+  box-shadow: none;
+}
+
+.storage-drive-info small {
+  display: block;
+  font: 500 11px ui-monospace, monospace;
+  color: #64748b;
+  margin-top: 3px;
+}
+
+.storage-drive-badge-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.storage-drive-badge {
+  font: 700 9px ui-monospace, monospace;
+  padding: 3px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.storage-drive-badge.active {
+  background: #1d4ed8;
+  color: #ffffff;
+}
+
+.storage-drive-badge.secondary {
+  background: rgba(255, 255, 255, 0.06);
+  color: #94a3b8;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.storage-drive-part-count {
+  font: 600 9px ui-monospace, monospace;
+  color: #64748b;
+  letter-spacing: 0.5px;
+}
+
+.storage-drive-mount-row {
+  display: flex;
+  justify-content: space-between;
+  font: 600 11px ui-monospace, monospace;
+  color: #94a3b8;
+}
+
+.storage-drive-mount-row b {
+  color: #f1f5f9;
+  font-weight: 700;
+}
+
+.storage-drive-bar-wrap {
+  width: 100%;
+  height: 6px;
+  background: #090f19;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.storage-drive-bar {
+  height: 100%;
+  background: #38bdf8;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.storage-drive-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.storage-drive-stat-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.storage-drive-stat-col small {
+  font: 700 9px ui-monospace, monospace;
+  color: #64748b;
+  letter-spacing: 0.5px;
+}
+
+.storage-drive-stat-col b {
+  font: 800 16px ui-monospace, monospace;
+  color: #f1f5f9;
+}
+
 @media (max-width: 1050px) {
   .shell { grid-template-columns: 215px minmax(0, 1fr); }
   .content { padding: 10px; }

@@ -2,7 +2,7 @@
   const invoke = window.__TAURI__?.core?.invoke;
   const $ = (selector) => document.querySelector(selector);
   const content = $('#content');
-  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', screenTimer: null, commTimer: null, commBusy: false, contacts: null, contactsSerial: '', toastTimer: null, lastTelemetry: 0, topAppsSelectedPid: null, topAppsExpandedGroups: new Set(), topAppsAppsExpanded: true, topAppsBgExpanded: true, topAppsSort: 'mem', topAppsSortDesc: true, topAppsSearch: '', powerPreset: 'balanced', gpuPreset: 'balanced', powerHist: [0.0, 0.0, 0.0], photosAlbum: 'all', photosSearch: '', photosDensity: 'comfortable', photosCursor: null, photosHasMore: true, photosPageLoading: false, photosThumbs: {}, photosThumbLoading: new Set(), photosObserver: null, photosSelected: new Set(), photosSelectionMode: false, photosLightboxIndex: null, photosCache: {}, photosCacheSerial: '', customSubtab: 'boot', customRootStatus: null, customFastbootDevices: null, customDensityVal: '', customAnimScale: '0.5' };
+  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', screenTimer: null, commTimer: null, commBusy: false, contacts: null, contactsSerial: '', toastTimer: null, lastTelemetry: 0, topAppsSelectedPid: null, topAppsExpandedGroups: new Set(), topAppsAppsExpanded: true, topAppsBgExpanded: true, topAppsSort: 'mem', topAppsSortDesc: true, topAppsSearch: '', powerPreset: 'balanced', gpuPreset: 'balanced', powerHist: [0.0, 0.0, 0.0], photosAlbum: 'all', photosSearch: '', photosDensity: 'comfortable', photosCursor: null, photosTotal: null, photosHasMore: true, photosPageLoading: false, photosThumbs: {}, photosThumbLoading: new Set(), photosObserver: null, photosSelected: new Set(), photosSelectionMode: false, photosLightboxIndex: null, photosCache: {}, photosCacheSerial: '', customSubtab: 'boot', customRootStatus: null, customFastbootDevices: null, customDensityVal: '', customAnimScale: '0.5' };
   const tabNames = { overview: 'Overview', screen: 'Screen share', messages: 'Messages', calls: 'Calls', photos: 'Photos', notifications: 'Notifications', sensors: 'Sensors', storage: 'Storage', apps: 'Apps', clipboard: 'Clipboard', terminal: 'Terminal', wireless: 'Wireless debugging', firmware: 'Customization & Boot' };
   const tabKinds = { messages: 'messages', calls: 'calls', photos: 'photos', notifications: 'notifications', sensors: 'sensors', apps: 'apps', storage: 'files', wireless: 'endpoints' };
   const icon = (code) => `<span class="icon" aria-hidden="true">&#x${code};</span>`;
@@ -97,7 +97,7 @@
       const picker = $('#device-select');
       if (!online.some((d) => d.serial === state.serial)) state.serial = online[0]?.serial ?? '';
       if (state.photosCacheSerial !== state.serial) {
-        state.photosCacheSerial = state.serial; state.photosCursor = null; state.photosHasMore = true; state.photosPageLoading = false;
+        state.photosCacheSerial = state.serial; state.photosCursor = null; state.photosTotal = null; state.photosHasMore = true; state.photosPageLoading = false;
         state.photosThumbs = {}; state.photosThumbLoading.clear(); state.photosCache = {}; state.photosSelected.clear();
       }
       if (state.sensorHistory.length && state.sensorHistorySerial !== state.serial) { state.sensorHistory = []; state.sensorHistorySerial = state.serial; }
@@ -125,7 +125,12 @@
     if (state.photosPageLoading || (!reset && !state.photosHasMore) || !state.serial) return;
     state.photosPageLoading = true;
     const serial = state.serial;
-    if (reset) { state.data = []; state.photosCursor = null; state.photosHasMore = true; }
+    if (reset) { state.data = []; state.photosCursor = null; state.photosTotal = null; state.photosHasMore = true; }
+    if (reset) invokeOrFail('adb_photos_count', { serial }).then((total) => {
+      if (serial !== state.serial || state.tab !== 'photos') return;
+      state.photosTotal = total;
+      if (!state.photosPageLoading) renderPhotos();
+    }).catch(() => {});
     try {
       const page = await invokeOrFail('adb_photos_page', { serial, cursor: reset ? null : state.photosCursor });
       if (serial !== state.serial || state.tab !== 'photos') return;
@@ -299,10 +304,18 @@
           <section class="card comm-dial-pane">
             <div class="dialer-title">
               <div>
-                <h3>Keypad &amp; Dial</h3>
-                <div class="subtle">Android Phone Telephony</div>
+                <h3>Call controls</h3>
+                <div class="subtle">Answer on device · route audio with Android</div>
               </div>
-              <span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3);">READY</span>
+              <span class="badge">PHONE</span>
+            </div>
+
+            <div class="call-control-window">
+              <span class="call-control-avatar">${icon("e0cd")}</span>
+              <div class="call-control-copy"><b>Android call</b><span>Use device or connected headset for audio</span></div>
+              <button class="button tonal" data-action="bluetooth_auto_connect" title="Open Android Bluetooth pairing">Bluetooth</button>
+              <button class="button success tonal" data-action="answer_call" title="Answer a ringing call">Answer</button>
+              <button class="button danger tonal" data-action="hangup" title="End an ongoing call">End</button>
             </div>
 
             <div class="dial-input-container">
@@ -330,10 +343,6 @@
               <button class="button success dial-submit" id="dial-call" title="Place phone call">
                 <span class="icon">&#xe0cd;</span>
                 <span>Call</span>
-              </button>
-              <button class="button danger dial-end" data-action="hangup" title="End ongoing call">
-                <span class="icon">&#xe0b1;</span>
-                <span>End</span>
               </button>
             </div>
             <p class="subtle dial-note">Calls use the device SIM. Android may ask you to select a SIM or confirm.</p>
@@ -387,7 +396,6 @@
       k.onclick = () => {
         const input = $('#dial-number');
         if (input) {
-          input.value += k.dataset.key;
           input.focus();
         }
       };
@@ -482,13 +490,6 @@
       return 'other';
     };
 
-    const counts = {
-      all: rows.length,
-      camera: rows.filter(p => getAlbum(p) === 'camera').length,
-      screenshots: rows.filter(p => getAlbum(p) === 'screenshots').length,
-      downloads: rows.filter(p => getAlbum(p) === 'downloads').length,
-    };
-
     const filtered = rows.filter(p => {
       if (album === 'camera' && getAlbum(p) !== 'camera') return false;
       if (album === 'screenshots' && getAlbum(p) !== 'screenshots') return false;
@@ -507,7 +508,7 @@
         <header class="photos-header-card">
           <div class="photos-header-info">
             <h2>${icon("e0f7")} Camera Roll & Gallery</h2>
-            <div class="photos-header-sub">${rows.length} photos loaded${state.photosHasMore ? ' · scroll to load more' : ' · all photos loaded'}</div>
+            <div class="photos-header-sub">${state.photosTotal == null ? 'Counting photos…' : `${state.photosTotal} photos total`} · ${rows.length} loaded</div>
           </div>
           <div class="photos-header-actions">
             <button class="button tonal" id="photo-upload-btn">${icon("e0cc")} Push Photo to Device</button>
@@ -518,15 +519,15 @@
         <!-- Filter & Search Toolbar -->
         <div class="photos-filter-bar">
           <div class="photos-albums">
-            <button class="album-pill ${album === 'all' ? 'active' : ''}" data-album="all">${icon("e0d7")} All (${counts.all})</button>
-            <button class="album-pill ${album === 'camera' ? 'active' : ''}" data-album="camera">${icon("e0f7")} Camera (${counts.camera})</button>
-            <button class="album-pill ${album === 'screenshots' ? 'active' : ''}" data-album="screenshots">${icon("e14f")} Screenshots (${counts.screenshots})</button>
-            <button class="album-pill ${album === 'downloads' ? 'active' : ''}" data-album="downloads">${icon("e0cc")} Downloads (${counts.downloads})</button>
+            <button class="album-pill ${album === 'all' ? 'active' : ''}" data-album="all">${icon("e0d7")} All (${state.photosTotal ?? rows.length})</button>
+            <button class="album-pill ${album === 'camera' ? 'active' : ''}" data-album="camera">${icon("e0f7")} Camera</button>
+            <button class="album-pill ${album === 'screenshots' ? 'active' : ''}" data-album="screenshots">${icon("e14f")} Screenshots</button>
+            <button class="album-pill ${album === 'downloads' ? 'active' : ''}" data-album="downloads">${icon("e0cc")} Downloads</button>
           </div>
 
           <div style="display:flex; align-items:center; gap:8px;">
             <div class="photos-search-wrap">
-              <span class="icon" style="position:absolute; left:9px; color:#64748b; font-size:14px; pointer-events:none;">&#xe14c;</span>
+              <svg class="photos-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
               <input id="photos-search-input" class="photos-search-input" type="search" placeholder="Search photos..." value="${escapeHtml(state.photosSearch)}">
             </div>
 
@@ -579,7 +580,7 @@
           </div>
         ` : empty('No photos found', rows.length === 0 ? 'No photos returned from /sdcard/DCIM or MediaStore. Click "Push Photo to Device" to transfer images to the camera roll.' : 'No photos match your filter or search query.')}
 
-        ${state.photosHasMore ? `<div class="photos-load-more" id="photos-load-more"><span>${state.photosPageLoading ? 'Loading photos…' : `${rows.length} loaded`}</span><button class="button tonal" id="load-more-photos" ${state.photosPageLoading ? 'disabled' : ''}>Load 10 more</button></div>` : ''}
+        ${state.photosHasMore ? `<div class="photos-load-more" id="photos-load-more" aria-live="polite">${state.photosPageLoading ? 'Loading more photos…' : ''}</div>` : ''}
 
         <!-- Floating Bulk Selection Bar -->
         ${state.photosSelected.size > 0 ? `
@@ -678,13 +679,18 @@
       renderPhotos();
       content.scrollTop = scrollTop;
     };
-    $('#load-more-photos')?.addEventListener('click', loadMorePhotos);
     state.photosObserver?.disconnect();
     if (state.photosHasMore && 'IntersectionObserver' in window) {
       state.photosObserver = new IntersectionObserver((entries) => {
-        if (content.scrollTop > 0 && entries.some((entry) => entry.isIntersecting)) loadMorePhotos();
-      }, { root: content, rootMargin: '120px' });
+        if (entries.some((entry) => entry.isIntersecting)) loadMorePhotos();
+      }, { root: content, rootMargin: '240px' });
       state.photosObserver.observe($('#photos-load-more'));
+    } else if (state.photosHasMore) {
+      content.onscroll = () => {
+        if (content.scrollTop + content.clientHeight >= content.scrollHeight - 240) loadMorePhotos();
+      };
+    } else {
+      content.onscroll = null;
     }
 
     // 4. Push / Upload photo

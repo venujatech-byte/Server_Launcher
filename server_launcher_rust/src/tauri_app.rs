@@ -223,6 +223,11 @@ async fn adb_photos_page(serial: String, cursor: Option<String>) -> Result<Value
 }
 
 #[tauri::command]
+async fn adb_photos_count(serial: String) -> Result<usize, String> {
+    on_worker(move || Ok(crate::adb::count_photos(Some(&serial)))).await
+}
+
+#[tauri::command]
 async fn adb_photo_thumbnail(serial: String, path: String) -> Result<String, String> {
     on_worker(move || {
         use base64::Engine;
@@ -257,6 +262,7 @@ async fn adb_action(
             "shell" => crate::adb::adb_cmd(Some(&serial), &["shell", &value]),
             "send_text" => crate::adb::send_text(&serial, &value).map(|_| "Text sent".into()),
             "call" => crate::adb::start_phone_call(Some(&serial), &value),
+            "answer_call" => crate::adb::send_keyevent(&serial, 79).map(|_| "Answer command sent. Android handles it only when a call is ringing.".into()),
             "hangup" => crate::adb::end_phone_call(Some(&serial)),
             "send_sms" => crate::adb::send_sms(Some(&serial), &value, &extra),
             "clipboard_get" => crate::adb::get_clipboard(&serial),
@@ -431,6 +437,7 @@ pub fn run() {
             adb_data,
             adb_screenshot,
             adb_photos_page,
+            adb_photos_count,
             adb_photo_preview,
             adb_photo_thumbnail,
             adb_action

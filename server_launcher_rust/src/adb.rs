@@ -2238,6 +2238,15 @@ pub fn list_photos_page(serial: Option<&str>, cursor: Option<&str>, limit: usize
     (items, next)
 }
 
+/// Counts all images visible to Android MediaStore, falling back to shared storage when unavailable.
+pub fn count_photos(serial: Option<&str>) -> usize {
+    if let Ok(count) = adb_cmd(serial, &["shell", "content query --uri content://media/external/images/media --projection _id 2>/dev/null | grep -c '^Row:'"]) {
+        if let Ok(count) = count.trim().parse() { if count > 0 { return count; } }
+    }
+    adb_cmd(serial, &["shell", "find /sdcard -type f \\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.gif' \\) 2>/dev/null | wc -l"])
+        .ok().and_then(|count| count.trim().parse().ok()).unwrap_or(0)
+}
+
 /// Pulls a remote file/photo to local directory.
 pub fn pull_photo_to_downloads(serial: Option<&str>, remote_path: &str) -> Result<String, String> {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());

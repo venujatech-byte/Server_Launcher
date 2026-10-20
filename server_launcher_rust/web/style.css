@@ -253,10 +253,19 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   align-items: center;
 }
 
+.photos-search-icon {
+  position: absolute;
+  left: 10px;
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
 .photos-search-input {
   height: 28px;
   border-radius: 999px;
-  padding: 0 12px 0 30px;
+  padding: 0 12px 0 34px;
   background: var(--well);
   border: none;
   color: #f1f5f9;
@@ -2432,6 +2441,20 @@ tr[hidden], .app-row[hidden] { display: none !important; }
   overflow-y: auto; 
 }
 .dialer-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
+.call-control-window {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 58px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--well);
+}
+.call-control-avatar { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 34px; border-radius: 50%; background: var(--surface2); color: var(--accent); }
+.call-control-copy { display: grid; gap: 3px; min-width: 0; flex: 1; }
+.call-control-copy b { font-size: 12px; }
+.call-control-copy span { color: var(--muted); font-size: 10px; }
+.call-control-window .button { min-height: 32px; padding: 0 10px; }
 .dial-input-container {
   position: relative;
   display: flex;
@@ -2490,7 +2513,7 @@ tr[hidden], .app-row[hidden] { display: none !important; }
 }
 .dial-actions-row {
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  grid-template-columns: 1fr;
   gap: 10px;
   width: 100%;
 }

@@ -3266,9 +3266,9 @@
       },
 
       wifi: () => {
-        const activeIface = network[0]?.name || 'wlp2s0';
-        const socketTotal = Number(latest.socketTotal || s.socket_total || 8);
-        const socketTcp = Number(latest.socketTcp || s.socket_tcp || 8);
+        const activeIface = network.find((iface) => /^wlan|^wifi/i.test(iface.name))?.name || 'Unavailable';
+        const socketTotal = Number(latest.socketTotal || s.socket_total || 0);
+        const socketTcp = Number(latest.socketTcp || s.socket_tcp || 0);
         const socketUdp = Number(latest.socketUdp || s.socket_udp || 0);
 
         return `
@@ -3278,7 +3278,7 @@
             title: 'WI-FI RADIO',
             heroVal: onOff(s.wifi_enabled),
             heroUnit: '',
-            subtitle: '802.11ac Wi-Fi link online',
+            subtitle: 'Android global Wi-Fi setting',
             leftStat: 'RADIO',
             rightStat: s.wifi_enabled ? 'ONLINE' : 'OFFLINE',
             data: [s.wifi_enabled ? 1 : 0, s.wifi_enabled ? 1 : 0],
@@ -3288,44 +3288,54 @@
           })}
           ${renderBigStatCard({
             iconCode: 'e119',
-            title: 'ACTIVE INTERFACE',
-            heroVal: activeIface,
-            heroUnit: '',
-            subtitle: 'DHCP on wlp2s0 (MTU 1500)',
-            leftStat: 'INTERFACE',
-            rightStat: 'ACTIVE',
-            data: [1, 1, 1, 1, 1, 1],
-            maxVal: 1,
+            title: 'INTERFACES',
+            heroVal: `${network.length}`,
+            heroUnit: 'reported',
+            subtitle: 'Exposed via /proc/net/dev',
+            leftStat: 'IFACES',
+            rightStat: 'COUNT',
+            data: Array(rxHist.length).fill(network.length),
+            maxVal: network.length || 1,
             dottedRatio: 0.9,
             color: '#38bdf8'
           })}
           ${renderBigStatCard({
-            iconCode: 'e085',
-            title: 'IPV4 ENDPOINT',
-            heroVal: '10.111.93.116',
+            iconCode: 'e186',
+            title: 'CURRENT RX',
+            heroVal: formatRate(currRxRate),
             heroUnit: '',
-            subtitle: 'Subnet 255.255.255.0 (/24)',
-            leftStat: 'GATEWAY',
-            rightStat: '10.111.93.127',
-            data: [1, 1, 1, 1, 1, 1],
-            maxVal: 1,
-            dottedRatio: 0.5,
+            subtitle: 'Live network downlink',
+            leftStat: `AVG ${formatRate(avgRxRate)}`,
+            rightStat: `PEAK ${formatRate(peak(rxHist))}`,
+            data: rxHist,
+            maxVal: Math.max(1024, ...rxHist),
+            dottedRatio: 0.3,
             color: '#38bdf8'
           })}
           ${renderBigStatCard({
-            iconCode: 'e181',
-            title: 'ACTIVE SOCKETS',
-            heroVal: `${socketTotal}`,
-            heroUnit: 'ports',
-            subtitle: `${socketTcp} TCP · ${socketUdp} UDP listening`,
-            leftStat: 'TCP LISTEN',
-            rightStat: `${socketTcp}`,
-            data: [socketTotal, socketTotal, socketTotal, socketTotal],
-            maxVal: socketTotal || 10,
-            dottedRatio: 0.8,
+            iconCode: 'e186',
+            title: 'CURRENT TX',
+            heroVal: formatRate(currTxRate),
+            heroUnit: '',
+            subtitle: 'Live network uplink',
+            leftStat: `AVG ${formatRate(avgTxRate)}`,
+            rightStat: `PEAK ${formatRate(peak(txHist))}`,
+            data: txHist,
+            maxVal: Math.max(1024, ...txHist),
+            dottedRatio: 0.3,
             color: 'var(--accent)'
           })}
         </div>
+
+        ${renderWaveformChartSvg({
+          title: 'Network Throughput · 60s Window',
+          series: [
+            { label: 'Received (Downlink)', data: rxHist, color: '#38bdf8' },
+            { label: 'Transmitted (Uplink)', data: txHist, color: 'var(--accent)' }
+          ],
+          height: 200,
+          suffix: ' B/s'
+        })}
 
         <div class="grid two" style="margin-top: 14px;">
           <article class="card wifi-ip-card">

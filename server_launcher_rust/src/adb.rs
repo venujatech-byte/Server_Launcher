@@ -545,7 +545,7 @@ fn parse_power_attribution(text: &str) -> Vec<AdbPowerAttribution> {
         match name {
             "cpu" | "Cpu" => "CPU",
             "wifi" | "Wifi" => "Wi-Fi",
-            "radio" => "Cell standby",
+            "radio" | "mobile_radio" => "Cell standby",
             "gps" | "gnss" | "Gps" => "GPS",
             "sensor" | "sensors" => "Sensors",
             "bluetooth" => "Bluetooth",
@@ -554,12 +554,28 @@ fn parse_power_attribution(text: &str) -> Vec<AdbPowerAttribution> {
             "audio" => "Audio",
             "video" => "Video",
             "screen" => "Screen",
+            "wakelock" => "Wake locks",
+            "phone" => "Phone",
             other => other,
         }
     }
     let mut totals = std::collections::BTreeMap::<String, f32>::new();
     let mut uid_totals = std::collections::BTreeMap::<String, f32>::new();
+    let modern = text.lines().any(|line| line.trim() == "Global");
+    let has_battery_states = text.contains("(on battery,");
+    let mut on_battery = false;
     for line in text.lines() {
+        let trimmed = line.trim();
+        if modern {
+            if trimmed.starts_with("UID ") { break; }
+            if trimmed.starts_with('(') {
+                on_battery = trimmed.starts_with("(on battery,");
+                continue;
+            }
+            // State subtotals partition the global total; never add both or include charger use.
+            if has_battery_states && !on_battery { continue; }
+            if !has_battery_states && line.len() - line.trim_start().len() > 4 { continue; }
+        }
         let Some((name, rest)) = line.trim().split_once(':') else { continue };
         if name == "Capacity" { continue; }
         let Some(mah) = rest.split_whitespace().next().and_then(|v| v.parse::<f32>().ok())
@@ -625,6 +641,14 @@ mod power_time_tests {
         let cpu = parse_power_attribution("Uid 0: 1 ( cpu=1 )\nUid u0a10: 2 ( cpu=2 )");
         assert_eq!(cpu[0].label, "CPU");
         assert_eq!(cpu[0].mah, 3.0);
+    }
+
+    #[test]
+    fn parses_modern_on_battery_states_without_global_or_uid_duplicates() {
+        let rows = parse_power_attribution("    Global\n    cpu: 100 apps: 90\n      (on battery, screen on)\n      cpu: 30 apps: 25\n      (on battery, screen off/doze)\n      cpu: 20 apps: 20\n      (not on battery, screen on)\n      cpu: 50 apps: 45\n  UID 1000: 90\n      cpu=90");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "CPU");
+        assert_eq!(rows[0].mah, 50.0);
     }
 
     #[test]

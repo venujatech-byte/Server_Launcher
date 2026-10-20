@@ -3901,3 +3901,10 @@ tr[hidden], .app-row[hidden] { display: none !important; }
   .comm-thread-pane { min-height: 52vh; }
   .comm-dial-pane { padding: 18px; }
 }
+
+/* Keep power explanations available to hover, keyboard focus and touch focus. */
+.power-attribution { position: relative; }
+.power-help { position: static; display: inline-block; vertical-align: middle; }
+.power-help button { width: 24px; height: 24px; padding: 0; border: 1px solid currentColor; border-radius: 50%; background: transparent; color: var(--dim); font: inherit; cursor: help; }
+.power-help [role="tooltip"] { display: none; position: absolute; top: 52px; left: 12px; right: 12px; z-index: 20; padding: 12px; border: 1px solid var(--dim); border-radius: 8px; background: #171a22; color: #f0f0f0; font: 12px/1.5 sans-serif; font-weight: 400; }
+.power-help:hover [role="tooltip"], .power-help:focus-within [role="tooltip"] { display: block; }

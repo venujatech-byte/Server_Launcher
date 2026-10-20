@@ -3924,6 +3924,12 @@
         const formatAttrWatts = mah => attrWattsPerMah == null ? 'Unavailable' : `${(mah * attrWattsPerMah).toFixed(3)} W`;
         const missingSectors = ['CPU', 'GPU', 'Screen', 'Wi-Fi', 'Cell standby', 'Bluetooth', 'GPS', 'Sensors', 'Camera', 'Flashlight', 'Audio', 'Video', 'Storage']
           .filter(label => !historyAttribution.some(a => a.label.toLowerCase() === label.toLowerCase()));
+        const powerHelp = [
+          'Live power needs battery current and voltage. Some devices restrict current readings without root; subsystem history can still be available.',
+          acOnline ? 'Plugged in: on-battery history is paused. Unplug to collect new subsystem samples. Net battery power excludes power supplied directly by the charger.' : 'Subsystem watts use the latest on-battery interval when available; otherwise recorded history.',
+          attrWattsPerMah == null ? 'Average watts unavailable: battery duration or voltage is missing.' : `Estimated average power over ${attrSeconds.toFixed(3)} seconds ${intervalPower ? 'between samples' : 'on battery since the statistics reset'}, using current voltage. This is not instantaneous power.`,
+          missingSectors.length ? `Not reported separately: ${missingSectors.join(', ')}. Missing readings do not mean zero power.` : '',
+        ].filter(Boolean).join(' ');
         const liveBatteryWatts = s.battery_current_ua != null && Number.isFinite(Number(s.battery_current_ua)) && voltageMv > 0
           ? Math.abs(Number(s.battery_current_ua)) * voltageMv / 1e9 : null;
         const drawWatts = liveBatteryWatts;
@@ -4116,15 +4122,15 @@
               </div>
             </section>
 
-            <section class="card">
+            <section class="card power-attribution">
               <div class="card-head">
-                <h2>Android Power Attribution</h2>
+                <h2>Android Power Attribution <span class="power-help"><button type="button" aria-label="About power readings" aria-describedby="power-help-text">?</button><span role="tooltip" id="power-help-text">${escapeHtml(powerHelp)}</span></span></h2>
                 <span class="chip">${acOnline ? 'HISTORY · PLUGGED IN' : intervalPower ? 'INTERVAL · AVG W' : 'HISTORY · AVG W'}</span>
               </div>
               <div class="android-power-alloc-labels" style="margin-bottom: 12px;">
                 <span>Live net battery power</span><b>${liveBatteryWatts == null ? 'Unavailable' : `${liveBatteryWatts.toFixed(3)} W`}</b>
               </div>
-              <p class="subtle">${acOnline ? 'Plugged in: Android pauses on-battery attribution. Unplug to collect new subsystem samples. Net battery power excludes power supplied directly by the charger.' : 'Subsystem watts use the latest on-battery interval when available; otherwise the recorded history.'}</p>
+
               ${attribution.length ? `
                 <div class="android-power-alloc-list">
                   ${attribution.map(a => `
@@ -4139,9 +4145,8 @@
                     </div>
                   `).join('')}
                 </div>
-                <p class="subtle" style="margin-top: 10px;">${attrWattsPerMah == null ? 'Average watts unavailable: battery duration or voltage is missing.' : `Estimated average power over ${attrSeconds.toFixed(3)} seconds ${intervalPower ? 'between samples' : 'on battery since the statistics reset'}, using the current battery voltage. Total attributed: ${formatAttrWatts(attrTotal)}. This is not instantaneous power.`}</p>
-              ` : empty('No power attribution history', 'Android has no batterystats drain history yet — it accumulates after the device has been on battery.')}
-              ${missingSectors.length ? `<p class="subtle" style="margin-top: 12px;">Not reported separately: ${missingSectors.join(', ')}. Missing readings do not mean zero power.</p>` : ''}
+                <div class="android-power-alloc-labels" style="margin-top: 12px;"><span>Total average</span><b>${formatAttrWatts(attrTotal)}</b></div>
+              ` : '<p class="subtle">No power attribution history</p>'}
             </section>
           </div>
 

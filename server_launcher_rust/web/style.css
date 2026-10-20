@@ -457,20 +457,57 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 .files-sticky-bar { position: sticky; top: -12px; z-index: 8; display: flex; align-items: center; gap: 7px; margin: -12px -14px 12px; padding: 12px 14px; background: var(--bg); border-bottom: 1px solid var(--surface2); }
 .files-sticky-bar form { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 80px; }
 .files-sticky-bar form .input { width: 100%; min-width: 0; min-height: 36px; }
+.files-search { display: flex; align-items: center; gap: 7px; width: clamp(130px, 18vw, 240px); min-height: 36px; padding: 0 10px; background: var(--surface); border-radius: 8px; color: var(--muted); }
+.files-search[hidden] { display: none; }
+.files-search-wrap { display: flex; align-items: center; gap: 6px; }
+.files-search-toggle { width: 38px; padding: 6px; font-size: 16px; }
+.files-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: 12px var(--font-body); }
 .files-actions { display: flex; gap: 6px; }
-.files-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
-.files-entry { display: grid; justify-items: center; align-content: start; gap: 7px; min-width: 0; min-height: 128px; padding: 12px 8px; background: transparent; border: 1px solid transparent; border-radius: 9px; cursor: pointer; }
+.files-menu-wrap { position: relative; }
+.files-menu-trigger { width: 38px; padding: 6px; font-size: 18px; }
+.files-options { position: absolute; z-index: 15; top: calc(100% + 6px); right: 0; width: 220px; padding: 10px; background: var(--surface); border: 1px solid var(--surface2); border-radius: 10px; box-shadow: 0 12px 30px #0009; }
+.files-options[hidden] { display: none; }
+.files-options-row { display: flex; align-items: center; gap: 8px; padding-bottom: 9px; border-bottom: 1px solid var(--surface2); }
+.files-options-row span { flex: 1; color: var(--muted); font-size: 12px; }
+.files-options button { min-width: 28px; min-height: 26px; border: 0; border-radius: 5px; background: var(--surface2); color: var(--text); font-weight: 700; cursor: pointer; }
+.files-options label { display: grid; gap: 6px; padding-top: 10px; color: var(--muted); font: 600 11px var(--font-mono); }
+.files-options select { width: 100%; min-height: 32px; padding: 5px 7px; border: 0; border-radius: 6px; background: var(--bg); color: var(--text); }
+.files-options .files-hidden-toggle { display: flex; align-items: center; gap: 7px; padding-top: 12px; color: var(--text); font: 12px var(--font-body); }
+.files-hidden-toggle input { accent-color: var(--accent); }
+.files-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(max(120px, calc(var(--file-icon-size, 92px) + 24px)), 1fr)); gap: 8px; }
+.files-entry { display: grid; justify-items: center; align-content: start; gap: 7px; min-width: 0; min-height: calc(var(--file-icon-size, 92px) + 44px); padding: 12px 8px; background: transparent; border: 1px solid transparent; border-radius: 9px; cursor: pointer; }
+.files-entry[hidden] { display: none; }
 .files-entry:hover, .files-entry.selected { background: var(--surface); border-color: var(--surface2); }
-.files-entry-icon { display: grid; place-items: center; width: 74px; height: 74px; border-radius: 12px; font-size: 48px; }
+.files-entry-icon { display: grid; place-items: center; width: min(var(--file-icon-size, 92px), 100%); height: var(--file-icon-size, 92px); border-radius: 12px; font-size: calc(var(--file-icon-size, 92px) * .64); overflow: hidden; }
 .files-entry-icon.folder { color: #4c9af0; }
 .files-entry-icon.file { color: var(--muted); }
+.files-entry-icon img { width: 100%; height: 100%; object-fit: cover; }
 .files-entry-name { width: 100%; overflow: hidden; color: var(--text); font-size: 12px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .files-empty { grid-column: 1 / -1; }
+.files-context-menu { position: fixed; z-index: 130; min-width: 184px; padding: 5px; background: var(--surface); border: 1px solid var(--surface2); border-radius: 9px; box-shadow: 0 10px 28px #000a; }
+.files-context-menu button { display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.files-context-menu button:hover { background: var(--surface2); }
+.files-context-menu button:disabled { opacity: .45; cursor: default; }
+.files-context-menu button.danger { color: var(--red); }
+.files-transfer { position: fixed; z-index: 20; right: 18px; bottom: 14px; left: 238px; display: grid; gap: 8px; max-width: 760px; margin: 0 auto; padding: 12px 15px; background: var(--surface); border: 1px solid var(--surface2); border-radius: 10px; box-shadow: 0 8px 26px #0008; color: var(--text); font: 12px var(--font-mono); }
+.files-transfer > span { display: flex; align-items: center; gap: 7px; }
+.files-transfer > i { height: 4px; overflow: hidden; background: var(--surface2); border-radius: 4px; }
+.files-transfer em { display: block; width: 35%; height: 100%; background: var(--accent-strong); border-radius: inherit; animation: files-transfer 1.2s ease-in-out infinite alternate; }
+@keyframes files-transfer { from { transform: translateX(-10%); } to { transform: translateX(205%); } }
+.files-preview { position: fixed; inset: 0; z-index: 140; display: grid; place-items: center; padding: 36px; background: #000d; }
+.files-preview img { max-width: min(90vw, 1200px); max-height: 88vh; object-fit: contain; }
+.files-preview-close { position: absolute; top: 18px; right: 20px; }
+.apps-sticky { position: sticky; top: -12px; z-index: 6; margin: -14px -16px 0; padding: 14px 16px 1px; background: var(--surface); }
+.apps-sticky .toolbar { margin-bottom: 8px; }
 @media (max-width: 760px) {
   .files-sticky-bar { margin-right: -8px; margin-left: -8px; padding-right: 8px; padding-left: 8px; flex-wrap: wrap; }
   .files-sticky-bar form { order: 2; flex-basis: 100%; }
+  .files-search-wrap { order: 3; }
+  .files-search { width: min(48vw, 200px); }
   .files-actions { margin-left: auto; }
   .files-actions .button { padding: 6px 9px; }
+  .files-transfer { left: 68px; right: 10px; }
+  .apps-sticky { margin-right: -12px; margin-left: -12px; padding-right: 12px; padding-left: 12px; }
 }
 
 /* Floating Multi-select Bar */

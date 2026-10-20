@@ -1511,6 +1511,24 @@ pub fn pull_file(serial: &str, remote_path: &str, local_dest: &Path) -> Result<S
     adb_cmd(Some(serial), &["pull", remote_path, &local_str])
 }
 
+/// Pulls a remote file or folder without overwriting an existing local item.
+pub fn pull_file_to_path(serial: &str, remote_path: &str, local_path: &Path) -> Result<String, String> {
+    if local_path.exists() {
+        return Err(format!("{} already exists", local_path.display()));
+    }
+    pull_file(serial, remote_path, local_path)
+}
+
+/// Pulls a remote folder into a local directory without overwriting an existing folder.
+pub fn pull_directory_to_directory(serial: &str, remote_path: &str, local_dir: &Path) -> Result<String, String> {
+    let name = Path::new(remote_path).file_name().ok_or_else(|| "Invalid device path".to_string())?;
+    let destination = local_dir.join(name);
+    if destination.exists() {
+        return Err(format!("{} already exists", destination.display()));
+    }
+    pull_file(serial, remote_path, &destination)
+}
+
 /// Reboots device to a specific target: "recovery", "bootloader", "fastboot", "edl", or normal system.
 pub fn reboot_device(serial: &str, target: &str) -> Result<String, String> {
     let target = target.trim();

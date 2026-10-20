@@ -267,6 +267,7 @@ async fn adb_action(
             "key_volume_down" => crate::adb::volume_down(Some(&serial)),
             "reboot" => crate::adb::reboot_device(&serial, &value),
             "shell" => crate::adb::adb_cmd(Some(&serial), &["shell", &value]),
+            "external_adb_shell" => crate::adb::launch_external_adb_terminal(&serial).map(|_| "External ADB shell opened".into()),
             "send_text" => crate::adb::send_text(&serial, &value).map(|_| "Text sent".into()),
             "call" => crate::adb::start_phone_call(Some(&serial), &value),
             "answer_call" => crate::adb::send_keyevent(&serial, 79).map(|_| "Answer command sent. Android handles it only when a call is ringing.".into()),
@@ -281,6 +282,10 @@ async fn adb_action(
             "delete_file" => {
                 crate::adb::delete_file(&serial, &value).map(|_| "File deleted".into())
             }
+            "copy_file" => crate::adb::adb_cmd(Some(&serial), &["shell", "cp", "-rn", &value, &extra]).map(|_| "File copied".into()),
+            "move_file" => crate::adb::adb_cmd(Some(&serial), &["shell", "mv", "-n", &value, &extra]).map(|_| "File moved".into()),
+            "pull_file" => crate::adb::pull_file_to_path(&serial, &value, std::path::Path::new(&extra)),
+            "pull_folder" => crate::adb::pull_directory_to_directory(&serial, &value, std::path::Path::new(&extra)),
             "push_file" => crate::adb::push_file(&serial, std::path::Path::new(&value), &extra),
             "download_photo" => crate::adb::pull_photo_to_downloads(Some(&serial), &value),
             "delete_photo" => crate::adb::delete_device_photo(Some(&serial), &value),
@@ -300,6 +305,14 @@ async fn adb_action(
                     Some(p) => Ok(p.to_string_lossy().to_string()),
                     None => Err("File selection cancelled".to_string()),
                 }
+            },
+            "pick_folder" => match rfd::FileDialog::new().pick_folder() {
+                Some(path) => Ok(path.to_string_lossy().to_string()),
+                None => Err("Folder selection cancelled".to_string()),
+            },
+            "save_file" => match rfd::FileDialog::new().set_file_name(&value).save_file() {
+                Some(path) => Ok(path.to_string_lossy().to_string()),
+                None => Err("Save location selection cancelled".to_string()),
             },
             "sideload_ota" => crate::adb::sideload_ota(&serial, std::path::Path::new(&value)),
             "fastboot_flash" => crate::adb::fastboot_flash(&value, std::path::Path::new(&extra)),

@@ -2,7 +2,12 @@
   const invoke = window.__TAURI__?.core?.invoke;
   const $ = (selector) => document.querySelector(selector);
   const content = $('#content');
-  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', filesView: 'drives', storageVolumes: null, storageVolumesSerial: '', filesSelectedPath: '', screenTimer: null, contacts: null, contactsSerial: '', toastTimer: null, lastTelemetry: 0, topAppsSelectedPid: null, topAppsExpandedGroups: new Set(), topAppsAppsExpanded: true, topAppsBgExpanded: true, topAppsSort: 'mem', topAppsSortDesc: true, topAppsSearch: '', powerPreset: 'balanced', gpuPreset: 'balanced', powerHist: [0.0, 0.0, 0.0], photosAlbum: 'all', photosSearch: '', photosDensity: 'comfortable', photosCursor: null, photosTotal: null, photosHasMore: true, photosPageLoading: false, photosThumbs: {}, photosThumbLoading: new Set(), photosObserver: null, photosSelected: new Set(), photosSelectionMode: false, photosLightboxIndex: null, photosCache: {}, photosCacheSerial: '', customSubtab: 'boot', customRootStatus: null, customFastbootDevices: null, customDensityVal: '', customAnimScale: '0.5' };
+  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', filesView: 'drives', storageVolumes: null, storageVolumesSerial: '', filesSelectedPath: '', filesSearch: '', filesSearchOpen: false, filesIconSize: 92, filesSort: 'name-asc', filesShowHidden: false, filesClipboard: null, filesThumbs: {}, filesThumbLoading: new Set(), filesThumbObserver: null, filesExporting: '', screenTimer: null, contacts: null, contactsSerial: '', toastTimer: null, lastTelemetry: 0, topAppsSelectedPid: null, topAppsExpandedGroups: new Set(), topAppsAppsExpanded: true, topAppsBgExpanded: true, topAppsSort: 'mem', topAppsSortDesc: true, topAppsSearch: '', powerPreset: 'balanced', gpuPreset: 'balanced', powerHist: [0.0, 0.0, 0.0], photosAlbum: 'all', photosSearch: '', photosDensity: 'comfortable', photosCursor: null, photosTotal: null, photosHasMore: true, photosPageLoading: false, photosThumbs: {}, photosThumbLoading: new Set(), photosObserver: null, photosSelected: new Set(), photosSelectionMode: false, photosLightboxIndex: null, photosCache: {}, photosCacheSerial: '', customSubtab: 'boot', customRootStatus: null, customFastbootDevices: null, customDensityVal: '', customAnimScale: '0.5' };
+  document.addEventListener('pointerdown', (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target?.closest('.files-menu-wrap')) document.querySelector('.files-options:not([hidden])')?.setAttribute('hidden', '');
+    if (!target?.closest('.files-context-menu')) document.querySelector('.files-context-menu')?.remove();
+  });
   const tabNames = { overview: 'Overview', screen: 'Screen share', messages: 'Messages', calls: 'Calls', photos: 'Photos', notifications: 'Notifications', sensors: 'Sensors', storage: 'Files', apps: 'Apps', clipboard: 'Clipboard', terminal: 'Terminal', wireless: 'Wireless debugging', firmware: 'Customization & Boot' };
   const tabKinds = { messages: 'messages', calls: 'calls', photos: 'photos', notifications: 'notifications', sensors: 'sensors', apps: 'apps', storage: 'files', wireless: 'endpoints' };
   const icon = (code) => `<span class="icon" aria-hidden="true">&#x${code};</span>`;
@@ -97,7 +102,7 @@
       if (state.photosCacheSerial !== state.serial) {
         state.photosCacheSerial = state.serial; state.photosCursor = null; state.photosTotal = null; state.photosHasMore = true; state.photosPageLoading = false;
         state.photosThumbs = {}; state.photosThumbLoading.clear(); state.photosCache = {}; state.photosSelected.clear();
-        state.storageVolumes = null; state.storageVolumesSerial = ''; state.filesView = 'drives'; state.path = '/sdcard'; state.filesSelectedPath = '';
+        state.storageVolumes = null; state.storageVolumesSerial = ''; state.filesView = 'drives'; state.path = '/sdcard'; state.filesSelectedPath = ''; state.filesSearch = ''; state.filesSearchOpen = false; state.filesClipboard = null; state.filesThumbs = {}; state.filesThumbLoading = new Set();
       }
       if (state.sensorHistory.length && state.sensorHistorySerial !== state.serial) { state.sensorHistory = []; state.sensorHistorySerial = state.serial; }
       if (state.sensorInventorySerial !== state.serial) { state.sensorInventory = []; state.sensorInventorySerial = state.serial; state.sensorInventoryLoaded = false; }
@@ -143,7 +148,7 @@
     }
   }
   async function action(action, value = '', extra = '') {
-    try { const result = await invokeOrFail('adb_action', { serial: state.serial, action, value: value || null, extra: extra || null }); if (result && !['shell', 'clipboard_get'].includes(action)) toast(result); return result; }
+    try { const result = await invokeOrFail('adb_action', { serial: state.serial, action, value: value || null, extra: extra || null }); if (result && !['shell', 'clipboard_get', 'pick_file', 'pick_folder', 'save_file'].includes(action)) toast(result); return result; }
     catch (error) { toast(String(error), true); throw error; }
   }
   const empty = (title, detail) => `<div class="empty"><div class="empty-icon">${icon("e0f9")}</div><b>${escapeHtml(title)}</b><span>${escapeHtml(detail)}</span></div>`;
@@ -868,9 +873,30 @@
 
     const rows = state.data || [];
     const normalizedPath = state.path.replace(/\/$/, '') || '/';
-    const selected = rows.find((file) => `${normalizedPath}/${file.name}` === state.filesSelectedPath && !file.directory);
+    const byPath = new Map(rows.map((file) => [`${normalizedPath}/${file.name}`, file]));
+    const selected = byPath.get(state.filesSelectedPath);
+    const visibleRows = rows.filter((file) => (state.filesShowHidden || !file.name.startsWith('.')) && file.name.toLowerCase().includes(state.filesSearch.toLowerCase()));
+    const extension = (name) => name.split('.').pop().toLowerCase();
+    visibleRows.sort((a, b) => {
+      if (a.directory !== b.directory) return a.directory ? -1 : 1;
+      if (state.filesSort === 'size') return b.bytes - a.bytes;
+      if (state.filesSort === 'type') return extension(a.name).localeCompare(extension(b.name)) || a.name.localeCompare(b.name);
+      if (state.filesSort === 'modified-newest') return b.modified.localeCompare(a.modified);
+      if (state.filesSort === 'modified-oldest') return a.modified.localeCompare(b.modified);
+      return state.filesSort === 'name-desc' ? b.name.localeCompare(a.name) : a.name.localeCompare(b.name);
+    });
     const openPath = (path) => { state.path = path; state.filesSelectedPath = ''; showPageLoading('Files'); void renderTab(); };
-    content.innerHTML = `<div class="files-browser"><div class="files-sticky-bar"><button class="button" id="files-home">${icon("e0d7")} Drives</button><button class="button" id="file-up" title="Parent folder">${icon("e0a7")}</button><form id="path-form"><input id="file-path" class="input mono" value="${escapeHtml(state.path)}" aria-label="Current folder path"><button class="button" title="Go to path">${icon("e0a6")}</button></form><div class="files-actions"><button class="button tonal" id="files-import">${icon("e0cc")} Import</button><button class="button tonal" id="files-export" ${selected ? '' : 'disabled'}>${icon("e0cc")} Export</button></div></div><div class="files-grid">${rows.length ? rows.map((file, index) => `<button class="files-entry ${state.filesSelectedPath === `${normalizedPath}/${file.name}` ? 'selected' : ''}" data-file-index="${index}"><span class="files-entry-icon ${file.directory ? 'folder' : 'file'}">${icon(file.directory ? 'e0d7' : 'e0cc')}</span><span class="files-entry-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span></button>`).join('') : `<div class="files-empty">${empty('Folder is empty', 'Choose another folder or import a file.')}</div>`}</div></div>`;
+    const imageExt = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp']);
+    content.innerHTML = `<div class="files-browser"><div class="files-sticky-bar">
+      <button class="button" id="files-home">${icon('e0d7')} Drives</button>
+      <button class="button files-up-button" id="file-up" title="Parent folder">Up</button>
+      <form id="path-form"><input id="file-path" class="input mono" value="${escapeHtml(state.path)}" aria-label="Current folder path"><button class="button" title="Go to path">${icon('e0a6')}</button></form>
+      <div class="files-search-wrap"><button class="button files-search-toggle" id="files-search-toggle" title="Search files" aria-label="Search files">${icon('e151')}</button><label class="files-search" ${state.filesSearchOpen ? '' : 'hidden'}><input id="files-search" type="search" value="${escapeHtml(state.filesSearch)}" placeholder="Search files" aria-label="Search files"></label></div>
+      <div class="files-actions"><button class="button tonal" id="files-import" ${state.filesExporting ? 'disabled' : ''}>${icon('e0cc')} Import</button><button class="button tonal" id="files-export" ${selected && !state.filesExporting ? '' : 'disabled'}>${icon('e0cc')} Export</button><div class="files-menu-wrap"><button class="button files-menu-trigger" id="files-menu-trigger" title="View options" aria-label="View options">${icon('e0b7')}</button>
+        <div class="files-options" id="files-options" hidden><div class="files-options-row"><span>Icon size</span><button data-size="-">−</button><button data-size="+">+</button></div><label>Sort<select id="files-sort"><option value="name-asc">A–Z</option><option value="name-desc">Z–A</option><option value="modified-newest">Last Modified</option><option value="modified-oldest">First Modified</option><option value="size">Size</option><option value="type">Type</option></select></label><label class="files-hidden-toggle"><input id="files-hidden" type="checkbox" ${state.filesShowHidden ? 'checked' : ''}> Show Hidden Files</label></div></div></div></div>
+      <div class="files-grid" style="--file-icon-size:${state.filesIconSize}px">${visibleRows.length ? visibleRows.map((file) => { const path = `${normalizedPath}/${file.name}`, isImage = !file.directory && imageExt.has(extension(file.name)) && file.bytes <= 24 * 1024 * 1024; return `<button class="files-entry ${state.filesSelectedPath === path ? 'selected' : ''}" data-file-path="${escapeHtml(path)}" data-directory="${file.directory}"><span class="files-entry-icon ${file.directory ? 'folder' : 'file'}">${file.directory ? icon('e0d7') : isImage ? `<img data-file-thumb="${escapeHtml(path)}" alt="">` : icon('e0cc')}</span><span class="files-entry-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span></button>`; }).join('') : `<div class="files-empty">${empty(state.filesSearch ? 'No matching files' : 'Folder is empty', state.filesSearch ? 'Try another search.' : 'Choose another folder or import a file.')}</div>`}</div>
+      ${state.filesExporting ? `<div class="files-transfer"><span>${icon('e0cc')} Exporting ${escapeHtml(state.filesExporting)}</span><i><em></em></i></div>` : ''}</div>`;
+    $('#files-sort').value = state.filesSort;
     $('#files-home').onclick = () => { state.filesView = 'drives'; state.filesSelectedPath = ''; renderStorage(); };
     $('#file-up').onclick = () => {
       if (state.path === state.storageRootPath) { state.filesView = 'drives'; renderStorage(); return; }
@@ -878,29 +904,125 @@
       openPath(parent);
     };
     $('#path-form').onsubmit = (event) => { event.preventDefault(); openPath($('#file-path').value.trim() || state.storageRootPath); };
-    document.querySelectorAll('[data-file-index]').forEach((button) => button.onclick = () => {
-      const file = rows[Number(button.dataset.fileIndex)];
-      const path = `${normalizedPath}/${file.name}`;
-      if (file.directory) openPath(path);
-      else { state.filesSelectedPath = path; renderStorage(); }
+    $('#files-search-toggle').onclick = () => { state.filesSearchOpen = !state.filesSearchOpen; renderStorage(); if (state.filesSearchOpen) $('#files-search').focus(); };
+    $('#files-search')?.addEventListener('input', (event) => {
+      state.filesSearch = event.target.value;
+      const query = state.filesSearch.toLowerCase();
+      document.querySelectorAll('[data-file-path]').forEach((entry) => { entry.hidden = !entry.querySelector('.files-entry-name').textContent.toLowerCase().includes(query); });
     });
+    $('#files-menu-trigger').onclick = () => { $('#files-options').hidden = !$('#files-options').hidden; };
+    $('#files-sort').onchange = (event) => { state.filesSort = event.target.value; renderStorage(); $('#files-options').hidden = false; };
+    $('#files-hidden').onchange = (event) => { state.filesShowHidden = event.target.checked; renderStorage(); $('#files-options').hidden = false; };
+    document.querySelectorAll('[data-size]').forEach((button) => button.onclick = () => {
+      state.filesIconSize = Math.max(56, Math.min(160, state.filesIconSize + (button.dataset.size === '+' ? 16 : -16)));
+      renderStorage(); $('#files-options').hidden = false;
+    });
+    const showFile = async (path) => {
+      const file = byPath.get(path);
+      if (file?.directory) { openPath(path); return; }
+      try {
+        const image = await invokeOrFail('adb_photo_preview', { serial: state.serial, path });
+        const preview = document.createElement('div');
+        preview.className = 'files-preview';
+        preview.innerHTML = `<button class="button files-preview-close" aria-label="Close">Close</button><img src="${image}" alt="${escapeHtml(file?.name || path)}">`;
+        preview.onclick = (event) => { if (event.target === preview || event.target.closest('.files-preview-close')) preview.remove(); };
+        document.body.append(preview);
+      } catch { toast('Preview is available for image files. Use Export for other file types.', true); }
+    };
+    const refreshFiles = async () => {
+      state.data = await invokeOrFail('adb_data', { serial: state.serial, section: 'files', path: state.path });
+      renderStorage();
+    };
+    const runFileAction = async (fileAction, source, destination = '') => {
+      await action(fileAction, source, destination);
+      await refreshFiles();
+    };
+    document.querySelectorAll('[data-file-path]').forEach((button) => {
+      button.onclick = () => { state.filesSelectedPath = button.dataset.filePath; renderStorage(); };
+      button.ondblclick = () => void showFile(button.dataset.filePath);
+      button.oncontextmenu = (event) => {
+        event.preventDefault();
+        const path = button.dataset.filePath, file = byPath.get(path), isDirectory = button.dataset.directory === 'true';
+        document.querySelector('.files-context-menu')?.remove();
+        const menu = document.createElement('div');
+        menu.className = 'files-context-menu';
+        menu.style.left = `${Math.max(4, Math.min(event.clientX, innerWidth - 200))}px`;
+        menu.style.top = `${Math.max(4, Math.min(event.clientY, innerHeight - 310))}px`;
+        menu.innerHTML = `<button data-file-command="open">Open</button><button data-file-command="copy">Copy</button><button data-file-command="cut">Cut</button><button data-file-command="paste" ${state.filesClipboard ? '' : 'disabled'}>Paste</button><button data-file-command="rename">Rename</button><button data-file-command="delete" class="danger">Delete</button><button data-file-command="export">Export</button>`;
+        document.body.append(menu);
+        const close = (outside) => { if (!menu.contains(outside.target)) { menu.remove(); window.removeEventListener('pointerdown', close); } };
+        window.addEventListener('pointerdown', close);
+        menu.onclick = async (click) => {
+          try {
+          click.stopPropagation();
+          const command = click.target.closest('[data-file-command]')?.dataset.fileCommand;
+          if (!command || click.target.closest('button').disabled) return;
+          menu.remove(); window.removeEventListener('pointerdown', close);
+          state.filesSelectedPath = path;
+          if (command === 'open') { await showFile(path); return; }
+          if (command === 'copy' || command === 'cut') { state.filesClipboard = { path, cut: command === 'cut' }; renderStorage(); toast(command === 'copy' ? 'Ready to copy' : 'Ready to move'); return; }
+          if (command === 'delete') {
+            if (confirm(`Delete ${file.name} from the device?`)) await runFileAction('delete_file', path);
+            return;
+          }
+          if (command === 'rename') {
+            const name = prompt('Rename to:', file.name)?.trim();
+            if (name && name !== file.name && !/[\\/]/.test(name) && !['.', '..'].includes(name)) await runFileAction('move_file', path, `${normalizedPath}/${name}`);
+            return;
+          }
+          if (command === 'paste' && state.filesClipboard) {
+            const destination = `${isDirectory ? path : normalizedPath}/`;
+            await runFileAction(state.filesClipboard.cut ? 'move_file' : 'copy_file', state.filesClipboard.path, destination);
+            if (state.filesClipboard.cut) { state.filesClipboard = null; renderStorage(); }
+            return;
+          }
+          if (command === 'export') await exportPath(path, file.name);
+          } catch { /* The shared action helper already reports transfer errors. */ }
+        };
+      };
+    });
+    const thumbNodes = [...document.querySelectorAll('[data-file-thumb]')];
+    state.filesThumbObserver?.disconnect();
+    const thumbnailSerial = state.serial;
+    const loadingThumbs = state.filesThumbLoading;
+    state.filesThumbObserver = new IntersectionObserver((entries) => entries.forEach(async (entry) => {
+      if (!entry.isIntersecting) return;
+      const image = entry.target, path = image.dataset.fileThumb;
+      state.filesThumbObserver?.unobserve(image);
+      if (state.filesThumbs[path]) { image.src = state.filesThumbs[path]; return; }
+      if (loadingThumbs.has(path)) return;
+      loadingThumbs.add(path);
+      try {
+        const thumbnail = await invokeOrFail('adb_photo_thumbnail', { serial: thumbnailSerial, path });
+        if (thumbnailSerial === state.serial) state.filesThumbs[path] = thumbnail;
+        if (image.isConnected) image.src = thumbnail;
+      } catch { if (image.isConnected) image.parentElement.innerHTML = icon('e0cc'); }
+      finally { loadingThumbs.delete(path); }
+    }), { root: content, rootMargin: '160px' });
+    thumbNodes.forEach((image) => state.filesThumbObserver.observe(image));
     $('#files-import').onclick = async () => {
       try {
         const localPath = await action('pick_file');
         await action('push_file', localPath, `${normalizedPath}/`);
-        state.data = await invokeOrFail('adb_data', { serial: state.serial, section: 'files', path: state.path });
-        renderStorage();
+        await refreshFiles();
       } catch (error) { if (!String(error).toLowerCase().includes('cancel')) toast(String(error), true); }
     };
-    $('#files-export').onclick = async () => {
-      if (!selected) return;
-      try { await action('download_photo', state.filesSelectedPath); }
-      catch { /* The shared action already shows the transfer error. */ }
+    const exportPath = async (path, name) => {
+      try {
+        const directory = byPath.get(path)?.directory;
+        const destination = directory ? await action('pick_folder') : await action('save_file', name);
+        state.filesExporting = name;
+        renderStorage();
+        await action(directory ? 'pull_folder' : 'pull_file', path, destination);
+        toast(`Exported ${name}`);
+      } catch (error) { if (!String(error).toLowerCase().includes('cancel')) toast(String(error), true); }
+      finally { state.filesExporting = ''; renderStorage(); }
     };
+    $('#files-export').onclick = () => selected && void exportPath(state.filesSelectedPath, selected.name);
   }
   function renderApps() {
     const rows = state.data || [];
-    content.innerHTML = `<section class="card"><div class="card-head"><div><h2>Installed apps</h2><div class="subtle" style="margin-top:5px">${rows.length} user apps</div></div><button class="button" data-refresh>${icon("e145")} Refresh</button></div><div class="toolbar"><input id="app-filter" class="input" placeholder="Filter package name"></div><div class="table-wrap"><table class="table"><thead><tr><th>Package</th><th>Actions</th></tr></thead><tbody>${rows.map((a,i)=>`<tr class="app-row"><td class="mono">${escapeHtml(a.name)}</td><td><button class="button tonal" data-action="launch_app" data-value="${escapeHtml(a.name)}">Open</button> <button class="button danger" data-action="stop_app" data-value="${escapeHtml(a.name)}">Force stop</button></td></tr>`).join('') || `<tr><td colspan="2">${empty('No apps returned', 'Could not read the user app list.')}</td></tr>`}</tbody></table></div></section>`;
+    content.innerHTML = `<section class="card apps-card"><div class="apps-sticky"><div class="card-head"><div><h2>Installed apps</h2><div class="subtle" style="margin-top:5px">${rows.length} user apps</div></div><button class="button" data-refresh>${icon("e145")} Refresh</button></div><div class="toolbar"><input id="app-filter" class="input" placeholder="Filter package name"></div></div><div class="table-wrap"><table class="table"><thead><tr><th>Package</th><th>Actions</th></tr></thead><tbody>${rows.map((a,i)=>`<tr class="app-row"><td class="mono">${escapeHtml(a.name)}</td><td><button class="button tonal" data-action="launch_app" data-value="${escapeHtml(a.name)}">Open</button> <button class="button danger" data-action="stop_app" data-value="${escapeHtml(a.name)}">Force stop</button></td></tr>`).join('') || `<tr><td colspan="2">${empty('No apps returned', 'Could not read the user app list.')}</td></tr>`}</tbody></table></div></section>`;
     $('#app-filter').oninput = e => document.querySelectorAll('.app-row').forEach(r => r.hidden = !r.textContent.toLowerCase().includes(e.target.value.toLowerCase()));
   }
   async function renderClipboard() {
@@ -909,7 +1031,8 @@
     $('#clipboard-send').onclick = async () => { await action('clipboard_set', $('#clipboard-text').value); };
   }
   function renderTerminal() {
-    content.innerHTML = `<section class="card"><div class="card-head"><div><h2>ADB shell</h2><div class="subtle" style="margin-top:5px">Commands run on the selected device over the local ADB bridge.</div></div></div><form id="shell-form" class="form-row"><input id="shell-command" class="input mono" placeholder="getprop ro.build.version.release" autocomplete="off"><button class="button primary">Run</button></form><pre id="shell-output" class="console" style="margin-top:14px">Ready. Output appears here.</pre></section>`;
+    content.innerHTML = `<section class="card"><div class="card-head"><div><h2>ADB shell</h2><div class="subtle" style="margin-top:5px">Commands run on the selected device over the local ADB bridge.</div></div><button class="button" id="external-adb-shell">${icon('e14f')} Open external shell</button></div><form id="shell-form" class="form-row"><input id="shell-command" class="input mono" placeholder="getprop ro.build.version.release" autocomplete="off"><button class="button primary">Run</button></form><pre id="shell-output" class="console" style="margin-top:14px">Ready. Output appears here.</pre></section>`;
+    $('#external-adb-shell').onclick = async () => { try { await action('external_adb_shell'); } catch {} };
     $('#shell-form').onsubmit = async e => { e.preventDefault(); const cmd=$('#shell-command').value.trim(); if(!cmd)return; const out=$('#shell-output'); out.textContent=`$ ${cmd}\nRunning…`; try { out.textContent=`$ ${cmd}\n${await action('shell',cmd) || '(completed)'}`; } catch(err) { out.textContent=`$ ${cmd}\n${err}`; } };
   }
   function renderWireless() {

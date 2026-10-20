@@ -2,7 +2,7 @@
   const invoke = window.__TAURI__?.core?.invoke;
   const $ = (selector) => document.querySelector(selector);
   const content = $('#content');
-  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', screenTimer: null, commTimer: null, commBusy: false, contacts: null, contactsSerial: '', toastTimer: null, lastTelemetry: 0, topAppsSelectedPid: null, topAppsExpandedGroups: new Set(), topAppsAppsExpanded: true, topAppsBgExpanded: true, topAppsSort: 'mem', topAppsSortDesc: true, topAppsSearch: '', powerPreset: 'balanced', gpuPreset: 'balanced', powerHist: [0.0, 0.0, 0.0], photosAlbum: 'all', photosSearch: '', photosDensity: 'comfortable', photosSelected: new Set(), photosSelectionMode: false, photosLightboxIndex: null, photosCache: {}, customSubtab: 'boot', customRootStatus: null, customFastbootDevices: null, customDensityVal: '', customAnimScale: '0.5' };
+  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', screenTimer: null, commTimer: null, commBusy: false, contacts: null, contactsSerial: '', toastTimer: null, lastTelemetry: 0, topAppsSelectedPid: null, topAppsExpandedGroups: new Set(), topAppsAppsExpanded: true, topAppsBgExpanded: true, topAppsSort: 'mem', topAppsSortDesc: true, topAppsSearch: '', powerPreset: 'balanced', gpuPreset: 'balanced', powerHist: [0.0, 0.0, 0.0], photosAlbum: 'all', photosSearch: '', photosDensity: 'comfortable', photosVisibleCount: 10, photosThumbs: {}, photosThumbLoading: new Set(), photosObserver: null, photosSelected: new Set(), photosSelectionMode: false, photosLightboxIndex: null, photosCache: {}, photosCacheSerial: '', customSubtab: 'boot', customRootStatus: null, customFastbootDevices: null, customDensityVal: '', customAnimScale: '0.5' };
   const tabNames = { overview: 'Overview', screen: 'Screen share', messages: 'Messages', calls: 'Calls', photos: 'Photos', notifications: 'Notifications', sensors: 'Sensors', storage: 'Storage', apps: 'Apps', clipboard: 'Clipboard', terminal: 'Terminal', wireless: 'Wireless debugging', firmware: 'Customization & Boot' };
   const tabKinds = { messages: 'messages', calls: 'calls', photos: 'photos', notifications: 'notifications', sensors: 'sensors', apps: 'apps', storage: 'files', wireless: 'endpoints' };
   const icon = (code) => `<span class="icon" aria-hidden="true">&#x${code};</span>`;
@@ -77,6 +77,7 @@
 
   function selectTab(tab) {
     if (!tabNames[tab]) return;
+    if (tab !== 'photos') { state.photosObserver?.disconnect(); state.photosObserver = null; }
     clearInterval(state.screenTimer); state.screenTimer = null;
     clearInterval(state.commTimer); state.commTimer = null;
     state.tab = tab; document.querySelectorAll('.nav-item').forEach((n) => n.classList.toggle('active', n.dataset.tab === tab));
@@ -95,6 +96,10 @@
       const online = devices.filter((d) => d.state === 'device');
       const picker = $('#device-select');
       if (!online.some((d) => d.serial === state.serial)) state.serial = online[0]?.serial ?? '';
+      if (state.photosCacheSerial !== state.serial) {
+        state.photosCacheSerial = state.serial; state.photosVisibleCount = 10;
+        state.photosThumbs = {}; state.photosThumbLoading.clear(); state.photosCache = {}; state.photosSelected.clear();
+      }
       if (state.sensorHistory.length && state.sensorHistorySerial !== state.serial) { state.sensorHistory = []; state.sensorHistorySerial = state.serial; }
       if (state.sensorInventorySerial !== state.serial) { state.sensorInventory = []; state.sensorInventorySerial = state.serial; state.sensorInventoryLoaded = false; }
       picker.innerHTML = online.length ? online.map((d) => `<option value="${escapeHtml(d.serial)}" ${d.serial === state.serial ? 'selected' : ''}>${escapeHtml(d.model || d.serial)}</option>`).join('') : '<option value="">No authorized device</option>';
@@ -417,6 +422,7 @@
       ]);
       if (rowsResult.status === 'rejected') throw rowsResult.reason;
       const rows = rowsResult.value;
+      if (rows.length === 0 && state.data.length > 0) return;
       const contacts = contactsResult.status === 'fulfilled' ? contactsResult.value : state.contacts;
       if (state.tab !== tab || state.serial !== serial) return;
       const changed = JSON.stringify(rows) !== JSON.stringify(state.data)
@@ -424,11 +430,20 @@
       state.data = rows || [];
       if (tab === 'calls') { state.contacts = contacts || []; state.contactsSerial = serial; }
       if (!changed) return;
+      const activeId = document.activeElement?.id;
+      const caret = activeId ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
+      const scroll = ['.comm-list', '.message-thread'].map((selector) => [selector, $(selector)?.scrollTop]);
       if (tab === 'messages') renderMessages(); else await renderCalls();
       for (const selector of fields) {
         const input = $(selector);
         if (input && saved[selector] != null) { input.value = saved[selector]; input.dispatchEvent(new Event('input')); }
       }
+      const active = activeId && document.getElementById(activeId);
+      if (active) {
+        active.focus();
+        if (caret && typeof active.setSelectionRange === 'function') active.setSelectionRange(...caret);
+      }
+      for (const [selector, top] of scroll) if (top != null && $(selector)) $(selector).scrollTop = top;
     } catch {
       // Keep the last successful panel data when a periodic ADB read fails.
     } finally {
@@ -463,6 +478,7 @@
       if (q && !((p.name || '').toLowerCase().includes(q) || (p.path || '').toLowerCase().includes(q))) return false;
       return true;
     });
+    const visible = filtered.slice(0, state.photosVisibleCount);
 
     const isSelected = (path) => state.photosSelected.has(path);
     const density = state.photosDensity || 'comfortable';
@@ -473,7 +489,7 @@
         <header class="photos-header-card">
           <div class="photos-header-info">
             <h2>${icon("e0f7")} Camera Roll & Gallery</h2>
-            <div class="photos-header-sub">${filtered.length} photos displayed · ${rows.length} total on device</div>
+          <div class="photos-header-sub">Showing ${visible.length} of ${filtered.length} photos · ${rows.length} on device</div>
           </div>
           <div class="photos-header-actions">
             <button class="button tonal" id="photo-upload-btn">${icon("e0cc")} Push Photo to Device</button>
@@ -507,9 +523,10 @@
         <!-- Photo Grid -->
         ${filtered.length > 0 ? `
           <div class="photo-grid density-${density} ${state.photosSelected.size > 0 ? 'selection-mode' : ''}">
-            ${filtered.map((p, idx) => {
+            ${visible.map((p) => {
+              const idx = filtered.indexOf(p);
               const selected = isSelected(p.path);
-              const cachedSrc = state.photosCache[p.path];
+              const cachedSrc = state.photosThumbs[p.path];
               const ext = (p.name.split('.').pop() || 'JPG').toUpperCase();
               return `
                 <article class="photo-card ${selected ? 'selected' : ''}" data-photo-path="${escapeHtml(p.path)}">
@@ -543,6 +560,8 @@
             }).join('')}
           </div>
         ` : empty('No photos found', rows.length === 0 ? 'No photos returned from /sdcard/DCIM or MediaStore. Click "Push Photo to Device" to transfer images to the camera roll.' : 'No photos match your filter or search query.')}
+
+        ${visible.length < filtered.length ? `<div class="photos-load-more" id="photos-load-more"><span>Showing ${visible.length} of ${filtered.length}</span><button class="button tonal" id="load-more-photos">Load 10 more</button></div>` : ''}
 
         <!-- Floating Bulk Selection Bar -->
         ${state.photosSelected.size > 0 ? `
@@ -611,6 +630,7 @@
     if (searchInput) {
       searchInput.oninput = (e) => {
         state.photosSearch = e.target.value;
+        state.photosVisibleCount = 10;
         renderPhotos();
         const fresh = $('#photos-search-input');
         if (fresh) { fresh.focus(); fresh.setSelectionRange(fresh.value.length, fresh.value.length); }
@@ -621,6 +641,7 @@
     document.querySelectorAll('[data-album]').forEach(btn => {
       btn.onclick = () => {
         state.photosAlbum = btn.dataset.album;
+        state.photosVisibleCount = 10;
         renderPhotos();
       };
     });
@@ -632,6 +653,22 @@
         renderPhotos();
       };
     });
+
+    const loadMorePhotos = () => {
+      if (state.tab !== 'photos' || state.photosVisibleCount >= filtered.length) return;
+      const scrollTop = content.scrollTop;
+      state.photosVisibleCount += 10;
+      renderPhotos();
+      content.scrollTop = scrollTop;
+    };
+    $('#load-more-photos')?.addEventListener('click', loadMorePhotos);
+    state.photosObserver?.disconnect();
+    if (visible.length < filtered.length && 'IntersectionObserver' in window) {
+      state.photosObserver = new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) loadMorePhotos();
+      }, { root: content, rootMargin: '360px' });
+      state.photosObserver.observe($('#photos-load-more'));
+    }
 
     // 4. Push / Upload photo
     const uploadBtn = $('#photo-upload-btn');
@@ -832,6 +869,34 @@
       if (window.__photoKeyHandler) window.removeEventListener('keydown', window.__photoKeyHandler);
       window.__photoKeyHandler = keyHandler;
       window.addEventListener('keydown', keyHandler);
+    }
+    void loadPhotoThumbnails(visible);
+  }
+
+  async function loadPhotoThumbnails(photos) {
+    const serial = state.serial;
+    const loadOne = async (photo) => {
+      if (state.photosThumbs[photo.path] || state.photosThumbLoading.has(photo.path)) return;
+      state.photosThumbLoading.add(photo.path);
+      try {
+        const src = await invokeOrFail('adb_photo_thumbnail', { serial, path: photo.path });
+        if (serial !== state.serial) return;
+        state.photosThumbs[photo.path] = src;
+        const card = [...document.querySelectorAll('.photo-card')].find((item) => item.dataset.photoPath === photo.path);
+        const holder = card?.querySelector('.photo-thumb-placeholder');
+        if (holder) {
+          const image = document.createElement('img');
+          image.className = 'photo-thumb-img'; image.alt = photo.name; image.loading = 'lazy'; image.src = src;
+          holder.replaceWith(image);
+        }
+      } catch {
+        // Keep the file-type placeholder when this image cannot be decoded.
+      } finally {
+        state.photosThumbLoading.delete(photo.path);
+      }
+    };
+    for (let index = 0; index < photos.length; index += 2) {
+      await Promise.all(photos.slice(index, index + 2).map(loadOne));
     }
   }
   function renderNotifications() {

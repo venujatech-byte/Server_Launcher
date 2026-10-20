@@ -316,6 +316,16 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   gap: 18px;
 }
 
+.photos-load-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 48px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .photo-card {
   position: relative;
   background: var(--well);

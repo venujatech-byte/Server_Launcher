@@ -210,6 +210,20 @@ async fn adb_photo_preview(serial: String, path: String) -> Result<String, Strin
 }
 
 #[tauri::command]
+async fn adb_photo_thumbnail(serial: String, path: String) -> Result<String, String> {
+    on_worker(move || {
+        use base64::Engine;
+        let bytes = crate::adb::read_remote_file(&serial, &path)?;
+        let image = image::load_from_memory(&bytes).map_err(|error| format!("Could not decode photo: {error}"))?;
+        let thumbnail = image.thumbnail(480, 360);
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        thumbnail.write_to(&mut encoded, image::ImageFormat::Jpeg)
+            .map_err(|error| format!("Could not create photo thumbnail: {error}"))?;
+        Ok(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(encoded.into_inner())))
+    }).await
+}
+
+#[tauri::command]
 async fn adb_action(
     serial: String,
     action: String,
@@ -404,6 +418,7 @@ pub fn run() {
             adb_data,
             adb_screenshot,
             adb_photo_preview,
+            adb_photo_thumbnail,
             adb_action
         ])
         .run(tauri::generate_context!())

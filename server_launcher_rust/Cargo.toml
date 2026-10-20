@@ -14,7 +14,7 @@ base64 = "0.22"
 sysinfo = "0.31"
 chrono = "0.4"
 rfd = "0.15"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 tauri = "2"
 
 [target.'cfg(unix)'.dependencies]

@@ -2,7 +2,7 @@
   const invoke = window.__TAURI__?.core?.invoke;
   const $ = (selector) => document.querySelector(selector);
   const content = $('#content');
-  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', dataUsageNetwork: 'wifi', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', filesView: 'drives', storageVolumes: null, storageVolumesSerial: '', filesSelectedPath: '', filesSearch: '', filesSearchOpen: false, filesIconSize: 92, filesSort: 'name-asc', filesShowHidden: false, filesClipboard: null, filesThumbs: {}, filesThumbLoading: new Set(), filesThumbObserver: null, filesExporting: '', screenTimer: null, contacts: null, contactsSerial: '', toastTimer: null, lastTelemetry: 0, topAppsSelectedPid: null, topAppsExpandedGroups: new Set(), topAppsAppsExpanded: true, topAppsBgExpanded: true, topAppsSort: 'mem', topAppsSortDesc: true, topAppsSearch: '', powerPreset: 'balanced', gpuPreset: 'balanced', powerHist: [0.0, 0.0, 0.0], photosAlbum: 'all', photosSearch: '', photosDensity: 'comfortable', photosCursor: null, photosTotal: null, photosHasMore: true, photosPageLoading: false, photosThumbs: {}, photosThumbLoading: new Set(), photosObserver: null, photosSelected: new Set(), photosSelectionMode: false, photosLightboxIndex: null, photosCache: {}, photosCacheSerial: '', customSubtab: 'boot', customRootStatus: null, customFastbootDevices: null, customDensityVal: '', customAnimScale: '0.5' };
+  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', dataUsageNetwork: 'wifi', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorReadings: [], sensorSelected: '', sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', filesView: 'drives', storageVolumes: null, storageVolumesSerial: '', filesSelectedPath: '', filesSearch: '', filesSearchOpen: false, filesIconSize: 92, filesSort: 'name-asc', filesShowHidden: false, filesClipboard: null, filesThumbs: {}, filesThumbLoading: new Set(), filesThumbObserver: null, filesExporting: '', screenTimer: null, contacts: null, contactsSerial: '', toastTimer: null, lastTelemetry: 0, topAppsSelectedPid: null, topAppsExpandedGroups: new Set(), topAppsAppsExpanded: true, topAppsBgExpanded: true, topAppsSort: 'mem', topAppsSortDesc: true, topAppsSearch: '', powerPreset: 'balanced', gpuPreset: 'balanced', powerHist: [0.0, 0.0, 0.0], photosAlbum: 'all', photosSearch: '', photosDensity: 'comfortable', photosCursor: null, photosTotal: null, photosHasMore: true, photosPageLoading: false, photosThumbs: {}, photosThumbLoading: new Set(), photosObserver: null, photosSelected: new Set(), photosSelectionMode: false, photosLightboxIndex: null, photosCache: {}, photosCacheSerial: '', customSubtab: 'boot', customRootStatus: null, customFastbootDevices: null, customDensityVal: '', customAnimScale: '0.5' };
   document.addEventListener('pointerdown', (event) => {
     const target = event.target instanceof Element ? event.target : null;
     if (!target?.closest('.files-menu-wrap')) document.querySelector('.files-options:not([hidden])')?.setAttribute('hidden', '');
@@ -106,7 +106,7 @@
         state.storageVolumes = null; state.storageVolumesSerial = ''; state.filesView = 'drives'; state.path = '/sdcard'; state.filesSelectedPath = ''; state.filesSearch = ''; state.filesSearchOpen = false; state.filesClipboard = null; state.filesThumbs = {}; state.filesThumbLoading = new Set();
       }
       if (state.sensorHistory.length && state.sensorHistorySerial !== state.serial) { state.sensorHistory = []; state.sensorHistorySerial = state.serial; }
-      if (state.sensorInventorySerial !== state.serial) { state.sensorInventory = []; state.sensorInventorySerial = state.serial; state.sensorInventoryLoaded = false; }
+      if (state.sensorInventorySerial !== state.serial) { state.sensorInventory = []; state.sensorReadings = []; state.sensorSelected = ''; state.sensorInventorySerial = state.serial; state.sensorInventoryLoaded = false; }
       picker.innerHTML = online.length ? online.map((d) => `<option value="${escapeHtml(d.serial)}" ${d.serial === state.serial ? 'selected' : ''}>${escapeHtml(d.model || d.serial)}</option>`).join('') : '<option value="">No authorized device</option>';
       state.device = online.find((d) => d.serial === state.serial) || null;
       setConnection(Boolean(state.device), state.device ? `Connected · ${state.device.state}` : 'No authorized ADB device');
@@ -2129,13 +2129,24 @@
 
   function renderHardwareSensors() {
     if (!state.sensorInventoryLoaded) {
-      content.innerHTML = `<section class="card">${state.sensorInventoryLoading ? 'Reading Android sensor list…' : 'Loading Android sensor list…'}</section>`;
+      content.innerHTML = `<section class="card">${state.sensorInventoryLoading ? 'Reading Android sensors…' : 'Loading Android sensors…'}</section>`;
       if (!state.sensorInventoryLoading && state.serial) {
         state.sensorInventoryLoading = true;
         const serial = state.serial;
-        invokeOrFail('adb_data', { serial, section: 'sensor_inventory', path: null }).then((names) => {
-          if (state.serial === serial) { state.sensorInventory = names; state.sensorInventoryLoaded = true; }
-        }).catch((error) => toast(String(error), true)).finally(() => {
+        Promise.all([
+          invokeOrFail('adb_data', { serial, section: 'sensor_inventory', path: null }),
+          invokeOrFail('adb_data', { serial, section: 'sensor_readings', path: null })
+        ]).then(([names, readings]) => {
+          if (state.serial === serial) {
+            state.sensorInventory = names;
+            state.sensorReadings = readings;
+            state.sensorSelected = names[0] || '';
+            state.sensorInventoryLoaded = true;
+          }
+        }).catch((error) => {
+          if (state.serial === serial) state.sensorInventoryLoaded = true;
+          toast(String(error), true);
+        }).finally(() => {
           state.sensorInventoryLoading = false;
           if (state.tab === 'hardware-sensors' && state.serial === serial) renderHardwareSensors();
         });
@@ -2152,7 +2163,22 @@
       if (!groups.has(kind)) groups.set(kind, []);
       groups.get(kind).push(name);
     }
-    content.innerHTML = `<section class="card"><div class="card-head"><div><h2>Hardware sensors</h2><span class="subtle">${state.sensorInventory.length} reported by Android</span></div></div>${groups.size ? [...groups].map(([kind, names]) => `<section class="sensor-inventory-group"><h3>${escapeHtml(kind)}</h3><div class="sensor-inventory-list">${names.map((name) => `<div class="sensor-inventory-item"><span class="icon">&#xe186;</span>${escapeHtml(name)}</div>`).join('')}</div></section>`).join('') : empty('No sensor inventory available', 'Android SensorService did not report hardware sensors.')}</section>`;
+    const selected = state.sensorSelected || state.sensorInventory[0] || '';
+    state.sensorSelected = selected;
+    const reading = state.sensorReadings.find((item) => item.name.toLowerCase() === selected.toLowerCase());
+    const labels = /accelerometer|gyroscope|magnetometer/i.test(selected) ? ['X', 'Y', 'Z', 'W'] : /light|als/i.test(selected) ? ['Illuminance', 'Value 2', 'Value 3'] : /proximity/i.test(selected) ? ['Distance', 'Value 2', 'Value 3'] : [];
+    content.innerHTML = `<section class="card"><div class="card-head"><div><h2>Sensor readings</h2><span class="subtle">${state.sensorInventory.length} hardware sensors · latest Android events</span></div><button class="button" id="sensor-readings-refresh" ${state.sensorInventoryLoading ? 'disabled' : ''}>${icon('e145')} Refresh readings</button></div>${state.sensorInventory.length ? `<div class="sensor-inspector"><aside class="sensor-inspector-list" aria-label="Hardware sensors">${[...groups].map(([kind, names]) => `<div class="sensor-inspector-group"><span class="sensor-inspector-heading">${escapeHtml(kind)}</span>${names.map((name) => `<button class="sensor-inspector-item ${name === selected ? 'active' : ''}" data-sensor-select="${escapeHtml(name)}"><span class="icon">&#xe186;</span><span>${escapeHtml(name)}</span><i class="${state.sensorReadings.some((item) => item.name.toLowerCase() === name.toLowerCase()) ? 'has-reading' : ''}"></i></button>`).join('')}</div>`).join('')}</aside><section class="sensor-reading-panel"><div class="sensor-reading-title"><div><span class="eyebrow">SELECTED SENSOR</span><h3>${escapeHtml(selected)}</h3></div><span class="chip ${reading ? 'sensor-live-chip' : ''}">${reading ? 'EVENT AVAILABLE' : 'NO RECENT EVENT'}</span></div>${reading ? `<div class="sensor-reading-values">${reading.values.map((value, index) => `<article class="sensor-reading-value"><span>${escapeHtml(labels[index] || `Value ${index + 1}`)}</span><b>${Number(value).toFixed(3)}</b></article>`).join('')}</div><div class="sensor-reading-meta">Latest cached event · ${escapeHtml(reading.time || 'time unavailable')}</div>` : `<div class="sensor-reading-empty"><span class="icon">&#xe1ae;</span><b>No recent reading</b><span>Android only reports values after an app or system service activates this sensor.</span></div>`}</section></div>` : empty('No sensor inventory available', 'Android SensorService did not report hardware sensors.')}</section>`;
+    $('#sensor-readings-refresh').onclick = async () => {
+      const serial = state.serial;
+      const button = $('#sensor-readings-refresh');
+      button.disabled = true;
+      try { state.sensorReadings = await invokeOrFail('adb_data', { serial, section: 'sensor_readings', path: null }); }
+      catch (error) { toast(String(error), true); }
+      finally { if (state.tab === 'hardware-sensors' && state.serial === serial) renderHardwareSensors(); }
+    };
+    content.querySelectorAll('[data-sensor-select]').forEach((button) => {
+      button.onclick = () => { state.sensorSelected = button.dataset.sensorSelect; renderHardwareSensors(); };
+    });
   }
 
   function renderSensors() {

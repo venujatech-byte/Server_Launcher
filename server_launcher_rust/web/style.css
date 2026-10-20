@@ -859,6 +859,30 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 .sensor-inventory-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
 .sensor-inventory-item { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 11px 12px; border-radius: 9px; background: var(--well); color: var(--text); overflow-wrap: anywhere; }
 .sensor-inventory-item .icon { color: var(--accent); flex: 0 0 auto; }
+.sensor-inspector { display: grid; grid-template-columns: minmax(220px, 30%) minmax(0, 1fr); min-height: 440px; border: 1px solid color-mix(in srgb, var(--text), transparent 91%); border-radius: 11px; overflow: hidden; }
+.sensor-inspector-list { max-height: min(68vh, 680px); overflow: auto; padding: 10px; background: color-mix(in srgb, var(--well), transparent 28%); border-right: 1px solid color-mix(in srgb, var(--text), transparent 91%); }
+.sensor-inspector-group + .sensor-inspector-group { margin-top: 15px; }
+.sensor-inspector-heading { display: block; padding: 5px 8px; color: var(--dim); font: 700 10px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+.sensor-inspector-item { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); text-align: left; cursor: pointer; }
+.sensor-inspector-item:hover, .sensor-inspector-item.active { background: var(--surface2); color: var(--text); }
+.sensor-inspector-item.active { box-shadow: inset 2px 0 var(--accent); }
+.sensor-inspector-item > span:nth-child(2) { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.sensor-inspector-item .icon { color: var(--accent); }
+.sensor-inspector-item i { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--surface2); }
+.sensor-inspector-item i.has-reading { background: var(--green); box-shadow: 0 0 8px color-mix(in srgb, var(--green), transparent 35%); }
+.sensor-reading-panel { min-width: 0; padding: 22px; }
+.sensor-reading-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.sensor-reading-title h3 { margin: 7px 0 0; font-size: 20px; }
+.sensor-live-chip { color: var(--green); }
+.sensor-reading-values { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-top: 25px; }
+.sensor-reading-value { padding: 16px; border-radius: 9px; background: var(--well); }
+.sensor-reading-value span { display: block; color: var(--muted); font: 700 11px var(--font-mono); text-transform: uppercase; }
+.sensor-reading-value b { display: block; margin-top: 8px; font: 700 22px var(--font-mono); color: var(--text); overflow-wrap: anywhere; }
+.sensor-reading-meta { margin-top: 16px; color: var(--dim); font: 11px var(--font-mono); }
+.sensor-reading-empty { min-height: 260px; display: grid; place-content: center; justify-items: center; gap: 10px; color: var(--muted); text-align: center; }
+.sensor-reading-empty .icon { color: var(--accent); font-size: 24px; }
+.sensor-reading-empty b { color: var(--text); }
+.sensor-reading-empty span:last-child { max-width: 370px; line-height: 1.5; }
 
 .sensors-subtab-pill {
   flex: 1 1 0;
@@ -2061,6 +2085,7 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   align-items: flex-end;
   text-align: right;
 }
+.tm-header-cell[data-sort="power"] { align-items: center; text-align: center; }
 
 .tm-header-top-val {
   font: 600 14px var(--font-body);
@@ -2272,7 +2297,7 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 .tm-pwr-cell {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: center;
   width: 100%;
   height: 21px;
   padding: 0 6px;
@@ -2352,6 +2377,9 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   .sensors-stat-grid {
     grid-template-columns: 1fr;
   }
+  .sensor-inspector { grid-template-columns: 1fr; }
+  .sensor-inspector-list { max-height: 260px; border-right: 0; border-bottom: 1px solid color-mix(in srgb, var(--text), transparent 91%); }
+  .sensor-reading-panel { padding: 16px; }
 }
 .file-open { border: 0; background: transparent; color: var(--text); font: 500 12px Inter, 'Cantarell', system-ui, sans-serif; cursor: pointer; text-align: left; }
 .file-open:hover { color: var(--accent); }

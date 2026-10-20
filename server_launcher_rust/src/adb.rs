@@ -104,6 +104,13 @@ pub struct AdbTemperatureSensor {
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct AdbSensorReading {
+    pub name: String,
+    pub values: Vec<f64>,
+    pub time: String,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct AdbDeviceSensors {
     pub cpu_model: String,
     pub cpu_cores: usize,
@@ -661,7 +668,7 @@ fn parse_battery_time(line: &str) -> Option<f64> {
 
 #[cfg(test)]
 mod power_time_tests {
-    use super::{parse_android_df_line, parse_battery_time, parse_power_attribution, parse_sensor_inventory, parse_sim_slots};
+    use super::{parse_android_df_line, parse_battery_time, parse_power_attribution, parse_sensor_inventory, parse_sensor_readings, parse_sim_slots};
 
     #[test]
     fn parses_sim_slots_from_android_property_lists() {
@@ -676,6 +683,16 @@ mod power_time_tests {
     fn reads_sensor_names_and_fingerprint_feature() {
         let sensors = parse_sensor_inventory("0x0001 (handle=1) BMI270 Accelerometer | vendor\nfeature:android.hardware.fingerprint\n__FEATURES__");
         assert_eq!(sensors, ["BMI270 Accelerometer", "Fingerprint authentication"]);
+    }
+
+    #[test]
+    fn parses_latest_sensor_event_values() {
+        let dump = "Recent Sensor events:\nAmbient Light: last 50 events\n 1 (ts=1.2, wall=10-20 19:26:33.676) 5.23, 0.00, 0.00,\n 2 (ts=2.2, wall=10-20 19:26:34.431) 5.88, 0.00, 0.00,\nAccelerometer: last 50 events\n 1 (ts=3.0, wall=10-20 19:26:35.000) -0.18, -0.16, 10.17,\nActive sensors:\n";
+        let readings = parse_sensor_readings(dump);
+        assert_eq!(readings.len(), 2);
+        assert_eq!(readings[0].values, [5.88, 0.0, 0.0]);
+        assert_eq!(readings[0].time, "10-20 19:26:34.431");
+        assert_eq!(readings[1].values, [-0.18, -0.16, 10.17]);
     }
 
     #[test]
@@ -1222,6 +1239,41 @@ pub fn query_device_sensor_inventory(serial: &str) -> Result<Vec<String>, String
     let sensors = parse_sensor_inventory(&output);
     cache.lock().map_err(|e| e.to_string())?.insert(serial.to_string(), sensors.clone());
     Ok(sensors)
+}
+
+pub fn query_device_sensor_readings(serial: &str) -> Result<Vec<AdbSensorReading>, String> {
+    let output = adb_cmd(Some(serial), &["shell", "dumpsys sensorservice"])?;
+    Ok(parse_sensor_readings(&output))
+}
+
+fn parse_sensor_readings(output: &str) -> Vec<AdbSensorReading> {
+    let mut readings: Vec<AdbSensorReading> = Vec::new();
+    let mut current: Option<String> = None;
+    let mut in_events = false;
+    for line in output.lines() {
+        let line = line.trim();
+        if line == "Recent Sensor events:" {
+            in_events = true;
+            continue;
+        }
+        if !in_events { continue; }
+        if line == "Active sensors:" { break; }
+        if let Some((name, _)) = line.split_once(": last ") {
+            current = Some(name.trim().to_string());
+            continue;
+        }
+        let (Some(name), Some((metadata, values))) = (current.as_ref(), line.split_once(") ")) else { continue; };
+        let Some(time) = metadata.split_once("wall=").map(|(_, time)| time.trim()) else { continue; };
+        let values: Vec<f64> = values.split(',').filter_map(|value| value.trim().parse::<f64>().ok()).collect();
+        if values.is_empty() { continue; }
+        if let Some(reading) = readings.iter_mut().find(|reading| reading.name == *name) {
+            reading.values = values;
+            reading.time = time.to_string();
+        } else {
+            readings.push(AdbSensorReading { name: name.clone(), values, time: time.to_string() });
+        }
+    }
+    readings
 }
 
 fn parse_sensor_inventory(output: &str) -> Vec<String> {

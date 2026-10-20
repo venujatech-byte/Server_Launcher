@@ -165,6 +165,7 @@ async fn adb_data(serial: String, section: String, path: Option<String>) -> Resu
             })).collect::<Vec<_>>()),
             "sensors" => json!(crate::adb::query_device_sensors(serial)?),
             "sensor_inventory" => json!(crate::adb::query_device_sensor_inventory(serial)?),
+            "sensor_readings" => json!(crate::adb::query_device_sensor_readings(serial)?),
             _ => return Err("Unsupported ADB data section".to_string()),
         };
         Ok(data)

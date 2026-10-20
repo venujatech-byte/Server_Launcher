@@ -83,6 +83,43 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Write release description
+        env:
+          EVENT_REF_TYPE: ${{ github.ref_type }}
+          BUILD_SHA: ${{ github.sha }}
+          BRANCH_NAME: ${{ github.ref_name }}
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          if [[ "$EVENT_REF_TYPE" == "tag" ]]; then
+            PREVIOUS_BUILD=$(git describe --tags --abbrev=0 --match 'v*' "${BUILD_SHA}^" 2>/dev/null || true)
+          else
+            PREVIOUS_BUILD=$(git describe --tags --abbrev=0 --match 'v*' "$BUILD_SHA" 2>/dev/null || true)
+          fi
+
+          CARGO_VERSION=$(grep -m1 '^version = ' server_launcher_rust/Cargo.toml | cut -d '"' -f 2)
+          MAJOR_MINOR=$(echo "$CARGO_VERSION" | cut -d '.' -f 1,2)
+          if [[ "$EVENT_REF_TYPE" == "tag" ]]; then
+            TAG_NAME="$BRANCH_NAME"
+          else
+            TAG_NAME="v${MAJOR_MINOR}.${RUN_NUMBER}"
+          fi
+
+          {
+            printf '%s\n' '### Automated Build'
+            printf -- '- **Version**: `%s`\n' "$TAG_NAME"
+            printf -- '- **Commit**: [%s](%s/%s/commit/%s)\n' "$BUILD_SHA" "$SERVER_URL" "$REPOSITORY" "$BUILD_SHA"
+            printf -- '- **Branch**: `%s`\n' "$BRANCH_NAME"
+            printf '%s\n' '- **Artifact**: Linux (`server_launcher-linux-x86_64.tar.gz`)'
+            printf '\n%s\n' '### Commit messages since the previous build'
+            if [[ -n "$PREVIOUS_BUILD" ]]; then
+              git log --reverse --format='- %s (`%h`)' "$PREVIOUS_BUILD..$BUILD_SHA"
+            else
+              git log --reverse --format='- %s (`%h`)' "$BUILD_SHA"
+            fi
+          } > release-notes.md
+
       - name: Determine Release Tag & Metadata
         id: release_info
         run: |
@@ -107,11 +144,5 @@ jobs:
           prerelease: false
           make_latest: true
           files: release-assets/*
-          generate_release_notes: true
-          body: |
-            ### Automated Build
-            - **Version**: `${{ steps.release_info.outputs.tag_name }}`
-            - **Commit**: [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
-            - **Branch**: `${{ github.ref_name }}`
-            - **Artifact**: Linux (`server_launcher-linux-x86_64.tar.gz`)
+          body_path: release-notes.md
 

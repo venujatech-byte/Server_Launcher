@@ -3932,11 +3932,20 @@
         ].filter(Boolean).join(' ');
         const liveBatteryWatts = s.battery_current_ua != null && Number.isFinite(Number(s.battery_current_ua)) && voltageMv > 0
           ? Math.abs(Number(s.battery_current_ua)) * voltageMv / 1e9 : null;
-        const drawWatts = liveBatteryWatts;
-        const drawSub = liveBatteryWatts == null ? 'Battery current or voltage unavailable' : 'Live battery current × voltage';
-        const drawSide = liveBatteryWatts == null ? 'Unavailable' : `${(Number(s.battery_current_ua) / 1000).toFixed(0)} mA`;
+        const averageWatts = attribution.length && attrWattsPerMah != null ? attrTotal * attrWattsPerMah : null;
+        const drawWatts = liveBatteryWatts ?? averageWatts;
+        const powerSource = liveBatteryWatts != null ? 'live' : averageWatts != null ? (intervalPower ? 'interval' : 'history') : 'unavailable';
+        const drawSub = powerSource === 'live' ? 'Live battery current × voltage'
+          : powerSource === 'interval' ? 'Estimated from latest battery interval'
+          : powerSource === 'history' ? 'Estimated from on-battery history' : 'No current or battery history';
+        const drawSide = powerSource === 'live' ? `${(Number(s.battery_current_ua) / 1000).toFixed(0)} mA`
+          : powerSource === 'unavailable' ? 'Unavailable' : 'ESTIMATE';
 
-        if (!state.powerHist) state.powerHist = [];
+        const powerHistoryKey = `${state.serial}:${powerSource}`;
+        if (state.powerHistoryKey !== powerHistoryKey) {
+          state.powerHist = [];
+          state.powerHistoryKey = powerHistoryKey;
+        }
         if (drawWatts != null) state.powerHist.push(drawWatts);
         if (state.powerHist.length > 25) state.powerHist.shift();
 
@@ -3989,11 +3998,11 @@
             })}
             ${renderBigStatCard({
               iconCode: 'e145',
-              title: 'NET BATTERY POWER',
+              title: liveBatteryWatts != null ? 'NET BATTERY POWER' : 'ESTIMATED AVG POWER',
               heroVal: drawWatts == null ? '—' : drawWatts.toFixed(1),
               heroUnit: 'W',
               subtitle: drawSub,
-              leftStat: 'POWER FLOW',
+              leftStat: liveBatteryWatts != null ? 'POWER FLOW' : 'ATTRIBUTED POWER',
               rightStat: drawSide,
               data: state.powerHist,
               maxVal: Math.max(5, ...state.powerHist),

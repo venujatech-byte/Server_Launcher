@@ -4,11 +4,11 @@ const vm = require('node:vm');
 
 const app = fs.readFileSync('web/app.js', 'utf8');
 const power = app.slice(app.indexOf('      power: () => {'), app.indexOf('      bluetooth:', app.indexOf('      power: () => {'))).trim().replace(/,$/, '');
-function render(overrides = {}, history = []) {
+function render(overrides = {}, history = [], state = {}) {
   return vm.runInNewContext(`({${power}}).power()`, {
     s: { battery_pct: 50, battery_status: 'Discharging', battery_voltage_mv: 4000,
       power_attribution_secs: 3600, power_attribution: [{ label: 'CPU', mah: 1000 }], ...overrides },
-    state: {}, hist: history, battHist: [50], tempHist: [30], uptimeHours: 1, uptimeMins: 0,
+    state, hist: history, battHist: [50], tempHist: [30], uptimeHours: 1, uptimeMins: 0,
     val: value => value ?? '—', avg: () => 0, peak: () => 0,
     escapeHtml: value => value, empty: title => title, icon: () => '',
     renderBigStatCard: card => JSON.stringify(card), renderWaveformChartSvg: () => '',
@@ -40,5 +40,16 @@ assert.match(plugged, /aria-describedby="power-help-text"/);
 assert.match(plugged, /role="tooltip"/);
 assert.doesNotMatch(plugged, /<p[^>]*>Plugged in:/);
 assert.doesNotMatch(plugged, /<p[^>]*>Not reported separately:/);
+assert.match(render(), /"title":"ESTIMATED AVG POWER","heroVal":"4.0"/);
+assert.match(render({ battery_current_ua: -500000 }), /"title":"NET BATTERY POWER","heroVal":"2.0"/);
+assert.match(render({ battery_current_ua: 0 }), /"title":"NET BATTERY POWER","heroVal":"0.0"/);
+const shared = { serial: 'first' };
+render({ battery_current_ua: -500000 }, [], shared);
+render({}, [], shared);
+assert.equal(shared.powerHist.length, 1);
+assert.equal(shared.powerHist[0], 4);
+shared.serial = 'second';
+render({ power_attribution: [] }, [], shared);
+assert.equal(shared.powerHist.length, 0);
 module.exports = { render };
 console.log('Power tab rendering, live readings, interval/reset and watts conversion checks passed.');

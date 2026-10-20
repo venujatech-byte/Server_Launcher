@@ -853,7 +853,40 @@
   }
   function renderNotifications() {
     const rows = state.data || [];
-    content.innerHTML = `<section class="card"><div class="card-head"><div><h2>Notifications</h2><div class="subtle" style="margin-top:5px">${rows.length} active device notifications</div></div><button class="button" data-refresh>${icon("e145")} Refresh</button></div><div class="stack">${rows.length ? rows.map(n => `<article class="list-item"><div class="list-item-top"><div><div class="list-title">${escapeHtml(n.title || n.app || n.package)}</div><div class="list-meta">${escapeHtml(n.app)} · ${escapeHtml(n.time)}</div></div><span class="chip">${escapeHtml(n.package)}</span></div><p>${escapeHtml(n.text)}</p></article>`).join('') : empty('No active notifications', 'The device did not report any currently posted notifications.')}</div></section>`;
+    const packageLabels = {
+      'com.whatsapp.w4b': 'WhatsApp Business',
+      'com.whatsapp': 'WhatsApp',
+      'com.google.android.gm': 'Gmail',
+      'com.google.android.apps.messaging': 'Messages',
+      'com.samsung.android.messaging': 'Samsung Messages',
+      'com.android.mms': 'Messages',
+      'com.android.phone': 'Phone',
+      'com.google.android.dialer': 'Phone',
+      'com.android.systemui': 'Android System',
+      'com.google.android.calendar': 'Calendar',
+      'com.google.android.youtube': 'YouTube',
+      'com.android.chrome': 'Chrome',
+      'com.google.android.googlequicksearchbox': 'Google'
+    };
+    const appLabel = (notification) => packageLabels[notification.package] || notification.app || notification.package || 'Android app';
+    const appIcon = (notification) => {
+      const pkg = String(notification.package || '').toLowerCase();
+      if (pkg.includes('whatsapp') || pkg.includes('messaging') || pkg.includes('.mms')) return 'e575';
+      if (pkg.includes('gmail') || pkg.includes('email')) return 'e10f';
+      if (pkg.includes('calendar')) return 'e063';
+      if (pkg.includes('dialer') || pkg.includes('.phone')) return 'e134';
+      if (pkg.includes('systemui') || pkg === 'android') return 'e163';
+      if (pkg.includes('youtube')) return 'e13c';
+      if (pkg.includes('chrome') || pkg.includes('browser')) return 'e0e8';
+      if (pkg.includes('music')) return 'e34a';
+      return 'e224';
+    };
+    content.innerHTML = `<section class="notifications-page"><header class="notifications-toolbar"><div class="notifications-total"><strong>${rows.length}</strong><span>active notifications</span></div><button class="button" data-refresh>${icon('e145')} Refresh</button></header>${rows.length ? `<div class="notifications-list">${rows.map((n) => {
+      const app = appLabel(n);
+      const title = n.title || n.text || app;
+      const preview = n.title ? (n.text || n.subtext) : n.subtext;
+      return `<article class="notification-item"><span class="notification-app-icon" aria-hidden="true">${icon(appIcon(n))}</span><div class="notification-copy"><div class="notification-heading"><strong>${escapeHtml(title)}</strong><time>${escapeHtml(n.time || 'Recent')}</time></div><div class="notification-source"><span>${escapeHtml(app)}</span><code title="Android package">${escapeHtml(n.package)}</code></div>${preview ? `<p>${escapeHtml(preview)}</p>` : ''}</div></article>`;
+    }).join('')}</div>` : empty('No active notifications', 'The device did not report any currently posted notifications.')}</section>`;
   }
   async function renderStorage() {
     const t = state.telemetry || {};

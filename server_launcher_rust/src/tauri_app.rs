@@ -172,6 +172,13 @@ async fn adb_data(serial: String, section: String, path: Option<String>) -> Resu
 }
 
 #[tauri::command]
+async fn adb_storage_volumes(serial: String) -> Result<Value, String> {
+    on_worker(move || Ok(json!(crate::adb::list_storage_volumes(&serial).into_iter().map(|(name, path, total_kb, free_kb)| json!({
+        "name": name, "path": path, "total_kb": total_kb, "free_kb": free_kb
+    })).collect::<Vec<_>>()))).await
+}
+
+#[tauri::command]
 async fn adb_screenshot(serial: String) -> Result<String, String> {
     on_worker(move || {
         use base64::Engine;
@@ -274,6 +281,7 @@ async fn adb_action(
             "delete_file" => {
                 crate::adb::delete_file(&serial, &value).map(|_| "File deleted".into())
             }
+            "push_file" => crate::adb::push_file(&serial, std::path::Path::new(&value), &extra),
             "download_photo" => crate::adb::pull_photo_to_downloads(Some(&serial), &value),
             "delete_photo" => crate::adb::delete_device_photo(Some(&serial), &value),
             "scrcpy" => crate::adb::launch_scrcpy(&serial, true, false, false, Some(12), Some(8))
@@ -435,6 +443,7 @@ pub fn run() {
             adb_theme_info,
             adb_telemetry,
             adb_data,
+            adb_storage_volumes,
             adb_screenshot,
             adb_photos_page,
             adb_photos_count,

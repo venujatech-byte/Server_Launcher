@@ -1475,6 +1475,25 @@ pub fn list_directory(serial: &str, remote_path: &str) -> Result<Vec<AdbFileEntr
     Ok(entries)
 }
 
+/// Lists user-browsable storage volumes, collapsing duplicate aliases of the emulated volume.
+pub fn list_storage_volumes(serial: &str) -> Vec<(String, String, u64, u64)> {
+    let mounts = adb_cmd(Some(serial), &["shell", "ls", "-1", "/storage"]).unwrap_or_default();
+    let mut paths = vec![("Internal storage".to_string(), "/storage/emulated/0".to_string())];
+    paths.extend(mounts.lines().map(str::trim)
+        .filter(|name| !name.is_empty() && *name != "emulated" && *name != "self" && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+        .map(|name| ("SD card".to_string(), format!("/storage/{name}"))));
+    let mut volumes = Vec::new();
+    for (name, path) in paths {
+        let output = adb_cmd(Some(serial), &["shell", "df", "-k", &path]).unwrap_or_default();
+        if let Some(fields) = output.lines().skip(1).map(|line| line.split_whitespace().collect::<Vec<_>>()).find(|fields| fields.len() >= 5) {
+            if let (Ok(total), Ok(free)) = (fields[1].parse(), fields[3].parse()) {
+                volumes.push((name, path, total, free));
+            }
+        }
+    }
+    volumes
+}
+
 /// Deletes a file or directory on the device.
 pub fn delete_file(serial: &str, remote_path: &str) -> Result<(), String> {
     adb_cmd(Some(serial), &["shell", "rm", "-rf", remote_path]).map(|_| ())

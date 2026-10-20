@@ -2,8 +2,8 @@
   const invoke = window.__TAURI__?.core?.invoke;
   const $ = (selector) => document.querySelector(selector);
   const content = $('#content');
-  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', screenTimer: null, commTimer: null, commBusy: false, contacts: null, contactsSerial: '', toastTimer: null, lastTelemetry: 0, topAppsSelectedPid: null, topAppsExpandedGroups: new Set(), topAppsAppsExpanded: true, topAppsBgExpanded: true, topAppsSort: 'mem', topAppsSortDesc: true, topAppsSearch: '', powerPreset: 'balanced', gpuPreset: 'balanced', powerHist: [0.0, 0.0, 0.0], photosAlbum: 'all', photosSearch: '', photosDensity: 'comfortable', photosCursor: null, photosTotal: null, photosHasMore: true, photosPageLoading: false, photosThumbs: {}, photosThumbLoading: new Set(), photosObserver: null, photosSelected: new Set(), photosSelectionMode: false, photosLightboxIndex: null, photosCache: {}, photosCacheSerial: '', customSubtab: 'boot', customRootStatus: null, customFastbootDevices: null, customDensityVal: '', customAnimScale: '0.5' };
-  const tabNames = { overview: 'Overview', screen: 'Screen share', messages: 'Messages', calls: 'Calls', photos: 'Photos', notifications: 'Notifications', sensors: 'Sensors', storage: 'Storage', apps: 'Apps', clipboard: 'Clipboard', terminal: 'Terminal', wireless: 'Wireless debugging', firmware: 'Customization & Boot' };
+  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', filesView: 'drives', storageVolumes: null, storageVolumesSerial: '', filesSelectedPath: '', screenTimer: null, contacts: null, contactsSerial: '', toastTimer: null, lastTelemetry: 0, topAppsSelectedPid: null, topAppsExpandedGroups: new Set(), topAppsAppsExpanded: true, topAppsBgExpanded: true, topAppsSort: 'mem', topAppsSortDesc: true, topAppsSearch: '', powerPreset: 'balanced', gpuPreset: 'balanced', powerHist: [0.0, 0.0, 0.0], photosAlbum: 'all', photosSearch: '', photosDensity: 'comfortable', photosCursor: null, photosTotal: null, photosHasMore: true, photosPageLoading: false, photosThumbs: {}, photosThumbLoading: new Set(), photosObserver: null, photosSelected: new Set(), photosSelectionMode: false, photosLightboxIndex: null, photosCache: {}, photosCacheSerial: '', customSubtab: 'boot', customRootStatus: null, customFastbootDevices: null, customDensityVal: '', customAnimScale: '0.5' };
+  const tabNames = { overview: 'Overview', screen: 'Screen share', messages: 'Messages', calls: 'Calls', photos: 'Photos', notifications: 'Notifications', sensors: 'Sensors', storage: 'Files', apps: 'Apps', clipboard: 'Clipboard', terminal: 'Terminal', wireless: 'Wireless debugging', firmware: 'Customization & Boot' };
   const tabKinds = { messages: 'messages', calls: 'calls', photos: 'photos', notifications: 'notifications', sensors: 'sensors', apps: 'apps', storage: 'files', wireless: 'endpoints' };
   const icon = (code) => `<span class="icon" aria-hidden="true">&#x${code};</span>`;
   const escapeHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -79,7 +79,6 @@
     if (!tabNames[tab]) return;
     if (tab !== 'photos') { state.photosObserver?.disconnect(); state.photosObserver = null; }
     clearInterval(state.screenTimer); state.screenTimer = null;
-    clearInterval(state.commTimer); state.commTimer = null;
     state.tab = tab; document.querySelectorAll('.nav-item').forEach((n) => n.classList.toggle('active', n.dataset.tab === tab));
     clearTimeout(state.sensorTimer); state.sensorTimer = null;
     $('#page-title').textContent = tabNames[tab]; $('#eyebrow').textContent = `ANDROID DEVICE / ${tab.toUpperCase()}`;
@@ -88,7 +87,6 @@
       showPageLoading(tabNames[tab]);
     }
     void renderTab();
-    if (['messages', 'calls'].includes(tab) && !document.hidden) state.commTimer = setInterval(refreshCommPanels, 15000);
   }
   async function refreshDevices() {
     try {
@@ -99,6 +97,7 @@
       if (state.photosCacheSerial !== state.serial) {
         state.photosCacheSerial = state.serial; state.photosCursor = null; state.photosTotal = null; state.photosHasMore = true; state.photosPageLoading = false;
         state.photosThumbs = {}; state.photosThumbLoading.clear(); state.photosCache = {}; state.photosSelected.clear();
+        state.storageVolumes = null; state.storageVolumesSerial = ''; state.filesView = 'drives'; state.path = '/sdcard'; state.filesSelectedPath = '';
       }
       if (state.sensorHistory.length && state.sensorHistorySerial !== state.serial) { state.sensorHistory = []; state.sensorHistorySerial = state.serial; }
       if (state.sensorInventorySerial !== state.serial) { state.sensorInventory = []; state.sensorInventorySerial = state.serial; state.sensorInventoryLoaded = false; }
@@ -165,6 +164,7 @@
     if (tabKinds[targetTab]) {
       showPageLoading(tabNames[targetTab]);
       if (targetTab === 'photos') await loadPhotoPage(true);
+      else if (targetTab === 'storage' && state.filesView === 'drives') state.data = [];
       else await loadData(tabKinds[targetTab], state.path);
       if (loadToken !== currentLoadToken || state.tab !== targetTab) return;
     }
@@ -227,15 +227,6 @@
 
     content.innerHTML = `
       <div class="comm-page">
-        <header class="comm-heading">
-          <div>
-            <div class="eyebrow">DEVICE COMMUNICATIONS</div>
-            <h2>Phone &amp; Contacts</h2>
-            <p class="subtle">Recent calls, device address book, and interactive keypad</p>
-          </div>
-          <button class="button" data-refresh>${icon("e145")} Refresh</button>
-        </header>
-
         <div class="comm-layout calls-layout">
           <section class="card comm-list-pane">
             <div class="comm-tab-pills">
@@ -396,6 +387,7 @@
       k.onclick = () => {
         const input = $('#dial-number');
         if (input) {
+          input.value += k.dataset.key;
           input.focus();
         }
       };
@@ -432,51 +424,8 @@
       };
     }
   }
-  async function refreshCommPanels() {
-    if (state.commBusy || document.hidden || !['messages', 'calls'].includes(state.tab) || !state.serial) return;
-    state.commBusy = true;
-    const tab = state.tab, serial = state.serial;
-    const fields = tab === 'messages'
-      ? ['#message-filter', '#sms-number', '#sms-body']
-      : ['#call-filter', '#contact-filter', '#dial-number'];
-    const saved = Object.fromEntries(fields.map((selector) => [selector, $(selector)?.value]));
-    try {
-      const section = tab;
-      const [rowsResult, contactsResult] = await Promise.allSettled([
-        invokeOrFail('adb_data', { serial, section, path: null }),
-        tab === 'calls' ? invokeOrFail('adb_data', { serial, section: 'contacts', path: null }) : Promise.resolve(state.contacts),
-      ]);
-      if (rowsResult.status === 'rejected') throw rowsResult.reason;
-      const rows = rowsResult.value;
-      if (rows.length === 0 && state.data.length > 0) return;
-      const contacts = contactsResult.status === 'fulfilled' ? contactsResult.value : state.contacts;
-      if (state.tab !== tab || state.serial !== serial) return;
-      const changed = JSON.stringify(rows) !== JSON.stringify(state.data)
-        || (tab === 'calls' && JSON.stringify(contacts) !== JSON.stringify(state.contacts));
-      state.data = rows || [];
-      if (tab === 'calls') { state.contacts = contacts || []; state.contactsSerial = serial; }
-      if (!changed) return;
-      const activeId = document.activeElement?.id;
-      const caret = activeId ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
-      const scroll = ['.comm-list', '.message-thread'].map((selector) => [selector, $(selector)?.scrollTop]);
-      if (tab === 'messages') renderMessages(); else await renderCalls();
-      for (const selector of fields) {
-        const input = $(selector);
-        if (input && saved[selector] != null) { input.value = saved[selector]; input.dispatchEvent(new Event('input')); }
-      }
-      const active = activeId && document.getElementById(activeId);
-      if (active) {
-        active.focus();
-        if (caret && typeof active.setSelectionRange === 'function') active.setSelectionRange(...caret);
-      }
-      for (const [selector, top] of scroll) if (top != null && $(selector)) $(selector).scrollTop = top;
-    } catch {
-      // Keep the last successful panel data when a periodic ADB read fails.
-    } finally {
-      state.commBusy = false;
-    }
-  }
   function renderPhotos() {
+    document.querySelector('.photo-context-menu')?.remove();
     const rows = state.data || [];
     const q = (state.photosSearch || '').trim().toLowerCase();
     const album = state.photosAlbum || 'all';
@@ -561,18 +510,6 @@
                         <span>${escapeHtml(ext)}</span>
                       </div>
                     `}
-                    <div class="photo-quick-overlay">
-                      <button class="photo-overlay-btn" data-overlay-view="${idx}">${icon("e14f")} View</button>
-                      <button class="photo-overlay-btn" data-overlay-save="${escapeHtml(p.path)}">${icon("e0cc")} Save</button>
-                      <button class="photo-overlay-btn danger" data-overlay-del="${escapeHtml(p.path)}">${icon("e048")} Del</button>
-                    </div>
-                  </div>
-                  <div class="photo-details">
-                    <div class="photo-title" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>
-                    <div class="photo-meta-row">
-                      <span>${escapeHtml(p.size)}</span>
-                      <span>${escapeHtml(p.date)}</span>
-                    </div>
                   </div>
                 </article>
               `;
@@ -605,9 +542,7 @@
                   <span class="lightbox-counter">${state.photosLightboxIndex + 1} / ${filtered.length}</span>
                 </div>
                 <div class="lightbox-actions">
-                  <button class="button tonal" id="lightbox-save-btn">${icon("e0cc")} Download to PC</button>
-                  <button class="button danger tonal" id="lightbox-del-btn">${icon("e048")} Delete</button>
-                  <button class="button" id="lightbox-close-btn">✕ Close</button>
+                  <button class="button" id="lightbox-close-btn">Close</button>
                 </div>
               </div>
 
@@ -635,8 +570,7 @@
               </div>
 
               <div class="lightbox-footer">
-                <span class="mono">${escapeHtml(p.path)}</span>
-                <span>${escapeHtml(p.size)} · ${escapeHtml(p.date)} · Press ← / → to navigate, Esc to exit</span>
+                <span>Press ← / → to navigate, Esc to close</span>
               </div>
             </div>
           `;
@@ -713,10 +647,10 @@
     }
 
     // 5. Lightbox open
-    document.querySelectorAll('[data-photo-view], [data-overlay-view]').forEach(el => {
+    document.querySelectorAll('[data-photo-view]').forEach(el => {
       el.onclick = async (e) => {
         e.stopPropagation();
-        const idx = Number(el.dataset.photoView ?? el.dataset.overlayView);
+        const idx = Number(el.dataset.photoView);
         state.photosLightboxIndex = idx;
         renderPhotos();
         const targetPhoto = filtered[idx];
@@ -735,6 +669,37 @@
       };
     });
 
+    document.querySelectorAll('.photo-card').forEach((card) => card.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      const index = Number(card.querySelector('[data-photo-view]')?.dataset.photoView);
+      const photo = filtered[index];
+      if (!photo) return;
+      document.querySelector('.photo-context-menu')?.remove();
+      const menu = document.createElement('div');
+      menu.className = 'photo-context-menu';
+      menu.style.left = `${Math.min(event.clientX, window.innerWidth - 170)}px`;
+      menu.style.top = `${Math.min(event.clientY, window.innerHeight - 150)}px`;
+      menu.innerHTML = '<button data-photo-menu="open">Open</button><button data-photo-menu="save">Save to PC</button><button data-photo-menu="delete" class="danger">Delete</button>';
+      document.body.append(menu);
+      const close = (outsideEvent) => {
+        if (!menu.contains(outsideEvent.target)) { menu.remove(); window.removeEventListener('pointerdown', close); }
+      };
+      window.addEventListener('pointerdown', close);
+      menu.onclick = async (click) => {
+        const choice = click.target.closest('[data-photo-menu]')?.dataset.photoMenu;
+        menu.remove(); window.removeEventListener('pointerdown', close);
+        if (choice === 'open') document.querySelector(`[data-photo-view="${index}"]`)?.click();
+        if (choice === 'save') await action('download_photo', photo.path);
+        if (choice === 'delete' && confirm(`Delete ${photo.name} from the device?`)) {
+          await action('delete_photo', photo.path);
+          delete state.photosCache[photo.path];
+          state.photosSelected.delete(photo.path);
+          await loadPhotoPage(true);
+          renderPhotos();
+        }
+      };
+    }));
+
     // 6. Selection checkbox
     document.querySelectorAll('[data-photo-select]').forEach(box => {
       box.onclick = (e) => {
@@ -746,29 +711,6 @@
           state.photosSelected.add(path);
         }
         renderPhotos();
-      };
-    });
-
-    // 7. Overlay save / delete
-    document.querySelectorAll('[data-overlay-save]').forEach(btn => {
-      btn.onclick = async (e) => {
-        e.stopPropagation();
-        const path = btn.dataset.overlaySave;
-        await action('download_photo', path);
-      };
-    });
-
-    document.querySelectorAll('[data-overlay-del]').forEach(btn => {
-      btn.onclick = async (e) => {
-        e.stopPropagation();
-        const path = btn.dataset.overlayDel;
-        if (confirm(`Are you sure you want to delete this photo from your device?\n${path}`)) {
-          await action('delete_photo', path);
-          delete state.photosCache[path];
-          state.photosSelected.delete(path);
-          await loadPhotoPage(true);
-          renderPhotos();
-        }
       };
     });
 
@@ -815,7 +757,6 @@
     // 9. Lightbox controls
     const lightboxModal = $('#photo-lightbox-modal');
     if (lightboxModal && state.photosLightboxIndex !== null) {
-      const curPhoto = filtered[state.photosLightboxIndex];
       const closeLb = () => { state.photosLightboxIndex = null; renderPhotos(); };
 
       const closeBtn = $('#lightbox-close-btn');
@@ -853,25 +794,6 @@
                 if (container) container.innerHTML = `<img src="${src}" alt="${escapeHtml(nextP.name)}">`;
               });
             }
-          }
-        };
-      }
-
-      const saveBtn = $('#lightbox-save-btn');
-      if (saveBtn) {
-        saveBtn.onclick = () => action('download_photo', curPhoto.path);
-      }
-
-      const delBtn = $('#lightbox-del-btn');
-      if (delBtn) {
-        delBtn.onclick = async () => {
-          if (confirm(`Delete ${curPhoto.name} from device?`)) {
-            await action('delete_photo', curPhoto.path);
-            delete state.photosCache[curPhoto.path];
-            state.photosSelected.delete(curPhoto.path);
-            closeLb();
-            await loadPhotoPage(true);
-            renderPhotos();
           }
         };
       }
@@ -926,12 +848,55 @@
     const rows = state.data || [];
     content.innerHTML = `<section class="card"><div class="card-head"><div><h2>Notifications</h2><div class="subtle" style="margin-top:5px">${rows.length} active device notifications</div></div><button class="button" data-refresh>${icon("e145")} Refresh</button></div><div class="stack">${rows.length ? rows.map(n => `<article class="list-item"><div class="list-item-top"><div><div class="list-title">${escapeHtml(n.title || n.app || n.package)}</div><div class="list-meta">${escapeHtml(n.app)} · ${escapeHtml(n.time)}</div></div><span class="chip">${escapeHtml(n.package)}</span></div><p>${escapeHtml(n.text)}</p></article>`).join('') : empty('No active notifications', 'The device did not report any currently posted notifications.')}</div></section>`;
   }
-  function renderStorage() {
-    const rows = state.data || [], t = state.telemetry || {};
-    content.innerHTML = `<div class="grid metrics">${metric('Internal used', t.storage_internal_total_gb != null ? `${(t.storage_internal_total_gb-(t.storage_internal_free_gb??0)).toFixed(1)} GB` : 'Unavailable', t.storage_internal_total_gb != null ? `${(t.storage_internal_free_gb??0).toFixed(1)} GB free of ${t.storage_internal_total_gb.toFixed(1)} GB` : 'No storage telemetry', t.storage_internal_total_gb != null ? 100*(1-t.storage_internal_free_gb/t.storage_internal_total_gb) : null)}${metric('Shared storage', t.storage_sdcard_total_gb != null ? `${(t.storage_sdcard_total_gb-(t.storage_sdcard_free_gb??0)).toFixed(1)} GB` : 'Unavailable', t.storage_sdcard_total_gb != null ? `${(t.storage_sdcard_free_gb??0).toFixed(1)} GB free` : 'No shared storage telemetry', null)}</div><section class="card"><div class="card-head"><div><h2>File browser</h2><div class="subtle mono" style="margin-top:5px">${escapeHtml(state.path)}</div></div><button class="button" data-refresh>${icon("e145")} Refresh</button></div><form id="path-form" class="toolbar"><input id="file-path" class="input" value="${escapeHtml(state.path)}"><button class="button primary">Go to path</button><button type="button" class="button" id="file-up">Parent folder</button></form><div class="table-wrap"><table class="table"><thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Modified</th><th></th></tr></thead><tbody>${rows.length ? rows.map((f,i) => `<tr><td><button class="file-open" data-file-index="${i}">${f.directory?icon("e0d7"):icon("e0cc")} ${escapeHtml(f.name)}</button></td><td>${f.directory?'Folder':'File'}</td><td>${f.bytes ? `${(f.bytes/1024).toFixed(1)} KB` : '—'}</td><td>${escapeHtml(f.modified)}</td><td><button class="button danger" data-action="delete_file" data-value="${escapeHtml(state.path.replace(/\/$/, '')+'/'+f.name)}">Delete</button></td></tr>`).join('') : `<tr><td colspan="5">${empty('Folder is empty', 'Try another folder path.')}</td></tr>`}</tbody></table></div></section>`;
-    $('#path-form').onsubmit = (e) => { e.preventDefault(); state.path = $('#file-path').value.trim() || '/sdcard'; showPageLoading('Folder'); void renderTab(); };
-    $('#file-up').onclick = () => { state.path = state.path.replace(/\/$/, '').split('/').slice(0,-1).join('/') || '/'; showPageLoading('Folder'); void renderTab(); };
-    document.querySelectorAll('[data-file-index]').forEach(b => b.onclick = () => { const f = rows[Number(b.dataset.fileIndex)]; if (f.directory) { state.path = `${state.path.replace(/\/$/, '')}/${f.name}`; showPageLoading('Folder'); void renderTab(); } });
+  async function renderStorage() {
+    const t = state.telemetry || {};
+    if (state.filesView !== 'explorer') {
+      if (state.storageVolumesSerial !== state.serial) {
+        try { state.storageVolumes = await invokeOrFail('adb_storage_volumes', { serial: state.serial }); }
+        catch { state.storageVolumes = []; }
+        state.storageVolumesSerial = state.serial;
+      }
+      const volumes = state.storageVolumes?.length ? state.storageVolumes : (t.storage_internal_total_gb != null ? [{ name: 'Internal storage', path: '/sdcard', total_kb: t.storage_internal_total_gb * 1024 * 1024, free_kb: (t.storage_internal_free_gb || 0) * 1024 * 1024 }] : []);
+      content.innerHTML = `<div class="files-home"><header class="files-home-heading"><div><h2>Storage locations</h2><span class="subtle">${volumes.length} mounted ${volumes.length === 1 ? 'volume' : 'volumes'}</span></div></header><div class="files-drive-grid">${volumes.map((volume, index) => { const total = volume.total_kb / 1024 / 1024, free = volume.free_kb / 1024 / 1024, usedPct = total ? Math.max(0, Math.min(100, 100 * (total - free) / total)) : 0; return `<button class="files-drive-card" data-storage-volume="${index}"><span class="files-drive-icon">${icon("e0c5")}</span><span class="files-drive-copy"><b>${escapeHtml(volume.name)}</b><span>${free.toFixed(1)} GB free of ${total.toFixed(1)} GB</span><i><em style="width:${usedPct}%"></em></i></span><span class="files-drive-chevron">${icon("e0a6")}</span></button>`; }).join('') || empty('No storage volumes', 'The device did not report any browseable storage.')}</div></div>`;
+      document.querySelectorAll('[data-storage-volume]').forEach((button) => button.onclick = () => {
+        const volume = volumes[Number(button.dataset.storageVolume)];
+        state.storageRootPath = volume.path; state.path = volume.path; state.filesView = 'explorer'; state.filesSelectedPath = '';
+        showPageLoading('Files'); void renderTab();
+      });
+      return;
+    }
+
+    const rows = state.data || [];
+    const normalizedPath = state.path.replace(/\/$/, '') || '/';
+    const selected = rows.find((file) => `${normalizedPath}/${file.name}` === state.filesSelectedPath && !file.directory);
+    const openPath = (path) => { state.path = path; state.filesSelectedPath = ''; showPageLoading('Files'); void renderTab(); };
+    content.innerHTML = `<div class="files-browser"><div class="files-sticky-bar"><button class="button" id="files-home">${icon("e0d7")} Drives</button><button class="button" id="file-up" title="Parent folder">${icon("e0a7")}</button><form id="path-form"><input id="file-path" class="input mono" value="${escapeHtml(state.path)}" aria-label="Current folder path"><button class="button" title="Go to path">${icon("e0a6")}</button></form><div class="files-actions"><button class="button tonal" id="files-import">${icon("e0cc")} Import</button><button class="button tonal" id="files-export" ${selected ? '' : 'disabled'}>${icon("e0cc")} Export</button></div></div><div class="files-grid">${rows.length ? rows.map((file, index) => `<button class="files-entry ${state.filesSelectedPath === `${normalizedPath}/${file.name}` ? 'selected' : ''}" data-file-index="${index}"><span class="files-entry-icon ${file.directory ? 'folder' : 'file'}">${icon(file.directory ? 'e0d7' : 'e0cc')}</span><span class="files-entry-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span></button>`).join('') : `<div class="files-empty">${empty('Folder is empty', 'Choose another folder or import a file.')}</div>`}</div></div>`;
+    $('#files-home').onclick = () => { state.filesView = 'drives'; state.filesSelectedPath = ''; renderStorage(); };
+    $('#file-up').onclick = () => {
+      if (state.path === state.storageRootPath) { state.filesView = 'drives'; renderStorage(); return; }
+      const parent = state.path.replace(/\/$/, '').split('/').slice(0, -1).join('/') || '/';
+      openPath(parent);
+    };
+    $('#path-form').onsubmit = (event) => { event.preventDefault(); openPath($('#file-path').value.trim() || state.storageRootPath); };
+    document.querySelectorAll('[data-file-index]').forEach((button) => button.onclick = () => {
+      const file = rows[Number(button.dataset.fileIndex)];
+      const path = `${normalizedPath}/${file.name}`;
+      if (file.directory) openPath(path);
+      else { state.filesSelectedPath = path; renderStorage(); }
+    });
+    $('#files-import').onclick = async () => {
+      try {
+        const localPath = await action('pick_file');
+        await action('push_file', localPath, `${normalizedPath}/`);
+        state.data = await invokeOrFail('adb_data', { serial: state.serial, section: 'files', path: state.path });
+        renderStorage();
+      } catch (error) { if (!String(error).toLowerCase().includes('cancel')) toast(String(error), true); }
+    };
+    $('#files-export').onclick = async () => {
+      if (!selected) return;
+      try { await action('download_photo', state.filesSelectedPath); }
+      catch { /* The shared action already shows the transfer error. */ }
+    };
   }
   function renderApps() {
     const rows = state.data || [];
@@ -4583,6 +4548,7 @@
       if (state.tab === 'overview') {
         await refreshTelemetry();
       } else if (state.tab === 'storage') {
+        state.storageVolumesSerial = '';
         showPageLoading(tabNames[state.tab]);
         await refreshTelemetry();
       } else if (state.tab === 'sensors') {

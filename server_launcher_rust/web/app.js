@@ -2,7 +2,7 @@
   const invoke = window.__TAURI__?.core?.invoke;
   const $ = (selector) => document.querySelector(selector);
   const content = $('#content');
-  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', filesView: 'drives', storageVolumes: null, storageVolumesSerial: '', filesSelectedPath: '', filesSearch: '', filesSearchOpen: false, filesIconSize: 92, filesSort: 'name-asc', filesShowHidden: false, filesClipboard: null, filesThumbs: {}, filesThumbLoading: new Set(), filesThumbObserver: null, filesExporting: '', screenTimer: null, contacts: null, contactsSerial: '', toastTimer: null, lastTelemetry: 0, topAppsSelectedPid: null, topAppsExpandedGroups: new Set(), topAppsAppsExpanded: true, topAppsBgExpanded: true, topAppsSort: 'mem', topAppsSortDesc: true, topAppsSearch: '', powerPreset: 'balanced', gpuPreset: 'balanced', powerHist: [0.0, 0.0, 0.0], photosAlbum: 'all', photosSearch: '', photosDensity: 'comfortable', photosCursor: null, photosTotal: null, photosHasMore: true, photosPageLoading: false, photosThumbs: {}, photosThumbLoading: new Set(), photosObserver: null, photosSelected: new Set(), photosSelectionMode: false, photosLightboxIndex: null, photosCache: {}, photosCacheSerial: '', customSubtab: 'boot', customRootStatus: null, customFastbootDevices: null, customDensityVal: '', customAnimScale: '0.5' };
+  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', dataUsageNetwork: 'wifi', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', filesView: 'drives', storageVolumes: null, storageVolumesSerial: '', filesSelectedPath: '', filesSearch: '', filesSearchOpen: false, filesIconSize: 92, filesSort: 'name-asc', filesShowHidden: false, filesClipboard: null, filesThumbs: {}, filesThumbLoading: new Set(), filesThumbObserver: null, filesExporting: '', screenTimer: null, contacts: null, contactsSerial: '', toastTimer: null, lastTelemetry: 0, topAppsSelectedPid: null, topAppsExpandedGroups: new Set(), topAppsAppsExpanded: true, topAppsBgExpanded: true, topAppsSort: 'mem', topAppsSortDesc: true, topAppsSearch: '', powerPreset: 'balanced', gpuPreset: 'balanced', powerHist: [0.0, 0.0, 0.0], photosAlbum: 'all', photosSearch: '', photosDensity: 'comfortable', photosCursor: null, photosTotal: null, photosHasMore: true, photosPageLoading: false, photosThumbs: {}, photosThumbLoading: new Set(), photosObserver: null, photosSelected: new Set(), photosSelectionMode: false, photosLightboxIndex: null, photosCache: {}, photosCacheSerial: '', customSubtab: 'boot', customRootStatus: null, customFastbootDevices: null, customDensityVal: '', customAnimScale: '0.5' };
   document.addEventListener('pointerdown', (event) => {
     const target = event.target instanceof Element ? event.target : null;
     if (!target?.closest('.files-menu-wrap')) document.querySelector('.files-options:not([hidden])')?.setAttribute('hidden', '');
@@ -1726,6 +1726,7 @@
     state.sensorHistorySerial = state.serial;
     const previous = state.sensorHistory.at(-1), now = Date.now();
     const sum = (items, key) => (items || []).reduce((n, item) => n + (Number(item[key]) || 0), 0);
+    const sumNetwork = (match, key) => sum((s.network_interfaces || []).filter((iface) => match.test(iface.name)), key);
     const mem = s.mem_total_kb ? 100 * (s.mem_total_kb - (s.mem_available_kb || 0)) / s.mem_total_kb : null;
     const diskTotal = s.storage_internal_total_kb, diskFree = s.storage_internal_free_kb;
     const rx = sum(s.network_interfaces, 'rx_bytes'), tx = sum(s.network_interfaces, 'tx_bytes');
@@ -1766,6 +1767,8 @@
       swap: Number((s.swap_total_kb ? 100 * (s.swap_total_kb - (s.swap_free_kb || 0)) / s.swap_total_kb : 0).toFixed(1)),
       storage: Number((diskTotal && diskFree != null ? 100 * (diskTotal - diskFree) / diskTotal : 0).toFixed(1)),
       rx, tx,
+      wifiRx: sumNetwork(/^(wlan|wifi)/i, 'rx_bytes'), wifiTx: sumNetwork(/^(wlan|wifi)/i, 'tx_bytes'),
+      mobileRx: sumNetwork(/^(rmnet|ccmni|wwan|pdp)/i, 'rx_bytes'), mobileTx: sumNetwork(/^(rmnet|ccmni|wwan|pdp)/i, 'tx_bytes'),
       rxRate: Number(rxRate.toFixed(1)),
       txRate: Number(txRate.toFixed(1)),
       diskReadRate: Number(diskReadRate.toFixed(1)),
@@ -2184,6 +2187,12 @@
     const netPeakRate = Math.max(1024, ...rxHist, ...txHist);
     const totRx = network.reduce((acc, iface) => acc + (Number(iface.rx_bytes) || 0), 0);
     const totTx = network.reduce((acc, iface) => acc + (Number(iface.tx_bytes) || 0), 0);
+    const usageType = state.dataUsageNetwork === 'mobile' ? 'mobile' : 'wifi';
+    const usagePattern = usageType === 'wifi' ? /^(wlan|wifi)/i : /^(rmnet|ccmni|wwan|pdp)/i;
+    const usageIfaces = network.filter((iface) => usagePattern.test(iface.name));
+    const usageRx = usageIfaces.reduce((sum, iface) => sum + (Number(iface.rx_bytes) || 0), 0);
+    const usageTx = usageIfaces.reduce((sum, iface) => sum + (Number(iface.tx_bytes) || 0), 0);
+    const usageHistory = hist.map((sample) => ({ rx: Number(sample[`${usageType}Rx`]) || 0, tx: Number(sample[`${usageType}Tx`]) || 0 }));
     const avgRxRate = avg(rxHist);
     const avgTxRate = avg(txHist);
 
@@ -3777,66 +3786,70 @@
       },
 
       'data-usage': () => `
+        <div class="toolbar" role="group" aria-label="Data usage network">
+          <button class="button ${usageType === 'mobile' ? 'tonal' : ''}" data-data-network="wifi" aria-pressed="${usageType === 'wifi'}">Wi-Fi</button>
+          <button class="button ${usageType === 'mobile' ? 'tonal' : ''}" data-data-network="mobile" aria-pressed="${usageType === 'mobile'}">Mobile data</button>
+        </div>
         <div class="sensors-stat-grid">
           ${renderBigStatCard({
             iconCode: 'e119',
             title: 'TOTAL TRANSFERRED',
-            heroVal: formatBytes(totRx + totTx),
+            heroVal: formatBytes(usageRx + usageTx),
             heroUnit: '',
-            subtitle: 'Combined interface traffic',
+            subtitle: `${usageType === 'wifi' ? 'Wi-Fi' : 'Mobile data'} interfaces`,
             leftStat: 'RX + TX',
             rightStat: 'TOTAL',
-            data: hist.map(h => Number(h.rx) + Number(h.tx)),
-            maxVal: Math.max(1024, ...(hist.map(h => Number(h.rx) + Number(h.tx)))),
+            data: usageHistory.map(h => h.rx + h.tx),
+            maxVal: Math.max(1024, ...usageHistory.map(h => h.rx + h.tx)),
             dottedRatio: 0.5,
             color: 'var(--accent)'
           })}
           ${renderBigStatCard({
             iconCode: 'e119',
             title: 'TOTAL RECEIVED',
-            heroVal: formatBytes(totRx),
+            heroVal: formatBytes(usageRx),
             heroUnit: '',
             subtitle: 'Cumulative downlink bytes',
             leftStat: 'RECEIVED',
-            rightStat: 'ALL IFACES',
-            data: hist.map(h => Number(h.rx) || 0),
-            maxVal: Math.max(1024, ...(hist.map(h => Number(h.rx) || 0))),
+            rightStat: usageType.toUpperCase(),
+            data: usageHistory.map(h => h.rx),
+            maxVal: Math.max(1024, ...usageHistory.map(h => h.rx)),
             dottedRatio: 0.5,
             color: '#38bdf8'
           })}
           ${renderBigStatCard({
             iconCode: 'e119',
             title: 'TOTAL SENT',
-            heroVal: formatBytes(totTx),
+            heroVal: formatBytes(usageTx),
             heroUnit: '',
             subtitle: 'Cumulative uplink bytes',
             leftStat: 'SENT',
-            rightStat: 'ALL IFACES',
-            data: hist.map(h => Number(h.tx) || 0),
-            maxVal: Math.max(1024, ...(hist.map(h => Number(h.tx) || 0))),
+            rightStat: usageType.toUpperCase(),
+            data: usageHistory.map(h => h.tx),
+            maxVal: Math.max(1024, ...usageHistory.map(h => h.tx)),
             dottedRatio: 0.5,
             color: '#a78bfa'
           })}
           ${renderBigStatCard({
             iconCode: 'e1ae',
             title: 'ACTIVE INTERFACES',
-            heroVal: `${network.length}`,
+            heroVal: `${usageIfaces.length}`,
             heroUnit: 'ifaces',
             subtitle: 'Reported by Linux kernel',
             leftStat: 'KERNEL',
             rightStat: 'NETWORKS',
-            data: Array(hist.length).fill(network.length),
-            maxVal: network.length || 1,
+            data: Array(hist.length).fill(usageIfaces.length),
+            maxVal: usageIfaces.length || 1,
             dottedRatio: 0.9,
             color: 'var(--accent)'
           })}
         </div>
 
         ${renderWaveformChartSvg({
-          title: 'Cumulative Network Traffic · 60s Trend',
+          title: `${usageType === 'wifi' ? 'Wi-Fi' : 'Mobile data'} Traffic · 60s Trend`,
           series: [
-            { label: 'Cumulative Downlink', data: hist.map(h => Number(h.rx) || 0), color: '#38bdf8' },
-            { label: 'Cumulative Uplink', data: hist.map(h => Number(h.tx) || 0), color: 'var(--accent)' }
+            { label: 'Cumulative Downlink', data: usageHistory.map(h => h.rx), color: '#38bdf8' },
+            { label: 'Cumulative Uplink', data: usageHistory.map(h => h.tx), color: 'var(--accent)' }
           ],
           height: 200,
           suffix: ' bytes'
@@ -3849,12 +3862,12 @@
               <div class="subtle">Cumulative bytes reported by Android kernel since device boot</div>
             </div>
           </div>
-          ${network.length ? `
+          ${usageIfaces.length ? `
             <div class="table-wrap">
               <table class="table">
                 <thead><tr><th>Interface</th><th>Received</th><th>Transmitted</th><th>Total</th></tr></thead>
                 <tbody>
-                  ${network.map(n => `
+                  ${usageIfaces.map(n => `
                     <tr>
                       <td class="mono"><b>${escapeHtml(n.name)}</b></td>
                       <td>↓ ${formatBytes(n.rx_bytes)}</td>
@@ -3865,7 +3878,7 @@
                 </tbody>
               </table>
             </div>
-          ` : empty('No data counters', 'Kernel byte counters unavailable.')}
+          ` : empty('No matching interface counters', `No ${usageType === 'wifi' ? 'Wi-Fi' : 'mobile data'} interface counters are exposed by the device.`)}
         </section>
       `,
 
@@ -4526,6 +4539,7 @@
       return;
     }
     const sensorTab = event.target.closest('[data-sensor-view]'); if (sensorTab) { state.sensorsView=sensorTab.dataset.sensorView; renderSensors(); return; }
+    const dataNetwork = event.target.closest('[data-data-network]'); if (dataNetwork) { state.dataUsageNetwork = dataNetwork.dataset.dataNetwork; renderSensors(); return; }
     const powerPresetBtn = event.target.closest('[data-power-preset]'); if (powerPresetBtn) { state.powerPreset = powerPresetBtn.dataset.powerPreset; renderSensors(); return; }
     const gpuPresetBtn = event.target.closest('[data-gpu-preset]'); if (gpuPresetBtn) { state.gpuPreset = gpuPresetBtn.dataset.gpuPreset; renderSensors(); return; }
     const tab = event.target.closest('[data-tab]'); if (tab) { selectTab(tab.dataset.tab); return; }

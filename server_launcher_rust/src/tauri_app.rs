@@ -279,6 +279,10 @@ async fn adb_action(
             }
             "launch_app" => crate::adb::launch_app(&serial, &value).map(|_| "App launched".into()),
             "stop_app" => crate::adb::force_stop_app(&serial, &value).map(|_| "App stopped".into()),
+            "kill_process" => {
+                let pid = value.parse::<u32>().map_err(|_| "Invalid process ID".to_string())?;
+                crate::adb::adb_cmd(Some(&serial), &["shell", "kill", "-9", &pid.to_string()]).map(|_| "Process terminated".into())
+            }
             "delete_file" => {
                 crate::adb::delete_file(&serial, &value).map(|_| "File deleted".into())
             }

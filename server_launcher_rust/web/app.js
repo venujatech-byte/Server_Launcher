@@ -4631,14 +4631,14 @@
       endTask.onclick = async () => {
         const pid = state.topAppsSelectedPid;
         if (!pid) return;
+        const group = allGroups.find((processGroup) => processGroup.pids.includes(pid));
         try {
-          await action('shell', `kill -9 ${pid}`);
-          toast(`Terminated process ${pid}`);
+          const packageName = group?.key;
+          if (group?.isApp && /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/.test(packageName || '')) await action('stop_app', packageName);
+          else await action('kill_process', String(pid));
           state.topAppsSelectedPid = null;
           await pollSensors(true);
-        } catch (err) {
-          toast(`Failed to terminate PID ${pid}: ${err}`, true);
-        }
+        } catch { /* The action helper reports ADB permission and process errors. */ }
       };
     }
 

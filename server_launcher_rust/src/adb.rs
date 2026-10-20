@@ -2191,6 +2191,53 @@ pub fn list_photos(serial: Option<&str>) -> Vec<AdbPhotoItem> {
     items
 }
 
+/// Lists one newest-first MediaStore page; fallback paths use an offset cursor.
+pub fn list_photos_page(serial: Option<&str>, cursor: Option<&str>, limit: usize) -> (Vec<AdbPhotoItem>, Option<String>) {
+    let limit = limit.clamp(1, 100);
+    let media_cursor = cursor.and_then(|value| value.strip_prefix("m:")).and_then(|value| value.parse::<u64>().ok());
+    if cursor.is_none() || media_cursor.is_some() {
+        let filter = media_cursor.map(|id| format!("--where \"_id < {id}\" ")).unwrap_or_default();
+        let query = format!(
+            "content query --uri content://media/external/images/media --projection _id:_display_name:_data:_size:date_modified {filter}--sort \"_id DESC\" 2>&1 | head -n {}",
+            limit + 1
+        );
+        if let Ok(raw) = adb_cmd(serial, &["shell", &query]) {
+            let mut page = Vec::new();
+            for line in raw.lines().filter(|line| line.trim_start().starts_with("Row:")) {
+                let mut id = String::new();
+                let mut name = String::new();
+                let mut path = String::new();
+                let mut size_bytes = None;
+                let mut date_secs = None;
+                for token in line.trim().split(", ") {
+                    let kv = token.trim();
+                    if let Some(value) = kv.strip_prefix("_id=") { id = value.to_string(); }
+                    else if let Some(value) = kv.strip_prefix("_display_name=") { name = value.to_string(); }
+                    else if let Some(value) = kv.strip_prefix("_data=") { path = value.to_string(); }
+                    else if let Some(value) = kv.strip_prefix("_size=") { size_bytes = value.parse::<u64>().ok(); }
+                    else if let Some(value) = kv.strip_prefix("date_modified=") { date_secs = value.parse::<i64>().ok(); }
+                }
+                if path.is_empty() { continue; }
+                if name.is_empty() { name = Path::new(&path).file_name().and_then(|value| value.to_str()).unwrap_or("photo.jpg").to_string(); }
+                let size_str = size_bytes.map(|bytes| if bytes < 1024 { format!("{bytes} B") } else if bytes < 1024 * 1024 { format!("{:.1} KB", bytes as f64 / 1024.0) } else { format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0)) }).unwrap_or_else(|| "--".into());
+                page.push((id, AdbPhotoItem { name, path, size_str, date_str: date_secs.map(format_timestamp_secs).unwrap_or_else(|| "Recent".into()) }));
+            }
+            if !page.is_empty() || media_cursor.is_some() {
+                let has_more = page.len() > limit;
+                page.truncate(limit);
+                let next = has_more.then(|| format!("m:{}", page.last().map(|item| item.0.as_str()).unwrap_or("")));
+                return (page.into_iter().map(|item| item.1).collect(), next);
+            }
+        }
+    }
+
+    let all = list_photos(serial);
+    let offset = cursor.and_then(|value| value.strip_prefix("f:")).and_then(|value| value.parse::<usize>().ok()).unwrap_or(0);
+    let items: Vec<_> = all.iter().skip(offset).take(limit).cloned().collect();
+    let next = (offset + items.len() < all.len()).then(|| format!("f:{}", offset + items.len()));
+    (items, next)
+}
+
 /// Pulls a remote file/photo to local directory.
 pub fn pull_photo_to_downloads(serial: Option<&str>, remote_path: &str) -> Result<String, String> {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());

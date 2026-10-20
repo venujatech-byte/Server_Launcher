@@ -210,6 +210,19 @@ async fn adb_photo_preview(serial: String, path: String) -> Result<String, Strin
 }
 
 #[tauri::command]
+async fn adb_photos_page(serial: String, cursor: Option<String>) -> Result<Value, String> {
+    on_worker(move || {
+        let (items, next_cursor) = crate::adb::list_photos_page(Some(&serial), cursor.as_deref(), 10);
+        Ok(json!({
+            "items": items.into_iter().map(|photo| json!({
+                "name": photo.name, "path": photo.path, "size": photo.size_str, "date": photo.date_str
+            })).collect::<Vec<_>>(),
+            "next_cursor": next_cursor
+        }))
+    }).await
+}
+
+#[tauri::command]
 async fn adb_photo_thumbnail(serial: String, path: String) -> Result<String, String> {
     on_worker(move || {
         use base64::Engine;
@@ -417,6 +430,7 @@ pub fn run() {
             adb_telemetry,
             adb_data,
             adb_screenshot,
+            adb_photos_page,
             adb_photo_preview,
             adb_photo_thumbnail,
             adb_action

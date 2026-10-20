@@ -2840,6 +2840,91 @@ tr[hidden], .app-row[hidden] { display: none !important; }
   color: #64748b;
 }
 
+/* Physical Memory Composition Card */
+.ram-comp-card {
+  margin-top: 14px;
+}
+
+.ram-comp-head-right {
+  font: 700 10px ui-monospace, monospace;
+  color: #94a3b8;
+  letter-spacing: 0.5px;
+}
+
+.ram-comp-bar-wrap {
+  margin: 14px 0 16px;
+}
+
+.ram-comp-bar {
+  width: 100%;
+  height: 12px;
+  background: #090f19;
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+}
+
+.ram-comp-seg {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.ram-comp-seg.in-use { background: #22d3ee; }
+.ram-comp-seg.modified { background: #94a3b8; }
+.ram-comp-seg.standby { background: #60a5fa; }
+.ram-comp-seg.free { background: #1e293b; }
+
+.ram-comp-cols {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 760px) {
+  .ram-comp-cols {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+}
+
+.ram-comp-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ram-comp-col-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 700 9.5px ui-monospace, monospace;
+  color: #94a3b8;
+  letter-spacing: 0.5px;
+}
+
+.ram-comp-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+}
+
+.ram-comp-dot.in-use { background: #22d3ee; }
+.ram-comp-dot.modified { background: #94a3b8; }
+.ram-comp-dot.standby { background: #60a5fa; }
+.ram-comp-dot.free { background: #334155; }
+
+.ram-comp-col-val {
+  font: 800 18px ui-monospace, monospace;
+  color: #f1f5f9;
+  line-height: 1.1;
+}
+
+.ram-comp-col-sub {
+  font: 500 11px ui-monospace, monospace;
+  color: #64748b;
+}
+
 /* Display & HW Accel Cards */
 .gpu-display-hero {
   font: 800 28px ui-monospace, monospace;

@@ -3278,6 +3278,230 @@ tr[hidden], .app-row[hidden] { display: none !important; }
   color: #f1f5f9;
 }
 
+/* Wi-Fi IP Config & Sockets Cards */
+.wifi-ip-card, .wifi-sockets-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wifi-ip-head-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font: 600 10px ui-monospace, monospace;
+  color: #64748b;
+  gap: 2px;
+}
+
+.wifi-ip-hero-wrap {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.wifi-ip-hero-label {
+  font: 700 9.5px ui-monospace, monospace;
+  color: #64748b;
+  letter-spacing: 0.5px;
+  margin-bottom: 3px;
+}
+
+.wifi-ip-hero-val {
+  font: 800 24px ui-monospace, monospace;
+  color: #f8fafc;
+  letter-spacing: -0.3px;
+}
+
+.wifi-ip-cidr {
+  font-size: 18px;
+  color: #64748b;
+}
+
+.wifi-copy-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  color: #94a3b8;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 13px;
+}
+
+.wifi-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f1f5f9;
+}
+
+.wifi-kv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wifi-kv-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font: 600 11.5px ui-monospace, monospace;
+}
+
+.wifi-kv-label {
+  color: #64748b;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+}
+
+.wifi-kv-val {
+  color: #f1f5f9;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wifi-dns-chip, .wifi-pci-chip {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9.5px;
+  color: #94a3b8;
+}
+
+.wifi-flush-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 1px 7px;
+  border-radius: 3px;
+  font: 700 9.5px ui-monospace, monospace;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.wifi-flush-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f1f5f9;
+}
+
+.wifi-lease-bar {
+  background: #090f19;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  padding: 10px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 4px;
+  font: 600 11px ui-monospace, monospace;
+}
+
+.wifi-lease-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #38bdf8;
+}
+
+.wifi-lease-right {
+  color: #f1f5f9;
+  font-weight: 700;
+}
+
+/* Sockets Card Styles */
+.wifi-sock-monitor-btn {
+  background: #1d4ed8;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font: 700 11px ui-monospace, monospace;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.wifi-sock-monitor-btn:hover {
+  background: #2563eb;
+}
+
+.wifi-sock-table {
+  width: 100%;
+  border-collapse: collapse;
+  font: 500 11px ui-monospace, monospace;
+}
+
+.wifi-sock-table th {
+  text-align: left;
+  font: 700 9px ui-monospace, monospace;
+  color: #64748b;
+  letter-spacing: 0.5px;
+  padding: 4px 6px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.wifi-sock-table th:last-child {
+  text-align: right;
+}
+
+.wifi-sock-table td {
+  padding: 5px 6px;
+  color: #cbd5e1;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+}
+
+.wifi-sock-table td:last-child {
+  text-align: right;
+}
+
+.wifi-sock-proc {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #f1f5f9;
+  font-weight: 600;
+}
+
+.wifi-sock-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #38bdf8;
+}
+
+.wifi-sock-pill {
+  display: inline-block;
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  font: 700 8.5px ui-monospace, monospace;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.wifi-sock-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font: 600 10px ui-monospace, monospace;
+  color: #64748b;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.wifi-sock-filter {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #38bdf8;
+}
+
 @media (max-width: 1050px) {
   .shell { grid-template-columns: 215px minmax(0, 1fr); }
   .content { padding: 10px; }

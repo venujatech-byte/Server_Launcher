@@ -2,7 +2,7 @@
   const invoke = window.__TAURI__?.core?.invoke;
   const $ = (selector) => document.querySelector(selector);
   const content = $('#content');
-  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', screenTimer: null, toastTimer: null, lastTelemetry: 0, topAppsSelectedPid: null, topAppsExpandedGroups: new Set(), topAppsAppsExpanded: true, topAppsBgExpanded: true, topAppsSort: 'mem', topAppsSortDesc: true, topAppsSearch: '', powerPreset: 'balanced', gpuPreset: 'balanced', powerHist: [0.0, 0.0, 0.0], photosAlbum: 'all', photosSearch: '', photosDensity: 'comfortable', photosSelected: new Set(), photosSelectionMode: false, photosLightboxIndex: null, photosCache: {}, customSubtab: 'boot', customRootStatus: null, customFastbootDevices: null, customDensityVal: '', customAnimScale: '0.5' };
+  const state = { serial: '', device: null, devices: [], tab: 'overview', telemetry: null, data: [], messageAddress: '', sensorsView: 'overview', sensorsCadence: 2000, sensorHistory: [], sensorTimer: null, sensorBusy: false, sensorFilter: '', sensorSort: 'cpu', sensorInventory: [], sensorInventorySerial: '', sensorInventoryLoading: false, sensorInventoryLoaded: false, path: '/sdcard', screenTimer: null, commTimer: null, commBusy: false, contacts: null, contactsSerial: '', toastTimer: null, lastTelemetry: 0, topAppsSelectedPid: null, topAppsExpandedGroups: new Set(), topAppsAppsExpanded: true, topAppsBgExpanded: true, topAppsSort: 'mem', topAppsSortDesc: true, topAppsSearch: '', powerPreset: 'balanced', gpuPreset: 'balanced', powerHist: [0.0, 0.0, 0.0], photosAlbum: 'all', photosSearch: '', photosDensity: 'comfortable', photosSelected: new Set(), photosSelectionMode: false, photosLightboxIndex: null, photosCache: {}, customSubtab: 'boot', customRootStatus: null, customFastbootDevices: null, customDensityVal: '', customAnimScale: '0.5' };
   const tabNames = { overview: 'Overview', screen: 'Screen share', messages: 'Messages', calls: 'Calls', photos: 'Photos', notifications: 'Notifications', sensors: 'Sensors', storage: 'Storage', apps: 'Apps', clipboard: 'Clipboard', terminal: 'Terminal', wireless: 'Wireless debugging', firmware: 'Customization & Boot' };
   const tabKinds = { messages: 'messages', calls: 'calls', photos: 'photos', notifications: 'notifications', sensors: 'sensors', apps: 'apps', storage: 'files', wireless: 'endpoints' };
   const icon = (code) => `<span class="icon" aria-hidden="true">&#x${code};</span>`;
@@ -78,6 +78,7 @@
   function selectTab(tab) {
     if (!tabNames[tab]) return;
     clearInterval(state.screenTimer); state.screenTimer = null;
+    clearInterval(state.commTimer); state.commTimer = null;
     state.tab = tab; document.querySelectorAll('.nav-item').forEach((n) => n.classList.toggle('active', n.dataset.tab === tab));
     clearTimeout(state.sensorTimer); state.sensorTimer = null;
     $('#page-title').textContent = tabNames[tab]; $('#eyebrow').textContent = `ANDROID DEVICE / ${tab.toUpperCase()}`;
@@ -86,6 +87,7 @@
       showPageLoading(tabNames[tab]);
     }
     void renderTab();
+    if (['messages', 'calls'].includes(tab) && !document.hidden) state.commTimer = setInterval(refreshCommPanels, 15000);
   }
   async function refreshDevices() {
     try {
@@ -397,6 +399,40 @@
           toast('Enter a phone number to call.', true);
         }
       };
+    }
+  }
+  async function refreshCommPanels() {
+    if (state.commBusy || document.hidden || !['messages', 'calls'].includes(state.tab) || !state.serial) return;
+    state.commBusy = true;
+    const tab = state.tab, serial = state.serial;
+    const fields = tab === 'messages'
+      ? ['#message-filter', '#sms-number', '#sms-body']
+      : ['#call-filter', '#contact-filter', '#dial-number'];
+    const saved = Object.fromEntries(fields.map((selector) => [selector, $(selector)?.value]));
+    try {
+      const section = tab;
+      const [rowsResult, contactsResult] = await Promise.allSettled([
+        invokeOrFail('adb_data', { serial, section, path: null }),
+        tab === 'calls' ? invokeOrFail('adb_data', { serial, section: 'contacts', path: null }) : Promise.resolve(state.contacts),
+      ]);
+      if (rowsResult.status === 'rejected') throw rowsResult.reason;
+      const rows = rowsResult.value;
+      const contacts = contactsResult.status === 'fulfilled' ? contactsResult.value : state.contacts;
+      if (state.tab !== tab || state.serial !== serial) return;
+      const changed = JSON.stringify(rows) !== JSON.stringify(state.data)
+        || (tab === 'calls' && JSON.stringify(contacts) !== JSON.stringify(state.contacts));
+      state.data = rows || [];
+      if (tab === 'calls') { state.contacts = contacts || []; state.contactsSerial = serial; }
+      if (!changed) return;
+      if (tab === 'messages') renderMessages(); else await renderCalls();
+      for (const selector of fields) {
+        const input = $(selector);
+        if (input && saved[selector] != null) { input.value = saved[selector]; input.dispatchEvent(new Event('input')); }
+      }
+    } catch {
+      // Keep the last successful panel data when a periodic ADB read fails.
+    } finally {
+      state.commBusy = false;
     }
   }
   function renderPhotos() {
@@ -4547,6 +4583,7 @@
       void syncTheme();
       if (state.tab === 'screen' && state.serial) selectTab('screen');
       else if (state.tab === 'sensors' && state.serial) void renderTab();
+      else if (['messages', 'calls'].includes(state.tab) && state.serial) selectTab(state.tab);
     }
   });
 

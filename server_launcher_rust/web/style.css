@@ -2556,6 +2556,376 @@ tr[hidden], .app-row[hidden] { display: none !important; }
   font-weight: 700;
 }
 
+/* GPU Telemetry Dashboard */
+.gpu-engine-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 14px;
+}
+
+@media (max-width: 800px) {
+  .gpu-engine-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+.gpu-engine-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gpu-engine-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 700 9px ui-monospace, monospace;
+  color: var(--dim);
+  letter-spacing: 0.8px;
+}
+
+.gpu-engine-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+.gpu-engine-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.gpu-engine-title-row h2 {
+  font-size: 20px;
+  font-weight: 800;
+  color: #f1f5f9;
+  letter-spacing: -0.3px;
+  margin: 0;
+}
+
+.gpu-driver-chip {
+  background: rgba(53, 132, 228, 0.2);
+  color: #93c5fd;
+  border: 1px solid rgba(53, 132, 228, 0.4);
+  font: 700 10px ui-monospace, monospace;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.gpu-engine-subtitle {
+  font: 500 11px ui-monospace, monospace;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.gpu-engine-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.gpu-mode-pill {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  color: #94a3b8;
+  font: 700 10px ui-monospace, monospace;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.gpu-mode-pill:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f1f5f9;
+}
+
+.gpu-mode-pill.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent), transparent 60%);
+}
+
+.gpu-refresh-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  color: #94a3b8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.gpu-refresh-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f1f5f9;
+}
+
+/* Engine Utilization Trace */
+.gpu-trace-section {
+  margin-top: 14px;
+}
+
+.gpu-trace-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+@media (max-width: 800px) {
+  .gpu-trace-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.gpu-trace-box {
+  background: #090f19;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gpu-trace-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.gpu-trace-info h4 {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f1f5f9;
+  margin: 0 0 3px;
+}
+
+.gpu-trace-info small {
+  font: 500 10px ui-monospace, monospace;
+  color: #64748b;
+}
+
+.gpu-trace-val-wrap {
+  text-align: right;
+}
+
+.gpu-trace-val {
+  font: 800 18px ui-monospace, monospace;
+  color: #f8fafc;
+  line-height: 1;
+}
+
+.gpu-trace-val small {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.gpu-trace-peak {
+  font: 600 9.5px ui-monospace, monospace;
+  color: #64748b;
+  margin-top: 3px;
+}
+
+.gpu-trace-spark-wrap {
+  width: 100%;
+  height: 38px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+/* Memory Subsystem Breakdown */
+.gpu-mem-card {
+  margin-top: 14px;
+}
+
+.gpu-mem-legend-chips {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font: 600 10px ui-monospace, monospace;
+  color: #94a3b8;
+}
+
+.gpu-mem-chip-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  margin-right: 4px;
+}
+
+.gpu-mem-chip-dot.vram { background: #38bdf8; }
+.gpu-mem-chip-dot.dynamic { background: var(--accent); }
+.gpu-mem-chip-dot.free { background: #1e293b; }
+
+.gpu-mem-bar-wrap {
+  margin: 14px 0 16px;
+}
+
+.gpu-mem-bar {
+  width: 100%;
+  height: 10px;
+  background: #111a2c;
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+}
+
+.gpu-mem-seg {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.gpu-mem-seg.vram { background: #38bdf8; }
+.gpu-mem-seg.dynamic { background: var(--accent); }
+.gpu-mem-seg.free { background: #1e293b; }
+
+.gpu-mem-cols {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 600px) {
+  .gpu-mem-cols {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+}
+
+.gpu-mem-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.gpu-mem-col-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 700 9.5px ui-monospace, monospace;
+  color: #64748b;
+  letter-spacing: 0.5px;
+}
+
+.gpu-mem-col-val {
+  font: 800 16px ui-monospace, monospace;
+  color: #f1f5f9;
+}
+
+.gpu-mem-col-sub {
+  font: 500 10px ui-monospace, monospace;
+  color: #64748b;
+}
+
+/* Display & HW Accel Cards */
+.gpu-display-hero {
+  font: 800 28px ui-monospace, monospace;
+  color: #f8fafc;
+  line-height: 1.1;
+  letter-spacing: -0.5px;
+  margin: 8px 0 4px;
+}
+
+.gpu-display-sub {
+  font: 600 11.5px ui-monospace, monospace;
+  color: #94a3b8;
+  margin-bottom: 14px;
+}
+
+.gpu-display-tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.gpu-display-tile {
+  background: #090f19;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gpu-display-tile small {
+  font: 600 9px ui-monospace, monospace;
+  color: #64748b;
+}
+
+.gpu-display-tile b {
+  font: 700 12px ui-monospace, monospace;
+  color: #f1f5f9;
+}
+
+.gpu-hw-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.gpu-hw-item {
+  background: #090f19;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font: 600 11.5px ui-monospace, monospace;
+}
+
+.gpu-hw-item-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #f1f5f9;
+}
+
+.gpu-hw-check {
+  color: #10b981;
+  font-weight: 800;
+}
+
+.gpu-hw-badge {
+  background: rgba(16, 185, 129, 0.12);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  font: 700 8.5px ui-monospace, monospace;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.gpu-hw-badge.direct {
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.3);
+}
+
 @media (max-width: 1050px) {
   .shell { grid-template-columns: 215px minmax(0, 1fr); }
   .content { padding: 10px; }

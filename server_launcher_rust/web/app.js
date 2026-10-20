@@ -1523,13 +1523,6 @@
     if (maxV === minV) maxV = minV + 1;
     const range = maxV - minV;
 
-    const xLeft = 52;
-    const xRight = w - 12;
-    const yBase = h - 18;
-    const yTop = 16;
-    const graphH = yBase - yTop;
-    const stepX = (xRight - xLeft) / (n - 1);
-
     const formatTick = (val) => {
       if (suffix === ' B/s') return formatRate(val);
       if (suffix === ' bytes') return formatBytes(val);
@@ -1539,11 +1532,26 @@
       return `${Math.round(val)}${suffix}`;
     };
 
-    const yAxisTicks = [1.0, 0.75, 0.5, 0.25, 0.0].map(ratio => {
-      const y = yBase - ratio * graphH;
+    const isLongUnit = suffix === ' B/s' || suffix === ' bytes' || suffix === ' B';
+    const tickRatios = [1.0, 0.75, 0.5, 0.25, 0.0];
+    const tickItems = tickRatios.map(ratio => {
       const v = minV + ratio * range;
       const txt = formatTick(v);
-      return `<text x="${xLeft - 7}" y="${(y + 3.5).toFixed(1)}" text-anchor="end" fill="#64748b" font-size="10" font-family="ui-monospace, monospace" font-weight="600">${txt}</text>`;
+      return { ratio, txt };
+    });
+
+    const maxChars = Math.max(...tickItems.map(t => t.txt.length), 4);
+    const neededLeft = Math.ceil(maxChars * 6.6 + 16);
+    const xLeft = isLongUnit ? Math.max(88, neededLeft) : Math.max(56, neededLeft);
+    const xRight = w - 12;
+    const yBase = h - 18;
+    const yTop = 16;
+    const graphH = yBase - yTop;
+    const stepX = (xRight - xLeft) / (n - 1);
+
+    const yAxisTicks = tickItems.map(({ ratio, txt }) => {
+      const y = yBase - ratio * graphH;
+      return `<text x="${xLeft - 8}" y="${(y + 3.5).toFixed(1)}" text-anchor="end" fill="#64748b" font-size="10" font-family="ui-monospace, monospace" font-weight="600">${txt}</text>`;
     }).join('');
 
     const legend = series.map((s, idx) => `
@@ -1592,7 +1600,7 @@
           <div class="chart-legend">${legend}</div>
         </div>
         <div class="waveform-chart-box">
-          <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(title)}" preserveAspectRatio="none" style="width:100%;height:${h}px;display:block;">
+          <svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(title)}" preserveAspectRatio="none" style="width:100%;height:${h}px;display:block;overflow:visible;">
             <line x1="${xLeft}" y1="${yBase}" x2="${xRight}" y2="${yBase}" stroke="rgba(255,255,255,0.08)" stroke-width="1.2"/>
             ${yAxisTicks}
             ${gridLines}
@@ -1600,7 +1608,7 @@
             ${paths}
           </svg>
         </div>
-        <div class="waveform-time-axis">
+        <div class="waveform-time-axis" style="padding-left: calc(6px + ${(xLeft / w * 100).toFixed(2)}%); padding-right: calc(6px + ${((w - xRight) / w * 100).toFixed(2)}%);">
           <span>60s ago</span>
           <span>45s</span>
           <span>30s</span>

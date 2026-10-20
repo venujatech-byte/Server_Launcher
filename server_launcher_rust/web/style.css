@@ -455,11 +455,22 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 .files-drive-copy em { display: block; height: 100%; border-radius: inherit; background: var(--accent-strong); }
 .files-drive-chevron { color: var(--dim); }
 .storage-volume-list, .storage-device-list { display: grid; gap: 10px; }
-.storage-volume-row { padding: 12px; background: var(--well); border-radius: 9px; }
+.storage-snapshot { padding: 16px; background: var(--surface); border: 1px solid var(--surface2); border-radius: 12px; }
+.storage-snapshot .card-head { margin-bottom: 14px; }
+.storage-volume-list { grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); }
+.storage-volume-row { display: flex; align-items: center; gap: 14px; padding: 16px; background: var(--well); border-radius: 10px; }
+.storage-volume-icon { display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: 22px; }
+.storage-volume-copy { flex: 1; min-width: 0; }
 .storage-volume-top { display: flex; justify-content: space-between; gap: 12px; color: var(--text); font-size: 13px; }
 .storage-volume-row small { display: block; margin-top: 4px; color: var(--muted); font: 11px var(--font-mono); }
 .storage-volume-row .progress { margin-top: 9px; }
 .storage-device-row { display: grid; grid-template-columns: minmax(100px, 1fr) repeat(2, minmax(110px, auto)); gap: 12px; align-items: center; padding: 10px 12px; background: var(--well); border-radius: 8px; color: var(--muted); font: 11px var(--font-mono); }
+.wifi-usage-card { margin-top: 14px; }
+.wifi-usage-totals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+.wifi-usage-totals > div { display: grid; gap: 6px; min-width: 0; padding: 12px; background: var(--well); border-radius: 8px; }
+.wifi-usage-totals small { color: var(--muted); font: 10px var(--font-mono); }
+.wifi-usage-totals b { overflow-wrap: anywhere; font-size: 14px; }
+@media (max-width: 760px) { .wifi-usage-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .files-sticky-bar { position: sticky; top: -12px; z-index: 8; display: flex; align-items: center; gap: 7px; margin: -12px -14px 12px; padding: 12px 14px; background: var(--bg); border-bottom: 1px solid var(--surface2); }
 .files-sticky-bar form { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 80px; }
 .files-sticky-bar form .input { width: 100%; min-width: 0; min-height: 36px; }
@@ -3567,398 +3578,31 @@ body.communications-style button { box-shadow: none !important; }
 }
 
 /* Wi-Fi IP Config & Sockets Cards */
-.wifi-ip-card, .wifi-sockets-card {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.wifi-ip-head-right {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  font: 600 10px ui-monospace, monospace;
-  color: #64748b;
-  gap: 2px;
-}
-
-.wifi-ip-hero-wrap {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-bottom: 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.wifi-ip-hero-label {
-  font: 700 9.5px ui-monospace, monospace;
-  color: #64748b;
-  letter-spacing: 0.5px;
-  margin-bottom: 3px;
-}
-
-.wifi-ip-hero-val {
-  font: 800 24px ui-monospace, monospace;
-  color: #f8fafc;
-  letter-spacing: -0.3px;
-}
-
-.wifi-ip-cidr {
-  font-size: 18px;
-  color: #64748b;
-}
-
-.wifi-copy-btn {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 4px;
-  color: #94a3b8;
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  font-size: 13px;
-}
-
-.wifi-copy-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #f1f5f9;
-}
-
-.wifi-kv-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.wifi-kv-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font: 600 11.5px ui-monospace, monospace;
-}
-
-.wifi-kv-label {
-  color: #64748b;
-  font-size: 10px;
-  letter-spacing: 0.5px;
-}
-
-.wifi-kv-val {
-  color: #f1f5f9;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.wifi-dns-chip, .wifi-pci-chip {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 1px 6px;
-  border-radius: 3px;
-  font-size: 9.5px;
-  color: #94a3b8;
-}
-
-.wifi-flush-btn {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 1px 7px;
-  border-radius: 3px;
-  font: 700 9.5px ui-monospace, monospace;
-  color: #94a3b8;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.wifi-flush-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #f1f5f9;
-}
-
-.wifi-lease-bar {
-  background: #090f19;
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  border-radius: 6px;
-  padding: 10px 14px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 4px;
-  font: 600 11px ui-monospace, monospace;
-}
-
-.wifi-lease-left {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: #38bdf8;
-}
-
-.wifi-lease-right {
-  color: #f1f5f9;
-  font-weight: 700;
-}
-
-/* Sockets Card Styles */
-.wifi-sock-monitor-btn {
-  background: #1d4ed8;
-  color: #ffffff;
-  border: none;
-  border-radius: 6px;
-  padding: 6px 14px;
-  font: 700 11px ui-monospace, monospace;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.wifi-sock-monitor-btn:hover {
-  background: #2563eb;
-}
-
-.wifi-sock-table {
-  width: 100%;
-  border-collapse: collapse;
-  font: 500 11px ui-monospace, monospace;
-}
-
-.wifi-sock-table th {
-  text-align: left;
-  font: 700 9px ui-monospace, monospace;
-  color: #64748b;
-  letter-spacing: 0.5px;
-  padding: 4px 6px 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-}
-
-.wifi-sock-table th:last-child {
-  text-align: right;
-}
-
-.wifi-sock-table td {
-  padding: 5px 6px;
-  color: #cbd5e1;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.02);
-}
-
-.wifi-sock-table td:last-child {
-  text-align: right;
-}
-
-.wifi-sock-proc {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: #f1f5f9;
-  font-weight: 600;
-}
-
-.wifi-sock-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #38bdf8;
-}
-
-.wifi-sock-pill {
-  display: inline-block;
-  background: rgba(56, 189, 248, 0.12);
-  color: #38bdf8;
-  border: 1px solid rgba(56, 189, 248, 0.25);
-  font: 700 8.5px ui-monospace, monospace;
-  padding: 2px 7px;
-  border-radius: 4px;
-}
-
-.wifi-sock-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font: 600 10px ui-monospace, monospace;
-  color: #64748b;
-  padding-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
-}
-
-.wifi-sock-filter {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: #38bdf8;
-}
-
-/* Cellular & Mobile Data Dashboard */
-.cellular-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px 20px;
-  margin-bottom: 14px;
-}
-
-@media (max-width: 800px) {
-  .cellular-header {
-    flex-direction: column;
-    align-items: stretch;
-  }
-}
-
-.cellular-header-left {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.cellular-indicator {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font: 700 9px ui-monospace, monospace;
-  color: var(--dim);
-  letter-spacing: 0.8px;
-}
-
-.cellular-indicator-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #10b981;
-  box-shadow: 0 0 8px #10b981;
-}
-
-.cellular-indicator-dot.standby {
-  background: #f59e0b;
-  box-shadow: 0 0 8px #f59e0b;
-}
-
-.cellular-title-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.cellular-title-row h2 {
-  font-size: 20px;
-  font-weight: 800;
-  color: #f1f5f9;
-  letter-spacing: -0.3px;
-  margin: 0;
-}
-
-.cellular-rat-chip {
-  background: rgba(16, 185, 129, 0.15);
-  color: #34d399;
-  border: 1px solid rgba(16, 185, 129, 0.3);
-  font: 700 10px ui-monospace, monospace;
-  padding: 2px 8px;
-  border-radius: 4px;
-}
-
-.cellular-subtitle {
-  font: 500 11px ui-monospace, monospace;
-  color: #64748b;
-  margin-top: 2px;
-}
-
-.cellular-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-/* Cellular SIM Card & Radio Card */
-.cellular-sim-card, .cellular-radio-card {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.cellular-sim-hero {
-  background: #090f19;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
-  padding: 12px 14px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.cellular-sim-hero-carrier {
-  font: 800 18px ui-monospace, monospace;
-  color: #f8fafc;
-}
-
-.cellular-sim-hero-sub {
-  font: 500 10.5px ui-monospace, monospace;
-  color: #64748b;
-  margin-top: 2px;
-}
-
-.cellular-signal-matrix {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
-
-@media (max-width: 600px) {
-  .cellular-signal-matrix {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-.cellular-signal-tile {
-  background: #090f19;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 6px;
-  padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.cellular-signal-tile small {
-  font: 700 8.5px ui-monospace, monospace;
-  color: #64748b;
-  letter-spacing: 0.5px;
-}
-
-.cellular-signal-tile b {
-  font: 800 15px ui-monospace, monospace;
-  color: #f1f5f9;
-}
-
-.cellular-signal-tile span {
-  font: 600 9px ui-monospace, monospace;
-}
-
-.cellular-slot-bar {
-  background: #090f19;
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  border-radius: 6px;
-  padding: 10px 14px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font: 600 11px ui-monospace, monospace;
-  margin-top: 4px;
-}
-
-.cellular-slot-bar small {
-  color: #94a3b8;
-}
-
-.cellular-slot-bar b {
-  color: #f1f5f9;
-}
+/* Cellular and storage telemetry */
+.cellular-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; padding: 16px; background: var(--surface); border: 1px solid var(--surface2); border-radius: 12px; }
+.cellular-header h2 { margin: 6px 0 3px; font-size: 20px; }
+.cellular-indicator { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font: 600 11px var(--font-mono); }
+.cellular-indicator-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+.cellular-indicator-dot.standby { background: var(--dim); }
+.cellular-traffic-grid, .cellular-sim-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+.cellular-traffic-card { display: grid; gap: 7px; min-width: 0; }
+.cellular-traffic-card .stat-card-title { display: flex; align-items: center; gap: 8px; color: var(--muted); font: 600 11px var(--font-mono); }
+.cellular-traffic-card .stat-card-title span { color: var(--accent); font-size: 18px; }
+.cellular-traffic-card > strong { font-size: clamp(24px, 3vw, 34px); letter-spacing: -.03em; }
+.cellular-traffic-card > span, .cellular-traffic-card > small { color: var(--muted); }
+.cellular-mini-chart { height: 46px; margin-top: 4px; }
+.cellular-mini-chart .stat-card-spark { width: 100%; height: 100%; }
+.cellular-sim-card { min-width: 0; padding: 16px; }
+.cellular-sim-card-head { display: flex; align-items: center; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--surface2); }
+.cellular-sim-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font: 700 11px var(--font-mono); }
+.cellular-sim-card-head h3, .cellular-interface-card h3 { margin: 0 0 3px; font-size: 15px; }
+.cellular-sim-carrier { padding: 14px 0; font-size: 20px; font-weight: 650; }
+.cellular-sim-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.cellular-sim-fields > div { display: grid; gap: 5px; min-width: 0; padding: 10px; background: var(--well); border-radius: 8px; }
+.cellular-sim-fields small { color: var(--muted); font: 10px var(--font-mono); text-transform: uppercase; }
+.cellular-sim-fields b { overflow-wrap: anywhere; font-size: 12px; }
+.cellular-interface-card { margin-top: 0; }
+@media (max-width: 760px) { .cellular-traffic-grid, .cellular-sim-grid { grid-template-columns: 1fr; } .cellular-header { align-items: flex-start; } }
 
 @media (max-width: 1050px) {
   .shell { grid-template-columns: 215px minmax(0, 1fr); }

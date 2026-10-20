@@ -88,6 +88,16 @@ pub struct AdbNetworkInterface {
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct AdbSimSlot {
+    pub slot: usize,
+    pub operator: String,
+    pub state: String,
+    pub network_type: String,
+    pub numeric: String,
+    pub country: String,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct AdbTemperatureSensor {
     pub name: String,
     pub temp_c: f32,
@@ -158,6 +168,7 @@ pub struct AdbDeviceSensors {
     pub cellular_operator: String,
     pub sim_operator: String,
     pub sim_state: String,
+    pub sim_slots: Vec<AdbSimSlot>,
     pub cellular_network_type: String,
     pub cellular_numeric: String,
     pub cellular_country: String,
@@ -279,6 +290,23 @@ fn parse_android_df_line(line: &str) -> Option<(String, u64, u64)> {
         fields.get(1)?.parse().ok()?,
         fields.get(3)?.parse().ok()?,
     ))
+}
+
+fn parse_sim_slots(operator: &str, state: &str, network_type: &str, numeric: &str, country: &str) -> Vec<AdbSimSlot> {
+    let values = [operator, state, network_type, numeric, country].map(|value| {
+        value.split(',').map(str::trim).map(str::to_string).collect::<Vec<_>>()
+    });
+    let count = if values.iter().any(|items| items.iter().any(|item| !item.is_empty())) {
+        values.iter().map(Vec::len).max().unwrap_or(0).min(2)
+    } else { 0 };
+    (0..count).map(|index| AdbSimSlot {
+        slot: index + 1,
+        operator: values[0].get(index).cloned().unwrap_or_default(),
+        state: values[1].get(index).cloned().unwrap_or_default(),
+        network_type: values[2].get(index).cloned().unwrap_or_default(),
+        numeric: values[3].get(index).cloned().unwrap_or_default(),
+        country: values[4].get(index).cloned().unwrap_or_default(),
+    }).collect()
 }
 
 /// Parses output from `adb devices -l` and returns all attached devices.
@@ -633,7 +661,16 @@ fn parse_battery_time(line: &str) -> Option<f64> {
 
 #[cfg(test)]
 mod power_time_tests {
-    use super::{parse_android_df_line, parse_battery_time, parse_power_attribution, parse_sensor_inventory};
+    use super::{parse_android_df_line, parse_battery_time, parse_power_attribution, parse_sensor_inventory, parse_sim_slots};
+
+    #[test]
+    fn parses_sim_slots_from_android_property_lists() {
+        let sims = parse_sim_slots("Hutch,Dialog", "READY,ABSENT", "LTE,Unknown", "41308,41302", "lk,lk");
+        assert_eq!(sims.len(), 2);
+        assert_eq!(sims[0].operator, "Hutch");
+        assert_eq!(sims[1].state, "ABSENT");
+        assert_eq!(sims[1].numeric, "41302");
+    }
 
     #[test]
     fn reads_sensor_names_and_fingerprint_feature() {
@@ -1145,6 +1182,13 @@ echo __TELEPHONY__; getprop gsm.operator.alpha; getprop gsm.sim.operator.alpha; 
         cellular_network_type: section("TELEPHONY").lines().nth(3).unwrap_or("").trim().to_string(),
         cellular_numeric: section("TELEPHONY").lines().nth(4).unwrap_or("").trim().to_string(),
         cellular_country: section("TELEPHONY").lines().nth(5).unwrap_or("").trim().to_string(),
+        sim_slots: parse_sim_slots(
+            section("TELEPHONY").lines().nth(1).unwrap_or(""),
+            section("TELEPHONY").lines().nth(2).unwrap_or(""),
+            section("TELEPHONY").lines().nth(3).unwrap_or(""),
+            section("TELEPHONY").lines().nth(4).unwrap_or(""),
+            section("TELEPHONY").lines().nth(5).unwrap_or(""),
+        ),
         baseband_version: section("TELEPHONY").lines().nth(6).unwrap_or("").trim().to_string(),
         ril_impl: section("TELEPHONY").lines().nth(7).unwrap_or("").trim().to_string(),
         mobile_data_enabled: section("TELEPHONY").lines().nth(8).and_then(|v| match v.trim() {

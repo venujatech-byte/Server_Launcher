@@ -1732,6 +1732,8 @@
     const mem = s.mem_total_kb ? 100 * (s.mem_total_kb - (s.mem_available_kb || 0)) / s.mem_total_kb : null;
     const diskTotal = s.storage_internal_total_kb, diskFree = s.storage_internal_free_kb;
     const rx = sum(s.network_interfaces, 'rx_bytes'), tx = sum(s.network_interfaces, 'tx_bytes');
+    const wifiRx = sumNetwork(/^(wlan|wifi)/i, 'rx_bytes'), wifiTx = sumNetwork(/^(wlan|wifi)/i, 'tx_bytes');
+    const mobileRx = sumNetwork(/^(rmnet|ccmni|wwan|pdp)/i, 'rx_bytes'), mobileTx = sumNetwork(/^(rmnet|ccmni|wwan|pdp)/i, 'tx_bytes');
     const diskRead = sum(s.disk_counters, 'read_sectors'), diskWrite = sum(s.disk_counters, 'written_sectors');
     const seconds = previous ? Math.max(0.1, (now - previous.at) / 1000) : 0;
     const rate = (current, old) => previous && current >= old && seconds > 0 ? (current - old) / seconds : 0;
@@ -1769,8 +1771,9 @@
       swap: Number((s.swap_total_kb ? 100 * (s.swap_total_kb - (s.swap_free_kb || 0)) / s.swap_total_kb : 0).toFixed(1)),
       storage: Number((diskTotal && diskFree != null ? 100 * (diskTotal - diskFree) / diskTotal : 0).toFixed(1)),
       rx, tx,
-      wifiRx: sumNetwork(/^(wlan|wifi)/i, 'rx_bytes'), wifiTx: sumNetwork(/^(wlan|wifi)/i, 'tx_bytes'),
-      mobileRx: sumNetwork(/^(rmnet|ccmni|wwan|pdp)/i, 'rx_bytes'), mobileTx: sumNetwork(/^(rmnet|ccmni|wwan|pdp)/i, 'tx_bytes'),
+      wifiRx, wifiTx, mobileRx, mobileTx,
+      wifiRxRate: Number(rate(wifiRx, previous?.wifiRx ?? wifiRx).toFixed(1)), wifiTxRate: Number(rate(wifiTx, previous?.wifiTx ?? wifiTx).toFixed(1)),
+      mobileRxRate: Number(rate(mobileRx, previous?.mobileRx ?? mobileRx).toFixed(1)), mobileTxRate: Number(rate(mobileTx, previous?.mobileTx ?? mobileTx).toFixed(1)),
       rxRate: Number(rxRate.toFixed(1)),
       txRate: Number(txRate.toFixed(1)),
       diskReadRate: Number(diskReadRate.toFixed(1)),
@@ -2155,17 +2158,17 @@
   function renderSensors() {
     const s = state.data || {}, t = state.telemetry || {};
     const subtabs = [
-      ['overview', 'Overview', 'e186'],
+      ['overview', 'Overview', 'e038'],
       ['top-apps', 'Top Apps', 'e129'],
-      ['cpu', 'CPU', 'e181'],
-      ['ram', 'RAM', 'e085'],
-      ['gpu', 'GPU', 'e0f7'],
+      ['cpu', 'CPU', 'e0a9'],
+      ['ram', 'RAM', 'e445'],
+      ['gpu', 'GPU', 'e0df'],
       ['storage', 'Storage', 'e0c5'],
       ['wifi', 'Wi-Fi', 'e1ae'],
-      ['cellular', 'Cellular', 'e0cd'],
-      ['data-usage', 'Data Usage', 'e119'],
-      ['power', 'Power', 'e145'],
-      ['bluetooth', 'Bluetooth', 'e14f'],
+      ['cellular', 'Cellular', 'e142'],
+      ['data-usage', 'Data Usage', 'e125'],
+      ['power', 'Power', 'e055'],
+      ['bluetooth', 'Bluetooth', 'e05c'],
       ['temperature', 'Temperature', 'e186']
     ];
 
@@ -2187,10 +2190,6 @@
     const freeStorageGb = s.storage_internal_free_kb == null ? (Number(t.storage_internal_free_gb) || 0) : Number(s.storage_internal_free_kb) / 1024 / 1024;
     const usedStorageGb = Math.max(0, totalStorageGb - freeStorageGb);
     const storageUsage = totalStorageGb > 0 ? (100 * usedStorageGb / totalStorageGb) : 0;
-
-    const sharedTotalGb = (Number(s.storage_shared_total_kb) || 0) / 1024 / 1024;
-    const sharedFreeGb = (Number(s.storage_shared_free_kb) || 0) / 1024 / 1024;
-    const sharedUsedGb = Math.max(0, sharedTotalGb - sharedFreeGb);
 
     const network = s.network_interfaces || [];
     const temps = s.temperatures || [];
@@ -2222,7 +2221,8 @@
     const usageIfaces = network.filter((iface) => usagePattern.test(iface.name));
     const usageRx = usageIfaces.reduce((sum, iface) => sum + (Number(iface.rx_bytes) || 0), 0);
     const usageTx = usageIfaces.reduce((sum, iface) => sum + (Number(iface.tx_bytes) || 0), 0);
-    const usageHistory = hist.map((sample) => ({ rx: Number(sample[`${usageType}Rx`]) || 0, tx: Number(sample[`${usageType}Tx`]) || 0 }));
+    const usageHistory = hist.map((sample) => ({ rx: Number(sample[`${usageType}Rx`]) || 0, tx: Number(sample[`${usageType}Tx`]) || 0, rxRate: Number(sample[`${usageType}RxRate`]) || 0, txRate: Number(sample[`${usageType}TxRate`]) || 0 }));
+    const usageRxRate = Number(latest[`${usageType}RxRate`]) || 0, usageTxRate = Number(latest[`${usageType}TxRate`]) || 0;
     const avgRxRate = avg(rxHist);
     const avgTxRate = avg(txHist);
 
@@ -3283,33 +3283,34 @@
 
       storage: () => {
         const storageVolumes = [
-          { name: 'Internal data partition', mount: '/data', total: Number(s.storage_internal_total_kb ?? (Number(t.storage_internal_total_gb) * 1024 * 1024)), free: Number(s.storage_internal_free_kb ?? (Number(t.storage_internal_free_gb) * 1024 * 1024)) },
-          { name: 'Shared user storage', mount: '/storage/emulated/0', total: Number(s.storage_shared_total_kb ?? (Number(t.storage_sdcard_total_gb) * 1024 * 1024)), free: Number(s.storage_shared_free_kb ?? (Number(t.storage_sdcard_free_gb) * 1024 * 1024)) }
+          { name: 'Device storage', mount: '/data', total: Number(s.storage_internal_total_kb ?? (Number(t.storage_internal_total_gb) * 1024 * 1024)), free: Number(s.storage_internal_free_kb ?? (Number(t.storage_internal_free_gb) * 1024 * 1024)) },
+          { name: 'Shared files', mount: '/storage/emulated/0', total: Number(s.storage_shared_total_kb ?? (Number(t.storage_sdcard_total_gb) * 1024 * 1024)), free: Number(s.storage_shared_free_kb ?? (Number(t.storage_sdcard_free_gb) * 1024 * 1024)) }
         ].filter((volume) => volume.total > 0 && Number.isFinite(volume.free));
         return `
-          <section class="card">
-            <div class="card-head"><h2>Mounted Android storage</h2><span class="chip">${storageVolumes.length} reported</span></div>
+          <section class="storage-snapshot">
+            <div class="card-head"><div><h2>Device storage</h2><span class="subtle">Capacity reported by Android</span></div><span class="chip">${storageVolumes.length} locations</span></div>
             <div class="storage-volume-list">${storageVolumes.map((volume) => {
               const used = Math.max(0, volume.total - volume.free), pct = Math.max(0, Math.min(100, used / volume.total * 100));
-              return `<article class="storage-volume-row"><div class="storage-volume-top"><b>${escapeHtml(volume.name)}</b><span>${(used / 1024 / 1024).toFixed(1)} / ${(volume.total / 1024 / 1024).toFixed(1)} GB</span></div><small>${escapeHtml(volume.mount)} · ${(volume.free / 1024 / 1024).toFixed(1)} GB free</small><div class="progress"><i style="width:${pct}%"></i></div></article>`;
+              return `<article class="card storage-volume-row"><div class="storage-volume-icon" aria-hidden="true">${icon('e0c5')}</div><div class="storage-volume-copy"><div class="storage-volume-top"><b>${escapeHtml(volume.name)}</b><span>${(used / 1024 / 1024).toFixed(1)} GB used</span></div><small>${escapeHtml(volume.mount)}</small><div class="progress"><i style="width:${pct}%"></i></div><small>${(volume.free / 1024 / 1024).toFixed(1)} GB free of ${(volume.total / 1024 / 1024).toFixed(1)} GB</small></div></article>`;
             }).join('') || empty('Storage data unavailable', 'Android did not return filesystem capacity for /data or shared storage.')}</div>
           </section>
           <div class="sensors-stat-grid" style="margin-top:14px">
-            ${renderBigStatCard({ iconCode: 'e186', title: 'READ RATE', heroVal: formatRate(Number(latest.diskReadRate) || 0), heroUnit: '', subtitle: 'Measured from Android block counters', leftStat: `AVG ${formatRate(avg(readHist))}`, rightStat: `PEAK ${formatRate(peak(readHist))}`, data: readHist, maxVal: Math.max(1024, ...readHist), dottedRatio: 0.3, color: 'var(--accent)' })}
-            ${renderBigStatCard({ iconCode: 'e186', title: 'WRITE RATE', heroVal: formatRate(Number(latest.diskWriteRate) || 0), heroUnit: '', subtitle: 'Measured from Android block counters', leftStat: `AVG ${formatRate(avg(writeHist))}`, rightStat: `PEAK ${formatRate(peak(writeHist))}`, data: writeHist, maxVal: Math.max(1024, ...writeHist), dottedRatio: 0.3, color: '#a78bfa' })}
+            ${renderBigStatCard({ iconCode: 'e042', title: 'READ RATE', heroVal: formatRate(Number(latest.diskReadRate) || 0), heroUnit: '', subtitle: 'Measured from Android block counters', leftStat: `AVG ${formatRate(avg(readHist))}`, rightStat: `PEAK ${formatRate(peak(readHist))}`, data: readHist, maxVal: Math.max(1024, ...readHist), dottedRatio: 0.3, color: 'var(--accent)' })}
+            ${renderBigStatCard({ iconCode: 'e04a', title: 'WRITE RATE', heroVal: formatRate(Number(latest.diskWriteRate) || 0), heroUnit: '', subtitle: 'Measured from Android block counters', leftStat: `AVG ${formatRate(avg(writeHist))}`, rightStat: `PEAK ${formatRate(peak(writeHist))}`, data: writeHist, maxVal: Math.max(1024, ...writeHist), dottedRatio: 0.3, color: '#a78bfa' })}
           </div>
           ${renderWaveformChartSvg({ title: 'Disk Throughput · 60s Window', series: [{ label: 'Read Throughput', data: readHist, color: 'var(--accent)' }, { label: 'Write Throughput', data: writeHist, color: '#a78bfa' }], height: 200, suffix: ' B/s' })}
-          <section class="card"><div class="card-head"><h2>Android block devices</h2><span class="chip">${s.disk_counters?.length || 0} reported</span></div>
-            <div class="storage-device-list">${s.disk_counters?.length ? s.disk_counters.map((device) => `<article class="storage-device-row"><b class="mono">${escapeHtml(device.name)}</b><span>Read ${formatBytes(Number(device.read_sectors) * 512)}</span><span>Written ${formatBytes(Number(device.written_sectors) * 512)}</span></article>`).join('') : empty('Block counters unavailable', 'The device did not expose /proc/diskstats.')}</div>
-          </section>`;
+          ${s.disk_counters?.length ? `<section class="card"><div class="card-head"><h2>Android block devices</h2><span class="chip">${s.disk_counters.length} reported</span></div>
+            <div class="storage-device-list">${s.disk_counters.map((device) => `<article class="storage-device-row"><b class="mono">${escapeHtml(device.name)}</b><span>Read ${formatBytes(Number(device.read_sectors) * 512)}</span><span>Written ${formatBytes(Number(device.written_sectors) * 512)}</span></article>`).join('')}</div>
+          </section>` : ''}`;
       },
 
       wifi: () => {
-        const activeIface = network.find((iface) => /^wlan|^wifi/i.test(iface.name))?.name || 'Unavailable';
-        const socketTotal = Number(latest.socketTotal || s.socket_total || 0);
-        const socketTcp = Number(latest.socketTcp || s.socket_tcp || 0);
-        const socketUdp = Number(latest.socketUdp || s.socket_udp || 0);
-
+        const wifiIfaces = network.filter((iface) => /^(wlan|wifi)/i.test(iface.name));
+        const wifiRx = wifiIfaces.reduce((sum, iface) => sum + (Number(iface.rx_bytes) || 0), 0);
+        const wifiTx = wifiIfaces.reduce((sum, iface) => sum + (Number(iface.tx_bytes) || 0), 0);
+        const wifiRxHist = hist.map((sample) => Number(sample.wifiRxRate) || 0);
+        const wifiTxHist = hist.map((sample) => Number(sample.wifiTxRate) || 0);
+        const wifiRxRate = Number(latest.wifiRxRate) || 0, wifiTxRate = Number(latest.wifiTxRate) || 0;
         return `
         <div class="sensors-stat-grid">
           ${renderBigStatCard({
@@ -3326,537 +3327,131 @@
             color: 'var(--accent)'
           })}
           ${renderBigStatCard({
-            iconCode: 'e119',
+            iconCode: 'e125',
             title: 'INTERFACES',
-            heroVal: `${network.length}`,
+            heroVal: `${wifiIfaces.length}`,
             heroUnit: 'reported',
             subtitle: 'Exposed via /proc/net/dev',
             leftStat: 'IFACES',
             rightStat: 'COUNT',
-            data: Array(rxHist.length).fill(network.length),
-            maxVal: network.length || 1,
+            data: Array(wifiRxHist.length).fill(wifiIfaces.length),
+            maxVal: wifiIfaces.length || 1,
             dottedRatio: 0.9,
             color: '#38bdf8'
           })}
           ${renderBigStatCard({
-            iconCode: 'e186',
+            iconCode: 'e042',
             title: 'CURRENT RX',
-            heroVal: formatRate(currRxRate),
+            heroVal: formatRate(wifiRxRate),
             heroUnit: '',
-            subtitle: 'Live network downlink',
-            leftStat: `AVG ${formatRate(avgRxRate)}`,
-            rightStat: `PEAK ${formatRate(peak(rxHist))}`,
-            data: rxHist,
-            maxVal: Math.max(1024, ...rxHist),
+            subtitle: 'Live Wi-Fi downlink',
+            leftStat: `AVG ${formatRate(avg(wifiRxHist))}`,
+            rightStat: `PEAK ${formatRate(peak(wifiRxHist))}`,
+            data: wifiRxHist,
+            maxVal: Math.max(1024, ...wifiRxHist),
             dottedRatio: 0.3,
             color: '#38bdf8'
           })}
           ${renderBigStatCard({
-            iconCode: 'e186',
+            iconCode: 'e04a',
             title: 'CURRENT TX',
-            heroVal: formatRate(currTxRate),
+            heroVal: formatRate(wifiTxRate),
             heroUnit: '',
-            subtitle: 'Live network uplink',
-            leftStat: `AVG ${formatRate(avgTxRate)}`,
-            rightStat: `PEAK ${formatRate(peak(txHist))}`,
-            data: txHist,
-            maxVal: Math.max(1024, ...txHist),
+            subtitle: 'Live Wi-Fi uplink',
+            leftStat: `AVG ${formatRate(avg(wifiTxHist))}`,
+            rightStat: `PEAK ${formatRate(peak(wifiTxHist))}`,
+            data: wifiTxHist,
+            maxVal: Math.max(1024, ...wifiTxHist),
             dottedRatio: 0.3,
             color: 'var(--accent)'
           })}
         </div>
 
         ${renderWaveformChartSvg({
-          title: 'Network Throughput · 60s Window',
+          title: 'Wi-Fi Throughput · 60s Window',
           series: [
-            { label: 'Received (Downlink)', data: rxHist, color: '#38bdf8' },
-            { label: 'Transmitted (Uplink)', data: txHist, color: 'var(--accent)' }
+            { label: 'Received (Downlink)', data: wifiRxHist, color: '#38bdf8' },
+            { label: 'Transmitted (Uplink)', data: wifiTxHist, color: 'var(--accent)' }
           ],
           height: 200,
           suffix: ' B/s'
         })}
 
-        <div class="grid two" style="margin-top: 14px;">
-          <article class="card wifi-ip-card">
-            <div class="card-head">
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <span class="icon">&#xe085;</span>
-                <div>
-                  <div style="display: flex; align-items: center; gap: 8px;">
-                    <h2 style="margin: 0; font-size: 15px;">IP Config</h2>
-                    <span class="chip" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);">DHCP</span>
-                  </div>
-                  <div style="font: 500 11px ui-monospace, monospace; color: #64748b; margin-top: 2px;">
-                    DHCP on ${escapeHtml(activeIface)}
-                  </div>
-                </div>
-              </div>
-              <div class="wifi-ip-head-right">
-                <span>MTU 1500</span>
-                <span>TX: 2.1 GB</span>
-              </div>
-            </div>
-
-            <div class="wifi-ip-hero-wrap">
-              <div>
-                <div class="wifi-ip-hero-label">IPV4 ADDRESS</div>
-                <div class="wifi-ip-hero-val">10.111.93.116<span class="wifi-ip-cidr">/24</span></div>
-              </div>
-              <button class="wifi-copy-btn" data-copy="10.111.93.116" title="Copy IPv4">
-                <span class="icon">&#xe14d;</span>
-              </button>
-            </div>
-
-            <div class="wifi-kv-list">
-              <div class="wifi-kv-row">
-                <span class="wifi-kv-label">SUBNET</span>
-                <span class="wifi-kv-val">255.255.255.0 (/24)</span>
-              </div>
-              <div class="wifi-kv-row">
-                <span class="wifi-kv-label">GATEWAY</span>
-                <span class="wifi-kv-val">10.111.93.127</span>
-              </div>
-              <div class="wifi-kv-row">
-                <span class="wifi-kv-label">DNS</span>
-                <span class="wifi-kv-val">
-                  <span>127.0.0.53</span>
-                  <span class="wifi-dns-chip">systemd</span>
-                  <button class="wifi-flush-btn" data-action="flush-dns">Flush</button>
-                </span>
-              </div>
-              <div class="wifi-kv-row">
-                <span class="wifi-kv-label">IPV6</span>
-                <span class="wifi-kv-val">
-                  <span>fe80::f1a1:8cf:7a9e:559a/64</span>
-                  <button class="wifi-copy-btn" style="width: 22px; height: 22px; font-size: 11px;" data-copy="fe80::f1a1:8cf:7a9e:559a/64" title="Copy IPv6">
-                    <span class="icon">&#xe14d;</span>
-                  </button>
-                </span>
-              </div>
-              <div class="wifi-kv-row">
-                <span class="wifi-kv-label">MAC</span>
-                <span class="wifi-kv-val">72:21:C5:69:3E:75</span>
-              </div>
-              <div class="wifi-kv-row">
-                <span class="wifi-kv-label">DRIVER</span>
-                <span class="wifi-kv-val">
-                  <span>ath10k_pci</span>
-                  <span class="wifi-pci-chip">0000:02:00.0</span>
-                </span>
-              </div>
-            </div>
-
-            <div class="wifi-lease-bar">
-              <div class="wifi-lease-left">
-                <span class="icon">&#xe1b0;</span>
-                <span>DHCP Lease</span>
-              </div>
-              <div class="wifi-lease-right">18h 42m 11s</div>
-            </div>
-          </article>
-
-          <article class="card wifi-sockets-card">
-            <div class="card-head">
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <span class="icon" style="color: #38bdf8;">&#xe1ae;</span>
-                <div>
-                  <div style="display: flex; align-items: center; gap: 8px;">
-                    <h2 style="margin: 0; font-size: 15px;">Sockets</h2>
-                    <span class="chip" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);">${socketTotal} Endpoints</span>
-                  </div>
-                  <div style="font: 500 11px ui-monospace, monospace; color: #64748b; margin-top: 2px;">
-                    Listening ports
-                  </div>
-                </div>
-              </div>
-              <button class="wifi-sock-monitor-btn" data-action="monitor-sockets">Monitor</button>
-            </div>
-
-            <div style="flex: 1; overflow-x: auto;">
-              <table class="wifi-sock-table">
-                <thead>
-                  <tr>
-                    <th>PROCESS</th>
-                    <th>PROTO</th>
-                    <th>PORT</th>
-                    <th>STATUS</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td><div class="wifi-sock-proc"><span class="wifi-sock-dot"></span><span>antigravity-daemon</span></div></td>
-                    <td>TCP</td>
-                    <td>:40369</td>
-                    <td><span class="wifi-sock-pill">LISTEN</span></td>
-                  </tr>
-                  <tr>
-                    <td><div class="wifi-sock-proc"><span class="wifi-sock-dot"></span><span>code (VS Code Server)</span></div></td>
-                    <td>TCP</td>
-                    <td>:35983</td>
-                    <td><span class="wifi-sock-pill">LISTEN</span></td>
-                  </tr>
-                  <tr>
-                    <td><div class="wifi-sock-proc"><span class="wifi-sock-dot"></span><span>antigravity-daemon</span></div></td>
-                    <td>TCP</td>
-                    <td>:43273</td>
-                    <td><span class="wifi-sock-pill">LISTEN</span></td>
-                  </tr>
-                  <tr>
-                    <td><div class="wifi-sock-proc"><span class="wifi-sock-dot"></span><span>code (VS Code Server)</span></div></td>
-                    <td>TCP</td>
-                    <td>:42355</td>
-                    <td><span class="wifi-sock-pill">LISTEN</span></td>
-                  </tr>
-                  <tr>
-                    <td><div class="wifi-sock-proc"><span class="wifi-sock-dot"></span><span>rquickshare (LAN Share)</span></div></td>
-                    <td>TCP</td>
-                    <td>:33197</td>
-                    <td><span class="wifi-sock-pill">LISTEN</span></td>
-                  </tr>
-                  <tr>
-                    <td><div class="wifi-sock-proc"><span class="wifi-sock-dot"></span><span>daemon (sshd)</span></div></td>
-                    <td>TCP</td>
-                    <td>:22</td>
-                    <td><span class="wifi-sock-pill">LISTEN</span></td>
-                  </tr>
-                  <tr>
-                    <td><div class="wifi-sock-proc"><span class="wifi-sock-dot"></span><span>antigravity-daemon</span></div></td>
-                    <td>TCP</td>
-                    <td>:46207</td>
-                    <td><span class="wifi-sock-pill">LISTEN</span></td>
-                  </tr>
-                  <tr>
-                    <td><div class="wifi-sock-proc"><span class="wifi-sock-dot"></span><span>antigravity-daemon</span></div></td>
-                    <td>TCP</td>
-                    <td>:32923</td>
-                    <td><span class="wifi-sock-pill">LISTEN</span></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            <div class="wifi-sock-footer">
-              <div class="wifi-sock-filter">
-                <span class="wifi-sock-dot"></span>
-                <span>Filter: TCP Listen</span>
-              </div>
-              <div>Queue: 0 / 128</div>
-            </div>
-          </article>
-        </div>
+        <section class="card wifi-usage-card">
+          <div class="card-head"><div><h2>Wi-Fi interface totals</h2><span class="subtle">Wireless interfaces only · totals since boot</span></div><span class="chip">${wifiIfaces.length} interfaces</span></div>
+          <div class="wifi-usage-totals"><div><small>RECEIVED</small><b>${formatBytes(wifiRx)}</b></div><div><small>SENT</small><b>${formatBytes(wifiTx)}</b></div><div><small>LIVE DOWNLOAD</small><b>${formatRate(wifiRxRate)}</b></div><div><small>LIVE UPLOAD</small><b>${formatRate(wifiTxRate)}</b></div></div>
+          ${wifiIfaces.length ? `<div class="storage-device-list">${wifiIfaces.map((iface) => `<article class="storage-device-row"><b>${escapeHtml(iface.name)}</b><span>↓ ${formatBytes(iface.rx_bytes)}</span><span>↑ ${formatBytes(iface.tx_bytes)}</span></article>`).join('')}</div>` : empty('No Wi-Fi counters', 'Android did not expose a wlan or wifi interface.')}
+        </section>
       `;
       },
 
       cellular: () => {
-        const hasSim = s.sim_state && s.sim_state !== 'ABSENT';
-        const simState = s.sim_state || 'READY';
-        const carrier = s.sim_operator || s.cellular_operator || (hasSim ? 'Carrier Profile' : 'No SIM (eSIM Ready)');
-        const rat = (s.cellular_network_type && s.cellular_network_type !== 'Unknown') ? s.cellular_network_type : 'LTE Advanced';
-        const isDataActive = s.mobile_data_enabled !== false;
-        const isRoaming = s.data_roaming_enabled === true;
-        const numeric = s.cellular_numeric || '310-260';
-        const country = s.cellular_country ? s.cellular_country.toUpperCase() : 'US';
-        const baseband = s.baseband_version || 'Qualcomm Snapdragon X-Series';
-        const ril = s.ril_impl || 'Android RIL v4.0';
-
-        return `
-          <div class="cellular-header">
-            <div class="cellular-header-left">
-              <div class="cellular-indicator">
-                <span class="cellular-indicator-dot ${hasSim ? '' : 'standby'}"></span>
-                <span>CELLULAR MODEM &amp; SIM SUBSYSTEM</span>
-              </div>
-              <div class="cellular-title-row">
-                <h2>${escapeHtml(carrier)}</h2>
-                <span class="cellular-rat-chip">${escapeHtml(rat)}</span>
-              </div>
-              <div class="cellular-subtitle">
-                Modem Baseband: ${escapeHtml(baseband)} • RIL: ${escapeHtml(ril)} • MCC-MNC: ${escapeHtml(numeric)} (${escapeHtml(country)})
-              </div>
-            </div>
-            <div class="cellular-header-actions">
-              <span class="chip" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);">
-                ${isDataActive ? 'DATA ACTIVE' : 'DATA STANDBY'}
-              </span>
-              <button class="gpu-refresh-btn" data-refresh title="Refresh Cellular Telemetry">
-                <span class="icon">&#xe12e;</span>
-              </button>
-            </div>
-          </div>
-
-          <div class="sensors-stat-grid">
-            ${renderBigStatCard({
-              iconCode: 'e0cd',
-              title: 'MOBILE DATA',
-              heroVal: isDataActive ? 'ACTIVE' : 'OFF',
-              heroUnit: '',
-              subtitle: `${rat} packet data connection`,
-              leftStat: 'DATA ROAMING',
-              rightStat: isRoaming ? 'ENABLED' : 'BLOCKED',
-              data: [isDataActive ? 1 : 0, isDataActive ? 1 : 0],
-              maxVal: 1,
-              dottedRatio: 0.5,
-              color: 'var(--accent)'
-            })}
-            ${renderBigStatCard({
-              iconCode: 'e1ae',
-              title: 'SIGNAL QUALITY',
-              heroVal: '-78',
-              heroUnit: 'dBm',
-              subtitle: '4 of 5 Bars · ASU 24',
-              leftStat: 'RSRP -82 dBm',
-              rightStat: 'RSRQ -8.5 dB',
-              data: [85, 80, 78, 82, 78, 76, 78],
-              maxVal: 100,
-              dottedRatio: 0.3,
-              color: '#38bdf8'
-            })}
-            ${renderBigStatCard({
-              iconCode: 'e085',
-              title: 'SIM 1 STATUS',
-              heroVal: hasSim ? simState : 'READY',
-              heroUnit: '',
-              subtitle: 'Primary UICC Profile',
-              leftStat: 'SLOT',
-              rightStat: 'SLOT 1',
-              data: [1, 1, 1, 1, 1],
-              maxVal: 1,
-              dottedRatio: 0.5,
-              color: '#38bdf8'
-            })}
-            ${renderBigStatCard({
-              iconCode: 'e181',
-              title: 'NETWORK ACCESS (RAT)',
-              heroVal: rat,
-              heroUnit: '',
-              subtitle: 'Carrier Aggregation 2CA',
-              leftStat: 'BAND',
-              rightStat: 'B66 (2.1 GHz)',
-              data: [1, 1, 1, 1, 1],
-              maxVal: 1,
-              dottedRatio: 0.8,
-              color: '#a78bfa'
-            })}
-          </div>
-
-          <div class="grid two" style="margin-top: 14px;">
-            <article class="card cellular-sim-card">
-              <div class="card-head">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <span class="icon" style="color: #38bdf8;">&#xe085;</span>
-                  <div>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                      <h2 style="margin: 0; font-size: 15px;">SIM &amp; Carrier Profile</h2>
-                      <span class="chip" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">Slot 1 (UICC) ●</span>
-                    </div>
-                    <div style="font: 500 11px ui-monospace, monospace; color: #64748b; margin-top: 2px;">
-                      Universal Integrated Circuit Card
-                    </div>
-                  </div>
-                </div>
-                <button class="wifi-copy-btn" data-copy="${escapeHtml(carrier)}" title="Copy Carrier">
-                  <span class="icon">&#xe14d;</span>
-                </button>
-              </div>
-
-              <div class="cellular-sim-hero">
-                <div>
-                  <div class="cellular-sim-hero-carrier">${escapeHtml(carrier)}</div>
-                  <div class="cellular-sim-hero-sub">Carrier ID: 1839 • Universal Subscriber Identity Module</div>
-                </div>
-                <span class="chip" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);">
-                  ${escapeHtml(country)}
-                </span>
-              </div>
-
-              <div class="wifi-kv-list">
-                <div class="wifi-kv-row">
-                  <span class="wifi-kv-label">SIM STATE</span>
-                  <span class="wifi-kv-val">${escapeHtml(simState)} (PIN Verified)</span>
-                </div>
-                <div class="wifi-kv-row">
-                  <span class="wifi-kv-label">OPERATOR (MCC/MNC)</span>
-                  <span class="wifi-kv-val">${escapeHtml(numeric)} (${escapeHtml(country)})</span>
-                </div>
-                <div class="wifi-kv-row">
-                  <span class="wifi-kv-label">SUBSCRIPTION ID</span>
-                  <span class="wifi-kv-val">Sub #1 (Default Voice + Mobile Data)</span>
-                </div>
-                <div class="wifi-kv-row">
-                  <span class="wifi-kv-label">VOICE SERVICE</span>
-                  <span class="wifi-kv-val">In Service (VoLTE HD Voice Enabled)</span>
-                </div>
-                <div class="wifi-kv-row">
-                  <span class="wifi-kv-label">ICCID / SERIAL</span>
-                  <span class="wifi-kv-val">
-                    <span>8901 2600 •••• •••• 9284</span>
-                    <button class="wifi-copy-btn" style="width: 22px; height: 22px; font-size: 11px;" data-copy="8901260000000009284" title="Copy ICCID">
-                      <span class="icon">&#xe14d;</span>
-                    </button>
-                  </span>
-                </div>
-                <div class="wifi-kv-row">
-                  <span class="wifi-kv-label">IMSI IDENTITY</span>
-                  <span class="wifi-kv-val">
-                    <span>${escapeHtml(numeric)}••••••••••</span>
-                    <button class="wifi-copy-btn" style="width: 22px; height: 22px; font-size: 11px;" data-copy="${escapeHtml(numeric)}0000000000" title="Copy IMSI">
-                      <span class="icon">&#xe14d;</span>
-                    </button>
-                  </span>
-                </div>
-                <div class="wifi-kv-row">
-                  <span class="wifi-kv-label">DATA ROAMING</span>
-                  <span class="wifi-kv-val">${isRoaming ? 'Roaming Permitted' : 'Domestic / Home Network Only'}</span>
-                </div>
-              </div>
-
-              <div class="cellular-slot-bar">
-                <div style="display: flex; align-items: center; gap: 6px;">
-                  <span class="icon" style="color: #64748b;">&#xe085;</span>
-                  <small>SIM Slot 2: <b>Standby / eSIM Profile Ready</b></small>
-                </div>
-                <span class="chip" style="font-size: 9px; padding: 1px 6px;">DSDS Ready</span>
-              </div>
-            </article>
-
-            <article class="card cellular-radio-card">
-              <div class="card-head">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <span class="icon" style="color: #38bdf8;">&#xe1ae;</span>
-                  <div>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                      <h2 style="margin: 0; font-size: 15px;">Radio Access Technology (RAT)</h2>
-                      <span class="chip" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">LTE-A / 5G ●</span>
-                    </div>
-                    <div style="font: 500 11px ui-monospace, monospace; color: #64748b; margin-top: 2px;">
-                      Modem RF Frontend &amp; Signal Matrix
-                    </div>
-                  </div>
-                </div>
-                <span class="chip" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);">B66 (2.1 GHz)</span>
-              </div>
-
-              <div class="cellular-signal-matrix">
-                <div class="cellular-signal-tile">
-                  <small>RSRP (POWER)</small>
-                  <b>-82 dBm</b>
-                  <span style="color: #34d399;">Excellent</span>
-                </div>
-                <div class="cellular-signal-tile">
-                  <small>RSRQ (QUALITY)</small>
-                  <b>-8.5 dB</b>
-                  <span style="color: #38bdf8;">Optimal</span>
-                </div>
-                <div class="cellular-signal-tile">
-                  <small>SINR (SNR)</small>
-                  <b>18.4 dB</b>
-                  <span style="color: #34d399;">Clean Link</span>
-                </div>
-                <div class="cellular-signal-tile">
-                  <small>ASU LEVEL</small>
-                  <b>24 ASU</b>
-                  <span style="color: #94a3b8;">Grade 4/4</span>
-                </div>
-              </div>
-
-              <div class="wifi-kv-list">
-                <div class="wifi-kv-row">
-                  <span class="wifi-kv-label">ACCESS TECHNOLOGY</span>
-                  <span class="wifi-kv-val">${escapeHtml(rat)} (Carrier Aggregation 2CA)</span>
-                </div>
-                <div class="wifi-kv-row">
-                  <span class="wifi-kv-label">OPERATING BAND</span>
-                  <span class="wifi-kv-val">Band 66 (AWS-3) · 2100 MHz FDD</span>
-                </div>
-                <div class="wifi-kv-row">
-                  <span class="wifi-kv-label">VOICE OVER LTE (VoLTE)</span>
-                  <span class="wifi-kv-val"><span style="color: #10b981; font-weight: 800;">✓</span> Provisioned &amp; Active</span>
-                </div>
-                <div class="wifi-kv-row">
-                  <span class="wifi-kv-label">WI-FI CALLING (VoWiFi)</span>
-                  <span class="wifi-kv-val"><span style="color: #10b981; font-weight: 800;">✓</span> Supported (WLAN Preferred)</span>
-                </div>
-                <div class="wifi-kv-row">
-                  <span class="wifi-kv-label">MODEM FIRMWARE</span>
-                  <span class="wifi-kv-val">${escapeHtml(baseband)}</span>
-                </div>
-                <div class="wifi-kv-row">
-                  <span class="wifi-kv-label">RIL PROTOCOL</span>
-                  <span class="wifi-kv-val">${escapeHtml(ril)}</span>
-                </div>
-              </div>
-
-              <div class="cellular-slot-bar">
-                <div style="display: flex; align-items: center; gap: 6px;">
-                  <span class="icon" style="color: #38bdf8;">&#xe119;</span>
-                  <small>APN: <b>fast.t-mobile.com (Default / SUPL / MMS)</b></small>
-                </div>
-                <span class="chip" style="font-size: 9px; padding: 1px 6px;">IPv4/IPv6 Dual</span>
-              </div>
-            </article>
-          </div>
-
-          <section class="card" style="margin-top: 14px;">
-            <div class="card-head">
-              <h2><span class="icon">&#xe119;</span> Mobile Data Interface &amp; APN Configuration</h2>
-              <span class="chip">RMNET PROTOCOL</span>
-            </div>
-            <div class="kv">
-              <div><small>Data Interface</small><b>rmnet_data0 (Modem Port)</b></div>
-              <div><small>PDP Context</small><b>IP / IPv6 Dual Stack Active</b></div>
-              <div><small>APN Endpoint</small><b>fast.t-mobile.com</b></div>
-              <div><small>MMS Center</small><b>http://mms.msg.eng.t-mobile.com/mms/wapenc</b></div>
-              <div><small>Authentication</small><b>PAP / CHAP (Automatic)</b></div>
-              <div><small>MTU Window</small><b>1500 bytes</b></div>
-              <div><small>Header Compression</small><b>V.42bis Enabled</b></div>
-              <div><small>Emergency Bearer</small><b>E911 Supported over IMS</b></div>
-            </div>
+        const simSlots = Array.isArray(s.sim_slots) ? s.sim_slots : [];
+        const slots = [1, 2].map((slot) => simSlots.find((sim) => Number(sim.slot) === slot) || (slot === 1 && !simSlots.length ? {
+          slot, operator: s.sim_operator || s.cellular_operator, state: s.sim_state, network_type: s.cellular_network_type,
+          numeric: s.cellular_numeric, country: s.cellular_country
+        } : { slot }));
+        const mobileIfaces = network.filter((iface) => /^(rmnet|ccmni|wwan|pdp)/i.test(iface.name));
+        const mobileRx = mobileIfaces.reduce((sum, iface) => sum + (Number(iface.rx_bytes) || 0), 0);
+        const mobileTx = mobileIfaces.reduce((sum, iface) => sum + (Number(iface.tx_bytes) || 0), 0);
+        const mobileRxRate = Number(latest.mobileRxRate) || 0, mobileTxRate = Number(latest.mobileTxRate) || 0;
+        const escapeOr = (value) => value && value !== 'unknown' && value !== 'Unknown' ? escapeHtml(value) : 'Unavailable';
+        const simCard = (sim) => {
+          const present = /ready|loaded|locked/i.test(sim.state || '');
+          const carrier = sim.operator || (present ? 'Carrier available' : 'No SIM detected');
+          return `<article class="card cellular-sim-card"><div class="cellular-sim-card-head"><span class="cellular-sim-icon" aria-hidden="true">SIM ${sim.slot}</span><div><h3>SIM ${sim.slot}</h3><span class="subtle">${present ? 'Present' : escapeOr(sim.state || 'Not reported')}</span></div></div><div class="cellular-sim-carrier">${escapeHtml(carrier)}</div><div class="cellular-sim-fields"><div><small>SIM state</small><b>${escapeOr(sim.state)}</b></div><div><small>Network</small><b>${escapeOr(sim.network_type)}</b></div><div><small>Operator code</small><b>${escapeOr(sim.numeric)}</b></div><div><small>Country</small><b>${escapeOr(sim.country)}</b></div></div></article>`;
+        };
+        return `<section class="cellular-header"><div><span class="cellular-indicator"><i class="cellular-indicator-dot ${s.mobile_data_enabled ? '' : 'standby'}"></i> CELLULAR NETWORK</span><h2>${escapeOr(s.cellular_operator || 'Mobile network')}</h2><span class="subtle">${escapeOr(s.cellular_network_type)} · ${s.mobile_data_enabled == null ? 'Data status unavailable' : s.mobile_data_enabled ? 'Mobile data on' : 'Mobile data off'}</span></div><button class="button" data-refresh>${icon('e145')} Refresh</button></section>
+          <section class="cellular-traffic-grid">
+            <article class="card cellular-traffic-card"><div class="stat-card-title"><span aria-hidden="true">↓</span> MOBILE DOWNLOAD</div><strong>${formatRate(mobileRxRate)}</strong><span>Live receive speed</span><small>${formatBytes(mobileRx)} received since boot</small><div class="cellular-mini-chart">${renderSparklineSvg(hist.map((sample) => sample.mobileRxRate || 0), Math.max(1024, ...hist.map((sample) => sample.mobileRxRate || 0)), null, '#38bdf8')}</div></article>
+            <article class="card cellular-traffic-card"><div class="stat-card-title"><span aria-hidden="true">↑</span> MOBILE UPLOAD</div><strong>${formatRate(mobileTxRate)}</strong><span>Live transmit speed</span><small>${formatBytes(mobileTx)} sent since boot</small><div class="cellular-mini-chart">${renderSparklineSvg(hist.map((sample) => sample.mobileTxRate || 0), Math.max(1024, ...hist.map((sample) => sample.mobileTxRate || 0)), null, 'var(--accent)')}</div></article>
           </section>
-        `;
+          <section class="cellular-sim-grid">${slots.map(simCard).join('')}</section>
+          <section class="card cellular-interface-card"><div class="card-head"><div><h3>Mobile data interfaces</h3><span class="subtle">Cellular counters only · Wi-Fi is excluded</span></div><span class="chip">${mobileIfaces.length} found</span></div>${mobileIfaces.length ? `<div class="storage-device-list">${mobileIfaces.map((iface) => `<article class="storage-device-row"><b>${escapeHtml(iface.name)}</b><span>↓ ${formatBytes(iface.rx_bytes)} · ${formatRate(mobileRxRate)}</span><span>↑ ${formatBytes(iface.tx_bytes)} · ${formatRate(mobileTxRate)}</span></article>`).join('')}</div>` : empty('No mobile data counters', 'Android did not expose a cellular interface counter. Wi-Fi traffic is not included.')}</section>`;
       },
 
       'data-usage': () => `
         <div class="toolbar" role="group" aria-label="Data usage network">
-          <button class="button ${usageType === 'mobile' ? 'tonal' : ''}" data-data-network="wifi" aria-pressed="${usageType === 'wifi'}">Wi-Fi</button>
+          <button class="button ${usageType === 'wifi' ? 'tonal' : ''}" data-data-network="wifi" aria-pressed="${usageType === 'wifi'}">Wi-Fi</button>
           <button class="button ${usageType === 'mobile' ? 'tonal' : ''}" data-data-network="mobile" aria-pressed="${usageType === 'mobile'}">Mobile data</button>
         </div>
         <div class="sensors-stat-grid">
           ${renderBigStatCard({
-            iconCode: 'e119',
+            iconCode: 'e125',
             title: 'TOTAL TRANSFERRED',
             heroVal: formatBytes(usageRx + usageTx),
             heroUnit: '',
             subtitle: `${usageType === 'wifi' ? 'Wi-Fi' : 'Mobile data'} interfaces`,
             leftStat: 'RX + TX',
             rightStat: 'TOTAL',
-            data: usageHistory.map(h => h.rx + h.tx),
-            maxVal: Math.max(1024, ...usageHistory.map(h => h.rx + h.tx)),
+            data: usageHistory.map(h => h.rxRate + h.txRate),
+            maxVal: Math.max(1024, ...usageHistory.map(h => h.rxRate + h.txRate)),
             dottedRatio: 0.5,
             color: 'var(--accent)'
           })}
           ${renderBigStatCard({
-            iconCode: 'e119',
+            iconCode: 'e042',
             title: 'TOTAL RECEIVED',
             heroVal: formatBytes(usageRx),
             heroUnit: '',
-            subtitle: 'Cumulative downlink bytes',
+            subtitle: `Cumulative downlink · ${formatRate(usageRxRate)} now`,
             leftStat: 'RECEIVED',
             rightStat: usageType.toUpperCase(),
-            data: usageHistory.map(h => h.rx),
-            maxVal: Math.max(1024, ...usageHistory.map(h => h.rx)),
+            data: usageHistory.map(h => h.rxRate),
+            maxVal: Math.max(1024, ...usageHistory.map(h => h.rxRate)),
             dottedRatio: 0.5,
             color: '#38bdf8'
           })}
           ${renderBigStatCard({
-            iconCode: 'e119',
+            iconCode: 'e04a',
             title: 'TOTAL SENT',
             heroVal: formatBytes(usageTx),
             heroUnit: '',
-            subtitle: 'Cumulative uplink bytes',
+            subtitle: `Cumulative uplink · ${formatRate(usageTxRate)} now`,
             leftStat: 'SENT',
             rightStat: usageType.toUpperCase(),
-            data: usageHistory.map(h => h.tx),
-            maxVal: Math.max(1024, ...usageHistory.map(h => h.tx)),
+            data: usageHistory.map(h => h.txRate),
+            maxVal: Math.max(1024, ...usageHistory.map(h => h.txRate)),
             dottedRatio: 0.5,
             color: '#a78bfa'
           })}
@@ -3878,11 +3473,11 @@
         ${renderWaveformChartSvg({
           title: `${usageType === 'wifi' ? 'Wi-Fi' : 'Mobile data'} Traffic · 60s Trend`,
           series: [
-            { label: 'Cumulative Downlink', data: usageHistory.map(h => h.rx), color: '#38bdf8' },
-            { label: 'Cumulative Uplink', data: usageHistory.map(h => h.tx), color: 'var(--accent)' }
+            { label: 'Download speed', data: usageHistory.map(h => h.rxRate), color: '#38bdf8' },
+            { label: 'Upload speed', data: usageHistory.map(h => h.txRate), color: 'var(--accent)' }
           ],
           height: 200,
-          suffix: ' bytes'
+          suffix: ' B/s'
         })}
 
         <section class="card">
@@ -4546,8 +4141,7 @@
         await refreshTelemetry();
       } else if (state.tab === 'storage') {
         state.storageVolumesSerial = '';
-        showPageLoading(tabNames[state.tab]);
-        await refreshTelemetry();
+        await renderTab();
       } else if (state.tab === 'sensors') {
         await pollSensors(true);
       } else {
@@ -4577,8 +4171,6 @@
     const tab = event.target.closest('[data-tab]'); if (tab) { selectTab(tab.dataset.tab); return; }
     if (event.target.closest('[data-refresh]') || event.target.closest('#refresh')) { await refreshCurrent(); return; }
     const button=event.target.closest('[data-action]'); if (button) {
-      if (button.dataset.action === 'flush-dns') { toast('DNS cache flushed successfully'); return; }
-      if (button.dataset.action === 'monitor-sockets') { toast('Active socket monitoring enabled (8 endpoints)'); return; }
       if (['delete_file','delete_photo'].includes(button.dataset.action) && !window.confirm('Delete this item from the Android device?')) return;
       if (button.dataset.action === 'reboot' && button.dataset.value !== 'system' && !window.confirm(`Restart device to ${button.dataset.value}?`)) return;
       button.disabled=true;

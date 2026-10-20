@@ -1797,14 +1797,15 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 /* WINDOWS TASK MANAGER PROCESS TABLE (Authentic Nocturnal Command Style)     */
 /* ══════════════════════════════════════════════════════════════════════════ */
 .tm-card {
-  background: var(--surface);
+  background: #171a22;
+  font-variant-numeric: tabular-nums;
   border: none;
   border-radius: 12px;
-  padding: 16px 20px;
+  padding: 14px 16px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 18px;
 }
 
 .tm-toolbar {
@@ -1822,8 +1823,8 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 }
 
 .tm-title {
-  font-size: 16px;
-  font-weight: 700;
+  font-size: 18px;
+  font-weight: 500;
   color: #f1f5f9;
   letter-spacing: -0.2px;
 }
@@ -1833,7 +1834,7 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   color: #94a3b8;
   border-radius: 999px;
   padding: 3px 10px;
-  font: 600 11px ui-monospace, monospace;
+  font: 500 12px var(--font-body);
   border: none;
 }
 
@@ -1853,12 +1854,12 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 }
 
 .tm-end-task-btn {
-  height: 28px;
-  min-height: 28px;
+  height: 32px;
+  min-height: 32px;
   padding: 0 14px;
   border-radius: 999px;
   font-family: var(--font-sans);
-  font-size: 11.5px;
+  font-size: 13px;
   font-weight: 700;
   line-height: 1;
   white-space: nowrap;
@@ -1876,7 +1877,7 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 .tm-end-task-btn.active {
   background: var(--accent);
   color: var(--accent-text);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--accent), transparent 50%);
+  box-shadow: none;
 }
 
 .tm-end-task-btn.active:hover {
@@ -1885,9 +1886,9 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 
 .tm-end-task-btn.disabled {
   background: rgba(255, 255, 255, 0.05);
-  color: #64748b;
+  color: #a0a6b3;
   cursor: not-allowed;
-  opacity: 0.6;
+  opacity: 0.8;
 }
 
 .tm-search-wrap {
@@ -1899,7 +1900,7 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 
 .tm-search-icon {
   position: absolute;
-  left: 10px;
+  right: 12px;
   width: 13px;
   height: 13px;
   stroke: #64748b;
@@ -1907,26 +1908,26 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 }
 
 .tm-search-input {
-  height: 28px;
+  height: 32px;
   border-radius: 999px;
-  padding: 0 28px 0 30px;
+  padding: 0 36px 0 16px;
   background: rgba(255, 255, 255, 0.05);
   border: none;
   color: #f1f5f9;
-  font-size: 11.5px;
-  width: 190px;
+  font-size: 14px;
+  width: 246px;
   transition: all 0.2s ease;
 }
 
 .tm-search-input:focus {
   background: rgba(255, 255, 255, 0.08);
-  width: 230px;
-  outline: none;
+  width: 246px;
+  outline: 1px solid var(--accent);
 }
 
 .tm-search-clear {
   position: absolute;
-  right: 8px;
+  right: 28px;
   background: none;
   border: none;
   color: #94a3b8;
@@ -1936,13 +1937,13 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 }
 
 .tm-interval-select {
-  height: 28px;
+  height: 32px;
   border-radius: 999px;
   padding: 0 10px;
   background: rgba(255, 255, 255, 0.05);
   border: none;
   color: #94a3b8;
-  font: 600 11px ui-monospace, monospace;
+  font: 500 12px var(--font-body);
   cursor: pointer;
   flex-shrink: 0;
   white-space: nowrap;
@@ -1951,16 +1952,16 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 /* Table Container & Scrolling */
 .tm-table-wrap {
   overflow-x: auto;
-  border-radius: 8px;
-  background: var(--well);
+  border-radius: 0;
+  background: transparent;
   border: none;
 }
 
 .tm-grid {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 78px 94px 86px 86px 78px 94px;
+  grid-template-columns: minmax(240px, 2.3fr) repeat(6, minmax(92px, 1fr));
   width: 100%;
-  min-width: 740px;
+  min-width: 820px;
 }
 
 /* Two-tier Stacked Header */
@@ -1969,8 +1970,9 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 }
 
 .tm-header-cell {
-  padding: 6px 8px;
-  background: var(--surface2);
+  padding: 12px 8px 8px;
+  height: 76px;
+  background: transparent;
   border-bottom: none;
   user-select: none;
   cursor: pointer;
@@ -1996,20 +1998,20 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 }
 
 .tm-header-top-val {
-  font: 800 13px ui-monospace, monospace;
+  font: 600 14px var(--font-body);
   color: #f8fafc;
   line-height: 1.2;
 }
 
 .tm-header-bottom-label {
-  font: 600 10.5px ui-monospace, monospace;
+  font: 500 12px var(--font-body);
   color: #94a3b8;
   letter-spacing: 0.2px;
   display: inline-flex;
   align-items: center;
   gap: 3px;
   line-height: 1.2;
-  margin-top: 2px;
+  margin-top: 16px;
 }
 
 .tm-header-cell.sorted .tm-header-bottom-label {
@@ -2028,9 +2030,9 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.02);
+  background: transparent;
   border-bottom: none;
-  font: 700 12.5px var(--font-body);
+  font: 500 14px var(--font-body);
   color: #f1f5f9;
   cursor: pointer;
   user-select: none;
@@ -2065,8 +2067,8 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   padding: 2px 4px;
   display: flex;
   align-items: center;
-  height: 27px;
-  font: 500 11.5px ui-monospace, monospace;
+  height: 30px;
+  font: 500 13px ui-monospace, monospace;
   border-bottom: none;
   transition: background 0.1s ease;
   cursor: pointer;
@@ -2074,7 +2076,7 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 }
 
 .tm-cell.col-name {
-  padding-left: 10px;
+  padding-right: 12px;
   font-family: var(--font-body);
   gap: 6px;
   overflow: hidden;
@@ -2098,7 +2100,7 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
 
 .tm-row.selected .tm-cell.col-name {
   border-left: none;
-  padding-left: 10px;
+  padding-right: 12px;
 }
 
 .tm-row.selected .tm-app-name {
@@ -2154,8 +2156,8 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 12px;
-  font-weight: 550;
+  font-size: 13px;
+  font-weight: 500;
   color: #e2e8f0;
 }
 
@@ -2165,10 +2167,10 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   align-items: center;
   justify-content: flex-end;
   width: 100%;
-  height: 21px;
+  height: 23px;
   padding: 0 6px;
   border-radius: 2px;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 500;
   font-family: ui-monospace, monospace;
   border: none;
@@ -2198,7 +2200,7 @@ textarea { width: 100%; min-height: 145px; resize: vertical; line-height: 1.55; 
   background: #0078d7;
   color: #ffffff;
   font-weight: 800;
-  box-shadow: 0 0 10px rgba(0, 120, 215, 0.5);
+  box-shadow: none;
 }
 
 /* Power Ratings */
@@ -3908,3 +3910,10 @@ tr[hidden], .app-row[hidden] { display: none !important; }
 .power-help button { width: 24px; height: 24px; padding: 0; border: 1px solid currentColor; border-radius: 50%; background: transparent; color: var(--dim); font: inherit; cursor: help; }
 .power-help [role="tooltip"] { display: none; position: absolute; top: 52px; left: 12px; right: 12px; z-index: 20; padding: 12px; border: 1px solid var(--dim); border-radius: 8px; background: #171a22; color: #f0f0f0; font: 12px/1.5 sans-serif; font-weight: 400; }
 .power-help:hover [role="tooltip"], .power-help:focus-within [role="tooltip"] { display: block; }
+
+@media (max-width: 720px) {
+  .tm-toolbar-right { width: 100%; justify-content: flex-start; gap: 8px; }
+  .tm-search-wrap { flex: 1; min-width: 150px; }
+  .tm-search-input, .tm-search-input:focus { width: 100%; }
+  .tm-table-wrap { max-width: 100%; }
+}

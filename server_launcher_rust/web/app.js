@@ -2091,66 +2091,17 @@
       return 'heat-3';
     }
 
-    // Prepare normalized processes with fallback dataset matching desktop Task Manager screenshot
-    const rawProcList = (processes && processes.length > 0) ? processes : [
-      { pid: 3120, name: 'antigravity-ide', cpu_usage: 0.6, memory_bytes: 1288490188, disk_rate_bps: 0, net_rate_bps: 11059, count: 17 },
-      { pid: 2840, name: 'chrome', cpu_usage: 0.2, memory_bytes: 591708160, disk_rate_bps: 0, net_rate_bps: 0, count: 12 },
-      { pid: 14120, name: 'server_launcher', cpu_usage: 35.0, memory_bytes: 530186240, disk_rate_bps: 0, net_rate_bps: 13414, count: 5 },
-      { pid: 8190, name: 'language_server', cpu_usage: 0.0, memory_bytes: 425932800, disk_rate_bps: 0, net_rate_bps: 140, count: 2 },
-      { pid: 9400, name: 'WebKitWebProcess', cpu_usage: 7.1, memory_bytes: 405417984, disk_rate_bps: 0, net_rate_bps: 19763, count: 4 },
-      { pid: 1840, name: 'gnome-shell', cpu_usage: 5.1, memory_bytes: 167562240, disk_rate_bps: 0, net_rate_bps: 0, count: 1 },
-      { pid: 9450, name: 'WebKitNetworkProcess', cpu_usage: 0.0, memory_bytes: 124990464, disk_rate_bps: 0, net_rate_bps: 0, count: 4 },
-      { pid: 4910, name: 'Telegram', cpu_usage: 0.0, memory_bytes: 56524800, disk_rate_bps: 0, net_rate_bps: 2621440, count: 1 },
-      { pid: 5600, name: 'codex', cpu_usage: 0.0, memory_bytes: 56419840, disk_rate_bps: 0, net_rate_bps: 64, count: 4 },
-      { pid: 3820, name: 'ptyxis', cpu_usage: 0.0, memory_bytes: 34707456, disk_rate_bps: 0, net_rate_bps: 0, count: 1 },
-      { pid: 2100, name: 'xdg-desktop-portal', cpu_usage: 0.0, memory_bytes: 33869824, disk_rate_bps: 0, net_rate_bps: 8396, count: 3 },
-      { pid: 2450, name: 'nautilus', cpu_usage: 0.0, memory_bytes: 29464576, disk_rate_bps: 0, net_rate_bps: 0, count: 1 },
-      { pid: 1200, name: 'adb', cpu_usage: 0.3, memory_bytes: 22858752, disk_rate_bps: 0, net_rate_bps: 7680, count: 3 },
-      { pid: 2310, name: 'gjs', cpu_usage: 0.0, memory_bytes: 21286912, disk_rate_bps: 0, net_rate_bps: 0, count: 2 },
-      { pid: 110, name: 'systemd', cpu_usage: 0.0, memory_bytes: 18432000, disk_rate_bps: 0, net_rate_bps: 0, count: 1 },
-      { pid: 450, name: 'dbus-daemon', cpu_usage: 0.0, memory_bytes: 12288000, disk_rate_bps: 0, net_rate_bps: 0, count: 1 },
-      { pid: 780, name: 'NetworkManager', cpu_usage: 0.1, memory_bytes: 15360000, disk_rate_bps: 0, net_rate_bps: 2048, count: 1 }
-    ];
-
-    const expandedRawList = [];
-    for (const p of rawProcList) {
-      if (p.count && p.count > 1 && !p.children) {
-        const parentCpu = Number(p.cpu_usage ?? p.cpu_pct ?? p.cpu ?? 0);
-        const parentMem = Number(p.memory_bytes ?? (p.memory_kb ? p.memory_kb * 1024 : 0) ?? (p.memory ? p.memory * 1024 : 0) ?? 0);
-        const parentDisk = Number(p.disk_rate_bps ?? p.disk_rate ?? 0);
-        const parentNet = Number(p.net_rate_bps ?? p.net_rate ?? 0);
-        expandedRawList.push({
-          pid: p.pid,
-          name: p.name,
-          cpu: parentCpu * 0.7,
-          mem: Math.round(parentMem * 0.5),
-          disk: parentDisk * 0.6,
-          net: parentNet * 0.7,
-          status: 'running'
-        });
-        for (let c = 1; c < p.count; c++) {
-          expandedRawList.push({
-            pid: p.pid + c,
-            name: `${p.name} (worker #${c})`,
-            cpu: (parentCpu * 0.3) / (p.count - 1),
-            mem: Math.round((parentMem * 0.5) / (p.count - 1)),
-            disk: (parentDisk * 0.4) / (p.count - 1),
-            net: (parentNet * 0.3) / (p.count - 1),
-            status: 'running'
-          });
-        }
-      } else {
-        expandedRawList.push({
-          pid: p.pid,
-          name: p.name,
-          cpu: Number(p.cpu_usage ?? p.cpu_pct ?? p.cpu ?? 0),
-          mem: Number(p.memory_bytes ?? (p.memory_kb ? p.memory_kb * 1024 : 0) ?? (p.memory ? p.memory * 1024 : 0) ?? 0),
-          disk: Number(p.disk_rate_bps ?? p.disk_rate ?? 0),
-          net: Number(p.net_rate_bps ?? p.net_rate ?? 0),
-          status: p.status || 'running'
-        });
-      }
-    }
+    // Only device-reported processes may be selected or terminated.
+    const rawProcList = processes || [];
+    const expandedRawList = rawProcList.map(p => ({
+      pid: p.pid,
+      name: p.name,
+      cpu: Number(p.cpu_usage ?? p.cpu_pct ?? p.cpu ?? 0),
+      mem: Number(p.memory_bytes ?? ((p.memory_kb ?? p.memory ?? 0) * 1024)),
+      disk: Number(p.disk_rate_bps ?? p.disk_rate ?? 0),
+      net: Number(p.net_rate_bps ?? p.net_rate ?? 0),
+      status: p.status || 'running'
+    }));
 
     const groupsMap = new Map();
     for (const p of expandedRawList) {
@@ -2168,9 +2119,9 @@
     }
 
     const normFactor = Math.max(1, s.cpu_cores || 8);
-    const totalSystemCpu = Number(s.cpu_usage_pct ?? state.sensorHistory.at(-1)?.cpu ?? 53);
-    const totalGpuPct = Number(s.gpus?.[0]?.load_pct ?? (s.gpu_renderer ? 15 : 15));
-    const sysWatts = Number(s.power_watts ?? (s.battery_voltage_mv ? Math.round((s.battery_voltage_mv / 1000) * 0.9) : 4));
+    const totalSystemCpu = Number(s.cpu_usage_pct ?? state.sensorHistory.at(-1)?.cpu ?? 0);
+    const totalGpuPct = Number(s.gpus?.[0]?.load_pct ?? 0);
+    const sysWatts = Number(s.power_watts ?? 0);
 
     const allGroups = [];
     for (const grp of groupsMap.values()) {
@@ -2250,12 +2201,12 @@
     const appsGroups = filteredGroups.filter(g => g.isApp);
     const bgGroups = filteredGroups.filter(g => !g.isApp);
 
-    const headerCpu = totalSystemCpu ? Math.round(totalSystemCpu) + '%' : '53%';
-    const headerMem = memUsage ? Math.round(memUsage) + '%' : '60%';
-    const headerDisk = '11%';
-    const headerNet = '0%';
-    const headerGpu = totalGpuPct ? Math.round(totalGpuPct) + '%' : '15%';
-    const headerPower = `${sysWatts} W`;
+    const headerCpu = s.cpu_usage_pct != null || state.sensorHistory.length ? Math.round(totalSystemCpu) + '%' : '—';
+    const headerMem = memUsage != null ? Math.round(memUsage) + '%' : '—';
+    const headerDisk = '—';
+    const headerNet = '—';
+    const headerGpu = s.gpus?.[0]?.load_pct != null ? Math.round(totalGpuPct) + '%' : '—';
+    const headerPower = s.power_watts != null ? `${sysWatts} W` : '—';
 
     function renderGroupRow(grp) {
       const isMulti = grp.children.length > 1;
@@ -2356,14 +2307,11 @@
         <div class="tm-toolbar">
           <div class="tm-toolbar-left">
             <span class="tm-title">Processes</span>
-            <span class="tm-count-pill">${allGroups.length ? (appsGroups.length + bgGroups.length) : 117} processes</span>
+            <span class="tm-count-pill">${expandedRawList.length} processes</span>
           </div>
           <div class="tm-toolbar-right">
             <div class="tm-actions-row">
-              <button class="tm-end-task-btn ${state.topAppsSelectedPid ? 'active' : 'disabled'}" id="tm-btn-end-task" ${!state.topAppsSelectedPid ? 'disabled' : ''}>
-                ✕ ${state.topAppsSelectedPid ? `End task (PID ${state.topAppsSelectedPid})` : 'End task'}
-              </button>
-              <select class="tm-interval-select" id="tm-refresh-cadence">
+              <select class="tm-interval-select" id="tm-refresh-cadence" aria-label="Refresh interval">
                 <option value="1000" ${state.sensorsCadence === 1000 ? 'selected' : ''}>⏱ 1s (High)</option>
                 <option value="2000" ${state.sensorsCadence === 2000 ? 'selected' : ''}>⏱ 2s (Fast)</option>
                 <option value="5000" ${state.sensorsCadence === 5000 ? 'selected' : ''}>⏱ 5s (Default)</option>
@@ -2376,9 +2324,12 @@
                 <circle cx="11" cy="11" r="8"></circle>
                 <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
               </svg>
-              <input class="tm-search-input" id="sensor-app-filter" value="${escapeHtml(state.topAppsSearch || state.sensorFilter || '')}" placeholder="Search by name or PID...">
+              <input class="tm-search-input" id="sensor-app-filter" aria-label="Search processes by name or PID" value="${escapeHtml(state.topAppsSearch || state.sensorFilter || '')}" placeholder="Search by name or PID...">
               ${(state.topAppsSearch || state.sensorFilter) ? `<button class="tm-search-clear" id="sensor-app-filter-clear">✕</button>` : ''}
             </div>
+              <button class="tm-end-task-btn ${state.topAppsSelectedPid ? 'active' : 'disabled'}" id="tm-btn-end-task" ${!state.topAppsSelectedPid ? 'disabled' : ''}>
+                ✕ ${state.topAppsSelectedPid ? `End task (PID ${state.topAppsSelectedPid})` : 'End task'}
+              </button>
           </div>
         </div>
 
@@ -2435,7 +2386,7 @@
 
             ${(!appsGroups.length && !bgGroups.length) ? `
               <div style="grid-column: 1 / -1; padding: 36px 0; text-align: center; color: #94a3b8;">
-                No processes match the search query.
+                ${rawProcList.length ? 'No processes match the search query.' : 'No process data available from this device.'}
               </div>
             ` : ''}
           </div>

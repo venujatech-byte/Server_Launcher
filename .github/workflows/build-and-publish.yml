@@ -107,6 +107,15 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Verify Linux package assets
+        run: |
+          for extension in deb rpm AppImage; do
+            if ! find release-assets -type f -name "*.${extension}" -print -quit | grep -q .; then
+              echo "::error::Missing Linux package: .${extension}"
+              exit 1
+            fi
+          done
+
       - name: Write release description
         env:
           EVENT_REF_TYPE: ${{ github.ref_type }}
@@ -167,6 +176,6 @@ jobs:
           target_commitish: ${{ github.sha }}
           prerelease: false
           make_latest: true
-          files: release-assets/*
+          files: release-assets/**/*
           body_path: release-notes.md
 

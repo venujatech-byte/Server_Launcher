@@ -14,8 +14,8 @@ permissions:
 
 jobs:
   build:
-    name: Build (Linux x86_64)
-    runs-on: ubuntu-latest
+    name: Build Linux packages (x86_64)
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout repository
@@ -39,7 +39,10 @@ jobs:
             libxcb-xfixes0-dev \
             libxdo-dev \
             libxkbcommon-dev \
+            libfuse2 \
+            patchelf \
             pkg-config \
+            rpm \
             wget
 
       - name: Set up Rust toolchain
@@ -50,9 +53,26 @@ jobs:
         with:
           workspaces: server_launcher_rust
 
-      - name: Build release binary
+      - name: Set package version
+        id: package_version
         working-directory: server_launcher_rust
-        run: cargo build --release
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            PACKAGE_VERSION="${GITHUB_REF_NAME#v}"
+          else
+            BASE_VERSION=$(grep -m1 '^version = ' Cargo.toml | cut -d '"' -f 2)
+            PACKAGE_VERSION="${BASE_VERSION%.*}.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "version=${PACKAGE_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version '^2' --locked
+
+      - name: Build Linux packages
+        env:
+          PACKAGE_VERSION: ${{ steps.package_version.outputs.version }}
+        working-directory: server_launcher_rust
+        run: cargo tauri build --bundles deb,rpm,appimage --config "{\"version\":\"${PACKAGE_VERSION}\",\"bundle\":{\"linux\":{\"rpm\":{\"release\":\"${GITHUB_RUN_NUMBER}\"}}}}"
 
       - name: Package Linux binary
         run: |
@@ -61,8 +81,12 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: server_launcher-linux-x86_64.tar.gz
-          path: server_launcher-linux-x86_64.tar.gz
+          name: server_launcher-linux-x86_64-packages
+          path: |
+            server_launcher-linux-x86_64.tar.gz
+            server_launcher_rust/target/release/bundle/deb/*.deb
+            server_launcher_rust/target/release/bundle/rpm/*.rpm
+            server_launcher_rust/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
 
   publish:
@@ -111,7 +135,7 @@ jobs:
             printf -- '- **Version**: `%s`\n' "$TAG_NAME"
             printf -- '- **Commit**: [%s](%s/%s/commit/%s)\n' "$BUILD_SHA" "$SERVER_URL" "$REPOSITORY" "$BUILD_SHA"
             printf -- '- **Branch**: `%s`\n' "$BRANCH_NAME"
-            printf '%s\n' '- **Artifact**: Linux (`server_launcher-linux-x86_64.tar.gz`)'
+            printf '%s\n' '- **Linux packages**: `.deb`, `.rpm`, `.AppImage`, and `server_launcher-linux-x86_64.tar.gz`'
             printf '\n%s\n' '### Commit messages since the previous build'
             if [[ -n "$PREVIOUS_BUILD" ]]; then
               git log --reverse --format='- %s (`%h`)' "$PREVIOUS_BUILD..$BUILD_SHA"

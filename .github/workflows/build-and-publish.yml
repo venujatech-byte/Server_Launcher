@@ -77,6 +77,7 @@ jobs:
       - name: Package Linux binary
         run: |
           tar -czf server_launcher-linux-x86_64.tar.gz -C server_launcher_rust/target/release server_launcher
+          cp server_launcher_rust/assets/icon.png server_launcher-icon.png
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -84,6 +85,7 @@ jobs:
           name: server_launcher-linux-x86_64-packages
           path: |
             server_launcher-linux-x86_64.tar.gz
+            server_launcher-icon.png
             server_launcher_rust/target/release/bundle/deb/*.deb
             server_launcher_rust/target/release/bundle/rpm/*.rpm
             server_launcher_rust/target/release/bundle/appimage/*.AppImage
@@ -144,7 +146,7 @@ jobs:
             printf -- '- **Version**: `%s`\n' "$TAG_NAME"
             printf -- '- **Commit**: [%s](%s/%s/commit/%s)\n' "$BUILD_SHA" "$SERVER_URL" "$REPOSITORY" "$BUILD_SHA"
             printf -- '- **Branch**: `%s`\n' "$BRANCH_NAME"
-            printf '%s\n' '- **Linux packages**: `.deb`, `.rpm`, `.AppImage`, and `server_launcher-linux-x86_64.tar.gz`'
+            printf '%s\n' '- **Linux packages**: `.deb`, `.rpm`, `.AppImage`, `server_launcher-linux-x86_64.tar.gz`, and `server_launcher-icon.png`'
             printf '\n%s\n' '### Commit messages since the previous build'
             if [[ -n "$PREVIOUS_BUILD" ]]; then
               git log --reverse --format='- %s (`%h`)' "$PREVIOUS_BUILD..$BUILD_SHA"

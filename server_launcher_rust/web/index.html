@@ -494,3 +494,51 @@
                 <pre class="terminal-shell-output" id="srv-detail-output">// Process is currently stopped. Click 'Start' to launch and stream stdout/stderr logs.</pre>
               </div>
             </div>
+            <!-- Scripts Right Panel Output (Alternate) -->
+            <div class="right-tab-content" id="tab-content-scripts" style="display: none;">
+              <div class="server-detail-header">
+                <h2 class="server-detail-name">Script Console Execution Output</h2>
+                <button class="btn-pill btn-quick-launch" id="btn-clear-scripts-output">Clear Logs</button>
+              </div>
+              <div class="terminal-shell-box" style="margin-top: 10px;">
+                <pre class="terminal-shell-output" id="scripts-terminal-output">// Select or run a custom script on the left to monitor live output...</pre>
+              </div>
+            </div>
+            <!-- Cmds Right Panel Output (Alternate) -->
+            <div class="right-tab-content" id="tab-content-cmds" style="display: none;">
+              <div class="server-detail-header">
+                <h2 class="server-detail-name">Command Dock Terminal Runner</h2>
+              </div>
+              <div class="terminal-shell-box" style="margin-top: 10px;">
+                <pre class="terminal-shell-output" id="cmds-terminal-output">// Click Execute on any command on the left to view results here...</pre>
+              </div>
+            </div>
+            <!-- SystemD Right Panel (Alternate) -->
+            <div class="right-tab-content" id="tab-content-systemd" style="display: none;">
+              <div class="server-detail-header">
+                <h2 class="server-detail-name">SystemD Service Unit Inspection</h2>
+              </div>
+              <div class="terminal-shell-box" style="margin-top: 10px;">
+                <pre class="terminal-shell-output" id="systemd-terminal-output">// Journalctl live log diagnostics will stream here...</pre>
+              </div>
+            </div>
+            <!-- Sensors Right Panel (Alternate) -->
+            <div class="right-tab-content" id="tab-content-sensors" style="display: none;">
+              <div class="server-detail-header">
+                <h2 class="server-detail-name">Real-time Sensor Graphs & Hardware Gauges</h2>
+                <button class="btn-pill" id="btn-poll-sensors"><span class="icon">&#xe145;</span> Poll Now</button>
+              </div>
+              <div class="sensors-metrics-cards">
+                <div class="sensor-metric-card">
+                  <div class="smc-header"><span>CPU Global Load</span><span class="smc-val" id="cpu-metric-val">14.2%</span></div>
+                  <div class="smc-track"><div class="smc-fill" id="cpu-metric-fill" style="width: 14.2%;"></div></div>
+                </div>
+                <div class="sensor-metric-card">
+                  <div class="smc-header"><span>RAM Memory</span><span class="smc-val" id="ram-metric-val">5.8 / 16.0 GB (36%)</span></div>
+                  <div class="smc-track"><div class="smc-fill" style="width: 36%; background: #a855f7;"></div></div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>

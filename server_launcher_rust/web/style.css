@@ -1401,3 +1401,10 @@ button:focus-visible, input:focus-visible {
 .ql-result-item .icon {
   color: var(--emerald-start);
 }
+
+.app-main-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}

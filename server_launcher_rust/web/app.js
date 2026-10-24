@@ -837,3 +837,6 @@ document.getElementById('btn-refresh-sensors')?.addEventListener('click', () => 
 
 // Quick launch live search
 document.getElementById('ql-search-input')?.addEventListener('input', (e) => { const q = e.target.value.toLowerCase(); document.querySelectorAll('.ql-result-item').forEach(item => { const txt = item.textContent.toLowerCase(); item.style.display = (!q || txt.includes(q)) ? 'flex' : 'none'; }); });
+
+// New script trigger
+document.getElementById('btn-new-script')?.addEventListener('click', () => { showToast('Script creation modal initialized'); });

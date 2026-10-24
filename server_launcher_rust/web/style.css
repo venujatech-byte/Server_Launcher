@@ -1338,3 +1338,6 @@ body {
 
 /* Quick launch button active state */
 .btn-quick-launch:active { transform: translateY(1px); }
+
+/* Nav pill active state */
+.nav-pill-tab:active { transform: scale(0.96); }

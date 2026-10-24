@@ -280,3 +280,26 @@ function setupActionDelegation() {
       }
     });
   }
+
+function init() {
+    setupNavTabs();
+    setupGroupFilter();
+    setupSubtabs();
+    setupBatchActions();
+    setupSearch();
+    setupAddServerForm();
+    setupShortcuts();
+    setupScanTimer();
+    setupWindowControls();
+    setupActionDelegation();
+    renderActiveView();
+    updateOverviewStats();
+    console.log('Server Launcher UI initialized.');
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();

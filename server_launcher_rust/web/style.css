@@ -1239,3 +1239,7 @@ button:focus-visible, input:focus-visible {
 .modal-dialog {
   border-radius: 16px;
 }
+
+#btn-cancel-add:hover {
+  background-color: var(--bg-card-hover);
+}

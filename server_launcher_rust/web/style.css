@@ -1410,3 +1410,6 @@ body {
 
 /* Scripts output shadow */
 .scripts-output-panel { box-shadow: inset 0 2px 8px rgba(0,0,0,0.5); }
+
+/* Cmd categories bar */
+.cmds-categories-bar { display: flex; gap: 8px; margin-bottom: 8px; }

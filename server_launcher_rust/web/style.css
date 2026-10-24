@@ -1287,3 +1287,7 @@ button:focus-visible, input:focus-visible {
 .managed-servers-heading-row {
   margin-bottom: 4px;
 }
+
+.subtab-status-dot {
+  box-sizing: border-box;
+}

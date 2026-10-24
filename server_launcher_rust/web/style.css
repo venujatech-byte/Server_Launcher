@@ -1356,3 +1356,6 @@ body {
 
 /* Subtab item active state */
 .subtab-item:active { transform: scale(0.96); }
+
+/* Subtab badge transition */
+.subtab-badge { transition: background-color 0.2s; }

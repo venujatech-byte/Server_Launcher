@@ -807,3 +807,6 @@ window.addEventListener('blur', () => { const tb = document.getElementById('wind
 
 // Window focus handler
 window.addEventListener('focus', () => { const tb = document.getElementById('window-titlebar'); if (tb) tb.classList.remove('window-inactive'); });
+
+// Copy IP handler
+document.getElementById('meta-ip')?.addEventListener('click', () => { navigator.clipboard?.writeText(document.getElementById('meta-ip').textContent); showToast('Copied LAN IP to clipboard'); });

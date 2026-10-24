@@ -1323,3 +1323,6 @@ body {
 
 /* Titlebar close button font weight */
 .win-btn.win-close { font-size: 14px; font-weight: bold; }
+
+/* Play button hover scale */
+.brand-launcher-circle:hover { transform: scale(1.05); }

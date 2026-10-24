@@ -270,3 +270,13 @@ function setupWindowControls() {
       if (btnClose) btnClose.addEventListener('click', () => appWin.close());
     }
   }
+
+function setupActionDelegation() {
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-action="toggle-server"]');
+      if (btn) {
+        const id = btn.getAttribute('data-id');
+        toggleServerStatus(id);
+      }
+    });
+  }

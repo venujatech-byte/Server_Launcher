@@ -1154,3 +1154,7 @@ code, pre, kbd {
   background-color: rgba(255, 255, 255, 0.08);
   border-color: var(--border-hover);
 }
+
+.ql-result-item:hover .ql-badge {
+  background-color: rgba(56, 189, 248, 0.25);
+}

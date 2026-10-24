@@ -1320,3 +1320,7 @@ button:focus-visible, input:focus-visible {
 .group-pill {
   letter-spacing: 0.01em;
 }
+
+.rail-item.active .icon {
+  color: #ffffff;
+}

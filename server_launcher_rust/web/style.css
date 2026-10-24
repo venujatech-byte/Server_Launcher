@@ -1192,3 +1192,7 @@ button:focus-visible, input:focus-visible {
 .custom-checkbox:hover .cb-box {
   border-color: var(--text-secondary);
 }
+
+.card-top-row {
+  min-height: 24px;
+}

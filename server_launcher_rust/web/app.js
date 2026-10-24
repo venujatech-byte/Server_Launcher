@@ -825,3 +825,6 @@ document.addEventListener('click', (e) => { const batch = e.target.closest('.btn
 
 // Clear script output handler
 document.getElementById('btn-clear-script-output')?.addEventListener('click', () => { const panel = document.getElementById('scripts-output-panel'); if (panel) panel.style.display = 'none'; showToast('Script output cleared'); });
+
+// Cmd category filter
+document.getElementById('cmds-categories-bar')?.addEventListener('click', (e) => { const pill = e.target.closest('.group-pill'); if (pill) { document.querySelectorAll('#cmds-categories-bar .group-pill').forEach(p => p.classList.remove('active')); pill.classList.add('active'); showToast(`Filter commands: ${pill.textContent}`); } });

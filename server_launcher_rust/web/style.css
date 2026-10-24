@@ -1443,3 +1443,6 @@ body {
 
 /* Form input hover */
 .form-input:hover { background-color: #0d1422; }
+
+/* Close modal hover */
+.btn-close-modal:hover { color: #ffffff; }

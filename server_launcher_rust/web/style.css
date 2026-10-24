@@ -1205,3 +1205,7 @@ button:focus-visible, input:focus-visible {
 #app-toast {
   pointer-events: none;
 }
+
+.subbar-heading {
+  letter-spacing: -0.01em;
+}

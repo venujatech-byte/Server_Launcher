@@ -1336,3 +1336,7 @@ button:focus-visible, input:focus-visible {
 .btn-action-stop .icon {
   margin-right: -2px;
 }
+
+.nav-pill-tab {
+  transition: color 0.2s, background-color 0.2s, border-color 0.2s;
+}

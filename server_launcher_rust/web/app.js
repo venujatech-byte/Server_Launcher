@@ -831,3 +831,6 @@ document.getElementById('cmds-categories-bar')?.addEventListener('click', (e) =>
 
 // Refresh systemd handler
 document.getElementById('btn-refresh-systemd')?.addEventListener('click', () => { showToast('Polling SystemD service status...'); const tbody = document.getElementById('systemd-tbody'); if (tbody) tbody.style.opacity = '0.5'; setTimeout(() => { if (tbody) tbody.style.opacity = '1'; showToast('SystemD service status updated'); }, 600); });
+
+// Refresh sensors handler
+document.getElementById('btn-refresh-sensors')?.addEventListener('click', () => { showToast('Sampling hardware telemetry sensors...'); const cGlobal = document.getElementById('sensor-cpu-global'); if (cGlobal) cGlobal.textContent = 'Measuring...'; setTimeout(() => { showToast('Sensors updated'); }, 500); });

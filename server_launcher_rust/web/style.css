@@ -1346,3 +1346,7 @@ button:focus-visible, input:focus-visible {
   font-size: 11px;
   letter-spacing: 0.05em;
 }
+
+.kbd-esc {
+  font-weight: 600;
+}

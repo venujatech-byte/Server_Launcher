@@ -1431,3 +1431,6 @@ body {
 
 /* Meter track shadow */
 .meter-bar-track { box-shadow: inset 0 1px 3px rgba(0,0,0,0.6); }
+
+/* Modal backdrop transition */
+.modal-backdrop { transition: opacity 0.2s ease-in-out; }

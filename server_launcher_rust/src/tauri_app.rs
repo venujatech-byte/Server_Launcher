@@ -93,7 +93,11 @@ pub async fn launcher_start_server(key: String) -> Result<String, String> {
             #[cfg(target_os = "linux")]
             {
                 let mut cmd = std::process::Command::new("bash");
-                cmd.args(["-c", &srv.command]).current_dir(cwd);
+                cmd.args(["-c", &srv.command])
+                    .current_dir(cwd)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
                 cmd.spawn().map_err(|e| format!("Failed to spawn process: {e}"))?;
             }
             Ok(format!("Started server: {}", srv.name))
@@ -234,6 +238,7 @@ pub async fn launcher_execute_script(id: String) -> Result<String, String> {
             let out = std::process::Command::new(&script.shell)
                 .args(["-c", &script.script])
                 .current_dir(if script.cwd.is_empty() { "." } else { &script.cwd })
+                .stdin(std::process::Stdio::null())
                 .output()
                 .map_err(|e| format!("Failed to run script: {e}"))?;
             let stdout = String::from_utf8_lossy(&out.stdout).to_string();
@@ -256,6 +261,7 @@ pub async fn launcher_execute_command(command: String, cwd: Option<String>) -> R
         let out = std::process::Command::new("bash")
             .args(["-c", &command])
             .current_dir(&dir)
+            .stdin(std::process::Stdio::null())
             .output()
             .map_err(|e| format!("Failed to execute command: {e}"))?;
         let stdout = String::from_utf8_lossy(&out.stdout).to_string();

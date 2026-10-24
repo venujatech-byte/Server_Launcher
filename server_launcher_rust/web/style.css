@@ -382,3 +382,123 @@ button, input, select, textarea, .win-btn, .sidebar-tab, .group-pill, .rail-item
   padding: 0 16px 10px 4px;
   gap: 12px;
 }
+
+/* 3. Left Panel (380px fixed width, matching egui) */
+.left-panel {
+  width: 380px;
+  min-width: 380px;
+  max-width: 380px;
+  background-color: var(--bg-sidebar);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  overflow: hidden;
+}
+
+.sidebar-tabs-bar {
+  display: flex;
+  align-items: center;
+  background-color: var(--bg-card);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.sidebar-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 5px 0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sidebar-tab:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-card-hover);
+}
+
+.sidebar-tab.active {
+  background-color: var(--accent-blue);
+  color: #ffffff;
+}
+
+.panel-left-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.group-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 10px;
+}
+
+.group-filter-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.group-pills-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.group-pill {
+  background-color: var(--bg-card);
+  border: none;
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.group-pill:hover {
+  background-color: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+
+.group-pill.active {
+  background-color: var(--accent-blue);
+  color: #ffffff;
+}
+
+.group-pill-add {
+  background-color: rgba(37, 99, 235, 0.2);
+  border: none;
+  color: var(--cyber-cyan);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.group-pill-add:hover {
+  background-color: rgba(37, 99, 235, 0.35);
+}
+
+.left-cards-scrollable {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+}

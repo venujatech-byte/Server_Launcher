@@ -1291,3 +1291,8 @@ button:focus-visible, input:focus-visible {
 .subtab-status-dot {
   box-sizing: border-box;
 }
+
+.form-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.7;
+}

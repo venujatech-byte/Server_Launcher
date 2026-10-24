@@ -409,8 +409,8 @@ async fn adb_action(
     extra: Option<String>,
 ) -> Result<String, String> {
     on_worker(move || {
-        let value = value.unwrap_or_default();
-        let extra = extra.unwrap_or_default();
+        let _value = value.unwrap_or_default();
+        let _extra = extra.unwrap_or_default();
         match action.as_str() {
             "key_back" => crate::adb::send_keyevent(&serial, 4).map(|_| "Back sent".into()),
             "key_home" => crate::adb::send_keyevent(&serial, 3).map(|_| "Home sent".into()),

@@ -1213,3 +1213,8 @@ button:focus-visible, input:focus-visible {
 .subbar-search-box:focus-within {
   border-color: var(--border-focus);
 }
+
+.card-actions-row {
+  flex-wrap: wrap;
+  gap: 8px;
+}

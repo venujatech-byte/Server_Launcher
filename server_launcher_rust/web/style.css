@@ -1393,3 +1393,7 @@ button:focus-visible, input:focus-visible {
 .subbar-timestamp {
   font-variant-numeric: tabular-nums;
 }
+
+.group-pill-add {
+  transition: background-color 0.2s, border-color 0.2s;
+}

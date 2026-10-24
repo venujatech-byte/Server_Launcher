@@ -1279,3 +1279,7 @@ button:focus-visible, input:focus-visible {
 .search-input::-webkit-search-cancel-button {
   display: none;
 }
+
+.quick-launch-search-bar input {
+  font-size: 16px;
+}

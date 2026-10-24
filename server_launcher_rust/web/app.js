@@ -213,3 +213,21 @@ function openAddServer() {
       });
     }
   }
+
+function setupShortcuts() {
+    window.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        if (DOM.globalSearch) DOM.globalSearch.focus();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        openQuickLaunch();
+      } else if (e.key === 'Escape') {
+        closeModal();
+      }
+    });
+    
+    if (DOM.btnQuickLaunch) {
+      DOM.btnQuickLaunch.addEventListener('click', openQuickLaunch);
+    }
+  }

@@ -96,3 +96,37 @@ function setupSubtabs() {
       });
     });
   }
+
+function toggleServerStatus(serverId) {
+    const s = state.servers.find(x => x.id === serverId || serverId.startsWith(x.id));
+    if (!s) return;
+    
+    s.status = s.status === 'running' ? 'stopped' : 'running';
+    updateServerCardUI(s);
+    updateOverviewStats();
+  }
+
+  function updateServerCardUI(server) {
+    const cards = document.querySelectorAll(`[id$="${server.id}"]`);
+    cards.forEach(card => {
+      const dot = card.querySelector('.status-dot');
+      const pill = card.querySelector('.status-pill');
+      const btn = card.querySelector('.btn-action-start, .btn-action-stop');
+      
+      if (server.status === 'running') {
+        if (dot) { dot.classList.remove('stopped'); dot.classList.add('running'); }
+        if (pill) { pill.classList.remove('stopped'); pill.classList.add('running'); pill.textContent = 'Running'; }
+        if (btn) {
+          btn.className = 'btn-action-stop';
+          btn.innerHTML = '<span class="icon">&#xe18c;</span><span>Stop</span>';
+        }
+      } else {
+        if (dot) { dot.classList.remove('running'); dot.classList.add('stopped'); }
+        if (pill) { pill.classList.remove('running'); pill.classList.add('stopped'); pill.textContent = 'Stopped'; }
+        if (btn) {
+          btn.className = 'btn-action-start';
+          btn.innerHTML = '<span class="icon">&#xe1c4;</span><span>Start</span>';
+        }
+      }
+    });
+  }

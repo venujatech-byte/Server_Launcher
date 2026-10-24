@@ -1383,3 +1383,6 @@ body {
 
 /* Action icon active */
 .btn-icon:active { transform: scale(0.92); }
+
+/* Checkbox hover */
+.custom-checkbox:hover .cb-box { background-color: #223048; }

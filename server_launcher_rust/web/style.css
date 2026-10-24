@@ -1350,3 +1350,7 @@ button:focus-visible, input:focus-visible {
 .kbd-esc {
   font-weight: 600;
 }
+
+.brand-launcher-circle .icon {
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}

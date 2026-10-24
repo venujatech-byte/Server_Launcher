@@ -17,16 +17,24 @@
         "minWidth": 900,
         "minHeight": 620,
         "center": true,
-        "decorations": false
+        "decorations": false,
+        "visible": true,
+        "focus": true
       }
     ],
     "security": {
-      "csp": "default-src 'self' data:; img-src 'self' asset: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+      "csp": null
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "rpm", "appimage"],
-    "icon": ["assets/icon.png"]
+    "targets": [
+      "deb",
+      "rpm",
+      "appimage"
+    ],
+    "icon": [
+      "assets/icon.png"
+    ]
   }
 }

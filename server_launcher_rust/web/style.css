@@ -1335,3 +1335,6 @@ body {
 
 /* No select on kbd hints */
 .kbd-hint { user-select: none; }
+
+/* Quick launch button active state */
+.btn-quick-launch:active { transform: translateY(1px); }

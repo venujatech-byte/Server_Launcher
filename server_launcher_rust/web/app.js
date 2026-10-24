@@ -130,3 +130,18 @@ function toggleServerStatus(serverId) {
       }
     });
   }
+
+function setupBatchActions() {
+    document.querySelectorAll('.btn-batch').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const group = btn.getAttribute('data-batch-group');
+        const action = btn.getAttribute('data-action');
+        
+        state.servers.filter(s => s.group === group).forEach(s => {
+          s.status = action === 'start' ? 'running' : 'stopped';
+          updateServerCardUI(s);
+        });
+        updateOverviewStats();
+      });
+    });
+  }

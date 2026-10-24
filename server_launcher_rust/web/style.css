@@ -1449,3 +1449,6 @@ body {
 
 /* Subbar search placeholder */
 .subbar-search-box input::placeholder { color: var(--text-muted); }
+
+/* Toast blur */
+#app-toast { backdrop-filter: blur(8px); }

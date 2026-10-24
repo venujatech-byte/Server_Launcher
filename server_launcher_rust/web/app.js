@@ -38,3 +38,28 @@ const DOM = {
     colGroupedServers: document.getElementById('col-grouped-servers'),
     colManagedServers: document.getElementById('col-managed-servers')
   };
+
+function setupNavTabs() {
+    DOM.navTabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        DOM.navTabs.forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        state.activeTab = tab.getAttribute('data-tab');
+        renderActiveView();
+      });
+    });
+  }
+
+  function renderActiveView() {
+    const isServers = state.activeTab === 'servers';
+    const workspace = document.querySelector('.workspace-layout');
+    const groupBar = document.querySelector('.group-filter-bar');
+    
+    if (workspace) workspace.style.display = isServers ? 'flex' : 'none';
+    if (groupBar) groupBar.style.display = isServers ? 'flex' : 'none';
+    
+    ['scripts', 'cmds', 'systemd', 'sensors'].forEach(v => {
+      const el = document.getElementById('view-' + v);
+      if (el) el.style.display = (state.activeTab === v) ? 'flex' : 'none';
+    });
+  }

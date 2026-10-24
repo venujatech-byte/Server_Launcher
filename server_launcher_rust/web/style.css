@@ -1263,3 +1263,7 @@ button:focus-visible, input:focus-visible {
 .rail-item.rail-bottom:hover {
   color: var(--cyan-accent);
 }
+
+.status-pill.running {
+  letter-spacing: 0.02em;
+}

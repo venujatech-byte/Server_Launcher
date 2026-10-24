@@ -1341,3 +1341,6 @@ body {
 
 /* Nav pill active state */
 .nav-pill-tab:active { transform: scale(0.96); }
+
+/* Pulsing keyframe */
+@keyframes pulseGreen { 0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); } 70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); } 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }

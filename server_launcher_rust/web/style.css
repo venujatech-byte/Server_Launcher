@@ -1401,3 +1401,6 @@ body {
 
 /* Managed card accent border */
 .managed-cards-stack .server-card { border-left: 2px solid transparent; } .managed-cards-stack .server-card:hover { border-left: 2px solid var(--primary-blue); }
+
+/* Script card hover */
+.script-card:hover, .cmd-card:hover { background-color: var(--bg-card-hover); }

@@ -1380,3 +1380,6 @@ body {
 
 /* Stop button active */
 .btn-action-stop:active { transform: scale(0.96); }
+
+/* Action icon active */
+.btn-icon:active { transform: scale(0.92); }

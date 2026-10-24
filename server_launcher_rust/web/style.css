@@ -1251,3 +1251,7 @@ button:focus-visible, input:focus-visible {
 .modal-backdrop {
   transition: opacity 0.2s ease;
 }
+
+.subtab-title {
+  font-weight: 600;
+}

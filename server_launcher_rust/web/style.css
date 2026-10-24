@@ -1398,3 +1398,6 @@ body {
 
 /* Card name bright on hover */
 .server-card:hover .card-name { color: #ffffff; }
+
+/* Managed card accent border */
+.managed-cards-stack .server-card { border-left: 2px solid transparent; } .managed-cards-stack .server-card:hover { border-left: 2px solid var(--primary-blue); }

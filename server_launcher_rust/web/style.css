@@ -1434,3 +1434,6 @@ body {
 
 /* Modal backdrop transition */
 .modal-backdrop { transition: opacity 0.2s ease-in-out; }
+
+/* Modal slide animation */
+.modal-dialog { animation: modalSlideDown 0.2s ease-out; } @keyframes modalSlideDown { from { transform: translateY(-16px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }

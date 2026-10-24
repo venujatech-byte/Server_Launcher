@@ -268,6 +268,268 @@ pub async fn launcher_execute_command(command: String, cwd: Option<String>) -> R
     }).await
 }
 
+#[tauri::command]
+pub async fn launcher_get_detailed_sensors() -> Result<Value, String> {
+    on_worker(move || {
+        let mut collector = crate::sensors::SystemSensorsCollector::new();
+        let snap = collector.collect();
+        Ok(json!({
+            "cpu_brand": snap.cpu_brand,
+            "cpu_cores_physical": snap.cpu_cores_physical,
+            "cpu_cores_logical": snap.cpu_cores_logical,
+            "cpu_global": snap.cpu_global_usage,
+            "cpu_cores": snap.cpu_core_usages,
+            "cpu_freq_mhz": snap.cpu_frequency_mhz,
+            "cpu_temp": snap.cpu_temp.unwrap_or(0.0),
+            "mem_total_mb": snap.mem_total_bytes / (1024 * 1024),
+            "mem_used_mb": snap.mem_used_bytes / (1024 * 1024),
+            "mem_pct": snap.mem_usage_pct,
+            "swap_total_mb": snap.swap_total_bytes / (1024 * 1024),
+            "swap_used_mb": snap.swap_used_bytes / (1024 * 1024),
+            "swap_pct": snap.swap_usage_pct,
+            "disks": snap.disks.into_iter().map(|d| json!({
+                "name": d.name,
+                "mount_point": d.mount_point,
+                "fs_type": d.fs_type,
+                "total_gb": d.total_bytes / (1024 * 1024 * 1024),
+                "used_gb": d.used_bytes / (1024 * 1024 * 1024),
+                "pct": d.usage_pct
+            })).collect::<Vec<_>>(),
+            "networks": snap.networks.into_iter().map(|n| json!({
+                "name": n.name,
+                "rx_rate_bps": n.rx_rate_bps,
+                "tx_rate_bps": n.tx_rate_bps,
+                "is_wireless": n.is_wireless
+            })).collect::<Vec<_>>(),
+            "top_apps": snap.top_apps.into_iter().take(20).map(|p| json!({
+                "pid": p.pid,
+                "name": p.name,
+                "cpu": p.cpu_usage,
+                "memory_mb": p.memory_bytes / (1024 * 1024),
+                "status": p.status
+            })).collect::<Vec<_>>(),
+            "gpus": snap.gpus.into_iter().map(|g| json!({
+                "name": g.name,
+                "load": g.load_pct,
+                "temp": g.temp,
+                "driver": g.driver
+            })).collect::<Vec<_>>(),
+            "uptime_secs": snap.uptime_secs
+        }))
+    }).await
+}
+
+#[tauri::command]
+pub async fn launcher_kill_process(pid: u32, force: bool) -> Result<String, String> {
+    on_worker(move || {
+        let sig = if force { "-9" } else { "-15" };
+        let out = std::process::Command::new("kill")
+            .args([sig, &pid.to_string()])
+            .output()
+            .map_err(|e| format!("Failed to send signal: {e}"))?;
+        if out.status.success() {
+            Ok(format!("Terminated process {pid}"))
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).to_string())
+        }
+    }).await
+}
+
+#[tauri::command]
+pub async fn launcher_systemd_journal(service: String, lines: Option<u32>) -> Result<String, String> {
+    on_worker(move || {
+        let n = lines.unwrap_or(50);
+        let out = std::process::Command::new("journalctl")
+            .args(["-u", &service, "-n", &n.to_string(), "--no-pager"])
+            .output()
+            .map_err(|e| format!("Failed to read journalctl: {e}"))?;
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    }).await
+}
+
+#[tauri::command]
+pub async fn launcher_save_script(script: Value) -> Result<String, String> {
+    on_worker(move || {
+        let mut config = crate::config::ConfigFile::load_from_file(&crate::config::ConfigFile::default_path());
+        let new_s: crate::config::CustomScript = serde_json::from_value(script)
+            .map_err(|e| format!("Invalid script format: {e}"))?;
+        if let Some(pos) = config.scripts.iter().position(|s| s.id == new_s.id) {
+            config.scripts[pos] = new_s;
+        } else {
+            config.scripts.push(new_s);
+        }
+        config.save_to_file(&crate::config::ConfigFile::default_path())
+            .map_err(|e| format!("Failed to save config: {e}"))?;
+        Ok("Script saved".to_string())
+    }).await
+}
+
+#[tauri::command]
+pub async fn launcher_delete_script(id: String) -> Result<String, String> {
+    on_worker(move || {
+        let mut config = crate::config::ConfigFile::load_from_file(&crate::config::ConfigFile::default_path());
+        config.scripts.retain(|s| s.id != id);
+        config.save_to_file(&crate::config::ConfigFile::default_path())
+            .map_err(|e| format!("Failed to save config: {e}"))?;
+        Ok("Script deleted".to_string())
+    }).await
+}
+
+#[tauri::command]
+pub async fn launcher_save_command(command: Value) -> Result<String, String> {
+    on_worker(move || {
+        let mut config = crate::config::ConfigFile::load_from_file(&crate::config::ConfigFile::default_path());
+        let new_c: crate::config::SavedCommand = serde_json::from_value(command)
+            .map_err(|e| format!("Invalid command format: {e}"))?;
+        if let Some(pos) = config.saved_commands.iter().position(|c| c.id == new_c.id) {
+            config.saved_commands[pos] = new_c;
+        } else {
+            config.saved_commands.push(new_c);
+        }
+        config.save_to_file(&crate::config::ConfigFile::default_path())
+            .map_err(|e| format!("Failed to save config: {e}"))?;
+        Ok("Command saved".to_string())
+    }).await
+}
+
+#[tauri::command]
+pub async fn launcher_delete_command(id: String) -> Result<String, String> {
+    on_worker(move || {
+        let mut config = crate::config::ConfigFile::load_from_file(&crate::config::ConfigFile::default_path());
+        config.saved_commands.retain(|c| c.id != id);
+        config.save_to_file(&crate::config::ConfigFile::default_path())
+            .map_err(|e| format!("Failed to save config: {e}"))?;
+        Ok("Command deleted".to_string())
+    }).await
+}
+
+#[tauri::command]
+pub fn launcher_get_autostart() -> bool {
+    crate::autostart::is_app_autostart_enabled()
+}
+
+#[tauri::command]
+pub fn launcher_set_autostart(enabled: bool) -> Result<String, String> {
+    let mut config = crate::config::ConfigFile::load_from_file(&crate::config::ConfigFile::default_path());
+    config.app_autostart = enabled;
+    let _ = config.save_to_file(&crate::config::ConfigFile::default_path());
+    crate::autostart::set_app_autostart(enabled)?;
+    Ok(format!("Autostart set to {enabled}"))
+}
+
+// -------------------------------------------------------------
+// SSH Remote Host Commands
+// -------------------------------------------------------------
+#[tauri::command]
+pub async fn ssh_test_connection(host_id: String) -> Result<String, String> {
+    on_worker(move || {
+        let config = crate::config::ConfigFile::load_from_file(&crate::config::ConfigFile::default_path());
+        if let Some(host) = config.ssh_hosts.iter().find(|h| h.id == host_id) {
+            crate::remote::test_ssh_connection(host)
+        } else {
+            Err("Host not found".to_string())
+        }
+    }).await
+}
+
+#[tauri::command]
+pub async fn ssh_fetch_listeners(host_id: String) -> Result<Value, String> {
+    on_worker(move || {
+        let config = crate::config::ConfigFile::load_from_file(&crate::config::ConfigFile::default_path());
+        if let Some(host) = config.ssh_hosts.iter().find(|h| h.id == host_id) {
+            let listeners = crate::remote::fetch_remote_listeners(host)?;
+            Ok(json!(listeners))
+        } else {
+            Err("Host not found".to_string())
+        }
+    }).await
+}
+
+#[tauri::command]
+pub async fn ssh_open_terminal(host_id: String) -> Result<String, String> {
+    on_worker(move || {
+        let config = crate::config::ConfigFile::load_from_file(&crate::config::ConfigFile::default_path());
+        if let Some(host) = config.ssh_hosts.iter().find(|h| h.id == host_id) {
+            crate::remote::launch_external_ssh_terminal(host)?;
+            Ok("SSH terminal opened".to_string())
+        } else {
+            Err("Host not found".to_string())
+        }
+    }).await
+}
+
+#[tauri::command]
+pub async fn ssh_execute_command(host_id: String, command: String) -> Result<String, String> {
+    on_worker(move || {
+        let config = crate::config::ConfigFile::load_from_file(&crate::config::ConfigFile::default_path());
+        if let Some(host) = config.ssh_hosts.iter().find(|h| h.id == host_id) {
+            let mut cmd = crate::remote::build_ssh_command(host, &command);
+            let out = cmd.output().map_err(|e| format!("SSH execution error: {e}"))?;
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+            if out.status.success() {
+                Ok(if stdout.is_empty() { "Command completed (exit 0)".to_string() } else { stdout })
+            } else {
+                Err(format!("Error (code {:?}): {}", out.status.code(), stderr))
+            }
+        } else {
+            Err("Host not found".to_string())
+        }
+    }).await
+}
+
+#[tauri::command]
+pub async fn ssh_reboot(host_id: String, sudo_password: String) -> Result<String, String> {
+    on_worker(move || {
+        let config = crate::config::ConfigFile::load_from_file(&crate::config::ConfigFile::default_path());
+        if let Some(host) = config.ssh_hosts.iter().find(|h| h.id == host_id) {
+            crate::remote::reboot_remote_device(host, &sudo_password)
+        } else {
+            Err("Host not found".to_string())
+        }
+    }).await
+}
+
+#[tauri::command]
+pub async fn ssh_shutdown(host_id: String, sudo_password: String) -> Result<String, String> {
+    on_worker(move || {
+        let config = crate::config::ConfigFile::load_from_file(&crate::config::ConfigFile::default_path());
+        if let Some(host) = config.ssh_hosts.iter().find(|h| h.id == host_id) {
+            crate::remote::shutdown_remote_device(host, &sudo_password)
+        } else {
+            Err("Host not found".to_string())
+        }
+    }).await
+}
+
+#[tauri::command]
+pub async fn ssh_save_host(host: Value) -> Result<String, String> {
+    on_worker(move || {
+        let mut config = crate::config::ConfigFile::load_from_file(&crate::config::ConfigFile::default_path());
+        let new_h: crate::config::SshRemoteHost = serde_json::from_value(host)
+            .map_err(|e| format!("Invalid host data: {e}"))?;
+        if let Some(pos) = config.ssh_hosts.iter().position(|h| h.id == new_h.id) {
+            config.ssh_hosts[pos] = new_h;
+        } else {
+            config.ssh_hosts.push(new_h);
+        }
+        config.save_to_file(&crate::config::ConfigFile::default_path())
+            .map_err(|e| format!("Failed to save config: {e}"))?;
+        Ok("Host saved".to_string())
+    }).await
+}
+
+#[tauri::command]
+pub async fn ssh_delete_host(host_id: String) -> Result<String, String> {
+    on_worker(move || {
+        let mut config = crate::config::ConfigFile::load_from_file(&crate::config::ConfigFile::default_path());
+        config.ssh_hosts.retain(|h| h.id != host_id);
+        config.save_to_file(&crate::config::ConfigFile::default_path())
+            .map_err(|e| format!("Failed to save config: {e}"))?;
+        Ok("Host deleted".to_string())
+    }).await
+}
+
 // -------------------------------------------------------------
 // Existing ADB Cockpit Commands (Fully Preserved)
 // -------------------------------------------------------------
@@ -444,6 +706,23 @@ pub fn run() {
             launcher_control_systemd,
             launcher_execute_script,
             launcher_execute_command,
+            launcher_get_detailed_sensors,
+            launcher_kill_process,
+            launcher_systemd_journal,
+            launcher_save_script,
+            launcher_delete_script,
+            launcher_save_command,
+            launcher_delete_command,
+            launcher_get_autostart,
+            launcher_set_autostart,
+            ssh_test_connection,
+            ssh_fetch_listeners,
+            ssh_open_terminal,
+            ssh_execute_command,
+            ssh_reboot,
+            ssh_shutdown,
+            ssh_save_host,
+            ssh_delete_host,
             adb_devices,
             adb_initial_serial,
             adb_accent_color,

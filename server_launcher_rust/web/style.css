@@ -1377,3 +1377,6 @@ body {
 
 /* Start button active */
 .btn-action-start:active { transform: scale(0.96); }
+
+/* Stop button active */
+.btn-action-stop:active { transform: scale(0.96); }

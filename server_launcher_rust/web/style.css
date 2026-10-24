@@ -1440,3 +1440,6 @@ body {
 
 /* Quick launch result active */
 .ql-result-item:active { background-color: #1e3a5f; }
+
+/* Form input hover */
+.form-input:hover { background-color: #0d1422; }

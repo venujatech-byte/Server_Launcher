@@ -822,3 +822,6 @@ document.addEventListener('change', (e) => { if (e.target.matches('.custom-check
 
 // Batch action listener
 document.addEventListener('click', (e) => { const batch = e.target.closest('.btn-batch'); if (batch) { const group = batch.getAttribute('data-batch-group'); const action = batch.getAttribute('data-action'); showToast(`${action === 'batch-start' ? 'Starting' : 'Stopping'} all ${group} servers`); } });
+
+// Clear script output handler
+document.getElementById('btn-clear-script-output')?.addEventListener('click', () => { const panel = document.getElementById('scripts-output-panel'); if (panel) panel.style.display = 'none'; showToast('Script output cleared'); });

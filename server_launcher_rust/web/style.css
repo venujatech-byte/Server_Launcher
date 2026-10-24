@@ -502,3 +502,275 @@ button, input, select, textarea, .win-btn, .sidebar-tab, .group-pill, .rail-item
   overflow-x: hidden;
   padding-right: 4px;
 }
+
+/* 4. Server Cards, Monospace Wells, and Interactive Controls */
+.group-block {
+  margin-bottom: 14px;
+}
+
+.group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  padding: 2px 4px;
+}
+
+.group-header-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tag-icon {
+  font-size: 13px;
+  color: #818cf8;
+}
+
+.group-header-text {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #818cf8;
+}
+
+.group-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-group-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-group-start {
+  background-color: var(--emerald-start);
+  color: #ffffff;
+}
+.btn-group-start:hover {
+  background-color: var(--emerald-start-hover);
+}
+
+.btn-group-stop {
+  background-color: var(--ruby-stop);
+  color: #ffffff;
+}
+.btn-group-stop:hover {
+  background-color: var(--ruby-stop-hover);
+}
+
+.server-card {
+  background-color: var(--bg-card);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  transition: all 0.15s ease;
+}
+
+.server-card:hover {
+  background-color: var(--bg-card-hover);
+}
+
+.card-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.card-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-indicator-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #64748b;
+}
+
+.server-card.running .status-indicator-dot {
+  background-color: #10b981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+}
+
+.card-title-text {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.card-title-text:hover {
+  color: var(--cyber-cyan);
+}
+
+.status-chip-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background-color: rgba(100, 116, 139, 0.2);
+  color: var(--text-muted);
+}
+
+.status-chip-pill.running {
+  background-color: rgba(16, 185, 129, 0.2);
+  color: #10b981;
+}
+
+.recessed-command-box {
+  background-color: var(--bg-code);
+  border-radius: 6px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.code-command {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--cyber-cyan);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.code-port {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: 8px;
+}
+
+.card-meta-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.meta-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background-color: rgba(100, 116, 139, 0.15);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.tag-port {
+  color: var(--cyber-cyan);
+}
+
+.card-actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.btn-glow-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background-color: var(--emerald-start);
+  color: #ffffff;
+  border: none;
+  border-radius: 999px;
+  padding: 4px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-glow-start:hover {
+  background-color: var(--emerald-start-hover);
+}
+
+.server-card.running .btn-glow-start {
+  background-color: var(--ruby-stop);
+}
+.server-card.running .btn-glow-start:hover {
+  background-color: var(--ruby-stop-hover);
+}
+
+.card-tools-cluster {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tool-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.tool-btn:hover {
+  background-color: var(--bg-card-active);
+  color: var(--text-primary);
+}
+
+.tool-btn.tool-danger:hover {
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+
+.card-checkboxes-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.toggle-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.toggle-checkbox input {
+  display: none;
+}
+
+.checkbox-ring {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-muted);
+  background-color: transparent;
+  transition: all 0.15s;
+}
+
+.toggle-checkbox input:checked + .checkbox-ring {
+  border-color: var(--accent-blue);
+  background-color: var(--accent-blue);
+}

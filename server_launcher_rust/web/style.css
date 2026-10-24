@@ -1188,3 +1188,7 @@ button:focus-visible, input:focus-visible {
 .window-titlebar {
   backdrop-filter: blur(8px);
 }
+
+.custom-checkbox:hover .cb-box {
+  border-color: var(--text-secondary);
+}

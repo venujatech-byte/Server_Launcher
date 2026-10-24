@@ -1395,3 +1395,6 @@ body {
 
 /* Tag chip hover */
 .tag-chip:hover { background-color: #223048; cursor: default; }
+
+/* Card name bright on hover */
+.server-card:hover .card-name { color: #ffffff; }

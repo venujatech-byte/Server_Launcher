@@ -1209,3 +1209,7 @@ button:focus-visible, input:focus-visible {
 .subbar-heading {
   letter-spacing: -0.01em;
 }
+
+.subbar-search-box:focus-within {
+  border-color: var(--border-focus);
+}

@@ -163,3 +163,21 @@ function setupSearch() {
       DOM.subbarSearch.addEventListener('input', (e) => handleSearch(e.target.value));
     }
   }
+
+function openQuickLaunch() {
+    if (!DOM.modalBackdrop || !DOM.modalQuickLaunch) return;
+    DOM.modalBackdrop.style.display = 'flex';
+    DOM.modalQuickLaunch.style.display = 'block';
+    DOM.modalAddServer.style.display = 'none';
+    if (DOM.qlSearchInput) {
+      DOM.qlSearchInput.value = '';
+      DOM.qlSearchInput.focus();
+    }
+  }
+
+  function closeModal() {
+    if (!DOM.modalBackdrop) return;
+    DOM.modalBackdrop.style.display = 'none';
+    if (DOM.modalQuickLaunch) DOM.modalQuickLaunch.style.display = 'none';
+    if (DOM.modalAddServer) DOM.modalAddServer.style.display = 'none';
+  }

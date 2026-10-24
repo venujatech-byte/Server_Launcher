@@ -332,3 +332,27 @@
                 <span class="tab-port-label">:8081</span>
               </button>
             </div>
+            <!-- Tab 0 Content: Server Overview -->
+            <div class="right-tab-content" id="tab-content-overview">
+              <!-- Subbar: Servers running on this PC + scan time + search + refresh -->
+              <div class="right-subbar">
+                <div class="subbar-info">
+                  <h2 class="subbar-title">Servers running on this PC</h2>
+                  <span class="subbar-scan-clock">last scan: <span id="scan-timer">00:53:29</span></span>
+                </div>
+                <div class="subbar-actions">
+                  <div class="subbar-search-pill">
+                    <input type="text" id="overview-search" placeholder="Search servers, ports, commands... (Ctrl+F)" />
+                    <span class="icon search-icon">&#xe151;</span>
+                  </div>
+                  <button class="btn-refresh-pill" id="btn-refresh" title="Scan System Ports">
+                    <span class="icon">&#xe145;</span>
+                    <span>Refresh</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Section: Launcher-managed servers -->
+              <div class="managed-servers-section">
+                <h3 class="managed-section-heading">Launcher-managed servers</h3>
+                <div class="managed-cards-container">

@@ -1362,3 +1362,6 @@ body {
 
 /* Refresh spin on click */
 .btn-refresh:active .icon { transform: rotate(180deg); transition: transform 0.3s; }
+
+/* Subbar search focus ring */
+.subbar-search-box:focus-within { box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.3); }

@@ -335,3 +335,62 @@ body {
   box-shadow: 0 2px 10px rgba(14, 165, 233, 0.35);
   font-weight: 600;
 }
+
+.group-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 24px 16px 24px;
+}
+
+.group-filter-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.group-pills {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.group-pill {
+  padding: 5px 14px;
+  border-radius: var(--radius-pill);
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.group-pill:hover {
+  background-color: var(--bg-card-hover);
+  color: var(--text-main);
+}
+
+.group-pill.active {
+  background-color: var(--primary-blue);
+  color: #ffffff;
+  border-color: var(--primary-blue);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+}
+
+.group-pill-add {
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  border: 1px dashed var(--primary-blue);
+  color: var(--cyan-accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.group-pill-add:hover {
+  background-color: rgba(37, 99, 235, 0.15);
+}

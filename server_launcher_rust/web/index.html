@@ -11,7 +11,17 @@
   <body>
     <div class="app-layout">
       <!-- Titlebar -->
-      <div class="window-titlebar" id="window-titlebar"></div>
+      <header class="window-titlebar" id="window-titlebar">
+        <div class="titlebar-brand">
+          <span class="brand-dot"></span>
+          <span class="brand-title">SERVER LAUNCHER</span>
+        </div>
+        <div class="titlebar-controls">
+          <button class="win-btn win-minimize" id="btn-minimize" title="Minimize" aria-label="Minimize">&#x2212;</button>
+          <button class="win-btn win-maximize" id="btn-maximize" title="Maximize" aria-label="Maximize">&#x25a2;</button>
+          <button class="win-btn win-close" id="btn-close" title="Close" aria-label="Close">&#x2715;</button>
+        </div>
+      </header>
       
       <!-- Main Content Container -->
       <div class="app-main-container" id="app-main-container"></div>

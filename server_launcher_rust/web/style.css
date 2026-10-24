@@ -1312,3 +1312,7 @@ button:focus-visible, input:focus-visible {
 .btn-quick-launch:active {
   background-color: var(--bg-card);
 }
+
+.subtabs-bar::-webkit-scrollbar {
+  height: 3px;
+}

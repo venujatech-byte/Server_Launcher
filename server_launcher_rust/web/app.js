@@ -816,3 +816,6 @@ document.querySelectorAll('.rail-item').forEach(item => { item.addEventListener(
 
 // Command well copy handler
 document.addEventListener('click', (e) => { const well = e.target.closest('.command-well'); if (well) { const code = well.querySelector('.code-text')?.textContent; if (code) { navigator.clipboard?.writeText(code); showToast(`Copied command: ${code}`); } } });
+
+// Checkbox change handler
+document.addEventListener('change', (e) => { if (e.target.matches('.custom-checkbox input')) { const name = e.target.getAttribute('name'); const checked = e.target.checked; const key = e.target.getAttribute('data-key'); showToast(`Updated ${name} to ${checked} for server`); } });

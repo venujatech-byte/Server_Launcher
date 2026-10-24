@@ -1378,3 +1378,9 @@ button:focus-visible, input:focus-visible {
 .detailed-card:hover {
   border-color: rgba(56, 189, 248, 0.3);
 }
+
+.view-header h3 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-main);
+}

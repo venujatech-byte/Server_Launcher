@@ -1353,3 +1353,6 @@ body {
 
 /* Group pill active state */
 .group-pill:active { transform: scale(0.95); }
+
+/* Subtab item active state */
+.subtab-item:active { transform: scale(0.96); }

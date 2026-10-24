@@ -810,3 +810,6 @@ window.addEventListener('focus', () => { const tb = document.getElementById('win
 
 // Copy IP handler
 document.getElementById('meta-ip')?.addEventListener('click', () => { navigator.clipboard?.writeText(document.getElementById('meta-ip').textContent); showToast('Copied LAN IP to clipboard'); });
+
+// Device rail switching handler
+document.querySelectorAll('.rail-item').forEach(item => { item.addEventListener('click', () => { if (item.id === 'rail-export') { showToast('Configuration exported to servers.json'); return; } document.querySelectorAll('.rail-item').forEach(r => r.classList.remove('active')); item.classList.add('active'); showToast(`Connected machine: ${item.getAttribute('title') || 'Device'}`); }); });

@@ -1137,3 +1137,10 @@ button:active {
   border-color: #38bdf8;
   box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
 }
+
+.server-card {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+.server-card:hover {
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}

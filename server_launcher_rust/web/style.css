@@ -1247,3 +1247,7 @@ button:focus-visible, input:focus-visible {
 .code-text {
   font-family: "JetBrains Mono", var(--font-mono);
 }
+
+.modal-backdrop {
+  transition: opacity 0.2s ease;
+}

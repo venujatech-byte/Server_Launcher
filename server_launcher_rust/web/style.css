@@ -1231,3 +1231,7 @@ button:focus-visible, input:focus-visible {
   color: var(--text-muted);
   opacity: 0.6;
 }
+
+.group-title-text {
+  text-transform: uppercase;
+}

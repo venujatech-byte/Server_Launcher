@@ -1413,3 +1413,6 @@ body {
 
 /* Cmd categories bar */
 .cmds-categories-bar { display: flex; gap: 8px; margin-bottom: 8px; }
+
+/* Cmd drawer css */
+.cmds-terminal-drawer { background-color: #040810; border-radius: var(--radius-card); padding: 14px; display: flex; flex-direction: column; gap: 8px; max-height: 200px; margin-top: 12px; }

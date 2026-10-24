@@ -1093,3 +1093,11 @@ body {
   font-size: 16px;
   cursor: pointer;
 }
+
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 6px rgba(16, 185, 129, 0.7); }
+  50% { box-shadow: 0 0 14px rgba(16, 185, 129, 1); }
+}
+.brand-dot {
+  animation: pulseGlow 2.5s infinite ease-in-out;
+}

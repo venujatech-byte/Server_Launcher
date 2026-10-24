@@ -1412,3 +1412,5 @@ button:focus-visible, input:focus-visible {
 .window-titlebar {
   border-bottom-color: rgba(255, 255, 255, 0.05);
 }
+
+/* Server Launcher UI recreation finalized */

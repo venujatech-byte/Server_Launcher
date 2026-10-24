@@ -1374,3 +1374,6 @@ body {
 
 /* Command well hover */
 .command-well { cursor: pointer; position: relative; } .command-well:hover { background-color: #0b111c; }
+
+/* Start button active */
+.btn-action-start:active { transform: scale(0.96); }

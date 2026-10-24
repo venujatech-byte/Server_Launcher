@@ -25,6 +25,7 @@
       
       <!-- Main Content Container -->
       <div class="app-main-container" id="app-main-container">
+
         <!-- Top Navigation & Header Row -->
         <header class="app-header">
           <div class="header-left">
@@ -56,31 +57,502 @@
             </button>
           </div>
         </header>
+        <!-- Navigation Tabs -->
+        <nav class="nav-tabs-bar">
+          <div class="nav-tabs-left">
+            <button class="nav-pill-tab active" data-tab="servers">
+              <span class="icon">&#xe106;</span>
+              <span>Servers</span>
+            </button>
+            <button class="nav-pill-tab" data-tab="scripts">
+              <span class="icon">&#xe1b8;</span>
+              <span>Scripts</span>
+            </button>
+            <button class="nav-pill-tab" data-tab="cmds">
+              <span class="icon">&#xe181;</span>
+              <span>Cmds</span>
+            </button>
+            <button class="nav-pill-tab" data-tab="systemd">
+              <span class="icon">&#xe158;</span>
+              <span>SystemD</span>
+            </button>
+            <button class="nav-pill-tab" data-tab="sensors">
+              <span class="icon">&#xe16f;</span>
+              <span>Sensors</span>
+            </button>
+          </div>
+        </nav>
+
+        <!-- Group Filter Bar -->
+        <div class="group-filter-bar">
+          <span class="group-filter-title">Group:</span>
+          <div class="group-pills">
+            <button class="group-pill active" data-group="all">All</button>
+            <button class="group-pill" data-group="backend">Backend</button>
+            <button class="group-pill" data-group="frontend">Frontend</button>
+            <button class="group-pill" data-group="mobile">Mobile</button>
+            <button class="group-pill-add" id="btn-add-group">+ Add</button>
+          </div>
+        </div>
+
+        <!-- Workspace Split Layout -->
+        <div class="workspace-layout">
+          <!-- Left Machine Rail -->
+          <aside class="device-rail" id="device-rail">
+            <button class="rail-item active" title="Local Machine" aria-label="Local Machine">
+              <span class="icon">&#xe106;</span>
+            </button>
+            <button class="rail-item" title="Remote Server 1" aria-label="Remote Server 1">
+              <span class="icon">&#xe104;</span>
+            </button>
+            <button class="rail-item" title="Remote Server 2" aria-label="Remote Server 2">
+              <span class="icon">&#xe104;</span>
+            </button>
+            <button class="rail-item has-badge" title="Android Device 1" aria-label="Android Device 1">
+              <span class="icon">&#xe17f;</span>
+              <span class="rail-badge-dot"></span>
+            </button>
+            <button class="rail-item has-badge" title="Android Device 2" aria-label="Android Device 2">
+              <span class="icon">&#xe17f;</span>
+              <span class="rail-badge-dot"></span>
+            </button>
+            <button class="rail-item" title="Android Device 3" aria-label="Android Device 3">
+              <span class="icon">&#xe17f;</span>
+            </button>
+            <button class="rail-item rail-add" id="btn-add-device" title="Add Device" aria-label="Add Device">
+              <span class="icon">&#xe12a;</span>
+            </button>
+            
+            <div class="rail-spacer"></div>
+            
+            <button class="rail-item rail-bottom" title="Download / Export" aria-label="Export">
+              <span class="icon">&#xe0c8;</span>
+            </button>
+          </aside>
+          
+          <!-- Main Content Area -->
+          <main class="dashboard-viewport" id="dashboard-viewport">
+            <!-- Horizontal Sub-Tabs -->
+            <div class="subtabs-bar">
+              <button class="subtab-item active" data-subtab="overview">
+                <span class="icon">&#xe106;</span>
+                <span class="subtab-title">Server Overview</span>
+                <span class="subtab-badge">0/5</span>
+              </button>
+              <button class="subtab-item" data-subtab="f">
+                <span class="subtab-status-dot"></span>
+                <span>f</span>
+                <span class="subtab-port">:5173</span>
+              </button>
+              <button class="subtab-item" data-subtab="vendly">
+                <span class="subtab-status-dot"></span>
+                <span>Vendly Backend</span>
+              </button>
+              <button class="subtab-item" data-subtab="portfolio">
+                <span class="subtab-status-dot"></span>
+                <span>Portfolio</span>
+                <span class="subtab-port">:3000</span>
+              </button>
+              <button class="subtab-item" data-subtab="expo">
+                <span class="subtab-status-dot"></span>
+                <span>React Native (Expo)</span>
+                <span class="subtab-port">:8081</span>
+              </button>
+            </div>
+
+            <!-- Overview Sub-header -->
+            <div class="overview-subbar">
+              <div class="subbar-left">
+                <h2 class="subbar-heading">Servers running on this PC</h2>
+                <span class="subbar-timestamp" id="scan-timer">last scan: 00:09:25</span>
+              </div>
+              <div class="subbar-right">
+                <div class="subbar-search-box">
+                  <input type="text" class="subbar-search-input" id="subbar-search" placeholder="Search servers, ports, commands... (Ctrl+F)" />
+                  <span class="icon">&#xe14c;</span>
+                </div>
+                <button class="btn-refresh" id="btn-refresh">
+                  <span class="icon">&#xe145;</span>
+                  <span>Refresh</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Split Columns Container -->
+            <div class="split-columns-container">
+              <!-- Left Column: Grouped Server Accordion -->
+              <div class="col-grouped-servers" id="col-grouped-servers">
+                <!-- BACKEND Group -->
+                <div class="group-section" data-group-section="backend">
+                  <div class="group-header-row">
+                    <div class="group-title-wrap">
+                      <span class="icon">&#xe194;</span>
+                      <span class="group-title-text">BACKEND (1)</span>
+                    </div>
+                    <div class="group-batch-actions">
+                      <button class="btn-batch btn-batch-start" data-batch-group="backend" data-action="start">
+                        <span class="icon">&#xe1c4;</span>
+                        <span>Start</span>
+                      </button>
+                      <button class="btn-batch btn-batch-stop" data-batch-group="backend" data-action="stop">
+                        <span class="icon">&#xe18c;</span>
+                        <span>Stop</span>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="group-cards-list" id="backend-cards-list">
+                    <!-- Vendly Backend Card -->
+                    <div class="server-card" id="card-vendly">
+                      <div class="card-top-row">
+                        <div class="card-title-group">
+                          <span class="status-dot stopped"></span>
+                          <span class="card-name">Vendly Backend</span>
+                        </div>
+                        <span class="status-pill stopped">Stopped</span>
+                      </div>
+                      
+                      <!-- Recessed Command Code Well -->
+                      <div class="command-well">
+                        <code class="code-text">python run.py</code>
+                      </div>
+                      
+                      <!-- Meta Tags Row -->
+                      <div class="card-tags-row">
+                        <span class="tag-chip tag-folder">
+                          <span class="icon">&#xe0e9;</span>
+                          <span>backend</span>
+                        </span>
+                      </div>
+                      
+                      <!-- Actions Row -->
+                      <div class="card-actions-row">
+                        <button class="btn-action-start" data-action="toggle-server" data-id="vendly">
+                          <span class="icon">&#xe1c4;</span>
+                          <span>Start</span>
+                        </button>
+                        <div class="card-icon-actions">
+                          <button class="btn-icon" title="Terminal"><span class="icon">&#xe181;</span></button>
+                          <button class="btn-icon" title="Edit"><span class="icon">&#xe0c4;</span></button>
+                          <button class="btn-icon" title="Code"><span class="icon">&#xe08a;</span></button>
+                          <button class="btn-icon" title="Folder"><span class="icon">&#xe0e9;</span></button>
+                          <button class="btn-icon btn-danger" title="Delete"><span class="icon">&#xe165;</span></button>
+                        </div>
+                      </div>
+                      
+                      <!-- Checkbox Options Row -->
+                      <div class="card-options-row">
+                        <label class="custom-checkbox">
+                          <input type="checkbox" name="autostart" />
+                          <span class="cb-box"></span>
+                          <span>autostart</span>
+                        </label>
+                        <label class="custom-checkbox">
+                          <input type="checkbox" name="external_terminal" checked />
+                          <span class="cb-box"></span>
+                          <span>run in external terminal</span>
+                        </label>
+                        <label class="custom-checkbox">
+                          <input type="checkbox" name="autorestart" />
+                          <span class="cb-box"></span>
+                          <span>auto-restart</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- FRONTEND Group -->
+                <div class="group-section" data-group-section="frontend">
+                  <div class="group-header-row">
+                    <div class="group-title-wrap">
+                      <span class="icon">&#xe194;</span>
+                      <span class="group-title-text">FRONTEND (3)</span>
+                    </div>
+                    <div class="group-batch-actions">
+                      <button class="btn-batch btn-batch-start" data-batch-group="frontend" data-action="start">
+                        <span class="icon">&#xe1c4;</span>
+                        <span>Start</span>
+                      </button>
+                      <button class="btn-batch btn-batch-stop" data-batch-group="frontend" data-action="stop">
+                        <span class="icon">&#xe18c;</span>
+                        <span>Stop</span>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="group-cards-list" id="frontend-cards-list">
+                    <!-- Server 'f' Card -->
+                    <div class="server-card" id="card-f">
+                      <div class="card-top-row">
+                        <div class="card-title-group">
+                          <span class="status-dot stopped"></span>
+                          <span class="card-name">f</span>
+                        </div>
+                        <span class="status-pill stopped">Stopped</span>
+                      </div>
+                      
+                      <div class="command-well">
+                        <code class="code-text">npm run dev</code>
+                        <span class="subtab-port">:5173</span>
+                      </div>
+                      
+                      <div class="card-tags-row">
+                        <span class="tag-chip tag-port">
+                          <span class="icon">&#xe112;</span>
+                          <span>:5173</span>
+                        </span>
+                        <span class="tag-chip tag-folder">
+                          <span class="icon">&#xe0e9;</span>
+                          <span>frontend</span>
+                        </span>
+                      </div>
+                      
+                      <div class="card-actions-row">
+                        <button class="btn-action-start" data-action="toggle-server" data-id="f">
+                          <span class="icon">&#xe1c4;</span>
+                          <span>Start</span>
+                        </button>
+                        <div class="card-icon-actions">
+                          <button class="btn-icon" title="Terminal"><span class="icon">&#xe181;</span></button>
+                          <button class="btn-icon" title="Edit"><span class="icon">&#xe0c4;</span></button>
+                          <button class="btn-icon" title="Code"><span class="icon">&#xe08a;</span></button>
+                          <button class="btn-icon" title="Folder"><span class="icon">&#xe0e9;</span></button>
+                          <button class="btn-icon btn-danger" title="Delete"><span class="icon">&#xe165;</span></button>
+                        </div>
+                      </div>
+                      
+                      <div class="card-options-row">
+                        <label class="custom-checkbox">
+                          <input type="checkbox" name="autostart" />
+                          <span class="cb-box"></span>
+                          <span>autostart</span>
+                        </label>
+                        <label class="custom-checkbox">
+                          <input type="checkbox" name="external_terminal" checked />
+                          <span class="cb-box"></span>
+                          <span>run in external terminal</span>
+                        </label>
+                        <label class="custom-checkbox">
+                          <input type="checkbox" name="autorestart" />
+                          <span class="cb-box"></span>
+                          <span>auto-restart</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Right Column: Launcher-managed Servers -->
+              <div class="col-managed-servers" id="col-managed-servers">
+                <div class="managed-servers-heading-row">
+                  <h3 class="managed-section-title">Launcher-managed servers</h3>
+                </div>
+                <div class="managed-cards-stack" id="managed-cards-stack">
+                  <!-- Detailed Server Card 'f' -->
+                  <div class="server-card detailed-card" id="managed-card-f">
+                    <div class="card-top-row">
+                      <div class="card-title-group">
+                        <span class="status-dot stopped"></span>
+                        <span class="card-name">f</span>
+                      </div>
+                      <span class="status-pill stopped">Stopped</span>
+                    </div>
+                    <div class="command-well">
+                      <code class="code-text">npm run dev</code>
+                      <span class="subtab-port">:5173</span>
+                    </div>
+                    <div class="card-tags-row">
+                      <span class="tag-chip tag-port">
+                        <span class="icon">&#xe112;</span>
+                        <span>:5173</span>
+                      </span>
+                      <span class="tag-chip tag-folder">
+                        <span class="icon">&#xe0e9;</span>
+                        <span>frontend</span>
+                      </span>
+                    </div>
+                    <div class="card-actions-row">
+                      <button class="btn-action-start" data-action="toggle-server" data-id="f-managed">
+                        <span class="icon">&#xe1c4;</span>
+                        <span>Start</span>
+                      </button>
+                      <div class="card-icon-actions">
+                        <button class="btn-icon"><span class="icon">&#xe181;</span></button>
+                        <button class="btn-icon"><span class="icon">&#xe0c4;</span></button>
+                        <button class="btn-icon"><span class="icon">&#xe08a;</span></button>
+                        <button class="btn-icon"><span class="icon">&#xe0e9;</span></button>
+                        <button class="btn-icon btn-danger"><span class="icon">&#xe165;</span></button>
+                      </div>
+                    </div>
+                    <div class="card-options-row">
+                      <label class="custom-checkbox">
+                        <input type="checkbox" name="autostart" />
+                        <span class="cb-box"></span>
+                        <span>autostart</span>
+                      </label>
+                      <label class="custom-checkbox">
+                        <input type="checkbox" name="external_terminal" checked />
+                        <span class="cb-box"></span>
+                        <span>run in external terminal</span>
+                      </label>
+                      <label class="custom-checkbox">
+                        <input type="checkbox" name="autorestart" />
+                        <span class="cb-box"></span>
+                        <span>auto-restart</span>
+                      </label>
+                    </div>
+                  </div>
+                  
+                  <!-- Detailed Server Card 'Vendly Backend' -->
+                  <div class="server-card detailed-card" id="managed-card-vendly">
+                    <div class="card-top-row">
+                      <div class="card-title-group">
+                        <span class="status-dot stopped"></span>
+                        <span class="card-name">Vendly Backend</span>
+                      </div>
+                      <span class="status-pill stopped">Stopped</span>
+                    </div>
+                    <div class="command-well">
+                      <code class="code-text">python run.py</code>
+                    </div>
+                    <div class="card-tags-row">
+                      <span class="tag-chip tag-folder">
+                        <span class="icon">&#xe0e9;</span>
+                        <span>backend</span>
+                      </span>
+                    </div>
+                    <div class="card-actions-row">
+                      <button class="btn-action-start" data-action="toggle-server" data-id="vendly-managed">
+                        <span class="icon">&#xe1c4;</span>
+                        <span>Start</span>
+                      </button>
+                      <div class="card-icon-actions">
+                        <button class="btn-icon"><span class="icon">&#xe181;</span></button>
+                        <button class="btn-icon"><span class="icon">&#xe0c4;</span></button>
+                        <button class="btn-icon"><span class="icon">&#xe08a;</span></button>
+                        <button class="btn-icon"><span class="icon">&#xe0e9;</span></button>
+                        <button class="btn-icon btn-danger"><span class="icon">&#xe165;</span></button>
+                      </div>
+                    </div>
+                    <div class="card-options-row">
+                      <label class="custom-checkbox">
+                        <input type="checkbox" name="autostart" />
+                        <span class="cb-box"></span>
+                        <span>autostart</span>
+                      </label>
+                      <label class="custom-checkbox">
+                        <input type="checkbox" name="external_terminal" checked />
+                        <span class="cb-box"></span>
+                        <span>run in external terminal</span>
+                      </label>
+                      <label class="custom-checkbox">
+                        <input type="checkbox" name="autorestart" />
+                        <span class="cb-box"></span>
+                        <span>auto-restart</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+
+        <!-- Alternate View Containers -->
+        <div class="tab-view-container" id="view-scripts" style="display: none;">
+          <div class="view-header">
+            <h3>Automation Scripts</h3>
+            <button class="btn-pill btn-add-server">+ New Script</button>
+          </div>
+          <div class="scripts-grid" id="scripts-grid"></div>
+        </div>
+        
+        <div class="tab-view-container" id="view-cmds" style="display: none;">
+          <div class="view-header">
+            <h3>Quick Command Dock</h3>
+          </div>
+          <div class="cmds-console" id="cmds-console"></div>
+        </div>
+        
+        <div class="tab-view-container" id="view-systemd" style="display: none;">
+          <div class="view-header">
+            <h3>SystemD Unit Services</h3>
+          </div>
+          <div class="systemd-table-wrapper" id="systemd-table-wrapper"></div>
+        </div>
+        
+        <div class="tab-view-container" id="view-sensors" style="display: none;">
+          <div class="view-header">
+            <h3>Hardware Telemetry & Sensors</h3>
+          </div>
+          <div class="sensors-metrics-grid" id="sensors-metrics-grid"></div>
+        </div>
+
+        <!-- Modals Backdrop -->
+        <div class="modal-backdrop" id="modal-backdrop" style="display: none;">
+          <!-- Quick Launch Modal -->
+          <div class="modal-dialog modal-quick-launch" id="modal-quick-launch" style="display: none;">
+            <div class="quick-launch-search-bar">
+              <span class="icon">&#xe14c;</span>
+              <input type="text" id="ql-search-input" placeholder="Type a command, server, or port to launch..." autofocus />
+              <kbd class="kbd-esc">ESC</kbd>
+            </div>
+            <div class="quick-launch-results" id="ql-results-list">
+              <div class="ql-result-item" data-action="start-vendly">
+                <span class="icon">&#xe1c4;</span>
+                <span class="ql-title">Start Vendly Backend</span>
+                <span class="ql-badge">python run.py</span>
+              </div>
+              <div class="ql-result-item" data-action="start-f">
+                <span class="icon">&#xe1c4;</span>
+                <span class="ql-title">Start f (Frontend)</span>
+                <span class="ql-badge">:5173</span>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Add Server Modal -->
+          <div class="modal-dialog modal-add-server" id="modal-add-server" style="display: none;">
+            <div class="modal-header">
+              <h3>Add New Server</h3>
+              <button class="btn-close-modal" id="btn-close-add-modal">&#x2715;</button>
+            </div>
+            <form id="form-add-server" class="modal-form">
+              <div class="form-group">
+                <label>Server Name</label>
+                <input type="text" name="name" class="form-input" placeholder="e.g. Next.js App" required />
+              </div>
+              <div class="form-group">
+                <label>Working Directory</label>
+                <input type="text" name="directory" class="form-input" placeholder="e.g. /home/user/project" required />
+              </div>
+              <div class="form-group">
+                <label>Execution Command</label>
+                <input type="text" name="command" class="form-input" placeholder="e.g. npm run dev" required />
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Port (Optional)</label>
+                  <input type="text" name="port" class="form-input" placeholder="e.g. 3000" />
+                </div>
+                <div class="form-group">
+                  <label>Group</label>
+                  <select name="group" class="form-input">
+                    <option value="frontend">Frontend</option>
+                    <option value="backend">Backend</option>
+                    <option value="mobile">Mobile</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-actions">
+                <button type="button" class="btn-pill" id="btn-cancel-add">Cancel</button>
+                <button type="submit" class="btn-pill btn-add-server">Save Server</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
       </div>
     </div>
   </body>
 </html>
-
-<!-- nav_tabs_html -->
-
-<!-- group_filter_html -->
-
-<!-- workspace_layout_html -->
-
-<!-- subtabs_html -->
-
-<!-- overview_header_html -->
-
-<!-- split_grid_html -->
-
-<!-- backend_group_header -->
-
-<!-- vendly_card_html -->
-
-<!-- frontend_group_html -->
-
-<!-- managed_servers_html -->
-
-<!-- alternate_views_html -->
-
-<!-- modals_html -->

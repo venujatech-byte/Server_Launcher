@@ -1329,3 +1329,6 @@ body {
 
 /* IP copy hover */
 .meta-ip:hover { text-decoration: underline; cursor: pointer; }
+
+/* Search input white text on focus */
+.search-pill-box input:focus { color: #ffffff; }

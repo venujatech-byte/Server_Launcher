@@ -1389,3 +1389,7 @@ button:focus-visible, input:focus-visible {
   font-size: 16px;
   font-weight: 700;
 }
+
+.subbar-timestamp {
+  font-variant-numeric: tabular-nums;
+}

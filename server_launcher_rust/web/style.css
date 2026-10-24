@@ -1332,3 +1332,7 @@ button:focus-visible, input:focus-visible {
 .btn-action-start .icon {
   margin-right: -2px;
 }
+
+.btn-action-stop .icon {
+  margin-right: -2px;
+}

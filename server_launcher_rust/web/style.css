@@ -1350,3 +1350,6 @@ body {
 
 /* Rail item active state */
 .rail-item:active { transform: scale(0.92); }
+
+/* Group pill active state */
+.group-pill:active { transform: scale(0.95); }

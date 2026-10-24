@@ -1308,3 +1308,7 @@ button:focus-visible, input:focus-visible {
 .btn-add-server {
   letter-spacing: 0.01em;
 }
+
+.btn-quick-launch:active {
+  background-color: var(--bg-card);
+}

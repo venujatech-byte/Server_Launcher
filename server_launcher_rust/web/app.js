@@ -834,3 +834,6 @@ document.getElementById('btn-refresh-systemd')?.addEventListener('click', () => 
 
 // Refresh sensors handler
 document.getElementById('btn-refresh-sensors')?.addEventListener('click', () => { showToast('Sampling hardware telemetry sensors...'); const cGlobal = document.getElementById('sensor-cpu-global'); if (cGlobal) cGlobal.textContent = 'Measuring...'; setTimeout(() => { showToast('Sensors updated'); }, 500); });
+
+// Quick launch live search
+document.getElementById('ql-search-input')?.addEventListener('input', (e) => { const q = e.target.value.toLowerCase(); document.querySelectorAll('.ql-result-item').forEach(item => { const txt = item.textContent.toLowerCase(); item.style.display = (!q || txt.includes(q)) ? 'flex' : 'none'; }); });

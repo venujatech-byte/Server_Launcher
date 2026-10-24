@@ -57,3 +57,32 @@
           </button>
         </div>
       </header>
+      <!-- 2. Main Workspace Body: Device Rail + Dual Panels (Left & Right) -->
+      <div class="workspace-body">
+        <!-- Far-left Device Rail (src/app.rs machines_nav_bar) -->
+        <aside class="device-rail" id="device-rail">
+          <button class="rail-item active" id="rail-local" title="Local Machine (This PC)">
+            <span class="icon">&#xe11d;</span>
+          </button>
+          <button class="rail-item" id="rail-remote" title="Remote Server (tab)">
+            <span class="icon">&#xe0e8;</span>
+          </button>
+          <button class="rail-item has-beacon" id="rail-adb-1" title="SM T295 (Android)">
+            <span class="icon">&#xe163;</span>
+            <span class="beacon-dot"></span>
+          </button>
+          <button class="rail-item has-beacon" id="rail-adb-2" title="Android Cockpit">
+            <span class="icon">&#xe163;</span>
+            <span class="beacon-dot"></span>
+          </button>
+          <button class="rail-item rail-add" id="rail-add-device" title="Add Host or Device">
+            <span class="icon">&#xe13d;</span>
+          </button>
+          <div class="rail-spacer"></div>
+          <button class="rail-item rail-download" id="rail-export" title="Export Configurations">
+            <span class="icon">&#xe0b2;</span>
+          </button>
+        </aside>
+
+        <!-- Main Workspace Dual Panels -->
+        <div class="dual-panels-container">

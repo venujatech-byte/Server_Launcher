@@ -4,80 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
-    <title>Android Cockpit · Server Launcher</title>
+    <title>Server Launcher</title>
     <link rel="stylesheet" href="./style.css" />
     <script defer src="./app.js"></script>
   </head>
   <body>
-    <div class="shell">
-      <aside class="sidebar">
-        <a class="brand" href="#overview"><span class="brand-mark icon">&#xe153;</span><span><b>Server Launcher</b><small>ANDROID COCKPIT</small></span></a>
-        <div class="device-label">DEVICE</div>
-        <select id="device-select" aria-label="Android device"><option>Searching for devices…</option></select>
-        <div id="connection-state" class="connection"><i></i><span>Connecting to ADB</span></div>
-        <nav id="navigation" aria-label="Device management">
-          <button class="nav-item active" data-tab="overview"><span class="icon">&#xe1c1;</span>Overview</button>
-          <button class="nav-item" data-tab="screen"><span class="icon">&#xe14f;</span>Screen</button>
-          <button class="nav-item" data-tab="messages"><span class="icon">&#xe117;</span>Messages</button>
-          <button class="nav-item" data-tab="calls"><span class="icon">&#xe134;</span>Calls</button>
-          <button class="nav-item" data-tab="photos"><span class="icon">&#xe0f6;</span>Photos</button>
-          <button class="nav-item" data-tab="notifications"><span class="icon">&#xe059;</span>Notifications</button>
-          <button class="nav-item" data-tab="sensors"><span class="icon">&#xe038;</span>Diagnosis</button>
-          <button class="nav-item" data-tab="hardware-sensors"><span class="icon">&#xe497;</span>Sensors</button>
-          <div class="nav-divider"></div>
-          <button class="nav-item" data-tab="storage"><span class="icon">&#xe0ed;</span>Files</button>
-          <button class="nav-item" data-tab="apps"><span class="icon">&#xe129;</span>Apps</button>
-          <button class="nav-item" data-tab="clipboard"><span class="icon">&#xe085;</span>Clipboard</button>
-          <button class="nav-item" data-tab="terminal"><span class="icon">&#xe181;</span>Terminal</button>
-          <button class="nav-item" data-tab="wireless"><span class="icon">&#xe1ae;</span>Wireless</button>
-          <button class="nav-item" data-tab="firmware"><span class="icon">&#xe29a;</span>Customization & Boot</button>
-        </nav>
-        <div class="sidebar-footer"><span class="status-dot"></span> Local ADB bridge</div>
-      </aside>
-
-      <main class="main">
-        <header class="topbar">
-          <div><div id="eyebrow" class="eyebrow">DEVICE OVERVIEW</div><h1 id="page-title">Overview</h1></div>
-          <div class="top-actions">
-            <div id="sensors-header-controls" class="sensors-header-controls" style="display: none;">
-              <div class="live-pulse-badge">
-                <div class="live-pulse-dot" id="header-pulse-dot"></div>
-                <span id="header-pulse-text">LIVE 60S</span>
-              </div>
-              <div class="cadence-control-group">
-                <label class="sensor-cadence-label" for="sensor-cadence">Cadence</label>
-                <select class="input sensor-cadence-select" id="sensor-cadence">
-                  <option value="1000">1s (Fast)</option>
-                  <option value="2000" selected>2s (Standard)</option>
-                  <option value="5000">5s (Low power)</option>
-                  <option value="0">Paused</option>
-                </select>
-              </div>
-            </div>
-            <button class="button tonal refresh-topbar-btn" id="refresh" title="Refresh current view" aria-label="Refresh">
-              <span class="icon">&#xe145;</span><span>Refresh</span>
-            </button>
-            <span id="device-model" class="device-chip">No device selected</span>
-            <button class="button primary" data-action="scrcpy"><span class="icon">&#xe0b9;</span> Open scrcpy</button>
-          </div>
-        </header>
-        <section id="content" class="content">
-          <div class="page-loading-wrapper">
-            <div class="page-loading-card">
-              <div class="loading-brand-container">
-                <img src="./icon.png" alt="Server Launcher Logo" class="loading-brand-logo" onerror="this.style.display='none'; const fb = document.getElementById('init-loading-fallback'); if (fb) fb.style.display='flex';" />
-                <div id="init-loading-fallback" class="loading-brand-fallback icon">&#xe153;</div>
-                <div class="loading-ring-pulse"></div>
-              </div>
-              <div class="loading-text-group">
-                <h3 class="loading-heading">Connecting to ADB</h3>
-                <p class="loading-subtext">Initializing Android Cockpit environment…</p>
-              </div>
-            </div>
-          </div>
-        </section>
-        <div id="toast" class="toast" role="status"></div>
-      </main>
+    <div class="app-layout">
+      <!-- Titlebar -->
+      <div class="window-titlebar" id="window-titlebar"></div>
+      
+      <!-- Main Content Container -->
+      <div class="app-main-container" id="app-main-container"></div>
     </div>
   </body>
 </html>

@@ -86,3 +86,13 @@ function setupGroupFilter() {
       }
     });
   }
+
+function setupSubtabs() {
+    DOM.subtabs.forEach(subtab => {
+      subtab.addEventListener('click', () => {
+        DOM.subtabs.forEach(s => s.classList.remove('active'));
+        subtab.classList.add('active');
+        state.activeSubtab = subtab.getAttribute('data-subtab');
+      });
+    });
+  }

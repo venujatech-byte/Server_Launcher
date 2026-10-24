@@ -1255,3 +1255,7 @@ button:focus-visible, input:focus-visible {
 .subtab-title {
   font-weight: 600;
 }
+
+.rail-spacer {
+  min-height: 20px;
+}

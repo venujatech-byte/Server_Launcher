@@ -10,6 +10,19 @@
   </head>
   <body>
     <div class="app-layout">
+      <!-- Custom Titlebar (matches egui with decorations: false) -->
+      <header class="window-titlebar" id="window-titlebar" data-tauri-drag-region>
+        <div class="titlebar-brand" data-tauri-drag-region>
+          <span class="brand-dot"></span>
+          <span class="brand-title">SERVER LAUNCHER</span>
+        </div>
+        <div class="titlebar-controls">
+          <button class="win-btn win-minimize" id="btn-minimize" title="Minimize" aria-label="Minimize">&#x2212;</button>
+          <button class="win-btn win-maximize" id="btn-maximize" title="Maximize" aria-label="Maximize">&#x25a2;</button>
+          <button class="win-btn win-close" id="btn-close" title="Close" aria-label="Close">&#x2715;</button>
+        </div>
+      </header>
+
       <!-- Main Application Header -->
       <header class="app-header">
         <div class="header-left">

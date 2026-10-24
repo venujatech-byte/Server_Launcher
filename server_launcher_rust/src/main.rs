@@ -172,20 +172,27 @@ X-GNOME-UsesNotifications=true\n",
 pub fn ensure_linux_desktop_integration() {}
 
 fn main() -> eframe::Result<()> {
+    #[cfg(target_os = "linux")]
+    ensure_linux_desktop_integration();
+
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "--egui") {
+        return run_legacy_egui();
+    }
+
     if let Some(index) = args.iter().position(|arg| arg == "--adb-cockpit" || arg.starts_with("--adb-cockpit=")) {
         if let Some(serial) = args[index].strip_prefix("--adb-cockpit=") {
             std::env::set_var("SERVER_LAUNCHER_ADB_SERIAL", serial);
         } else if let Some(serial) = args.get(index + 1) {
             std::env::set_var("SERVER_LAUNCHER_ADB_SERIAL", serial);
         }
-        tauri_app::run();
-        return Ok(());
     }
 
-    #[cfg(target_os = "linux")]
-    ensure_linux_desktop_integration();
+    tauri_app::run();
+    Ok(())
+}
 
+fn run_legacy_egui() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_app_id("server_launcher")
         .with_title("Server Launcher (Rust)")

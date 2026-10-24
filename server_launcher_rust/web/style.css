@@ -1132,3 +1132,8 @@ button:active {
 .btn-refresh.spinning .icon {
   animation: spin 0.5s ease-in-out;
 }
+
+.subtab-item.active {
+  border-color: #38bdf8;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
+}

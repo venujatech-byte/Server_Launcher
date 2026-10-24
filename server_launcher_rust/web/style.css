@@ -1316,3 +1316,7 @@ button:focus-visible, input:focus-visible {
 .subtabs-bar::-webkit-scrollbar {
   height: 3px;
 }
+
+.group-pill {
+  letter-spacing: 0.01em;
+}

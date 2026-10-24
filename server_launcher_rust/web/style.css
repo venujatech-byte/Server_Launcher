@@ -1300,3 +1300,7 @@ button:focus-visible, input:focus-visible {
 .win-btn {
   user-select: none;
 }
+
+.status-pill {
+  transition: background-color 0.25s, color 0.25s;
+}

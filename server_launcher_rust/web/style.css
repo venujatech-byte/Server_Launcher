@@ -1404,3 +1404,6 @@ body {
 
 /* Script card hover */
 .script-card:hover, .cmd-card:hover { background-color: var(--bg-card-hover); }
+
+/* Shell badge border */
+.shell-badge { border: 1px solid rgba(56, 189, 248, 0.2); }

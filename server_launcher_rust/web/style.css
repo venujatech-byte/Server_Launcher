@@ -1366,3 +1366,7 @@ button:focus-visible, input:focus-visible {
 .code-text {
   white-space: nowrap;
 }
+
+.status-dot.stopped {
+  opacity: 0.6;
+}

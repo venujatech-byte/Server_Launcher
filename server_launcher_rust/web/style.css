@@ -1158,3 +1158,8 @@ code, pre, kbd {
 .ql-result-item:hover .ql-badge {
   background-color: rgba(56, 189, 248, 0.25);
 }
+
+.group-pill-add:hover {
+  border-color: #38bdf8;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.25);
+}

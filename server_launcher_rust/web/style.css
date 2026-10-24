@@ -1354,3 +1354,7 @@ button:focus-visible, input:focus-visible {
 .brand-launcher-circle .icon {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
+
+.header-app-name {
+  letter-spacing: -0.02em;
+}

@@ -1326,3 +1326,6 @@ body {
 
 /* Play button hover scale */
 .brand-launcher-circle:hover { transform: scale(1.05); }
+
+/* IP copy hover */
+.meta-ip:hover { text-decoration: underline; cursor: pointer; }

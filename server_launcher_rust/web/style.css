@@ -1358,3 +1358,7 @@ button:focus-visible, input:focus-visible {
 .header-app-name {
   letter-spacing: -0.02em;
 }
+
+.tag-chip .icon {
+  font-size: 12px;
+}

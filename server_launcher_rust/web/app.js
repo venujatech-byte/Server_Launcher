@@ -231,3 +231,29 @@ function setupShortcuts() {
       DOM.btnQuickLaunch.addEventListener('click', openQuickLaunch);
     }
   }
+
+function setupScanTimer() {
+    setInterval(() => {
+      state.scanElapsedSec++;
+      const m = String(Math.floor(state.scanElapsedSec / 60)).padStart(2, '0');
+      const s = String(state.scanElapsedSec % 60).padStart(2, '0');
+      if (DOM.scanTimer) {
+        DOM.scanTimer.textContent = `last scan: 00:${m}:${s}`;
+      }
+    }, 1000);
+
+    if (DOM.btnRefresh) {
+      DOM.btnRefresh.addEventListener('click', () => {
+        state.scanElapsedSec = 0;
+        DOM.btnRefresh.classList.add('spinning');
+        setTimeout(() => DOM.btnRefresh.classList.remove('spinning'), 500);
+      });
+    }
+  }
+
+  function updateOverviewStats() {
+    const running = state.servers.filter(s => s.status === 'running').length;
+    const total = state.servers.length;
+    const badge = document.querySelector('.subtab-badge');
+    if (badge) badge.textContent = `${running}/${total}`;
+  }

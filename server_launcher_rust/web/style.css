@@ -1271,3 +1271,7 @@ button:focus-visible, input:focus-visible {
 .btn-batch-start .icon {
   font-size: 10px;
 }
+
+.btn-batch-stop .icon {
+  font-size: 10px;
+}

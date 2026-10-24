@@ -1370,3 +1370,7 @@ button:focus-visible, input:focus-visible {
 .status-dot.stopped {
   opacity: 0.6;
 }
+
+.status-dot.running {
+  filter: brightness(1.2);
+}

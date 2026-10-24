@@ -1324,3 +1324,7 @@ button:focus-visible, input:focus-visible {
 .rail-item.active .icon {
   color: #ffffff;
 }
+
+.card-options-row {
+  font-size: 11.5px;
+}

@@ -1452,3 +1452,6 @@ body {
 
 /* Toast blur */
 #app-toast { backdrop-filter: blur(8px); }
+
+/* Selection color */
+::selection { background-color: var(--primary-blue); color: #ffffff; }

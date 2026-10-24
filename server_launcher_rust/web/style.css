@@ -1371,3 +1371,6 @@ body {
 
 /* Status dot pulse */
 .status-dot.running { animation: pulseGreen 2.5s infinite; }
+
+/* Command well hover */
+.command-well { cursor: pointer; position: relative; } .command-well:hover { background-color: #0b111c; }

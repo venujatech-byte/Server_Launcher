@@ -542,3 +542,44 @@
           </section>
         </div>
       </div>
+      <!-- Modals Backdrop -->
+      <div class="modal-backdrop" id="modal-backdrop" style="display: none;">
+        <!-- Quick Launch Modal (Ctrl+P) -->
+        <div class="modal-dialog modal-quick-launch" id="modal-quick-launch" style="display: none;">
+          <div class="quick-launch-search-bar">
+            <span class="icon search-icon">&#xe151;</span>
+            <input type="text" id="ql-search-input" placeholder="Type a command, server, or port to launch..." autofocus />
+            <kbd class="kbd-hint">ESC</kbd>
+          </div>
+          <div class="quick-launch-results" id="ql-results-list"></div>
+        </div>
+        <!-- Add Server Modal -->
+        <div class="modal-dialog modal-add-server" id="modal-add-server" style="display: none;">
+          <div class="modal-header">
+            <h3>Add New Server</h3>
+            <button class="btn-close-modal" id="btn-close-add-modal">&#x2715;</button>
+          </div>
+          <form id="form-add-server" class="modal-form">
+            <div class="form-group"><label>Server Name</label><input type="text" name="name" class="form-input" placeholder="e.g. Next.js App" required /></div>
+            <div class="form-group"><label>Working Directory</label><input type="text" name="cwd" class="form-input" placeholder="/home/user/project" required /></div>
+            <div class="form-group"><label>Execution Command</label><input type="text" name="command" class="form-input" placeholder="npm run dev" required /></div>
+            <div class="form-row">
+              <div class="form-group"><label>Port (Optional)</label><input type="number" name="port" class="form-input" placeholder="3000" /></div>
+              <div class="form-group"><label>Group</label><select name="group" class="form-input"><option value="Frontend">Frontend</option><option value="Backend">Backend</option><option value="Mobile">Mobile</option><option value="General">General</option></select></div>
+            </div>
+            <div class="form-actions"><button type="button" class="btn-pill" id="btn-cancel-add">Cancel</button><button type="submit" class="btn-pill btn-add-server">Save Server</button></div>
+          </form>
+        </div>
+        <!-- Settings Modal -->
+        <div class="modal-dialog modal-settings" id="modal-settings" style="display: none;">
+          <div class="modal-header"><h3>Server Launcher Settings</h3><button class="btn-close-modal" id="btn-close-settings">&#x2715;</button></div>
+          <div class="modal-form">
+            <div class="form-group"><label>Theme Mode</label><select class="form-input" id="select-theme"><option value="nocturnal">Nocturnal Command (Obsidian Dark)</option><option value="cyber">Cyberpunk Cobalt</option></select></div>
+            <div class="form-group"><label><input type="checkbox" id="chk-autostart-app" checked /> Launch Server Launcher silently on system login</label></div>
+            <div class="form-actions"><button type="button" class="btn-pill" id="btn-save-settings">Done</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

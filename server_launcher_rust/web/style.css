@@ -1397,3 +1397,7 @@ button:focus-visible, input:focus-visible {
 .group-pill-add {
   transition: background-color 0.2s, border-color 0.2s;
 }
+
+.ql-result-item .icon {
+  color: var(--emerald-start);
+}

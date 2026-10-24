@@ -1304,3 +1304,7 @@ button:focus-visible, input:focus-visible {
 .status-pill {
   transition: background-color 0.25s, color 0.25s;
 }
+
+.btn-add-server {
+  letter-spacing: 0.01em;
+}

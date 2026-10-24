@@ -1392,3 +1392,6 @@ body {
 
 /* Dual grid scrollbar */
 .servers-grid-dual::-webkit-scrollbar { width: 6px; } .servers-grid-dual::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+
+/* Tag chip hover */
+.tag-chip:hover { background-color: #223048; cursor: default; }

@@ -1121,3 +1121,7 @@ body {
   border-color: rgba(56, 189, 248, 0.35);
   box-shadow: 0 0 12px rgba(56, 189, 248, 0.1);
 }
+
+button:active {
+  transform: scale(0.97);
+}

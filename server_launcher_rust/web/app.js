@@ -804,3 +804,6 @@ function showToast(msg) {
 
 // Window blur handler
 window.addEventListener('blur', () => { const tb = document.getElementById('window-titlebar'); if (tb) tb.classList.add('window-inactive'); });
+
+// Window focus handler
+window.addEventListener('focus', () => { const tb = document.getElementById('window-titlebar'); if (tb) tb.classList.remove('window-inactive'); });

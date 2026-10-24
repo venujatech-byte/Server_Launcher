@@ -75,3 +75,68 @@ button, input, select, textarea, .win-btn, .sidebar-tab, .group-pill, .rail-item
   width: 100vw;
   background-color: var(--bg-app);
 }
+
+/* 0. Dedicated Slim Titlebar (22px matching egui) */
+.window-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 22px;
+  background-color: var(--bg-app);
+  padding: 0 10px;
+  app-region: drag;
+  -webkit-app-region: drag;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.titlebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.brand-dot {
+  font-size: 8px;
+  color: #10b981;
+}
+
+.brand-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.titlebar-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.win-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  width: 32px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 11px;
+  border-radius: 4px;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.win-btn:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+.win-btn.win-close:hover {
+  background-color: #ef4444 !important;
+  color: #ffffff !important;
+}

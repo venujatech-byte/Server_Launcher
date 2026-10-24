@@ -1340,3 +1340,9 @@ button:focus-visible, input:focus-visible {
 .nav-pill-tab {
   transition: color 0.2s, background-color 0.2s, border-color 0.2s;
 }
+
+.form-group label {
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+}

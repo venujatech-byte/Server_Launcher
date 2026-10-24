@@ -1359,3 +1359,6 @@ body {
 
 /* Subtab badge transition */
 .subtab-badge { transition: background-color 0.2s; }
+
+/* Refresh spin on click */
+.btn-refresh:active .icon { transform: rotate(180deg); transition: transform 0.3s; }

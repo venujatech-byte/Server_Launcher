@@ -1259,3 +1259,7 @@ button:focus-visible, input:focus-visible {
 .rail-spacer {
   min-height: 20px;
 }
+
+.rail-item.rail-bottom:hover {
+  color: var(--cyan-accent);
+}

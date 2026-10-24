@@ -1419,3 +1419,6 @@ body {
 
 /* Drawer status font */
 .drawer-status { font-family: var(--font-mono); font-size: 11px; color: var(--cyan-accent); }
+
+/* Systemd row hover */
+.systemd-table tr:hover td { background-color: rgba(255, 255, 255, 0.02); }

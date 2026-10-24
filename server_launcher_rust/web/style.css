@@ -1283,3 +1283,7 @@ button:focus-visible, input:focus-visible {
 .quick-launch-search-bar input {
   font-size: 16px;
 }
+
+.managed-servers-heading-row {
+  margin-bottom: 4px;
+}

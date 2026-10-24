@@ -1332,3 +1332,6 @@ body {
 
 /* Search input white text on focus */
 .search-pill-box input:focus { color: #ffffff; }
+
+/* No select on kbd hints */
+.kbd-hint { user-select: none; }

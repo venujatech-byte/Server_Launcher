@@ -1425,3 +1425,6 @@ body {
 
 /* Sensor card hover */
 .sensor-card:hover { background-color: var(--bg-card-hover); }
+
+/* Core cell center */
+.core-cell { text-align: center; font-weight: 600; color: var(--cyan-accent); }

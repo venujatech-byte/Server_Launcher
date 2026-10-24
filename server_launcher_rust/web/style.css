@@ -591,3 +591,24 @@ body {
   color: var(--cyan-accent);
   border-color: var(--cyan-accent);
 }
+
+.split-columns-container {
+  display: grid;
+  grid-template-columns: 420px 1fr;
+  gap: 24px;
+  padding: 16px 24px 24px 24px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.col-grouped-servers {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.col-managed-servers {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}

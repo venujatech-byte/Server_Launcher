@@ -1365,3 +1365,6 @@ body {
 
 /* Subbar search focus ring */
 .subbar-search-box:focus-within { box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.3); }
+
+/* Server card GPU optimization */
+.server-card { will-change: transform, background-color; }

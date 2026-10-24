@@ -520,3 +520,74 @@ body {
   font-size: 11px;
   color: var(--cyan-port);
 }
+
+.overview-subbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 24px 8px 24px;
+}
+
+.subbar-left {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.subbar-heading {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.subbar-timestamp {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.subbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.subbar-search-box {
+  display: flex;
+  align-items: center;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 5px 12px;
+  width: 310px;
+  gap: 8px;
+}
+
+.subbar-search-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-main);
+  font-size: 12px;
+  width: 100%;
+}
+
+.btn-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-refresh:hover {
+  background-color: var(--bg-card-hover);
+  color: var(--cyan-accent);
+  border-color: var(--cyan-accent);
+}

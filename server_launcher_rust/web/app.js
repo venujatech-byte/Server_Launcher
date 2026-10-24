@@ -145,3 +145,21 @@ function setupBatchActions() {
       });
     });
   }
+
+function setupSearch() {
+    const handleSearch = (q) => {
+      state.searchQuery = q.toLowerCase().trim();
+      const cards = document.querySelectorAll('.server-card');
+      cards.forEach(card => {
+        const text = card.textContent.toLowerCase();
+        card.style.display = text.includes(state.searchQuery) ? 'flex' : 'none';
+      });
+    };
+
+    if (DOM.globalSearch) {
+      DOM.globalSearch.addEventListener('input', (e) => handleSearch(e.target.value));
+    }
+    if (DOM.subbarSearch) {
+      DOM.subbarSearch.addEventListener('input', (e) => handleSearch(e.target.value));
+    }
+  }

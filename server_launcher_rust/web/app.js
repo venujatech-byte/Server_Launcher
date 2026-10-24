@@ -828,3 +828,6 @@ document.getElementById('btn-clear-script-output')?.addEventListener('click', ()
 
 // Cmd category filter
 document.getElementById('cmds-categories-bar')?.addEventListener('click', (e) => { const pill = e.target.closest('.group-pill'); if (pill) { document.querySelectorAll('#cmds-categories-bar .group-pill').forEach(p => p.classList.remove('active')); pill.classList.add('active'); showToast(`Filter commands: ${pill.textContent}`); } });
+
+// Refresh systemd handler
+document.getElementById('btn-refresh-systemd')?.addEventListener('click', () => { showToast('Polling SystemD service status...'); const tbody = document.getElementById('systemd-tbody'); if (tbody) tbody.style.opacity = '0.5'; setTimeout(() => { if (tbody) tbody.style.opacity = '1'; showToast('SystemD service status updated'); }, 600); });

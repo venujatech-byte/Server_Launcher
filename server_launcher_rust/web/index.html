@@ -302,3 +302,33 @@
               <div class="sensors-left-nav" id="sensors-left-nav"></div>
             </div>
           </section>
+          <!-- ═════════════════════════════════════════════════════════ -->
+          <!-- RIGHT PANEL: Notebook Tabs Bar + Overview / Server View -->
+          <!-- ═════════════════════════════════════════════════════════ -->
+          <section class="right-panel">
+            <!-- Row 1: Notebook Subtabs Strip (src/app.rs render_servers_right_panel) -->
+            <div class="notebook-tabs-strip" id="notebook-tabs-strip">
+              <!-- Tab 0: Server Overview -->
+              <button class="notebook-tab active" data-subtab="overview">
+                <span class="icon">&#xe153;</span>
+                <span class="notebook-tab-name">Server Overview</span>
+                <span class="online-count-badge" id="online-count-badge">0/3</span>
+              </button>
+              <!-- Tab 1: f -->
+              <button class="notebook-tab" data-subtab="f">
+                <span class="tab-radio-dot">○</span>
+                <span class="notebook-tab-name">f</span>
+                <span class="tab-port-label">:5173</span>
+              </button>
+              <!-- Tab 2: Vendly Backend -->
+              <button class="notebook-tab" data-subtab="vendly_backend">
+                <span class="tab-radio-dot">○</span>
+                <span class="notebook-tab-name">Vendly Backend</span>
+              </button>
+              <!-- Tab 3: React Native (Expo) -->
+              <button class="notebook-tab" data-subtab="react_native__expo">
+                <span class="tab-radio-dot">○</span>
+                <span class="notebook-tab-name">React Native (Expo)</span>
+                <span class="tab-port-label">:8081</span>
+              </button>
+            </div>

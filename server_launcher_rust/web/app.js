@@ -63,3 +63,26 @@ function setupNavTabs() {
       if (el) el.style.display = (state.activeTab === v) ? 'flex' : 'none';
     });
   }
+
+function setupGroupFilter() {
+    DOM.groupPills.forEach(pill => {
+      pill.addEventListener('click', () => {
+        DOM.groupPills.forEach(p => p.classList.remove('active'));
+        pill.classList.add('active');
+        state.activeGroup = pill.getAttribute('data-group');
+        applyGroupFilter();
+      });
+    });
+  }
+
+  function applyGroupFilter() {
+    const sections = document.querySelectorAll('.group-section');
+    sections.forEach(sec => {
+      const group = sec.getAttribute('data-group-section');
+      if (state.activeGroup === 'all' || state.activeGroup === group) {
+        sec.style.display = 'flex';
+      } else {
+        sec.style.display = 'none';
+      }
+    });
+  }

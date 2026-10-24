@@ -1368,3 +1368,6 @@ body {
 
 /* Server card GPU optimization */
 .server-card { will-change: transform, background-color; }
+
+/* Status dot pulse */
+.status-dot.running { animation: pulseGreen 2.5s infinite; }

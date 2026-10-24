@@ -1184,3 +1184,7 @@ button:focus-visible, input:focus-visible {
 .rail-badge-dot {
   animation: pulseDot 2s infinite ease-in-out;
 }
+
+.window-titlebar {
+  backdrop-filter: blur(8px);
+}

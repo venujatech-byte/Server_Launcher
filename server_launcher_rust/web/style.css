@@ -1275,3 +1275,7 @@ button:focus-visible, input:focus-visible {
 .btn-batch-stop .icon {
   font-size: 10px;
 }
+
+.search-input::-webkit-search-cancel-button {
+  display: none;
+}

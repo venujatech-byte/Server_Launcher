@@ -1296,3 +1296,7 @@ button:focus-visible, input:focus-visible {
   color: var(--text-muted);
   opacity: 0.7;
 }
+
+.win-btn {
+  user-select: none;
+}

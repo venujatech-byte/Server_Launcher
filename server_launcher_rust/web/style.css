@@ -1167,3 +1167,7 @@ code, pre, kbd {
 .nav-pill-tab {
   will-change: background-color, border-color, box-shadow;
 }
+
+.split-columns-container {
+  min-height: 0;
+}

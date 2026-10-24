@@ -1347,3 +1347,6 @@ body {
 
 /* Apply pulse to green dot */
 .rail-indicator-dot { animation: pulseGreen 2s infinite ease-in-out; }
+
+/* Rail item active state */
+.rail-item:active { transform: scale(0.92); }

@@ -1317,3 +1317,6 @@ body {
   padding: 2px 8px;
   border-radius: 4px;
 }
+
+/* Titlebar button active state */
+.win-btn:active { transform: scale(0.92); }

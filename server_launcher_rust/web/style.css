@@ -1362,3 +1362,7 @@ button:focus-visible, input:focus-visible {
 .tag-chip .icon {
   font-size: 12px;
 }
+
+.code-text {
+  white-space: nowrap;
+}

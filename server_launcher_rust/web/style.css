@@ -291,3 +291,94 @@ button, input, select, textarea, .win-btn, .sidebar-tab, .group-pill, .rail-item
   background-color: var(--bg-card-hover);
   color: var(--text-primary);
 }
+
+/* 2. Main Workspace Layout & Left Device Rail */
+.workspace-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  width: 100%;
+}
+
+.device-rail {
+  width: 52px;
+  background-color: var(--bg-app);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 0;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.rail-item {
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  background-color: var(--bg-card);
+  border: none;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.15s;
+}
+
+.rail-item:hover {
+  background-color: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+
+.rail-item.active {
+  background-color: var(--accent-blue);
+  color: #ffffff;
+}
+
+.rail-item .beacon-dot {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: #10b981;
+  border: 1.5px solid var(--bg-app);
+}
+
+#rail-adb-2 .beacon-dot {
+  background-color: var(--cyber-cyan);
+}
+
+.rail-item.rail-add {
+  background: transparent;
+  font-size: 20px;
+  color: var(--text-muted);
+}
+.rail-item.rail-add:hover {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.rail-spacer {
+  flex: 1;
+}
+
+.rail-item.rail-download {
+  background: transparent;
+  color: var(--text-muted);
+}
+.rail-item.rail-download:hover {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.dual-panels-container {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  padding: 0 16px 10px 4px;
+  gap: 12px;
+}

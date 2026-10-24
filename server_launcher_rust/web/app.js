@@ -181,3 +181,35 @@ function openQuickLaunch() {
     if (DOM.modalQuickLaunch) DOM.modalQuickLaunch.style.display = 'none';
     if (DOM.modalAddServer) DOM.modalAddServer.style.display = 'none';
   }
+
+function openAddServer() {
+    if (!DOM.modalBackdrop || !DOM.modalAddServer) return;
+    DOM.modalBackdrop.style.display = 'flex';
+    DOM.modalAddServer.style.display = 'block';
+    DOM.modalQuickLaunch.style.display = 'none';
+  }
+
+  function setupAddServerForm() {
+    if (DOM.btnAddServer) DOM.btnAddServer.addEventListener('click', openAddServer);
+    if (DOM.btnCloseAddModal) DOM.btnCloseAddModal.addEventListener('click', closeModal);
+    if (DOM.btnCancelAdd) DOM.btnCancelAdd.addEventListener('click', closeModal);
+    
+    if (DOM.formAddServer) {
+      DOM.formAddServer.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const fd = new FormData(DOM.formAddServer);
+        const name = fd.get('name');
+        const cmd = fd.get('command');
+        const port = fd.get('port');
+        const group = fd.get('group');
+        const folder = fd.get('directory') || 'custom';
+        
+        const id = name.toLowerCase().replace(/[^a-z0-9]/g, '-');
+        state.servers.push({ id, name, group, cmd, port, folder, status: 'stopped' });
+        
+        closeModal();
+        DOM.formAddServer.reset();
+        alert(`Server "${name}" added successfully.`);
+      });
+    }
+  }

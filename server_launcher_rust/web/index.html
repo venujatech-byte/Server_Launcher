@@ -463,3 +463,34 @@
                 </div>
               </div>
             </div>
+            <!-- Dedicated Server Log Content View (When individual server tab is open) -->
+            <div class="right-tab-content" id="tab-content-server" style="display: none;">
+              <div class="server-detail-header">
+                <div class="server-detail-title-group">
+                  <span class="server-detail-dot" id="srv-detail-dot">●</span>
+                  <h2 class="server-detail-name" id="srv-detail-name">Vendly Backend</h2>
+                  <span class="status-chip-pill stopped" id="srv-detail-chip">Stopped</span>
+                </div>
+                <div class="server-detail-actions">
+                  <button class="btn-glow-start" id="srv-detail-start-btn">
+                    <span class="icon">&#xe13c;</span>
+                    <span>Start</span>
+                  </button>
+                  <button class="tool-btn" id="srv-detail-term-btn" title="Open Terminal"><span class="icon">&#xe181;</span></button>
+                  <button class="tool-btn" id="srv-detail-code-btn" title="VS Code"><span class="icon">&#xe093;</span></button>
+                  <button class="tool-btn" id="srv-detail-folder-btn" title="Folder"><span class="icon">&#xe0d7;</span></button>
+                </div>
+              </div>
+
+              <!-- Custom Actions and Links -->
+              <div class="server-custom-bar" id="srv-custom-bar"></div>
+
+              <!-- Terminal Shell Log Box -->
+              <div class="terminal-shell-box">
+                <div class="terminal-shell-header">
+                  <span class="terminal-shell-label">>_ Process Logs & Terminal Stream</span>
+                  <span class="terminal-shell-cwd" id="srv-detail-cwd">/backend</span>
+                </div>
+                <pre class="terminal-shell-output" id="srv-detail-output">// Process is currently stopped. Click 'Start' to launch and stream stdout/stderr logs.</pre>
+              </div>
+            </div>

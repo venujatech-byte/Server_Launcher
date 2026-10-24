@@ -1389,3 +1389,6 @@ body {
 
 /* Batch button active */
 .btn-batch:active { transform: scale(0.95); }
+
+/* Dual grid scrollbar */
+.servers-grid-dual::-webkit-scrollbar { width: 6px; } .servers-grid-dual::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }

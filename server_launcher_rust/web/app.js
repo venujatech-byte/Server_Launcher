@@ -257,3 +257,16 @@ function setupScanTimer() {
     const badge = document.querySelector('.subtab-badge');
     if (badge) badge.textContent = `${running}/${total}`;
   }
+
+function setupWindowControls() {
+    const btnMin = document.getElementById('btn-minimize');
+    const btnMax = document.getElementById('btn-maximize');
+    const btnClose = document.getElementById('btn-close');
+
+    if (window.__TAURI__ && window.__TAURI__.window) {
+      const appWin = window.__TAURI__.window.getCurrentWindow();
+      if (btnMin) btnMin.addEventListener('click', () => appWin.minimize());
+      if (btnMax) btnMax.addEventListener('click', () => appWin.toggleMaximize());
+      if (btnClose) btnClose.addEventListener('click', () => appWin.close());
+    }
+  }

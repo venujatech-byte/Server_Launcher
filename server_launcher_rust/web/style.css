@@ -612,3 +612,73 @@ body {
   flex-direction: column;
   gap: 16px;
 }
+
+.group-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.group-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 4px;
+}
+
+.group-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--cyan-accent);
+  letter-spacing: 0.04em;
+}
+
+.group-batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-batch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.2s;
+}
+
+.btn-batch-start {
+  background-color: rgba(16, 185, 129, 0.15);
+  border-color: rgba(16, 185, 129, 0.4);
+  color: var(--emerald-start);
+}
+
+.btn-batch-start:hover {
+  background-color: var(--emerald-start);
+  color: #ffffff;
+}
+
+.btn-batch-stop {
+  background-color: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: var(--ruby-stop);
+}
+
+.btn-batch-stop:hover {
+  background-color: var(--ruby-stop);
+  color: #ffffff;
+}
+
+.group-cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}

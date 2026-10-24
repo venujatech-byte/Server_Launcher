@@ -1386,3 +1386,6 @@ body {
 
 /* Checkbox hover */
 .custom-checkbox:hover .cb-box { background-color: #223048; }
+
+/* Batch button active */
+.btn-batch:active { transform: scale(0.95); }

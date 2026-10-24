@@ -17,3 +17,24 @@
     searchQuery: '',
     scanElapsedSec: 565
   };
+
+const DOM = {
+    navTabs: document.querySelectorAll('.nav-pill-tab'),
+    groupPills: document.querySelectorAll('.group-pill'),
+    subtabs: document.querySelectorAll('.subtab-item'),
+    globalSearch: document.getElementById('global-search'),
+    subbarSearch: document.getElementById('subbar-search'),
+    scanTimer: document.getElementById('scan-timer'),
+    btnRefresh: document.getElementById('btn-refresh'),
+    btnQuickLaunch: document.getElementById('btn-quick-launch'),
+    btnAddServer: document.getElementById('btn-add-server'),
+    modalBackdrop: document.getElementById('modal-backdrop'),
+    modalQuickLaunch: document.getElementById('modal-quick-launch'),
+    modalAddServer: document.getElementById('modal-add-server'),
+    qlSearchInput: document.getElementById('ql-search-input'),
+    formAddServer: document.getElementById('form-add-server'),
+    btnCloseAddModal: document.getElementById('btn-close-add-modal'),
+    btnCancelAdd: document.getElementById('btn-cancel-add'),
+    colGroupedServers: document.getElementById('col-grouped-servers'),
+    colManagedServers: document.getElementById('col-managed-servers')
+  };

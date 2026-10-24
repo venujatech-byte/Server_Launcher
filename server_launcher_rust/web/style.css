@@ -1235,3 +1235,7 @@ button:focus-visible, input:focus-visible {
 .group-title-text {
   text-transform: uppercase;
 }
+
+.modal-dialog {
+  border-radius: 16px;
+}

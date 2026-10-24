@@ -1176,3 +1176,11 @@ button:focus-visible, input:focus-visible {
   outline: 2px solid var(--cyan-accent);
   outline-offset: 2px;
 }
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 0.8; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+.rail-badge-dot {
+  animation: pulseDot 2s infinite ease-in-out;
+}

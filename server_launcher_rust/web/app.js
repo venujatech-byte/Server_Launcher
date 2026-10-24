@@ -801,3 +801,6 @@ function showToast(msg) {
   clearTimeout(t._timer);
   t._timer = setTimeout(() => { t.style.opacity = '0'; }, 2600);
 }
+
+// Window blur handler
+window.addEventListener('blur', () => { const tb = document.getElementById('window-titlebar'); if (tb) tb.classList.add('window-inactive'); });

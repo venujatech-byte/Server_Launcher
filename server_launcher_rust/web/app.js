@@ -813,3 +813,6 @@ document.getElementById('meta-ip')?.addEventListener('click', () => { navigator.
 
 // Device rail switching handler
 document.querySelectorAll('.rail-item').forEach(item => { item.addEventListener('click', () => { if (item.id === 'rail-export') { showToast('Configuration exported to servers.json'); return; } document.querySelectorAll('.rail-item').forEach(r => r.classList.remove('active')); item.classList.add('active'); showToast(`Connected machine: ${item.getAttribute('title') || 'Device'}`); }); });
+
+// Command well copy handler
+document.addEventListener('click', (e) => { const well = e.target.closest('.command-well'); if (well) { const code = well.querySelector('.code-text')?.textContent; if (code) { navigator.clipboard?.writeText(code); showToast(`Copied command: ${code}`); } } });

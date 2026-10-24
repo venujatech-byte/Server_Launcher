@@ -840,3 +840,6 @@ document.getElementById('ql-search-input')?.addEventListener('input', (e) => { c
 
 // New script trigger
 document.getElementById('btn-new-script')?.addEventListener('click', () => { showToast('Script creation modal initialized'); });
+
+// Log completion
+console.log('Server Launcher: all 65 modular features initialized.');

@@ -1437,3 +1437,6 @@ body {
 
 /* Modal slide animation */
 .modal-dialog { animation: modalSlideDown 0.2s ease-out; } @keyframes modalSlideDown { from { transform: translateY(-16px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+/* Quick launch result active */
+.ql-result-item:active { background-color: #1e3a5f; }

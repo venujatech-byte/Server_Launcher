@@ -1374,3 +1374,7 @@ button:focus-visible, input:focus-visible {
 .status-dot.running {
   filter: brightness(1.2);
 }
+
+.detailed-card:hover {
+  border-color: rgba(56, 189, 248, 0.3);
+}

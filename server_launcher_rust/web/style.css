@@ -1218,3 +1218,7 @@ button:focus-visible, input:focus-visible {
   flex-wrap: wrap;
   gap: 8px;
 }
+
+.group-cards-list > .server-card + .server-card {
+  margin-top: 2px;
+}

@@ -1226,3 +1226,8 @@ button:focus-visible, input:focus-visible {
 .brand-launcher-circle {
   flex-shrink: 0;
 }
+
+.meta-divider {
+  color: var(--text-muted);
+  opacity: 0.6;
+}

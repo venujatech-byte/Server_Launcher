@@ -118,14 +118,14 @@ function toggleServerStatus(serverId) {
         if (pill) { pill.classList.remove('stopped'); pill.classList.add('running'); pill.textContent = 'Running'; }
         if (btn) {
           btn.className = 'btn-action-stop';
-          btn.innerHTML = '<span class="icon">&#xe18c;</span><span>Stop</span>';
+          btn.innerHTML = '<span class="icon">&#xe167;</span><span>Stop</span>';
         }
       } else {
         if (dot) { dot.classList.remove('running'); dot.classList.add('stopped'); }
         if (pill) { pill.classList.remove('running'); pill.classList.add('stopped'); pill.textContent = 'Stopped'; }
         if (btn) {
           btn.className = 'btn-action-start';
-          btn.innerHTML = '<span class="icon">&#xe1c4;</span><span>Start</span>';
+          btn.innerHTML = '<span class="icon">&#xe13c;</span><span>Start</span>';
         }
       }
     });

@@ -819,3 +819,6 @@ document.addEventListener('click', (e) => { const well = e.target.closest('.comm
 
 // Checkbox change handler
 document.addEventListener('change', (e) => { if (e.target.matches('.custom-checkbox input')) { const name = e.target.getAttribute('name'); const checked = e.target.checked; const key = e.target.getAttribute('data-key'); showToast(`Updated ${name} to ${checked} for server`); } });
+
+// Batch action listener
+document.addEventListener('click', (e) => { const batch = e.target.closest('.btn-batch'); if (batch) { const group = batch.getAttribute('data-batch-group'); const action = batch.getAttribute('data-action'); showToast(`${action === 'batch-start' ? 'Starting' : 'Stopping'} all ${group} servers`); } });

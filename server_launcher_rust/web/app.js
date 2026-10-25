@@ -1688,3 +1688,4 @@ function showToast(msg) {
 // Network speed: updates real-time throughput metrics
 // Socket stats: updates active socket statistics
 // Top apps: renders ranked process table
+// Process kill: sends termination signal to selected PID

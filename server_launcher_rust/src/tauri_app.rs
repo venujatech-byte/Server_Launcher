@@ -1209,3 +1209,4 @@ pub fn run() {
 /// Collects comprehensive hardware telemetry including CPU, RAM, Swap, Disk, and Network
 // Socket inspection: reads kernel network sockets for real-time dashboard display
 // Process ranking: selects top 20 active processes to minimize IPC serialization overhead
+// Storage aggregation: sums mounted disk partitions to derive aggregate storage statistics

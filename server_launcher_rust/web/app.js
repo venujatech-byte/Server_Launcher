@@ -1682,3 +1682,4 @@ function showToast(msg) {
 // Telemetry strip: updates CPU model, RAM, storage, and uptime
 // Telemetry CPU: updates CPU metrics and averages
 // Telemetry RAM: updates physical memory usage and capacity
+// Telemetry Swap: updates swap space metrics

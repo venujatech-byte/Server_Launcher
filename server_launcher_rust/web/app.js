@@ -1668,3 +1668,4 @@ function showToast(msg) {
 // Terminal native: launches external terminal emulator in current cwd
 // Commands category: filters commands by selected category
 // Commands search: filters commands by query in name or code
+// Commands run: executes command in terminal or external emulator

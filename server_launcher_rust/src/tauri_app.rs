@@ -1194,3 +1194,4 @@ pub fn run() {
         .expect("failed to start Server Launcher");
 }
 // Terminal state: tracks active current working directory and history across IPC invocations
+// Path resolution: resolves '~' to HOME or USERPROFILE and canonicalizes symlinks

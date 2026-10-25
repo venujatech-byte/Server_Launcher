@@ -1685,3 +1685,4 @@ function showToast(msg) {
 // Telemetry Swap: updates swap space metrics
 // Telemetry Storage: updates disk capacity and free space
 // Network formatting: formats bytes/sec into B/s, KB/s, MB/s
+// Network speed: updates real-time throughput metrics

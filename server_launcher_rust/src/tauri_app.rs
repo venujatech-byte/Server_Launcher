@@ -1212,3 +1212,4 @@ pub fn run() {
 // Storage aggregation: sums mounted disk partitions to derive aggregate storage statistics
 // SSH connection: validates remote host reachability before opening interactive consoles
 /// Parses remote listening sockets and process names into structured JSON listener objects
+// Power management: sends privileged reboot or shutdown commands to remote Linux hosts

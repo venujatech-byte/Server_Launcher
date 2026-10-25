@@ -1671,3 +1671,4 @@ function showToast(msg) {
 // Commands run: executes command in terminal or external emulator
 // Commands copy: writes command text to system clipboard
 // Commands delete: deletes command from configuration
+// SystemD mode: switches query scope between user and system units

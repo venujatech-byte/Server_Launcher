@@ -1204,3 +1204,4 @@ pub fn run() {
 // Autocomplete optimization: stream directory entries without loading entire filesystem tree
 /// Queries systemd units with either --user scope or default system scope via systemctl
 // Filter: ensures only '.service' units are parsed and returned to the frontend
+// Unit status: evaluates is_active and is_failed states according to systemd lifecycle

@@ -1679,3 +1679,4 @@ function showToast(msg) {
 // SystemD actions: triggers unit lifecycle actions
 // Sensors router: switches between 11 hardware telemetry views
 // Sensors interval: adjusts telemetry polling timer
+// Telemetry strip: updates CPU model, RAM, storage, and uptime

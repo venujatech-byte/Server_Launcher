@@ -1661,3 +1661,4 @@ function showToast(msg) {
 // Scripts selection: displays active script code and metadata
 // Scripts execution: invokes backend and logs output stream
 // Terminal init: syncs cwd and prompt on startup
+// Terminal history: navigates history backwards and forwards

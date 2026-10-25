@@ -1670,3 +1670,4 @@ function showToast(msg) {
 // Commands search: filters commands by query in name or code
 // Commands run: executes command in terminal or external emulator
 // Commands copy: writes command text to system clipboard
+// Commands delete: deletes command from configuration

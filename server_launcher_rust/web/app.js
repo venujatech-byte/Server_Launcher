@@ -1657,3 +1657,4 @@ function showToast(msg) {
   t._timer = setTimeout(() => { t.style.opacity = '0'; }, 2500);
 }
 // Scripts filter: filters custom scripts by name or code
+// Scripts empty: shows empty placeholder when list is empty

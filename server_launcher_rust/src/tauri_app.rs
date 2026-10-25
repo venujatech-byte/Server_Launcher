@@ -1200,3 +1200,4 @@ pub fn run() {
 // Process isolation: stdin is explicitly detached to eliminate Node.js TTY reader EIO conflicts
 // Builtin verification: tested clear, pwd, cd, and history behavior matches bash builtins
 /// Scans target directory prefix and returns common suffix completion or candidate vector
+// Path suffixing: directories append trailing '/' while files append trailing space

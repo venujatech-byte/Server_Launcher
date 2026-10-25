@@ -1678,3 +1678,4 @@ function showToast(msg) {
 // SystemD journal: streams journalctl logs with tail refresh
 // SystemD actions: triggers unit lifecycle actions
 // Sensors router: switches between 11 hardware telemetry views
+// Sensors interval: adjusts telemetry polling timer

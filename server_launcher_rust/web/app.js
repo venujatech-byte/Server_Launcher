@@ -1660,3 +1660,4 @@ function showToast(msg) {
 // Scripts empty: shows empty placeholder when list is empty
 // Scripts selection: displays active script code and metadata
 // Scripts execution: invokes backend and logs output stream
+// Terminal init: syncs cwd and prompt on startup

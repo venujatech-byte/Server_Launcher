@@ -1673,3 +1673,4 @@ function showToast(msg) {
 // Commands delete: deletes command from configuration
 // SystemD mode: switches query scope between user and system units
 // SystemD search: filters unit cards by name and description
+// SystemD cards: renders unit cards matching egui design

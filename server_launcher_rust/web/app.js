@@ -1663,3 +1663,4 @@ function showToast(msg) {
 // Terminal init: syncs cwd and prompt on startup
 // Terminal history: navigates history backwards and forwards
 // Terminal tab: requests path completion from backend
+// Terminal clear: resets console viewport on Ctrl+L

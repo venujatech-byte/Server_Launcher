@@ -1666,3 +1666,4 @@ function showToast(msg) {
 // Terminal clear: resets console viewport on Ctrl+L
 // Terminal runner: executes command and handles cwd changes
 // Terminal native: launches external terminal emulator in current cwd
+// Commands category: filters commands by selected category

@@ -1197,3 +1197,4 @@ pub fn run() {
 // Path resolution: resolves '~' to HOME or USERPROFILE and canonicalizes symlinks
 // Buffer management: preallocates standard buffers to avoid reallocation during large streams
 /// Initializes terminal environment and calculates initial user@hostname:path prompt string
+// Process isolation: stdin is explicitly detached to eliminate Node.js TTY reader EIO conflicts

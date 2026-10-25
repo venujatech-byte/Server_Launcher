@@ -54,7 +54,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-button, input, select, textarea, .win-btn, .sidebar-tab, .group-pill, .rail-item, .notebook-tab, .btn-glow-start, .tool-btn, .toggle-checkbox, .cat-pill, .sensor-nav-item, .btn-adb-nav {
+button, input, select, textarea, .win-btn, .sidebar-tab, .group-pill, .rail-item, .notebook-tab, .btn-glow-start, .tool-btn, .toggle-checkbox, .cat-pill, .sensor-nav-item, .btn-adb-nav, .server-card, .script-card-item, .sysd-service-card, .quick-chip, .btn-pill, .btn-mode-toggle {
   -webkit-app-region: no-drag !important;
   app-region: no-drag !important;
   pointer-events: auto !important;
@@ -84,8 +84,8 @@ button, input, select, textarea, .win-btn, .sidebar-tab, .group-pill, .rail-item
   height: 22px;
   background-color: var(--bg-app);
   padding: 0 10px;
-  app-region: drag;
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
   user-select: none;
   flex-shrink: 0;
 }
@@ -94,7 +94,17 @@ button, input, select, textarea, .win-btn, .sidebar-tab, .group-pill, .rail-item
   display: flex;
   align-items: center;
   gap: 6px;
-  pointer-events: none;
+  cursor: default;
+  -webkit-app-region: drag;
+  app-region: drag;
+  pointer-events: auto;
+}
+
+.titlebar-drag-spacer {
+  flex: 1;
+  height: 100%;
+  -webkit-app-region: drag;
+  app-region: drag;
 }
 
 .brand-dot {
@@ -114,6 +124,10 @@ button, input, select, textarea, .win-btn, .sidebar-tab, .group-pill, .rail-item
   display: flex;
   align-items: center;
   gap: 2px;
+  -webkit-app-region: no-drag !important;
+  app-region: no-drag !important;
+  pointer-events: auto !important;
+  z-index: 10;
 }
 
 .win-btn {
@@ -128,6 +142,9 @@ button, input, select, textarea, .win-btn, .sidebar-tab, .group-pill, .rail-item
   cursor: pointer;
   font-size: 11px;
   border-radius: 4px;
+  -webkit-app-region: no-drag !important;
+  app-region: no-drag !important;
+  pointer-events: auto !important;
   transition: background-color 0.15s, color 0.15s;
 }
 

@@ -88,6 +88,12 @@
     if (window.__TAURI__ && window.__TAURI__.core && typeof window.__TAURI__.core.invoke === 'function') {
       return window.__TAURI__.core.invoke(cmd, args);
     }
+    if (window.__TAURI__ && typeof window.__TAURI__.invoke === 'function') {
+      return window.__TAURI__.invoke(cmd, args);
+    }
+    if (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {
+      return window.__TAURI_INTERNALS__.invoke(cmd, args);
+    }
     return Promise.reject(new Error(`Tauri IPC not available for ${cmd}`));
   }
 
@@ -205,37 +211,43 @@
   }
 
   // 3. Navigation Sidebar Tabs (Servers, Scripts, Cmds, SystemD, Sensors)
+  function switchSidebarTab(target) {
+    if (!target) return;
+    state.activeSidebarTab = target;
+    document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === target));
+
+    ['servers', 'scripts', 'cmds', 'systemd', 'sensors'].forEach(t => {
+      const lv = document.getElementById(`left-view-${t}`);
+      const rv = document.getElementById(`rv-${t}-view`);
+      if (lv) lv.style.display = (t === target) ? 'flex' : 'none';
+      if (rv) rv.style.display = (t === target) ? 'flex' : 'none';
+    });
+
+    if (target === 'sensors') {
+      pollDetailedSensors();
+    } else if (target === 'systemd') {
+      loadSystemdServices();
+    } else if (target === 'scripts') {
+      renderScriptsList();
+    } else if (target === 'cmds') {
+      renderCommandsList();
+    }
+  }
+
   function setupSidebarTabs() {
     const tabs = document.querySelectorAll('.sidebar-tab');
     tabs.forEach(tab => {
-      tab.onclick = () => {
-        const target = tab.dataset.tab;
-        state.activeSidebarTab = target;
-        tabs.forEach(t => t.classList.toggle('active', t === tab));
-
-        ['servers', 'scripts', 'cmds', 'systemd', 'sensors'].forEach(t => {
-          const lv = document.getElementById(`left-view-${t}`);
-          const rv = document.getElementById(`rv-${t}-view`);
-          if (lv) lv.style.display = (t === target) ? 'flex' : 'none';
-          if (rv) rv.style.display = (t === target) ? 'flex' : 'none';
-        });
-
-        if (target === 'sensors') {
-          pollDetailedSensors();
-        } else if (target === 'systemd') {
-          loadSystemdServices();
-        } else if (target === 'scripts') {
-          renderScriptsList();
-        } else if (target === 'cmds') {
-          renderCommandsList();
-        }
+      tab.onclick = (e) => {
+        e.stopPropagation();
+        switchSidebarTab(tab.dataset.tab);
       };
     });
 
     // Group Filter Pills
     const groupPills = document.querySelectorAll('.group-pill');
     groupPills.forEach(pill => {
-      pill.onclick = () => {
+      pill.onclick = (e) => {
+        e.stopPropagation();
         state.selectedGroup = pill.dataset.group;
         groupPills.forEach(p => p.classList.toggle('active', p === pill));
         filterServersByGroup();
@@ -311,6 +323,19 @@
         ? '<span class="icon">&#xe167;</span><span>Stop</span>'
         : '<span class="icon">&#xe13c;</span><span>Start</span>';
       startBtn.onclick = () => toggleServer(srv.key);
+    }
+
+    const termBtn = document.getElementById('srv-detail-term-btn');
+    if (termBtn) {
+      termBtn.onclick = () => invokeTauri('launcher_open_terminal', { cwd: srv.cwd || '.' }).then(() => showToast(`Terminal opened in /${srv.cwd || '.'}`)).catch(e => showToast(e));
+    }
+    const codeBtn = document.getElementById('srv-detail-code-btn');
+    if (codeBtn) {
+      codeBtn.onclick = () => invokeTauri('launcher_execute_command', { command: `code "${srv.cwd || '.'}"` }).then(() => showToast('VS Code launched')).catch(e => showToast(e));
+    }
+    const folderBtn = document.getElementById('srv-detail-folder-btn');
+    if (folderBtn) {
+      folderBtn.onclick = () => invokeTauri('launcher_open_folder', { path: srv.cwd || '.' }).then(() => showToast('Folder opened')).catch(e => showToast(e));
     }
 
     if (outEl) {
@@ -421,10 +446,6 @@
     if (beacon) beacon.style.display = running > 0 ? 'block' : 'none';
   }
 
-    const beacon = document.getElementById('rail-local-beacon');
-    if (beacon) beacon.style.display = running > 0 ? 'block' : 'none';
-  }
-
   // 5. Scripts Page Controller (Image 1)
   function renderScriptsList() {
     const list = document.getElementById('scripts-left-list');
@@ -432,7 +453,7 @@
     list.innerHTML = '';
 
     const filterIn = document.getElementById('scripts-search-input');
-    const query = filterIn ? filterIn.value.trim().toLowerCase() : '';
+    const query = (filterIn && typeof filterIn.value === 'string') ? filterIn.value.trim().toLowerCase() : '';
 
     const matched = state.scripts.filter(s => {
       return s.name.toLowerCase().includes(query) || (s.script && s.script.toLowerCase().includes(query));
@@ -693,7 +714,7 @@
     list.innerHTML = '';
 
     const filterIn = document.getElementById('cmds-search-input');
-    const query = filterIn ? filterIn.value.trim().toLowerCase() : '';
+    const query = (filterIn && typeof filterIn.value === 'string') ? filterIn.value.trim().toLowerCase() : '';
 
     const filtered = state.savedCommands.filter(c => {
       const matchCat = (state.activeCmdCat === 'all' || c.category === state.activeCmdCat);
@@ -830,7 +851,7 @@
     list.innerHTML = '';
 
     const filterIn = document.getElementById('sysd-search-input');
-    const query = filterIn ? filterIn.value.toLowerCase().trim() : '';
+    const query = (filterIn && typeof filterIn.value === 'string') ? filterIn.value.toLowerCase().trim() : '';
 
     const matched = state.systemdServices.filter(s => {
       return !query || s.name.toLowerCase().includes(query) || (s.description && s.description.toLowerCase().includes(query));
@@ -942,18 +963,23 @@
   let sensorPollTimer = null;
   let sensorPollInterval = 5000;
 
+  function switchSensorCategory(cat) {
+    if (!cat) return;
+    state.activeSensorCat = cat;
+    document.querySelectorAll('#sensors-nav-list .sensor-nav-item').forEach(b => b.classList.toggle('active', b.dataset.sensorCat === cat));
+    
+    const allPanes = ['overview', 'top_apps', 'cpu', 'memory', 'gpu', 'storage', 'wifi', 'data_usage', 'power', 'bluetooth', 'temperature'];
+    allPanes.forEach(c => {
+      const pane = document.getElementById(`spane-${c}`);
+      if (pane) pane.style.display = (c === cat) ? 'block' : 'none';
+    });
+  }
+
   function setupSensorsNav() {
     document.querySelectorAll('#sensors-nav-list .sensor-nav-item').forEach(btn => {
-      btn.onclick = () => {
-        const cat = btn.dataset.sensorCat;
-        state.activeSensorCat = cat;
-        document.querySelectorAll('#sensors-nav-list .sensor-nav-item').forEach(b => b.classList.toggle('active', b === btn));
-        
-        const allPanes = ['overview', 'top_apps', 'cpu', 'memory', 'gpu', 'storage', 'wifi', 'data_usage', 'power', 'bluetooth', 'temperature'];
-        allPanes.forEach(c => {
-          const pane = document.getElementById(`spane-${c}`);
-          if (pane) pane.style.display = (c === cat) ? 'block' : 'none';
-        });
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        switchSensorCategory(btn.dataset.sensorCat);
       };
     });
 
@@ -996,7 +1022,12 @@
     });
   }
 
+  function safeNum(v, def = 0) {
+    return (typeof v === 'number' && !isNaN(v)) ? v : def;
+  }
+
   function applyTelemetryData(data) {
+    if (!data) return;
     // 1. Top Strip Chips
     const cpuChip = document.getElementById('strip-cpu-text');
     const ramChip = document.getElementById('strip-ram-text');
@@ -1010,7 +1041,7 @@
       ramChip.textContent = `${Math.round(data.mem_total_mb / 1024)}GB RAM`;
     }
     if (storageChip && data.storage_total_gb) {
-      storageChip.textContent = `${data.storage_total_gb.toFixed(1)} GB`;
+      storageChip.textContent = `${safeNum(data.storage_total_gb).toFixed(1)} GB`;
     }
     if (uptimeChip && data.uptime_secs) {
       const h = Math.floor(data.uptime_secs / 3600);
@@ -1021,30 +1052,34 @@
     // 2. Overview 4 Stat Cards
     const cpuVal = document.getElementById('ov-cpu-val');
     const cpuSub = document.getElementById('ov-cpu-sub');
-    if (cpuVal) cpuVal.textContent = `${data.cpu_global.toFixed(1)} %`;
+    if (cpuVal) cpuVal.textContent = `${safeNum(data.cpu_global).toFixed(1)} %`;
     if (cpuSub && data.cpu_freq_mhz) {
-      cpuSub.textContent = `${data.cpu_cores_physical || 4} Core / ${data.cpu_cores_logical || 4}T • ${(data.cpu_freq_mhz / 1000).toFixed(2)} GHz`;
+      cpuSub.textContent = `${data.cpu_cores_physical || 4} Core / ${data.cpu_cores_logical || 4}T • ${(safeNum(data.cpu_freq_mhz) / 1000).toFixed(2)} GHz`;
     }
 
     const ramVal = document.getElementById('ov-ram-val');
     const ramSub = document.getElementById('ov-ram-sub');
-    if (ramVal) ramVal.textContent = `${data.mem_pct.toFixed(1)} %`;
-    if (ramSub) ramSub.textContent = `${data.mem_used_mb.toFixed(2)} MB / ${data.mem_total_mb.toFixed(2)} MB`;
+    if (ramVal) ramVal.textContent = `${safeNum(data.mem_pct).toFixed(1)} %`;
+    if (ramSub && data.mem_used_mb !== undefined && data.mem_total_mb !== undefined) {
+      ramSub.textContent = `${safeNum(data.mem_used_mb).toFixed(2)} MB / ${safeNum(data.mem_total_mb).toFixed(2)} MB`;
+    }
 
     const swapVal = document.getElementById('ov-swap-val');
     const swapSub = document.getElementById('ov-swap-sub');
-    if (swapVal) swapVal.textContent = `${data.swap_pct.toFixed(1)} %`;
-    if (swapSub) swapSub.textContent = `${(data.swap_used_mb / 1024).toFixed(1)} GB / ${(data.swap_total_mb / 1024).toFixed(1)} GB`;
+    if (swapVal) swapVal.textContent = `${safeNum(data.swap_pct).toFixed(1)} %`;
+    if (swapSub && data.swap_used_mb !== undefined && data.swap_total_mb !== undefined) {
+      swapSub.textContent = `${(safeNum(data.swap_used_mb) / 1024).toFixed(1)} GB / ${(safeNum(data.swap_total_mb) / 1024).toFixed(1)} GB`;
+    }
 
     const storageVal = document.getElementById('ov-storage-val');
     const storageSub = document.getElementById('ov-storage-sub');
     const storageFree = document.getElementById('ov-storage-free');
-    if (storageVal) storageVal.textContent = `${data.storage_pct.toFixed(1)} %`;
-    if (storageSub && data.storage_total_gb) {
-      storageSub.textContent = `${data.storage_used_gb.toFixed(2)} GB / ${data.storage_total_gb.toFixed(2)} GB`;
+    if (storageVal) storageVal.textContent = `${safeNum(data.storage_pct).toFixed(1)} %`;
+    if (storageSub && data.storage_total_gb !== undefined && data.storage_used_gb !== undefined) {
+      storageSub.textContent = `${safeNum(data.storage_used_gb).toFixed(2)} GB / ${safeNum(data.storage_total_gb).toFixed(2)} GB`;
     }
-    if (storageFree && data.storage_total_gb) {
-      storageFree.textContent = `${(data.storage_total_gb - data.storage_used_gb).toFixed(2)} GB`;
+    if (storageFree && data.storage_total_gb !== undefined && data.storage_used_gb !== undefined) {
+      storageFree.textContent = `${(safeNum(data.storage_total_gb) - safeNum(data.storage_used_gb)).toFixed(2)} GB`;
     }
 
     // 3. Overall Speed & Sockets
@@ -1499,6 +1534,137 @@
 
     // Action delegations (Kill process, copy command, run command, etc.)
     document.addEventListener('click', (e) => {
+      // Window control buttons
+      if (e.target.closest('#btn-minimize')) {
+        invokeTauri('app_minimize').catch(() => console.log('Minimize'));
+        return;
+      }
+      if (e.target.closest('#btn-maximize')) {
+        invokeTauri('app_toggle_maximize').catch(() => console.log('Toggle Maximize'));
+        return;
+      }
+      if (e.target.closest('#btn-close')) {
+        invokeTauri('app_close').catch(() => console.log('Close'));
+        return;
+      }
+
+      // Sidebar Navigation Tabs
+      const sideTab = e.target.closest('.sidebar-tab');
+      if (sideTab) {
+        const target = sideTab.dataset.tab;
+        if (target) switchSidebarTab(target);
+        return;
+      }
+
+      // Notebook subtabs
+      const nbTab = e.target.closest('.notebook-tab');
+      if (nbTab) {
+        const subId = nbTab.dataset.subtab;
+        if (subId) openSubtab(subId);
+        return;
+      }
+
+      // Direct open-subtab links
+      const openSubEl = e.target.closest('[data-open-subtab]');
+      if (openSubEl) {
+        openSubtab(openSubEl.dataset.openSubtab);
+        return;
+      }
+
+      // Server cards: clicking card body opens its detail notebook tab
+      const srvCard = e.target.closest('.server-card');
+      if (srvCard && !e.target.closest('button, input, select, textarea, .recessed-command-box, .toggle-checkbox, label')) {
+        const key = srvCard.id.replace('managed-card-', '').replace('card-', '');
+        if (key) {
+          openSubtab(key);
+          return;
+        }
+      }
+
+      // Group filter pills
+      const grpPill = e.target.closest('.group-pill');
+      if (grpPill) {
+        state.selectedGroup = grpPill.dataset.group;
+        document.querySelectorAll('.group-pill').forEach(p => p.classList.toggle('active', p === grpPill));
+        filterServersByGroup();
+        return;
+      }
+
+      // Device Rail items
+      const railItem = e.target.closest('.rail-item');
+      if (railItem && railItem.dataset.machine) {
+        switchMachine(railItem.dataset.machine);
+        return;
+      }
+
+      // Batch start / batch stop
+      const bStart = e.target.closest('[data-batch-start]');
+      if (bStart) {
+        const grp = bStart.dataset.batchStart;
+        state.servers.filter(s => s.group && s.group.toLowerCase() === grp.toLowerCase()).forEach(s => {
+          if (s.status !== 'running') toggleServer(s.key);
+        });
+        showToast(`Starting ${grp} servers`);
+        return;
+      }
+      const bStop = e.target.closest('[data-batch-stop]');
+      if (bStop) {
+        const grp = bStop.dataset.batchStop;
+        state.servers.filter(s => s.group && s.group.toLowerCase() === grp.toLowerCase()).forEach(s => {
+          if (s.status === 'running') toggleServer(s.key);
+        });
+        showToast(`Stopping ${grp} servers`);
+        return;
+      }
+
+      // SystemD mode toggle
+      const sysdModeBtn = e.target.closest('.btn-mode-toggle');
+      if (sysdModeBtn) {
+        const isUser = sysdModeBtn.id === 'btn-sysd-mode-user';
+        state.systemdMode = isUser ? 'user' : 'system';
+        document.querySelectorAll('.btn-mode-toggle').forEach(b => b.classList.toggle('active', b === sysdModeBtn));
+        loadSystemdServices();
+        return;
+      }
+
+      // Sensors navigation item
+      const sensorNav = e.target.closest('.sensor-nav-item');
+      if (sensorNav) {
+        const cat = sensorNav.dataset.sensorCat;
+        if (cat) switchSensorCategory(cat);
+        return;
+      }
+
+      // Command category pills
+      const catPill = e.target.closest('.cat-pill');
+      if (catPill) {
+        state.activeCmdCat = catPill.dataset.cat;
+        document.querySelectorAll('.cat-pill').forEach(p => p.classList.toggle('active', p === catPill));
+        const catSel = document.getElementById('cmds-cat-select');
+        if (catSel) catSel.value = catPill.dataset.cat;
+        renderCommandsList();
+        return;
+      }
+
+      // Remote diagnostic quick chips
+      const quickChip = e.target.closest('.quick-chip[data-remote-cmd]');
+      if (quickChip && currentRemoteHost) {
+        runRemoteCommand(currentRemoteHost, quickChip.dataset.remoteCmd);
+        return;
+      }
+
+      // Recessed command boxes copy on click
+      const cmdBox = e.target.closest('.recessed-command-box');
+      if (cmdBox) {
+        const code = cmdBox.querySelector('code');
+        if (code && code.textContent) {
+          navigator.clipboard.writeText(code.textContent.trim());
+          showToast(`Copied: ${code.textContent.trim()}`);
+        }
+        return;
+      }
+
+      // Kill process
       const killBtn = e.target.closest('[data-kill-pid]');
       if (killBtn) {
         const pid = parseInt(killBtn.dataset.killPid, 10);
@@ -1509,6 +1675,7 @@
         return;
       }
 
+      // Copy command
       const copyBtn = e.target.closest('[data-copy-cmd]');
       if (copyBtn) {
         navigator.clipboard.writeText(copyBtn.dataset.copyCmd);
@@ -1516,24 +1683,28 @@
         return;
       }
 
+      // Run saved command
       const runCmdBtn = e.target.closest('[data-run-cmd]');
       if (runCmdBtn) {
         executeCustomCommand(runCmdBtn.dataset.runCmd);
         return;
       }
 
+      // Run script
       const runScBtn = e.target.closest('[data-run-script]');
       if (runScBtn) {
         executeScript(runScBtn.dataset.runScript);
         return;
       }
 
+      // Toggle server
       const toggleBtn = e.target.closest('[data-toggle-key]');
       if (toggleBtn) {
         toggleServer(toggleBtn.dataset.toggleKey);
         return;
       }
 
+      // Server card tools
       const toolBtn = e.target.closest('[data-tool]');
       if (toolBtn) {
         const tool = toolBtn.dataset.tool;
@@ -1551,6 +1722,12 @@
         if (c) executeCustomCommand(c);
       };
     }
+  }
+
+  function executeCustomCommand(cmd) {
+    if (!cmd) return;
+    runLocalTerminal(cmd);
+    showToast(`Command sent to Local Terminal`);
   }
 
   function handleServerTool(tool, key) {
@@ -1623,16 +1800,16 @@
   }
 
   function init() {
-    setupWindowControls();
-    setupDeviceRail();
-    setupSidebarTabs();
-    setupSubtabsRouter();
-    setupSensorsNav();
-    initLocalTerminal();
-    loadSystemdServices();
-    setupModals();
-    setupClock();
-    syncInitialBackendData();
+    try { setupWindowControls(); } catch (e) { console.error('Window controls error:', e); }
+    try { setupDeviceRail(); } catch (e) { console.error('Device rail error:', e); }
+    try { setupSidebarTabs(); } catch (e) { console.error('Sidebar tabs error:', e); }
+    try { setupSubtabsRouter(); } catch (e) { console.error('Subtabs router error:', e); }
+    try { setupSensorsNav(); } catch (e) { console.error('Sensors nav error:', e); }
+    try { initLocalTerminal(); } catch (e) { console.error('Local terminal error:', e); }
+    try { loadSystemdServices(); } catch (e) { console.error('Systemd services error:', e); }
+    try { setupModals(); } catch (e) { console.error('Modals error:', e); }
+    try { setupClock(); } catch (e) { console.error('Clock error:', e); }
+    try { syncInitialBackendData(); } catch (e) { console.error('Backend sync error:', e); }
     console.log('Server Launcher complete system active.');
   }
 

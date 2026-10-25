@@ -11,15 +11,16 @@
   <body>
     <div class="app-window">
       <!-- 0. Dedicated Slim Custom Titlebar (Height 22px, matching egui) -->
-      <div class="window-titlebar" id="window-titlebar" data-tauri-drag-region>
+      <div class="window-titlebar" id="window-titlebar">
         <div class="titlebar-brand" data-tauri-drag-region>
-          <span class="brand-dot">●</span>
-          <span class="brand-title">SERVER LAUNCHER</span>
+          <span class="brand-dot" data-tauri-drag-region>●</span>
+          <span class="brand-title" data-tauri-drag-region>SERVER LAUNCHER</span>
         </div>
-        <div class="titlebar-controls" id="titlebar-controls">
-          <button class="win-btn win-minimize" id="btn-minimize" title="Minimize" aria-label="Minimize">&#x2212;</button>
-          <button class="win-btn win-maximize" id="btn-maximize" title="Maximize" aria-label="Maximize">&#x25a2;</button>
-          <button class="win-btn win-close" id="btn-close" title="Close" aria-label="Close">&#x2715;</button>
+        <div class="titlebar-drag-spacer" data-tauri-drag-region></div>
+        <div class="titlebar-controls" id="titlebar-controls" data-tauri-drag-region="false">
+          <button class="win-btn win-minimize" id="btn-minimize" title="Minimize" aria-label="Minimize" data-tauri-drag-region="false">&#x2212;</button>
+          <button class="win-btn win-maximize" id="btn-maximize" title="Maximize" aria-label="Maximize" data-tauri-drag-region="false">&#x25a2;</button>
+          <button class="win-btn win-close" id="btn-close" title="Close" aria-label="Close" data-tauri-drag-region="false">&#x2715;</button>
         </div>
       </div>
 

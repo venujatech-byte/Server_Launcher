@@ -1667,3 +1667,4 @@ function showToast(msg) {
 // Terminal runner: executes command and handles cwd changes
 // Terminal native: launches external terminal emulator in current cwd
 // Commands category: filters commands by selected category
+// Commands search: filters commands by query in name or code

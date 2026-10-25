@@ -1203,3 +1203,4 @@ pub fn run() {
 // Path suffixing: directories append trailing '/' while files append trailing space
 // Autocomplete optimization: stream directory entries without loading entire filesystem tree
 /// Queries systemd units with either --user scope or default system scope via systemctl
+// Filter: ensures only '.service' units are parsed and returned to the frontend

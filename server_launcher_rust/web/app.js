@@ -1675,3 +1675,4 @@ function showToast(msg) {
 // SystemD search: filters unit cards by name and description
 // SystemD cards: renders unit cards matching egui design
 // SystemD details: inspects active unit load and sub state
+// SystemD journal: streams journalctl logs with tail refresh

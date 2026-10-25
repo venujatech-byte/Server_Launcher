@@ -1214,3 +1214,4 @@ pub fn run() {
 /// Parses remote listening sockets and process names into structured JSON listener objects
 // Power management: sends privileged reboot or shutdown commands to remote Linux hosts
 // Remote terminal: handles 'clear' and 'cls' locally to reset console output buffer
+// SSH prompt: formats prompt as user@host:~$ to match remote shell appearance

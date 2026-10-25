@@ -1195,3 +1195,4 @@ pub fn run() {
 }
 // Terminal state: tracks active current working directory and history across IPC invocations
 // Path resolution: resolves '~' to HOME or USERPROFILE and canonicalizes symlinks
+// Buffer management: preallocates standard buffers to avoid reallocation during large streams

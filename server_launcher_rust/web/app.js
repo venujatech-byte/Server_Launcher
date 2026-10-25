@@ -1692,3 +1692,4 @@ function showToast(msg) {
 // Remote connect: tests SSH connection and updates online badge
 // Remote listeners: scans remote listening ports over SSH
 // Remote actions: dispatches service actions to remote host
+// Remote terminal: executes interactive remote commands via SSH

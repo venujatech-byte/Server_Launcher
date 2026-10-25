@@ -1664,3 +1664,4 @@ function showToast(msg) {
 // Terminal history: navigates history backwards and forwards
 // Terminal tab: requests path completion from backend
 // Terminal clear: resets console viewport on Ctrl+L
+// Terminal runner: executes command and handles cwd changes

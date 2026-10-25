@@ -257,8 +257,12 @@
               <!-- 2. SCRIPTS LEFT VIEW -->
               <div class="panel-left-view" id="left-view-scripts" style="display: none;">
                 <div class="view-header-row">
-                  <span class="view-header-title">Custom Scripts</span>
+                  <span class="view-header-title">CUSTOM SCRIPTS</span>
                   <button class="btn-pill btn-add-server" id="btn-add-script">+ New Script</button>
+                </div>
+                <div class="panel-search-box">
+                  <span class="icon search-icon">&#xe151;</span>
+                  <input type="text" id="scripts-search-input" placeholder="Filter scripts..." />
                 </div>
                 <div class="scripts-left-list left-cards-scrollable" id="scripts-left-list">
                   <!-- Scripts injected dynamically -->
@@ -268,15 +272,36 @@
               <!-- 3. CMDS LEFT VIEW -->
               <div class="panel-left-view" id="left-view-cmds" style="display: none;">
                 <div class="view-header-row">
-                  <span class="view-header-title">Saved Commands</span>
-                  <button class="btn-pill btn-add-server" id="btn-add-command">+ Add Cmd</button>
+                  <span class="view-header-title">SAVED COMMANDS</span>
+                  <div class="cmds-header-actions">
+                    <button class="btn-subtle-action" id="btn-import-cmds"><span class="icon">&#xe0e8;</span> Import</button>
+                    <button class="btn-subtle-action" id="btn-export-cmds"><span class="icon">&#xe0b2;</span> Export</button>
+                    <button class="btn-pill btn-add-server" id="btn-add-command">+ Save Command</button>
+                  </div>
+                </div>
+                <div class="panel-search-box">
+                  <span class="icon search-icon">&#xe151;</span>
+                  <input type="text" id="cmds-search-input" placeholder="Filter commands..." />
+                </div>
+                <div class="cmds-cat-select-row">
+                  <span class="cat-label">Category:</span>
+                  <select id="cmds-cat-select" class="cmds-cat-dropdown">
+                    <option value="all">All (1207)</option>
+                    <option value="General">General</option>
+                    <option value="Package Management">Package Management</option>
+                    <option value="Docker & Containers">Docker & Containers</option>
+                    <option value="Git & Version Control">Git & Version Control</option>
+                    <option value="Network & Ports">Network & Ports</option>
+                    <option value="System Administration">System Administration</option>
+                  </select>
                 </div>
                 <div class="cmds-categories-row" id="cmds-categories-row">
                   <button class="cat-pill active" data-cat="all">All</button>
-                  <button class="cat-pill" data-cat="Docker">Docker</button>
-                  <button class="cat-pill" data-cat="Git">Git</button>
-                  <button class="cat-pill" data-cat="System">System</button>
-                  <button class="cat-pill" data-cat="Database">Database</button>
+                  <button class="cat-pill" data-cat="Backup & Utilities">Backup & Utilities</button>
+                  <button class="cat-pill" data-cat="Command Help & Reference">Command Help & Reference</button>
+                  <button class="cat-pill" data-cat="Configuration">Configuration</button>
+                  <button class="cat-pill" data-cat="Package Management">Package Management</button>
+                  <button class="cat-pill" data-cat="General">General</button>
                 </div>
                 <div class="cmds-left-list left-cards-scrollable" id="cmds-left-list">
                   <!-- Commands injected dynamically -->
@@ -286,16 +311,21 @@
               <!-- 4. SYSTEMD LEFT VIEW -->
               <div class="panel-left-view" id="left-view-systemd" style="display: none;">
                 <div class="view-header-row">
-                  <span class="view-header-title">SystemD Services</span>
-                  <button class="btn-pill" id="btn-refresh-sysd"><span class="icon">&#xe145;</span> Refresh</button>
+                  <span class="view-header-title">SYSTEMD SERVICES</span>
+                  <button class="btn-pill btn-add-server" id="btn-add-systemd-service">+ New Service</button>
                 </div>
-                <div class="sysd-search-bar">
-                  <input type="text" id="sysd-search-input" placeholder="Filter services (e.g. nginx, docker)..." />
+                <div class="sysd-mode-toggle-row">
+                  <div class="sysd-mode-pills">
+                    <button class="sysd-mode-pill active" id="btn-sysd-mode-user" data-mode="user">User (--user)</button>
+                    <button class="sysd-mode-pill" id="btn-sysd-mode-system" data-mode="system">System</button>
+                  </div>
+                  <button class="btn-icon btn-mode-refresh" id="btn-refresh-sysd" title="Refresh Services">
+                    <span class="icon">&#xe145;</span>
+                  </button>
                 </div>
-                <div class="sysd-filters-row">
-                  <button class="cat-pill active" data-sysd-filter="all">All</button>
-                  <button class="cat-pill" data-sysd-filter="active">Active</button>
-                  <button class="cat-pill" data-sysd-filter="failed">Failed</button>
+                <div class="panel-search-box">
+                  <span class="icon search-icon">&#xe151;</span>
+                  <input type="text" id="sysd-search-input" placeholder="Filter services..." />
                 </div>
                 <div class="systemd-left-list left-cards-scrollable" id="systemd-left-list">
                   <!-- Systemd services injected dynamically -->
@@ -305,39 +335,63 @@
               <!-- 5. SENSORS LEFT VIEW -->
               <div class="panel-left-view" id="left-view-sensors" style="display: none;">
                 <div class="view-header-row">
-                  <span class="view-header-title">Telemetry Nodes</span>
-                  <span class="telemetry-badge" id="telemetry-poll-badge">Live 2s</span>
+                  <span class="view-header-title">HARDWARE ENGINES</span>
+                  <div class="sensors-header-controls">
+                    <select id="sensors-interval-select" class="sensors-interval-dropdown" title="Poll Interval">
+                      <option value="1000">⏱ 1s</option>
+                      <option value="2000">⏱ 2s</option>
+                      <option value="5000" selected>⏱ 5s</option>
+                      <option value="10000">⏱ 10s</option>
+                    </select>
+                    <button class="btn-icon btn-mode-refresh" id="btn-refresh-sensors-sidebar" title="Refresh Telemetry">
+                      <span class="icon">&#xe145;</span>
+                    </button>
+                  </div>
                 </div>
                 <div class="sensors-nav-list" id="sensors-nav-list">
-                  <button class="sensor-nav-item active" data-sensor-cat="top_apps">
+                  <button class="sensor-nav-item active" data-sensor-cat="overview">
+                    <span class="icon">&#xe153;</span>
+                    <span class="sn-label">Overview</span>
+                  </button>
+                  <button class="sensor-nav-item" data-sensor-cat="top_apps">
                     <span class="icon">&#xe1b4;</span>
                     <span class="sn-label">Top Apps</span>
-                    <span class="sn-val" id="sn-top-apps-val">Active</span>
                   </button>
                   <button class="sensor-nav-item" data-sensor-cat="cpu">
                     <span class="icon">&#xe0e2;</span>
-                    <span class="sn-label">CPU Global</span>
-                    <span class="sn-val" id="sn-cpu-val">0%</span>
+                    <span class="sn-label">CPU</span>
                   </button>
-                  <button class="sensor-nav-item" data-sensor-cat="memory">
+                  <button class="sensor-nav-item" data-sensor-cat="ram">
                     <span class="icon">&#xe153;</span>
-                    <span class="sn-label">Memory (RAM)</span>
-                    <span class="sn-val" id="sn-mem-val">0 GB</span>
+                    <span class="sn-label">RAM</span>
                   </button>
                   <button class="sensor-nav-item" data-sensor-cat="gpu">
                     <span class="icon">&#xe16b;</span>
                     <span class="sn-label">GPU</span>
-                    <span class="sn-val" id="sn-gpu-val">Active</span>
                   </button>
                   <button class="sensor-nav-item" data-sensor-cat="storage">
                     <span class="icon">&#xe14d;</span>
-                    <span class="sn-label">Storage / Disks</span>
-                    <span class="sn-val" id="sn-storage-val">NVMe</span>
+                    <span class="sn-label">Storage</span>
                   </button>
-                  <button class="sensor-nav-item" data-sensor-cat="system">
+                  <button class="sensor-nav-item" data-sensor-cat="wifi">
+                    <span class="icon">&#xe137;</span>
+                    <span class="sn-label">Wi-Fi</span>
+                  </button>
+                  <button class="sensor-nav-item" data-sensor-cat="data_usage">
+                    <span class="icon">&#xe151;</span>
+                    <span class="sn-label">Data Usage</span>
+                  </button>
+                  <button class="sensor-nav-item" data-sensor-cat="power">
+                    <span class="icon">&#xe1b4;</span>
+                    <span class="sn-label">Power</span>
+                  </button>
+                  <button class="sensor-nav-item" data-sensor-cat="bluetooth">
+                    <span class="icon">&#xe0a9;</span>
+                    <span class="sn-label">Bluetooth</span>
+                  </button>
+                  <button class="sensor-nav-item" data-sensor-cat="temperature">
                     <span class="icon">&#xe186;</span>
-                    <span class="sn-label">System / ACPI</span>
-                    <span class="sn-val" id="sn-sys-val">Healthy</span>
+                    <span class="sn-label">Temperature</span>
                   </button>
                 </div>
               </div>
@@ -511,82 +565,307 @@
                 </div>
               </div>
 
-              <!-- SCRIPTS RIGHT CONSOLE OUTPUT -->
+              <!-- SCRIPTS RIGHT VIEW -->
               <div class="tab-view-container" id="rv-scripts-view" style="display: none;">
-                <div class="server-detail-header">
-                  <div>
-                    <h2 class="server-detail-name" id="scripts-active-name">Script Console Execution Output</h2>
-                    <span class="script-status-desc" id="scripts-status-desc">Select a script to view logs</span>
+                <!-- Empty State matching Image 1 -->
+                <div class="empty-state-card" id="scripts-empty-card">
+                  <div class="empty-state-icon-wrap">
+                    <span class="icon">&#xe2ed;</span>
                   </div>
-                  <div class="server-detail-actions">
-                    <button class="btn-pill btn-quick-launch" id="btn-run-active-script"><span class="icon">&#xe13c;</span> Execute Now</button>
-                    <button class="btn-pill" id="btn-clear-scripts-output">Clear Logs</button>
-                  </div>
+                  <h2 class="empty-state-title">Custom Scripts</h2>
+                  <p class="empty-state-desc">
+                    Select a script from the left or click '+ New Script' to create one.<br />
+                    Scripts can execute any command or interpreter and can run automatically on launch.
+                  </p>
                 </div>
-                <div class="terminal-shell-box" style="margin-top: 10px;">
-                  <pre class="terminal-shell-output" id="scripts-terminal-output">// Select or run a custom script on the left...</pre>
+                <!-- Active Script Runner (when selected) -->
+                <div class="script-runner-pane" id="scripts-active-pane" style="display: none;">
+                  <div class="server-detail-header">
+                    <div>
+                      <h2 class="server-detail-name" id="scripts-active-name">Script Console Execution Output</h2>
+                      <span class="script-status-desc" id="scripts-status-desc">Select a script to view logs</span>
+                    </div>
+                    <div class="server-detail-actions">
+                      <button class="btn-pill btn-quick-launch" id="btn-run-active-script"><span class="icon">&#xe13c;</span> Execute Now</button>
+                      <button class="btn-pill" id="btn-clear-scripts-output">Clear Logs</button>
+                    </div>
+                  </div>
+                  <div class="terminal-shell-box" style="margin-top: 10px;">
+                    <pre class="terminal-shell-output" id="scripts-terminal-output">// Select or run a custom script on the left...</pre>
+                  </div>
                 </div>
               </div>
 
-              <!-- CMDS RIGHT RUNNER & TERMINAL -->
+              <!-- CMDS RIGHT VIEW: LOCAL INTERACTIVE TERMINAL (Matching Image 4) -->
               <div class="tab-view-container" id="rv-cmds-view" style="display: none;">
-                <div class="server-detail-header">
-                  <h2 class="server-detail-name">Command Runner Dock</h2>
-                  <div class="cmd-run-form">
-                    <input type="text" id="cmd-inline-input" placeholder="Enter shell command to run (e.g. docker ps -a)..." />
-                    <button class="btn-pill btn-quick-launch" id="btn-run-inline-cmd"><span class="icon">&#xe1b4;</span> Run</button>
+                <div class="terminal-cockpit-header">
+                  <div class="term-cockpit-title-wrap">
+                    <span class="icon term-icon">&#xe181;</span>
+                    <span class="icon term-laptop-icon">&#xe11d;</span>
+                    <h2 class="term-cockpit-title">Local Interactive Terminal</h2>
+                  </div>
+                  <div class="term-cockpit-status-wrap">
+                    <span class="beacon-ready-dot"></span>
+                    <span class="term-ready-text">Ready</span>
+                    <span class="term-bullet">•</span>
+                    <span class="icon term-folder-icon">&#xe0d7;</span>
+                    <span class="term-cwd-text" id="local-term-cwd-display">~/Documents/Coding/Server_Launcher/server_launcher_rust</span>
+                  </div>
+                  <div class="term-cockpit-actions">
+                    <button class="btn-pill" id="btn-open-native-term" title="Launch External Terminal Emulator">
+                      <span class="icon">&#xe093;</span>
+                      <span>Native Terminal</span>
+                    </button>
+                    <button class="btn-pill" id="btn-clear-local-term" title="Clear Screen (Ctrl+L)">
+                      <span class="icon">&#xe18e;</span>
+                      <span>Clear (Ctrl+L)</span>
+                    </button>
                   </div>
                 </div>
-                <div class="terminal-shell-box" style="margin-top: 10px;">
-                  <div class="terminal-shell-header">
-                    <span>>_ Output History</span>
-                    <span id="cmd-inline-cwd">CWD: /</span>
-                  </div>
-                  <pre class="terminal-shell-output" id="cmds-terminal-output">// Execute any saved command from the left panel or type custom command above...</pre>
+
+                <!-- Monospace Terminal Scrollable Viewport -->
+                <div class="terminal-console-viewport" id="local-term-console">
+                  <div class="term-log-line banner">Terminal ready. Type a command below or press Tab for auto-completion.</div>
+                </div>
+
+                <!-- Bottom Interactive Command Prompt Bar -->
+                <div class="terminal-interactive-bar">
+                  <span class="term-prompt-prefix" id="local-term-prompt-str">venujasilva@:~/Documents/Coding/Server_Launcher/server_launcher_rust$ </span>
+                  <input type="text" class="term-prompt-input" id="local-term-input" placeholder="Type a command..." autocomplete="off" spellcheck="false" />
+                  <button class="btn-glow-start btn-term-run" id="btn-local-term-run">
+                    <span class="icon">&#xe13c;</span>
+                    <span>Run</span>
+                  </button>
                 </div>
               </div>
 
-              <!-- SYSTEMD RIGHT DETAILS & JOURNAL LOGS -->
+              <!-- SYSTEMD RIGHT VIEW (Matching Image 2) -->
               <div class="tab-view-container" id="rv-systemd-view" style="display: none;">
-                <div class="server-detail-header">
-                  <div>
-                    <h2 class="server-detail-name" id="sysd-active-name">Select SystemD Service</h2>
-                    <span class="script-status-desc" id="sysd-active-desc">Unit inspection and journalctl diagnostics</span>
+                <!-- Empty State matching Image 2 -->
+                <div class="empty-state-card" id="sysd-empty-card">
+                  <div class="empty-state-icon-wrap">
+                    <span class="icon">&#xe245;</span>
                   </div>
-                  <div class="server-detail-actions" id="sysd-controls-cluster">
-                    <button class="btn-group-action btn-group-start" id="btn-sysd-start"><span class="icon">&#xe13c;</span> Start</button>
-                    <button class="btn-group-action btn-group-stop" id="btn-sysd-stop"><span class="icon">&#xe167;</span> Stop</button>
-                    <button class="btn-pill" id="btn-sysd-restart"><span class="icon">&#xe145;</span> Restart</button>
-                  </div>
+                  <h2 class="empty-state-title">SystemMD Services</h2>
+                  <p class="empty-state-desc">
+                    Select a systemd unit from the left panel to control, edit unit files & drop-ins, and inspect dependencies,<br />
+                    or click '+ New Service' to create and enable a new systemd unit.
+                  </p>
                 </div>
-                <div class="sysd-unit-meta" id="sysd-unit-meta">
-                  <span class="sysd-meta-pill" id="sysd-load-state">Loaded: -</span>
-                  <span class="sysd-meta-pill" id="sysd-active-state">Active: -</span>
-                  <span class="sysd-meta-pill" id="sysd-sub-state">Sub: -</span>
-                </div>
-                <div class="terminal-shell-box" style="margin-top: 10px;">
-                  <div class="terminal-shell-header">
-                    <span>Journalctl Live Log Stream</span>
-                    <button class="btn-refresh-pill" id="btn-refresh-journal"><span class="icon">&#xe145;</span> Tail -n 50</button>
+
+                <!-- Active Service Unit Details (when selected) -->
+                <div class="sysd-details-pane" id="sysd-active-pane" style="display: none;">
+                  <div class="server-detail-header">
+                    <div>
+                      <h2 class="server-detail-name" id="sysd-active-name">Select SystemD Service</h2>
+                      <span class="script-status-desc" id="sysd-active-desc">Unit inspection and journalctl diagnostics</span>
+                    </div>
+                    <div class="server-detail-actions" id="sysd-controls-cluster">
+                      <button class="btn-group-action btn-group-start" id="btn-sysd-start"><span class="icon">&#xe13c;</span> Start</button>
+                      <button class="btn-group-action btn-group-stop" id="btn-sysd-stop"><span class="icon">&#xe167;</span> Stop</button>
+                      <button class="btn-pill" id="btn-sysd-restart"><span class="icon">&#xe145;</span> Restart</button>
+                    </div>
                   </div>
-                  <pre class="terminal-shell-output" id="sysd-journal-output">// Journal logs will stream here...</pre>
+                  <div class="sysd-unit-meta" id="sysd-unit-meta">
+                    <span class="sysd-meta-pill" id="sysd-load-state">Loaded: -</span>
+                    <span class="sysd-meta-pill" id="sysd-active-state">Active: -</span>
+                    <span class="sysd-meta-pill" id="sysd-sub-state">Sub: -</span>
+                  </div>
+                  <div class="terminal-shell-box" style="margin-top: 10px;">
+                    <div class="terminal-shell-header">
+                      <span>Journalctl Live Log Stream</span>
+                      <button class="btn-refresh-pill" id="btn-refresh-journal"><span class="icon">&#xe145;</span> Tail -n 50</button>
+                    </div>
+                    <pre class="terminal-shell-output" id="sysd-journal-output">// Journal logs will stream here...</pre>
+                  </div>
                 </div>
               </div>
 
-              <!-- SENSORS RIGHT TELEMETRY PANELS -->
+              <!-- SENSORS RIGHT VIEW (Matching Image 3) -->
               <div class="tab-view-container" id="rv-sensors-view" style="display: none;">
-                <!-- System Brief Panel -->
-                <div class="sensors-brief-banner">
-                  <div class="sbb-item"><span class="sbb-label">OS:</span> <strong id="sbb-os-val">Linux (x86_64)</strong></div>
-                  <div class="sbb-item"><span class="sbb-label">CPU:</span> <strong id="sbb-cpu-model">System Processor</strong></div>
-                  <div class="sbb-item"><span class="sbb-label">Uptime:</span> <strong id="sbb-uptime-val">Loading...</strong></div>
-                  <div class="sbb-actions">
-                    <button class="btn-refresh-pill" id="btn-poll-sensors"><span class="icon">&#xe145;</span> Poll Now</button>
+                <!-- Top Host Telemetry Strip -->
+                <div class="sensors-telemetry-strip" id="sensors-telemetry-strip">
+                  <div class="strip-host-pill">
+                    <span class="icon strip-bolt-icon">&#xe1b4;</span>
+                    <span>Local Host</span>
+                  </div>
+                  <div class="strip-chip-item" id="strip-cpu-chip">
+                    <span class="icon">&#xe0e2;</span>
+                    <span id="strip-cpu-text">Intel Pentium Silver N5030 4C/4T</span>
+                  </div>
+                  <div class="strip-chip-item" id="strip-ram-chip">
+                    <span class="icon">&#xe153;</span>
+                    <span id="strip-ram-text">7GB RAM</span>
+                  </div>
+                  <div class="strip-chip-item" id="strip-storage-chip">
+                    <span class="icon">&#xe14d;</span>
+                    <span id="strip-storage-text">704.2 GB</span>
+                  </div>
+                  <div class="strip-chip-item" id="strip-uptime-chip">
+                    <span id="strip-uptime-text">Up 5h 49m</span>
+                  </div>
+                  <div class="strip-live-pill" id="strip-live-pill">
+                    <span>LIVE</span>
+                    <span class="live-dot">●</span>
+                  </div>
+                  <button class="btn-icon strip-refresh-btn" id="strip-refresh-btn" title="Refresh Telemetry">
+                    <span class="icon">&#xe145;</span>
+                  </button>
+                </div>
+
+                <!-- Pane 1: Overview Dashboard (Active Default, Image 3) -->
+                <div class="sensor-section-pane" id="spane-overview">
+                  <!-- 4 Main Telemetry Cards Grid -->
+                  <div class="telemetry-four-grid">
+                    <!-- CPU Card -->
+                    <div class="telemetry-stat-card">
+                      <div class="stat-card-header">
+                        <span class="icon stat-card-icon">&#xe1b4;</span>
+                        <span class="stat-card-title">CPU</span>
+                      </div>
+                      <div class="stat-card-value" id="ov-cpu-val">30.2 %</div>
+                      <div class="stat-card-sub" id="ov-cpu-sub">4 Core / 4T • 2.33 GHz</div>
+                      <div class="stat-card-chart-wrap">
+                        <svg class="stat-sparkline" id="ov-cpu-svg" viewBox="0 0 200 40" preserveAspectRatio="none">
+                          <path class="sparkline-line" d="M0,35 Q50,35 100,35 T150,35 T180,30 T190,38 T200,33" />
+                        </svg>
+                      </div>
+                      <div class="stat-card-footer">
+                        <span>AVG <strong id="ov-cpu-avg">16%</strong></span>
+                        <span>PEAK <strong id="ov-cpu-peak">94%</strong></span>
+                      </div>
+                    </div>
+
+                    <!-- RAM Card -->
+                    <div class="telemetry-stat-card">
+                      <div class="stat-card-header">
+                        <span class="icon stat-card-icon">&#xe153;</span>
+                        <span class="stat-card-title">RAM</span>
+                      </div>
+                      <div class="stat-card-value" id="ov-ram-val">52.8 %</div>
+                      <div class="stat-card-sub" id="ov-ram-sub">4015.33 MB / 7605.10 MB</div>
+                      <div class="stat-card-chart-wrap">
+                        <svg class="stat-sparkline" id="ov-ram-svg" viewBox="0 0 200 40" preserveAspectRatio="none">
+                          <defs>
+                            <linearGradient id="ramGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.6"/>
+                              <stop offset="100%" stop-color="#3b82f6" stop-opacity="0.0"/>
+                            </linearGradient>
+                          </defs>
+                          <path class="sparkline-area" d="M0,15 L180,15 L190,20 L200,38 L200,40 L0,40 Z" fill="url(#ramGrad)" />
+                          <path class="sparkline-line" d="M0,15 L180,15 L190,20 L200,38" />
+                        </svg>
+                      </div>
+                      <div class="stat-card-footer">
+                        <span>AVG <strong id="ov-ram-avg">77%</strong></span>
+                        <span>PEAK <strong id="ov-ram-peak">80%</strong></span>
+                      </div>
+                    </div>
+
+                    <!-- SWAP Card -->
+                    <div class="telemetry-stat-card">
+                      <div class="stat-card-header">
+                        <span class="icon stat-card-icon">&#xe145;</span>
+                        <span class="stat-card-title">SWAP</span>
+                      </div>
+                      <div class="stat-card-value" id="ov-swap-val">15.6 %</div>
+                      <div class="stat-card-sub" id="ov-swap-sub">2.3 GB / 14.7 GB</div>
+                      <div class="stat-card-chart-wrap">
+                        <svg class="stat-sparkline" id="ov-swap-svg" viewBox="0 0 200 40" preserveAspectRatio="none">
+                          <path class="sparkline-line" d="M0,32 L150,32 L160,33 L180,31 L200,34" />
+                        </svg>
+                      </div>
+                      <div class="stat-card-footer">
+                        <span>AVG <strong id="ov-swap-avg">17.1%</strong></span>
+                        <span>PEAK <strong id="ov-swap-peak">17.5%</strong></span>
+                      </div>
+                    </div>
+
+                    <!-- STORAGE Card -->
+                    <div class="telemetry-stat-card">
+                      <div class="stat-card-header">
+                        <span class="icon stat-card-icon">&#xe14d;</span>
+                        <span class="stat-card-title">STORAGE</span>
+                      </div>
+                      <div class="stat-card-value" id="ov-storage-val">13.3 %</div>
+                      <div class="stat-card-sub" id="ov-storage-sub">100.53 GB / 756.17 GB</div>
+                      <div class="stat-card-chart-wrap">
+                        <svg class="stat-sparkline" id="ov-storage-svg" viewBox="0 0 200 40" preserveAspectRatio="none">
+                          <path class="sparkline-line" d="M0,35 L200,35" />
+                        </svg>
+                      </div>
+                      <div class="stat-card-footer">
+                        <span>FREE <strong id="ov-storage-free">655.64 GB</strong></span>
+                        <span>AVG <strong id="ov-storage-avg">13.3%</strong></span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Wide Bottom Telemetry Grid: Speed & Sockets -->
+                  <div class="telemetry-bottom-grid">
+                    <!-- OVERALL SPEED Card -->
+                    <div class="telemetry-speed-card">
+                      <div class="speed-header-row">
+                        <div class="speed-title-wrap">
+                          <span class="speed-title">OVERALL SPEED</span>
+                          <span class="speed-sub">Interface total • peak 3.49 MB/s</span>
+                        </div>
+                        <div class="speed-metrics-wrap">
+                          <span class="speed-metric up"><strong id="ov-speed-up">822 B/s</strong> Up ↑</span>
+                          <span class="speed-metric down"><strong id="ov-speed-down">1.3 KB/s</strong> Down ↓</span>
+                        </div>
+                      </div>
+                      <div class="speed-chart-container">
+                        <svg class="speed-chart-svg" id="speed-chart-svg" viewBox="0 0 500 120" preserveAspectRatio="none">
+                          <defs>
+                            <linearGradient id="speedGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stop-color="#0284c7" stop-opacity="0.5"/>
+                              <stop offset="100%" stop-color="#0284c7" stop-opacity="0.0"/>
+                            </linearGradient>
+                          </defs>
+                          <line x1="0" y1="20" x2="500" y2="20" class="chart-grid-line" />
+                          <line x1="0" y1="60" x2="500" y2="60" class="chart-grid-line" />
+                          <line x1="0" y1="100" x2="500" y2="100" class="chart-grid-line" />
+                          <path class="speed-area" id="speed-area-path" d="M0,30 L400,30 L450,100 L500,100 L500,120 L0,120 Z" fill="url(#speedGrad)" />
+                          <path class="speed-line" id="speed-line-path" d="M0,30 L400,30 L450,100 L500,100" />
+                        </svg>
+                      </div>
+                      <div class="speed-footer-row">
+                        <span>SENT <strong id="ov-speed-sent">51.8 MB</strong></span>
+                        <span>RECEIVED <strong id="ov-speed-recv">467.1 MB</strong></span>
+                        <span>AVG OVER WINDOW: ↑ <strong id="ov-speed-avg-up">2.52 MB/s</strong>, ↓ <strong id="ov-speed-avg-down">2.54 MB/s</strong></span>
+                      </div>
+                    </div>
+
+                    <!-- CONNECTION STATS Card -->
+                    <div class="telemetry-sockets-card">
+                      <div class="sockets-header-row">
+                        <span class="sockets-title">CONNECTION STATS</span>
+                      </div>
+                      <div class="sockets-big-stat" id="ov-sockets-total">1486 open sockets</div>
+                      <div class="sockets-sub-row">
+                        <span class="socket-pill tcp">— TCP <strong id="ov-tcp-count">52</strong></span>
+                        <span class="socket-pill udp">— UDP <strong id="ov-udp-count">20</strong></span>
+                      </div>
+                      <div class="sockets-chart-container">
+                        <svg class="sockets-chart-svg" id="sockets-chart-svg" viewBox="0 0 250 80" preserveAspectRatio="none">
+                          <defs>
+                            <linearGradient id="sockGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stop-color="#0ea5e9" stop-opacity="0.4"/>
+                              <stop offset="100%" stop-color="#0ea5e9" stop-opacity="0.0"/>
+                            </linearGradient>
+                          </defs>
+                          <line x1="0" y1="40" x2="250" y2="40" class="chart-grid-line" />
+                          <path class="sockets-area" d="M0,45 L220,45 L230,75 L250,65 L250,80 L0,80 Z" fill="url(#sockGrad)" />
+                          <path class="sockets-line" d="M0,45 L220,45 L230,75 L250,65" />
+                        </svg>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
                 <!-- Category: Top Apps & Processes -->
-                <div class="sensor-section-pane" id="spane-top_apps">
+                <div class="sensor-section-pane" id="spane-top_apps" style="display: none;">
                   <div class="pane-header">
                     <h3>Top Applications & Processes</h3>
                     <div class="pane-filter">
@@ -612,7 +891,7 @@
                   </div>
                 </div>
 
-                <!-- Category: CPU -->
+                <!-- Category: CPU Detail -->
                 <div class="sensor-section-pane" id="spane-cpu" style="display: none;">
                   <div class="pane-header">
                     <h3>CPU Performance & Frequency</h3>
@@ -626,16 +905,12 @@
                     <div class="meter-track"><div class="meter-fill" id="cpu-global-bar" style="width: 0%;"></div></div>
                   </div>
                   <h4 style="margin: 12px 0 8px; font-size: 13px; color: var(--text-secondary);">Logical Core Threads</h4>
-                  <div class="cpu-cores-grid" id="cpu-cores-grid">
-                    <!-- Populated dynamically -->
-                  </div>
+                  <div class="cpu-cores-grid" id="cpu-cores-grid"></div>
                 </div>
 
-                <!-- Category: Memory -->
+                <!-- Category: Memory Detail -->
                 <div class="sensor-section-pane" id="spane-memory" style="display: none;">
-                  <div class="pane-header">
-                    <h3>Physical Memory & Swap</h3>
-                  </div>
+                  <div class="pane-header"><h3>Physical Memory & Swap</h3></div>
                   <div class="meter-card">
                     <div class="meter-row">
                       <span>System RAM</span>
@@ -652,22 +927,50 @@
                   </div>
                 </div>
 
-                <!-- Category: GPU -->
+                <!-- Category: GPU Detail -->
                 <div class="sensor-section-pane" id="spane-gpu" style="display: none;">
                   <div class="pane-header"><h3>Graphics Accelerators</h3></div>
                   <div class="gpus-cards-list" id="gpus-cards-list"></div>
                 </div>
 
-                <!-- Category: Storage -->
+                <!-- Category: Storage Detail -->
                 <div class="sensor-section-pane" id="spane-storage" style="display: none;">
                   <div class="pane-header"><h3>Mounted Storage Disks</h3></div>
                   <div class="storage-disks-list" id="storage-disks-list"></div>
                 </div>
 
-                <!-- Category: System -->
-                <div class="sensor-section-pane" id="spane-system" style="display: none;">
-                  <div class="pane-header"><h3>System ACPI & Network Interfaces</h3></div>
-                  <div class="system-networks-list" id="system-networks-list"></div>
+                <!-- Category: Wi-Fi Detail -->
+                <div class="sensor-section-pane" id="spane-wifi" style="display: none;">
+                  <div class="pane-header"><h3>Wi-Fi & Wireless Interfaces</h3></div>
+                  <div class="system-networks-list" id="wifi-networks-list"></div>
+                </div>
+
+                <!-- Category: Data Usage Detail -->
+                <div class="sensor-section-pane" id="spane-data_usage" style="display: none;">
+                  <div class="pane-header"><h3>Network Data Usage & Throughput</h3></div>
+                  <div class="system-networks-list" id="data-usage-networks-list"></div>
+                </div>
+
+                <!-- Category: Power & ACPI Detail -->
+                <div class="sensor-section-pane" id="spane-power" style="display: none;">
+                  <div class="pane-header"><h3>Power Consumption & Battery Health</h3></div>
+                  <div class="meter-card">
+                    <div class="meter-row"><span>Power State</span><strong>AC Line Connected (Optimal)</strong></div>
+                  </div>
+                </div>
+
+                <!-- Category: Bluetooth Detail -->
+                <div class="sensor-section-pane" id="spane-bluetooth" style="display: none;">
+                  <div class="pane-header"><h3>Bluetooth Radio & Paired Devices</h3></div>
+                  <div class="meter-card">
+                    <div class="meter-row"><span>Bluetooth Controller</span><strong>Active (Discoverable)</strong></div>
+                  </div>
+                </div>
+
+                <!-- Category: Temperature Detail -->
+                <div class="sensor-section-pane" id="spane-temperature" style="display: none;">
+                  <div class="pane-header"><h3>Thermal Sensors & Cooling Zones</h3></div>
+                  <div class="system-networks-list" id="temp-sensors-list"></div>
                 </div>
               </div>
 
@@ -675,7 +978,7 @@
           </div>
 
           <!-- ═══════════════════════════════════════════════════════════ -->
-          <!-- B. REMOTE SSH HOST WORKSPACE                                -->
+          <!-- B. REMOTE SSH HOST WORKSPACE (Matching Image 5)             -->
           <!-- ═══════════════════════════════════════════════════════════ -->
           <div class="remote-host-container" id="view-remote-host" style="display: none;">
             <!-- Remote Host Header -->
@@ -683,51 +986,67 @@
               <div class="rh-left">
                 <span class="icon rh-icon">&#xe0e8;</span>
                 <div>
-                  <h2 class="rh-name" id="remote-host-title">Remote Host</h2>
-                  <div class="rh-meta">
+                  <div class="rh-title-row">
+                    <h2 class="rh-name" id="remote-host-title">tab</h2>
                     <span class="rh-status-badge online" id="remote-status-badge">● Online</span>
-                    <span class="rh-target" id="remote-target-desc">ssh://user@host:22</span>
                   </div>
+                  <div class="rh-target" id="remote-target-desc">ssh://ubuntu@100.94.20.30:22</div>
                 </div>
               </div>
               <div class="rh-actions">
-                <button class="btn-pill" id="btn-remote-reconnect"><span class="icon">&#xe145;</span> Reconnect</button>
+                <button class="btn-pill btn-remote-amber" id="btn-remote-reboot"><span class="icon">&#xe145;</span> Restart Device</button>
+                <button class="btn-pill btn-remote-red" id="btn-remote-shutdown"><span class="icon">&#xe167;</span> Shut Down</button>
                 <button class="btn-pill" id="btn-remote-scan-ports"><span class="icon">&#xe151;</span> Scan Ports</button>
-                <button class="btn-pill" id="btn-remote-terminal" style="color: var(--cyber-cyan);"><span class="icon">&#xe181;</span> Terminal</button>
+                <button class="btn-pill" id="btn-remote-terminal"><span class="icon">&#xe181;</span> Terminal</button>
+                <button class="btn-pill" id="btn-remote-reconnect"><span class="icon">&#xe145;</span> Reconnect</button>
                 <button class="btn-pill" id="btn-remote-edit-host"><span class="icon">&#xe155;</span> Edit</button>
-                <button class="btn-group-action btn-group-start" id="btn-remote-reboot"><span class="icon">&#xe145;</span> Reboot</button>
-                <button class="btn-group-action btn-group-stop" id="btn-remote-shutdown"><span class="icon">&#xe167;</span> Shut Down</button>
+                <button class="btn-icon" id="btn-remote-settings" title="Remote Settings"><span class="icon">&#xe155;</span></button>
               </div>
             </div>
 
-            <!-- Remote Content Split -->
+            <!-- Remote Content Split: Left (Remote Servers) & Right (Remote SSH Terminal) -->
             <div class="remote-content-split">
-              <!-- Remote Left: Remote Services & Ports -->
+              <!-- Remote Left: Remote Servers & Listeners -->
               <div class="remote-left-pane">
-                <div class="pane-header">
-                  <h3>Remote Listening Ports</h3>
-                  <button class="btn-refresh-pill" id="btn-refresh-remote-ports"><span class="icon">&#xe145;</span> Refresh</button>
+                <div class="view-header-row">
+                  <span class="view-header-title" id="remote-servers-count-header">REMOTE SERVERS (13)</span>
+                  <button class="btn-pill btn-glow-start" id="btn-remote-start-server">+ Start Server</button>
                 </div>
-                <div class="remote-ports-list" id="remote-ports-list">
+                <div class="panel-search-box">
+                  <span class="icon search-icon">&#xe151;</span>
+                  <input type="text" id="remote-search-input" placeholder="Filter remote servers..." />
+                </div>
+                <div class="remote-ports-list left-cards-scrollable" id="remote-ports-list">
                   <!-- Ports injected dynamically -->
                 </div>
               </div>
 
-              <!-- Remote Right: Remote Shell Runner -->
+              <!-- Remote Right: Remote SSH Interactive Terminal (Image 5) -->
               <div class="remote-right-pane">
-                <div class="pane-header">
-                  <h3>Remote Shell Execution</h3>
-                  <div class="cmd-run-form">
-                    <input type="text" id="remote-cmd-input" placeholder="Run command on remote host (e.g. systemctl status nginx)..." />
-                    <button class="btn-pill btn-quick-launch" id="btn-run-remote-cmd"><span class="icon">&#xe1b4;</span> Send</button>
+                <div class="remote-terminal-header">
+                  <div class="remote-term-title">REMOTE SSH TERMINAL</div>
+                  <div class="remote-quick-chips" id="remote-quick-chips">
+                    <button class="quick-chip" data-remote-cmd="ss -tulpn">ss -tulpn</button>
+                    <button class="quick-chip" data-remote-cmd="docker ps">docker ps</button>
+                    <button class="quick-chip" data-remote-cmd="uptime">uptime</button>
+                    <button class="quick-chip" data-remote-cmd="free -m">free -m</button>
+                    <button class="quick-chip" data-remote-cmd="df -h">df -h</button>
+                    <button class="quick-chip" id="btn-clear-remote-term">Clear</button>
                   </div>
                 </div>
-                <div class="terminal-shell-box" style="margin-top: 10px;">
-                  <div class="terminal-shell-header">
-                    <span>Remote Console Output</span>
-                    <button class="btn-pill" id="btn-clear-remote-term">Clear</button>
-                  </div>
-                  <pre class="terminal-shell-output" id="remote-terminal-output">// Remote execution output will display here...</pre>
+
+                <!-- Monospace Terminal Scrollable Viewport -->
+                <div class="remote-terminal-viewport" id="remote-terminal-console">
+                  <div class="term-log-line banner">[ssh] Terminal initialized. Ready to execute remote commands.</div>
+                </div>
+
+                <!-- Bottom Interactive Remote Command Prompt Bar -->
+                <div class="terminal-interactive-bar remote-bar">
+                  <span class="term-prompt-prefix remote-prefix" id="remote-term-prompt-str">ubuntu@100.94.20.30:~$ </span>
+                  <input type="text" class="term-prompt-input" id="remote-term-input" placeholder="Type remote command and press Enter (e.g. ls -la, uname -a)..." autocomplete="off" spellcheck="false" />
+                  <button class="btn-pill btn-quick-launch btn-remote-execute" id="btn-remote-term-execute">
+                    <span>Execute</span>
+                  </button>
                 </div>
               </div>
             </div>

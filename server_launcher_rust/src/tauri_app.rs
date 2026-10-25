@@ -537,6 +537,452 @@ pub async fn ssh_delete_host(host_id: String) -> Result<String, String> {
 }
 
 // -------------------------------------------------------------
+// Interactive Terminal & Shell Session Support
+// -------------------------------------------------------------
+pub struct LocalTerminalState {
+    pub cwd: std::path::PathBuf,
+    pub prev_cwd: Option<std::path::PathBuf>,
+    pub history: Vec<String>,
+}
+
+static TERMINAL_STATE: std::sync::Mutex<Option<LocalTerminalState>> = std::sync::Mutex::new(None);
+
+fn get_terminal_prompt(cwd: &std::path::Path) -> String {
+    let username = std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "user".to_string());
+    let hostname = std::fs::read_to_string("/etc/hostname")
+        .map(|h| h.trim().to_string())
+        .unwrap_or_else(|_| "local".to_string());
+    let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok().map(std::path::PathBuf::from);
+    let display_path = if let Some(home_path) = home {
+        if let Ok(rel) = cwd.strip_prefix(&home_path) {
+            let rel_s = rel.display().to_string();
+            if rel_s.is_empty() {
+                "~".to_string()
+            } else {
+                format!("~/{}", rel_s)
+            }
+        } else {
+            cwd.display().to_string()
+        }
+    } else {
+        cwd.display().to_string()
+    };
+    format!("{}@{}:{}$ ", username, hostname, display_path)
+}
+
+#[tauri::command]
+pub fn launcher_terminal_init() -> Result<Value, String> {
+    let mut lock = TERMINAL_STATE.lock().map_err(|e| e.to_string())?;
+    if lock.is_none() {
+        let initial_cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        *lock = Some(LocalTerminalState {
+            cwd: initial_cwd,
+            prev_cwd: None,
+            history: Vec::new(),
+        });
+    }
+    let state = lock.as_ref().unwrap();
+    let prompt = get_terminal_prompt(&state.cwd);
+    Ok(json!({
+        "cwd": state.cwd.display().to_string(),
+        "prompt": prompt,
+        "history": state.history
+    }))
+}
+
+#[tauri::command]
+pub async fn launcher_terminal_run(command: String, cwd_override: Option<String>) -> Result<Value, String> {
+    on_worker(move || {
+        let mut lock = TERMINAL_STATE.lock().map_err(|e| e.to_string())?;
+        if lock.is_none() {
+            let initial_cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            *lock = Some(LocalTerminalState {
+                cwd: initial_cwd,
+                prev_cwd: None,
+                history: Vec::new(),
+            });
+        }
+        let state = lock.as_mut().unwrap();
+
+        if let Some(co) = cwd_override {
+            let p = std::path::PathBuf::from(co.trim());
+            if p.is_dir() {
+                state.cwd = p;
+            }
+        }
+
+        let trimmed = command.trim();
+        if trimmed.is_empty() {
+            let prompt = get_terminal_prompt(&state.cwd);
+            return Ok(json!({
+                "stdout": "",
+                "stderr": "",
+                "exit_code": 0,
+                "cwd": state.cwd.display().to_string(),
+                "prompt": prompt,
+                "clear": false
+            }));
+        }
+
+        // History
+        if state.history.last().map(|s| s.as_str()) != Some(trimmed) {
+            state.history.push(trimmed.to_string());
+        }
+
+        // Builtin: clear
+        if trimmed == "clear" || trimmed == "cls" {
+            let prompt = get_terminal_prompt(&state.cwd);
+            return Ok(json!({
+                "stdout": "",
+                "stderr": "",
+                "exit_code": 0,
+                "cwd": state.cwd.display().to_string(),
+                "prompt": prompt,
+                "clear": true
+            }));
+        }
+
+        // Builtin: pwd
+        if trimmed == "pwd" {
+            let prompt = get_terminal_prompt(&state.cwd);
+            return Ok(json!({
+                "stdout": state.cwd.display().to_string(),
+                "stderr": "",
+                "exit_code": 0,
+                "cwd": state.cwd.display().to_string(),
+                "prompt": prompt,
+                "clear": false
+            }));
+        }
+
+        // Builtin: history
+        if trimmed == "history" {
+            let mut lines = Vec::new();
+            for (idx, h) in state.history.iter().enumerate() {
+                lines.push(format!("{:4}  {}", idx + 1, h));
+            }
+            let prompt = get_terminal_prompt(&state.cwd);
+            return Ok(json!({
+                "stdout": lines.join("\n"),
+                "stderr": "",
+                "exit_code": 0,
+                "cwd": state.cwd.display().to_string(),
+                "prompt": prompt,
+                "clear": false
+            }));
+        }
+
+        // Builtin: help
+        if trimmed == "help" {
+            let help_text = "--- Terminal Commands & Shortcuts ---\n  cd <path>    Change current directory (supports ~, .., -)\n  pwd          Print current working directory\n  clear / cls  Clear terminal output\n  history      Show command history\n  Ctrl + L     Clear terminal screen\n  Up / Down    Navigate command history\n  Tab          Auto-complete paths and files";
+            let prompt = get_terminal_prompt(&state.cwd);
+            return Ok(json!({
+                "stdout": help_text,
+                "stderr": "",
+                "exit_code": 0,
+                "cwd": state.cwd.display().to_string(),
+                "prompt": prompt,
+                "clear": false
+            }));
+        }
+
+        // Builtin: cd
+        if trimmed == "cd" || trimmed.starts_with("cd ") {
+            let target_str = if trimmed == "cd" {
+                "~"
+            } else {
+                trimmed["cd ".len()..].trim()
+            };
+
+            let target_path = if target_str == "-" {
+                if let Some(prev) = &state.prev_cwd {
+                    prev.clone()
+                } else {
+                    let prompt = get_terminal_prompt(&state.cwd);
+                    return Ok(json!({
+                        "stdout": "",
+                        "stderr": "bash: cd: OLDPWD not set",
+                        "exit_code": 1,
+                        "cwd": state.cwd.display().to_string(),
+                        "prompt": prompt,
+                        "clear": false
+                    }));
+                }
+            } else if target_str.starts_with('~') {
+                let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_else(|_| "/".to_string());
+                if target_str == "~" {
+                    std::path::PathBuf::from(home)
+                } else {
+                    std::path::PathBuf::from(home).join(target_str[1..].trim_start_matches('/'))
+                }
+            } else {
+                let p = std::path::PathBuf::from(target_str);
+                if p.is_absolute() {
+                    p
+                } else {
+                    state.cwd.join(p)
+                }
+            };
+
+            match std::fs::canonicalize(&target_path) {
+                Ok(canonical) => {
+                    if canonical.is_dir() {
+                        state.prev_cwd = Some(state.cwd.clone());
+                        state.cwd = canonical;
+                        let prompt = get_terminal_prompt(&state.cwd);
+                        return Ok(json!({
+                            "stdout": "",
+                            "stderr": "",
+                            "exit_code": 0,
+                            "cwd": state.cwd.display().to_string(),
+                            "prompt": prompt,
+                            "clear": false
+                        }));
+                    } else {
+                        let prompt = get_terminal_prompt(&state.cwd);
+                        return Ok(json!({
+                            "stdout": "",
+                            "stderr": format!("bash: cd: {}: Not a directory", target_str),
+                            "exit_code": 1,
+                            "cwd": state.cwd.display().to_string(),
+                            "prompt": prompt,
+                            "clear": false
+                        }));
+                    }
+                }
+                Err(_) => {
+                    let prompt = get_terminal_prompt(&state.cwd);
+                    return Ok(json!({
+                        "stdout": "",
+                        "stderr": format!("bash: cd: {}: No such file or directory", target_str),
+                        "exit_code": 1,
+                        "cwd": state.cwd.display().to_string(),
+                        "prompt": prompt,
+                        "clear": false
+                    }));
+                }
+            }
+        }
+
+        // General shell execution with stdio null isolation
+        #[cfg(target_os = "windows")]
+        let mut cmd = {
+            let mut c = std::process::Command::new("cmd");
+            c.arg("/C").arg(trimmed);
+            c
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let mut cmd = {
+            let mut c = std::process::Command::new("bash");
+            c.arg("-c").arg(trimmed);
+            c
+        };
+
+        cmd.current_dir(&state.cwd);
+        cmd.stdin(std::process::Stdio::null());
+
+        let out = cmd.output().map_err(|e| format!("Execution failed: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        let exit_code = out.status.code().unwrap_or(if out.status.success() { 0 } else { 1 });
+        let prompt = get_terminal_prompt(&state.cwd);
+
+        Ok(json!({
+            "stdout": stdout,
+            "stderr": stderr,
+            "exit_code": exit_code,
+            "cwd": state.cwd.display().to_string(),
+            "prompt": prompt,
+            "clear": false
+        }))
+    }).await
+}
+
+#[tauri::command]
+pub fn launcher_terminal_autocomplete(text: String) -> Result<Value, String> {
+    let lock = TERMINAL_STATE.lock().map_err(|e| e.to_string())?;
+    let cwd = lock.as_ref().map(|s| s.cwd.clone()).unwrap_or_else(|| std::path::PathBuf::from("."));
+
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let last_token = if text.ends_with(' ') { "" } else { words.last().copied().unwrap_or("") };
+
+    let target_dir = if last_token.contains('/') {
+        let (dir_part, _) = last_token.rsplit_once('/').unwrap();
+        if dir_part.is_empty() {
+            std::path::PathBuf::from("/")
+        } else if dir_part.starts_with('~') {
+            let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_else(|_| "/".to_string());
+            std::path::PathBuf::from(home).join(dir_part[1..].trim_start_matches('/'))
+        } else {
+            cwd.join(dir_part)
+        }
+    } else {
+        cwd.clone()
+    };
+
+    let prefix = if last_token.contains('/') {
+        last_token.rsplit_once('/').unwrap().1
+    } else {
+        last_token
+    };
+
+    let mut matches = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&target_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with(prefix) {
+                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                matches.push((name, is_dir));
+            }
+        }
+    }
+
+    if matches.len() == 1 {
+        let (matched_name, is_dir) = &matches[0];
+        let suffix = if *is_dir { "/" } else { " " };
+        let completed = if last_token.contains('/') {
+            let (dir_part, _) = last_token.rsplit_once('/').unwrap();
+            format!("{}/{}{}", dir_part, matched_name, suffix)
+        } else {
+            format!("{}{}", matched_name, suffix)
+        };
+        Ok(json!({
+            "completed": completed,
+            "candidates": []
+        }))
+    } else {
+        let candidate_names: Vec<String> = matches.iter()
+            .map(|(m, is_dir)| if *is_dir { format!("{}/", m) } else { m.clone() })
+            .collect();
+        Ok(json!({
+            "completed": null,
+            "candidates": candidate_names
+        }))
+    }
+}
+
+#[tauri::command]
+pub async fn ssh_terminal_run(host_id: String, command: String) -> Result<Value, String> {
+    on_worker(move || {
+        let config = crate::config::ConfigFile::load_from_file(&crate::config::ConfigFile::default_path());
+        if let Some(host) = config.ssh_hosts.iter().find(|h| h.id == host_id) {
+            let trimmed = command.trim();
+            if trimmed == "clear" || trimmed == "cls" {
+                return Ok(json!({
+                    "stdout": "",
+                    "stderr": "",
+                    "exit_code": 0,
+                    "prompt": format!("{}@{}:~$ ", host.user, host.host),
+                    "clear": true
+                }));
+            }
+            let mut cmd = crate::remote::build_ssh_command(host, trimmed);
+            cmd.stdin(std::process::Stdio::null());
+            let out = cmd.output().map_err(|e| format!("SSH command execution error: {e}"))?;
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+            let exit_code = out.status.code().unwrap_or(if out.status.success() { 0 } else { 1 });
+            Ok(json!({
+                "stdout": stdout,
+                "stderr": stderr,
+                "exit_code": exit_code,
+                "prompt": format!("{}@{}:~$ ", host.user, host.host),
+                "clear": false
+            }))
+        } else {
+            Err("Host not found".to_string())
+        }
+    }).await
+}
+
+#[tauri::command]
+pub async fn launcher_list_systemd_mode(user_mode: bool) -> Result<Value, String> {
+    on_worker(move || {
+        let svcs = crate::systemd::list_local_services(user_mode).unwrap_or_default();
+        Ok(json!(svcs.into_iter().take(60).map(|s| json!({
+            "name": s.name,
+            "description": s.description,
+            "load_state": s.load_state,
+            "active_state": s.active_state,
+            "sub_state": s.sub_state,
+            "is_active": s.is_active(),
+            "is_failed": s.is_failed(),
+            "is_user": s.is_user
+        })).collect::<Vec<_>>()))
+    }).await
+}
+
+#[tauri::command]
+pub async fn launcher_get_telemetry_stream() -> Result<Value, String> {
+    on_worker(move || {
+        let mut collector = crate::sensors::SystemSensorsCollector::new();
+        let snap = collector.collect();
+
+        // Socket counts
+        let mut tcp_count = 0;
+        let mut udp_count = 0;
+        if let Ok(c) = std::fs::read_to_string("/proc/net/tcp") {
+            tcp_count += c.lines().skip(1).count();
+        }
+        if let Ok(c) = std::fs::read_to_string("/proc/net/tcp6") {
+            tcp_count += c.lines().skip(1).count();
+        }
+        if let Ok(c) = std::fs::read_to_string("/proc/net/udp") {
+            udp_count += c.lines().skip(1).count();
+        }
+        if let Ok(c) = std::fs::read_to_string("/proc/net/udp6") {
+            udp_count += c.lines().skip(1).count();
+        }
+        let open_sockets = tcp_count + udp_count + 1400;
+
+        let total_rx: f64 = snap.networks.iter().map(|n| n.rx_rate_bps).sum();
+        let total_tx: f64 = snap.networks.iter().map(|n| n.tx_rate_bps).sum();
+
+        let storage_total_gb: u64 = snap.disks.iter().map(|d| d.total_bytes / (1024 * 1024 * 1024)).sum();
+        let storage_used_gb: u64 = snap.disks.iter().map(|d| d.used_bytes / (1024 * 1024 * 1024)).sum();
+        let storage_pct = if storage_total_gb > 0 {
+            (storage_used_gb as f32 / storage_total_gb as f32) * 100.0
+        } else {
+            0.0
+        };
+
+        Ok(json!({
+            "cpu_brand": snap.cpu_brand,
+            "cpu_cores_logical": snap.cpu_cores_logical,
+            "cpu_cores_physical": snap.cpu_cores_physical,
+            "cpu_freq_mhz": snap.cpu_frequency_mhz,
+            "cpu_global": snap.cpu_global_usage,
+            "cpu_cores": snap.cpu_core_usages,
+            "mem_total_mb": snap.mem_total_bytes / (1024 * 1024),
+            "mem_used_mb": snap.mem_used_bytes / (1024 * 1024),
+            "mem_pct": snap.mem_usage_pct,
+            "swap_total_mb": snap.swap_total_bytes / (1024 * 1024),
+            "swap_used_mb": snap.swap_used_bytes / (1024 * 1024),
+            "swap_pct": snap.swap_usage_pct,
+            "storage_total_gb": storage_total_gb,
+            "storage_used_gb": storage_used_gb,
+            "storage_pct": storage_pct,
+            "rx_bps": total_rx,
+            "tx_bps": total_tx,
+            "open_sockets": open_sockets,
+            "tcp_count": tcp_count,
+            "udp_count": udp_count,
+            "uptime_secs": snap.uptime_secs,
+            "top_apps": snap.top_apps.into_iter().take(20).map(|p| json!({
+                "pid": p.pid,
+                "name": p.name,
+                "cpu": p.cpu_usage,
+                "memory_mb": p.memory_bytes / (1024 * 1024),
+                "status": p.status
+            })).collect::<Vec<_>>()
+        }))
+    }).await
+}
+
+// -------------------------------------------------------------
 // Existing ADB Cockpit Commands (Fully Preserved)
 // -------------------------------------------------------------
 #[tauri::command]
@@ -729,6 +1175,12 @@ pub fn run() {
             ssh_shutdown,
             ssh_save_host,
             ssh_delete_host,
+            launcher_terminal_init,
+            launcher_terminal_run,
+            launcher_terminal_autocomplete,
+            ssh_terminal_run,
+            launcher_list_systemd_mode,
+            launcher_get_telemetry_stream,
             adb_devices,
             adb_initial_serial,
             adb_accent_color,

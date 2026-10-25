@@ -421,13 +421,38 @@
     if (beacon) beacon.style.display = running > 0 ? 'block' : 'none';
   }
 
-  // 5. Scripts Page Controller
+    const beacon = document.getElementById('rail-local-beacon');
+    if (beacon) beacon.style.display = running > 0 ? 'block' : 'none';
+  }
+
+  // 5. Scripts Page Controller (Image 1)
   function renderScriptsList() {
     const list = document.getElementById('scripts-left-list');
     if (!list) return;
     list.innerHTML = '';
 
-    state.scripts.forEach(sc => {
+    const filterIn = document.getElementById('scripts-search-input');
+    const query = filterIn ? filterIn.value.trim().toLowerCase() : '';
+
+    const matched = state.scripts.filter(s => {
+      return s.name.toLowerCase().includes(query) || (s.script && s.script.toLowerCase().includes(query));
+    });
+
+    if (matched.length === 0) {
+      list.innerHTML = `
+        <div class="empty-list-placeholder">
+          <p class="empty-main">No scripts found</p>
+          <p class="empty-sub">Click '+ New Script' to create one.</p>
+        </div>
+      `;
+      const emptyCard = document.getElementById('scripts-empty-card');
+      const activePane = document.getElementById('scripts-active-pane');
+      if (emptyCard) emptyCard.style.display = 'flex';
+      if (activePane) activePane.style.display = 'none';
+      return;
+    }
+
+    matched.forEach(sc => {
       const card = document.createElement('div');
       card.className = `script-card-item ${state.activeScriptId === sc.id ? 'active' : ''}`;
       card.innerHTML = `
@@ -447,15 +472,33 @@
           selectScript(sc);
         }
       };
+      const runBtn = card.querySelector('[data-run-script]');
+      if (runBtn) {
+        runBtn.onclick = (e) => {
+          e.stopPropagation();
+          selectScript(sc);
+          executeScript(sc.id);
+        };
+      }
       list.appendChild(card);
     });
 
     const btnNew = document.getElementById('btn-add-script');
     if (btnNew) btnNew.onclick = () => openModal('modal-new-script');
+
+    if (filterIn && !filterIn.dataset.bound) {
+      filterIn.dataset.bound = 'true';
+      filterIn.oninput = () => renderScriptsList();
+    }
   }
 
   function selectScript(sc) {
     state.activeScriptId = sc.id;
+    const emptyCard = document.getElementById('scripts-empty-card');
+    const activePane = document.getElementById('scripts-active-pane');
+    if (emptyCard) emptyCard.style.display = 'none';
+    if (activePane) activePane.style.display = 'flex';
+
     document.querySelectorAll('.script-card-item').forEach(c => c.classList.remove('active'));
     renderScriptsList();
 
@@ -465,10 +508,13 @@
 
     if (titleEl) titleEl.textContent = sc.name;
     if (descEl) descEl.textContent = `Interpreter: ${sc.shell} | CWD: ${sc.cwd}`;
-    if (outEl) outEl.textContent = `Script Source Code:\n\n${sc.script}\n\nClick 'Execute Now' to run.`;
+    if (outEl) outEl.textContent = `// Script Source Code:\n\n${sc.script}\n\n// Click 'Execute Now' to run.`;
 
     const runBtn = document.getElementById('btn-run-active-script');
     if (runBtn) runBtn.onclick = () => executeScript(sc.id);
+
+    const clearBtn = document.getElementById('btn-clear-scripts-output');
+    if (clearBtn) clearBtn.onclick = () => { if (outEl) outEl.textContent = '// Logs cleared.'; };
   }
 
   function executeScript(id) {
@@ -485,29 +531,242 @@
     });
   }
 
-  // 6. Commands Page Controller
+  // 6. Saved Commands & Interactive Terminal Controller (Image 4)
+  let termHistory = [];
+  let termHistoryIdx = -1;
+  let termCurrentPrompt = 'venujasilva@:~/Documents/Coding/Server_Launcher/server_launcher_rust$ ';
+
+  function initLocalTerminal() {
+    invokeTauri('launcher_terminal_init').then(res => {
+      if (res) {
+        if (res.prompt) termCurrentPrompt = res.prompt;
+        const promptEl = document.getElementById('local-term-prompt-str');
+        if (promptEl) promptEl.textContent = termCurrentPrompt;
+        const cwdEl = document.getElementById('local-term-cwd-display');
+        if (cwdEl && res.cwd) cwdEl.textContent = res.cwd;
+        if (Array.isArray(res.history)) termHistory = res.history;
+      }
+    }).catch(() => {});
+
+    const termInput = document.getElementById('local-term-input');
+    const runBtn = document.getElementById('btn-local-term-run');
+    const clearBtn = document.getElementById('btn-clear-local-term');
+    const nativeBtn = document.getElementById('btn-open-native-term');
+
+    if (termInput && !termInput.dataset.bound) {
+      termInput.dataset.bound = 'true';
+      termInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const cmd = termInput.value;
+          runLocalTerminal(cmd);
+          termInput.value = '';
+          termHistoryIdx = -1;
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          if (termHistory.length > 0) {
+            if (termHistoryIdx === -1) termHistoryIdx = termHistory.length - 1;
+            else if (termHistoryIdx > 0) termHistoryIdx--;
+            termInput.value = termHistory[termHistoryIdx] || '';
+          }
+        } else if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          if (termHistory.length > 0 && termHistoryIdx !== -1) {
+            if (termHistoryIdx < termHistory.length - 1) {
+              termHistoryIdx++;
+              termInput.value = termHistory[termHistoryIdx] || '';
+            } else {
+              termHistoryIdx = -1;
+              termInput.value = '';
+            }
+          }
+        } else if (e.key === 'Tab') {
+          e.preventDefault();
+          invokeTauri('launcher_terminal_autocomplete', { text: termInput.value }).then(res => {
+            if (res) {
+              if (res.completed) {
+                termInput.value = res.completed;
+              } else if (Array.isArray(res.candidates) && res.candidates.length > 0) {
+                const con = document.getElementById('local-term-console');
+                if (con) {
+                  const line = document.createElement('div');
+                  line.className = 'term-log-line stdout';
+                  line.textContent = res.candidates.join('   ');
+                  con.appendChild(line);
+                  con.scrollTop = con.scrollHeight;
+                }
+              }
+            }
+          });
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l') {
+          e.preventDefault();
+          clearLocalTerminal();
+        }
+      });
+    }
+
+    if (runBtn) {
+      runBtn.onclick = () => {
+        if (termInput) {
+          runLocalTerminal(termInput.value);
+          termInput.value = '';
+          termHistoryIdx = -1;
+        }
+      };
+    }
+
+    if (clearBtn) clearBtn.onclick = clearLocalTerminal;
+    if (nativeBtn) {
+      nativeBtn.onclick = () => {
+        const cwdEl = document.getElementById('local-term-cwd-display');
+        const cwd = cwdEl ? cwdEl.textContent : '.';
+        invokeTauri('launcher_open_terminal', { cwd, command: null })
+          .then(() => showToast('Native terminal launched'))
+          .catch(e => showToast(e));
+      };
+    }
+  }
+
+  function clearLocalTerminal() {
+    const con = document.getElementById('local-term-console');
+    if (con) {
+      con.innerHTML = '<div class="term-log-line banner">Terminal ready. Type a command below or press Tab for auto-completion.</div>';
+    }
+  }
+
+  function runLocalTerminal(cmdStr) {
+    const con = document.getElementById('local-term-console');
+    if (!con) return;
+
+    const trimmed = cmdStr.trim();
+    const promptLine = document.createElement('div');
+    promptLine.className = 'term-log-line prompt-line';
+    promptLine.textContent = `${termCurrentPrompt}${trimmed}`;
+    con.appendChild(promptLine);
+    con.scrollTop = con.scrollHeight;
+
+    if (!trimmed) return;
+
+    if (termHistory.length === 0 || termHistory[termHistory.length - 1] !== trimmed) {
+      termHistory.push(trimmed);
+    }
+
+    invokeTauri('launcher_terminal_run', { command: trimmed, cwdOverride: null }).then(res => {
+      if (res.clear) {
+        clearLocalTerminal();
+        return;
+      }
+      if (res.stdout) {
+        const outLine = document.createElement('div');
+        outLine.className = 'term-log-line stdout';
+        outLine.textContent = res.stdout;
+        con.appendChild(outLine);
+      }
+      if (res.stderr) {
+        const errLine = document.createElement('div');
+        errLine.className = 'term-log-line stderr';
+        errLine.textContent = res.stderr;
+        con.appendChild(errLine);
+      }
+      if (res.prompt) {
+        termCurrentPrompt = res.prompt;
+        const promptEl = document.getElementById('local-term-prompt-str');
+        if (promptEl) promptEl.textContent = termCurrentPrompt;
+      }
+      if (res.cwd) {
+        const cwdEl = document.getElementById('local-term-cwd-display');
+        if (cwdEl) cwdEl.textContent = res.cwd;
+      }
+      con.scrollTop = con.scrollHeight;
+    }).catch(err => {
+      const errLine = document.createElement('div');
+      errLine.className = 'term-log-line stderr';
+      errLine.textContent = `Launcher execution error: ${err}`;
+      con.appendChild(errLine);
+      con.scrollTop = con.scrollHeight;
+    });
+  }
+
   function renderCommandsList() {
     const list = document.getElementById('cmds-left-list');
     if (!list) return;
     list.innerHTML = '';
 
-    const filtered = state.savedCommands.filter(c => state.activeCmdCat === 'all' || c.category === state.activeCmdCat);
+    const filterIn = document.getElementById('cmds-search-input');
+    const query = filterIn ? filterIn.value.trim().toLowerCase() : '';
+
+    const filtered = state.savedCommands.filter(c => {
+      const matchCat = (state.activeCmdCat === 'all' || c.category === state.activeCmdCat);
+      const matchQuery = !query || c.name.toLowerCase().includes(query) || c.command.toLowerCase().includes(query);
+      return matchCat && matchQuery;
+    });
 
     filtered.forEach(cmd => {
       const card = document.createElement('div');
-      card.className = 'cmd-card-item';
+      card.className = 'server-card';
+      card.style.marginBottom = '8px';
       card.innerHTML = `
-        <div class="sci-header">
-          <strong class="sci-title">${escapeHtml(cmd.name)}</strong>
-          <div style="display:flex;gap:4px;">
+        <div class="card-row-header">
+          <div class="card-title-wrap">
+            <span class="card-title-text">${escapeHtml(cmd.name)}</span>
+          </div>
+          <span class="status-chip-pill stopped">[${escapeHtml(cmd.category || 'General')}]</span>
+        </div>
+        <div class="recessed-command-box" title="Click to copy command">
+          <code class="code-command">${escapeHtml(cmd.command)}</code>
+        </div>
+        <div class="card-actions-row">
+          <button class="btn-glow-start" data-run-cmd="${escapeHtml(cmd.command)}">
+            <span class="icon">&#xe13c;</span><span>Run</span>
+          </button>
+          <div class="card-tools-cluster">
             <button class="tool-btn" data-copy-cmd="${escapeHtml(cmd.command)}" title="Copy"><span class="icon">&#xe0b2;</span></button>
-            <button class="btn-group-action btn-group-start" data-run-cmd="${escapeHtml(cmd.command)}"><span class="icon">&#xe13c;</span> Run</button>
+            <button class="tool-btn" data-edit-cmd="${cmd.id}" title="Edit"><span class="icon">&#xe1f9;</span></button>
+            <button class="tool-btn tool-danger" data-del-cmd="${cmd.id}" title="Delete"><span class="icon">&#xe18e;</span></button>
           </div>
         </div>
-        <div class="sci-meta" style="margin-top:6px;">
-          <code style="color:var(--cyber-cyan);font-family:var(--font-mono);">${escapeHtml(cmd.command)}</code>
+        <div class="card-checkboxes-row">
+          <label class="toggle-checkbox">
+            <input type="checkbox" data-ext-term="${cmd.id}" ${cmd.external_terminal ? 'checked' : ''} />
+            <span class="checkbox-ring"></span><span>Run in external terminal</span>
+          </label>
         </div>
       `;
+
+      const runBtn = card.querySelector('[data-run-cmd]');
+      if (runBtn) {
+        runBtn.onclick = () => {
+          const extCheck = card.querySelector(`[data-ext-term="${cmd.id}"]`);
+          if (extCheck && extCheck.checked) {
+            invokeTauri('launcher_open_terminal', { cwd: '.', command: cmd.command })
+              .then(() => showToast(`Executed '${cmd.name}' in external terminal`))
+              .catch(e => showToast(e));
+          } else {
+            runLocalTerminal(cmd.command);
+            showToast(`Sent '${cmd.name}' to Local Terminal`);
+          }
+        };
+      }
+
+      const copyBtn = card.querySelector('[data-copy-cmd]');
+      if (copyBtn) {
+        copyBtn.onclick = () => {
+          navigator.clipboard.writeText(cmd.command);
+          showToast('Command copied to clipboard');
+        };
+      }
+
+      const delBtn = card.querySelector('[data-del-cmd]');
+      if (delBtn) {
+        delBtn.onclick = () => {
+          invokeTauri('launcher_delete_command', { id: cmd.id }).then(() => {
+            state.savedCommands = state.savedCommands.filter(c => c.id !== cmd.id);
+            renderCommandsList();
+            showToast('Command deleted');
+          }).catch(e => showToast(e));
+        };
+      }
+
       list.appendChild(card);
     });
 
@@ -520,33 +779,48 @@
       };
     });
 
+    const catSelect = document.getElementById('cmds-cat-select');
+    if (catSelect && !catSelect.dataset.bound) {
+      catSelect.dataset.bound = 'true';
+      catSelect.onchange = () => {
+        state.activeCmdCat = catSelect.value;
+        document.querySelectorAll('#cmds-categories-row .cat-pill').forEach(p => p.classList.toggle('active', p.dataset.cat === catSelect.value));
+        renderCommandsList();
+      };
+    }
+
+    if (filterIn && !filterIn.dataset.bound) {
+      filterIn.dataset.bound = 'true';
+      filterIn.oninput = () => renderCommandsList();
+    }
+
     const btnNew = document.getElementById('btn-add-command');
     if (btnNew) btnNew.onclick = () => openModal('modal-new-command');
   }
 
-  function executeCustomCommand(cmdStr) {
-    const outEl = document.getElementById('cmds-terminal-output');
-    if (outEl) outEl.textContent = `[Terminal Runner] $ ${cmdStr}\n`;
+  // 7. SystemD Page Controller (Image 2)
+  state.systemdMode = 'user'; // 'user' (--user) or 'system'
 
-    invokeTauri('launcher_execute_command', { command: cmdStr }).then(res => {
-      if (outEl) outEl.textContent += res;
-    }).catch(err => {
-      if (outEl) outEl.textContent += `\n[Error] ` + err;
-    });
-  }
-
-  // 7. SystemD Page Controller
   function loadSystemdServices() {
     const list = document.getElementById('systemd-left-list');
-    if (list) list.innerHTML = '<p class="empty-state-p">Loading systemd units...</p>';
+    if (list) list.innerHTML = '<p class="empty-state-p">Loading systemd services...</p>';
 
-    invokeTauri('launcher_list_systemd').then(services => {
+    const isUser = (state.systemdMode === 'user');
+    invokeTauri('launcher_list_systemd_mode', { userMode: isUser }).then(services => {
       if (Array.isArray(services)) {
         state.systemdServices = services;
         renderSystemdList();
       }
-    }).catch(e => {
-      if (list) list.innerHTML = `<p class="empty-state-p">Error loading systemd: ${e}</p>`;
+    }).catch(() => {
+      // Fallback to launcher_list_systemd
+      invokeTauri('launcher_list_systemd').then(svcs => {
+        if (Array.isArray(svcs)) {
+          state.systemdServices = svcs;
+          renderSystemdList();
+        }
+      }).catch(e => {
+        if (list) list.innerHTML = `<p class="empty-state-p">Error loading systemd: ${e}</p>`;
+      });
     });
   }
 
@@ -556,31 +830,70 @@
     list.innerHTML = '';
 
     const filterIn = document.getElementById('sysd-search-input');
-    const query = filterIn ? filterIn.value.toLowerCase() : '';
+    const query = filterIn ? filterIn.value.toLowerCase().trim() : '';
 
     const matched = state.systemdServices.filter(s => {
-      return s.name.toLowerCase().includes(query) || (s.description && s.description.toLowerCase().includes(query));
+      return !query || s.name.toLowerCase().includes(query) || (s.description && s.description.toLowerCase().includes(query));
     });
 
     matched.forEach(unit => {
       const card = document.createElement('div');
-      card.className = `sysd-unit-card ${state.activeSysdUnit?.name === unit.name ? 'active' : ''}`;
-      const statusClass = unit.is_active ? 'active' : (unit.is_failed ? 'failed' : 'stopped');
+      const isSelected = state.activeSysdUnit && state.activeSysdUnit.name === unit.name;
+      card.className = `sysd-service-card ${isSelected ? 'active' : ''}`;
+      const isRunning = unit.is_active || unit.active_state === 'active';
+      const isFailed = unit.is_failed || unit.active_state === 'failed';
+
       card.innerHTML = `
-        <div class="sysd-unit-header">
-          <span class="sysd-unit-name">${escapeHtml(unit.name)}</span>
-          <span class="status-chip-pill ${statusClass}">${unit.active_state}</span>
+        <div class="sysd-card-top">
+          <div class="sysd-card-name-wrap">
+            <span class="sysd-hollow-dot ${isFailed ? 'failed' : ''}">○</span>
+            <span class="sysd-unit-name">${escapeHtml(unit.name)}</span>
+          </div>
+          <span class="sysd-status-text ${isFailed ? 'failed' : (isRunning ? 'running' : '')}">${isRunning ? 'running' : unit.active_state}</span>
         </div>
-        <div class="sysd-unit-desc">${escapeHtml(unit.description || 'System service unit')}</div>
+        <div class="sysd-card-desc">${escapeHtml(unit.description || unit.name)}</div>
       `;
       card.onclick = () => selectSystemdUnit(unit);
       list.appendChild(card);
     });
+
+    // Mode Toggle Buttons
+    const btnUser = document.getElementById('btn-sysd-mode-user');
+    const btnSys = document.getElementById('btn-sysd-mode-system');
+    const btnRefresh = document.getElementById('btn-refresh-sysd');
+
+    if (btnUser) {
+      btnUser.onclick = () => {
+        state.systemdMode = 'user';
+        btnUser.classList.add('active');
+        if (btnSys) btnSys.classList.remove('active');
+        loadSystemdServices();
+      };
+    }
+    if (btnSys) {
+      btnSys.onclick = () => {
+        state.systemdMode = 'system';
+        btnSys.classList.add('active');
+        if (btnUser) btnUser.classList.remove('active');
+        loadSystemdServices();
+      };
+    }
+    if (btnRefresh) btnRefresh.onclick = () => loadSystemdServices();
+
+    if (filterIn && !filterIn.dataset.bound) {
+      filterIn.dataset.bound = 'true';
+      filterIn.oninput = () => renderSystemdList();
+    }
   }
 
   function selectSystemdUnit(unit) {
     state.activeSysdUnit = unit;
-    document.querySelectorAll('.sysd-unit-card').forEach(c => c.classList.remove('active'));
+    const emptyCard = document.getElementById('sysd-empty-card');
+    const activePane = document.getElementById('sysd-active-pane');
+    if (emptyCard) emptyCard.style.display = 'none';
+    if (activePane) activePane.style.display = 'flex';
+
+    document.querySelectorAll('.sysd-service-card').forEach(c => c.classList.remove('active'));
     renderSystemdList();
 
     const nameEl = document.getElementById('sysd-active-name');
@@ -597,7 +910,6 @@
 
     loadJournalLogs(unit.name);
 
-    // Controls
     const btnStart = document.getElementById('btn-sysd-start');
     const btnStop = document.getElementById('btn-sysd-stop');
     const btnRestart = document.getElementById('btn-sysd-restart');
@@ -626,132 +938,170 @@
     });
   }
 
-  // 8. Sensors Telemetry Page Controller
+  // 8. Sensors Telemetry Page Controller (Image 3)
+  let sensorPollTimer = null;
+  let sensorPollInterval = 5000;
+
   function setupSensorsNav() {
-    document.querySelectorAll('.sensor-nav-item').forEach(btn => {
+    document.querySelectorAll('#sensors-nav-list .sensor-nav-item').forEach(btn => {
       btn.onclick = () => {
         const cat = btn.dataset.sensorCat;
         state.activeSensorCat = cat;
-        document.querySelectorAll('.sensor-nav-item').forEach(b => b.classList.toggle('active', b === btn));
+        document.querySelectorAll('#sensors-nav-list .sensor-nav-item').forEach(b => b.classList.toggle('active', b === btn));
         
-        ['top_apps', 'cpu', 'memory', 'gpu', 'storage', 'system'].forEach(c => {
+        const allPanes = ['overview', 'top_apps', 'cpu', 'memory', 'gpu', 'storage', 'wifi', 'data_usage', 'power', 'bluetooth', 'temperature'];
+        allPanes.forEach(c => {
           const pane = document.getElementById(`spane-${c}`);
-          if (pane) pane.style.display = (c === cat) ? 'flex' : 'none';
+          if (pane) pane.style.display = (c === cat) ? 'block' : 'none';
         });
       };
     });
 
-    const pollBtn = document.getElementById('btn-poll-sensors');
-    if (pollBtn) pollBtn.onclick = pollDetailedSensors;
+    const refreshTopBtn = document.getElementById('btn-refresh-sensors-sidebar');
+    if (refreshTopBtn) refreshTopBtn.onclick = pollDetailedSensors;
 
-    // Periodic sensor telemetry polling loop
-    setInterval(() => {
+    const stripRefreshBtn = document.getElementById('strip-refresh-btn');
+    if (stripRefreshBtn) stripRefreshBtn.onclick = pollDetailedSensors;
+
+    const intervalSel = document.getElementById('sensors-interval-select');
+    if (intervalSel) {
+      intervalSel.onchange = () => {
+        sensorPollInterval = parseInt(intervalSel.value, 10) || 5000;
+        restartSensorTimer();
+      };
+    }
+
+    restartSensorTimer();
+  }
+
+  function restartSensorTimer() {
+    if (sensorPollTimer) clearInterval(sensorPollTimer);
+    pollDetailedSensors();
+    sensorPollTimer = setInterval(() => {
       if (state.activeSidebarTab === 'sensors' && state.selectedMachine === 'local') {
         pollDetailedSensors();
       }
-    }, 2000);
+    }, sensorPollInterval);
   }
 
   function pollDetailedSensors() {
-    invokeTauri('launcher_get_detailed_sensors').then(data => {
+    invokeTauri('launcher_get_telemetry_stream').then(data => {
       if (!data) return;
-
-      // Update sidebar nav values
-      const snCpu = document.getElementById('sn-cpu-val');
-      const snMem = document.getElementById('sn-mem-val');
-      if (snCpu) snCpu.textContent = `${Math.round(data.cpu_global)}%`;
-      if (snMem) snMem.textContent = `${(data.mem_used_mb / 1024).toFixed(1)} GB`;
-
-      // System banner
-      const osVal = document.getElementById('sbb-os-val');
-      const cpuModel = document.getElementById('sbb-cpu-model');
-      const uptime = document.getElementById('sbb-uptime-val');
-      if (osVal && data.cpu_brand) cpuModel.textContent = data.cpu_brand;
-      if (uptime && data.uptime_secs) {
-        const d = Math.floor(data.uptime_secs / 86400);
-        const h = Math.floor((data.uptime_secs % 86400) / 3600);
-        uptime.textContent = `${d}d ${h}h`;
-      }
-
-      // CPU Pane
-      const cpuNum = document.getElementById('cpu-global-num');
-      const cpuBar = document.getElementById('cpu-global-bar');
-      const cpuTemp = document.getElementById('cpu-temp-badge');
-      if (cpuNum) cpuNum.textContent = `${data.cpu_global.toFixed(1)}%`;
-      if (cpuBar) cpuBar.style.width = `${Math.min(100, Math.max(0, data.cpu_global))}%`;
-      if (cpuTemp) cpuTemp.textContent = `${data.cpu_temp ? data.cpu_temp.toFixed(0) : '45'}°C`;
-
-      // Cores grid
-      const coresGrid = document.getElementById('cpu-cores-grid');
-      if (coresGrid && Array.isArray(data.cpu_cores)) {
-        coresGrid.innerHTML = '';
-        data.cpu_cores.forEach((corePct, idx) => {
-          const div = document.createElement('div');
-          div.className = 'core-meter-box';
-          div.innerHTML = `
-            <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px;">
-              <span>Core ${idx}</span><strong>${corePct.toFixed(0)}%</strong>
-            </div>
-            <div class="meter-track" style="height:5px;">
-              <div class="meter-fill" style="width:${Math.min(100, Math.max(0, corePct))}%;"></div>
-            </div>
-          `;
-          coresGrid.appendChild(div);
-        });
-      }
-
-      // Memory Pane
-      const ramText = document.getElementById('ram-meter-text');
-      const ramBar = document.getElementById('ram-meter-bar');
-      const swapText = document.getElementById('swap-meter-text');
-      const swapBar = document.getElementById('swap-meter-bar');
-
-      if (ramText) ramText.textContent = `${(data.mem_used_mb / 1024).toFixed(1)} / ${(data.mem_total_mb / 1024).toFixed(1)} GB (${data.mem_pct.toFixed(0)}%)`;
-      if (ramBar) ramBar.style.width = `${data.mem_pct}%`;
-      if (swapText) swapText.textContent = `${(data.swap_used_mb / 1024).toFixed(1)} / ${(data.swap_total_mb / 1024).toFixed(1)} GB (${data.swap_pct.toFixed(0)}%)`;
-      if (swapBar) swapBar.style.width = `${data.swap_pct}%`;
-
-      // Disks Pane
-      const disksList = document.getElementById('storage-disks-list');
-      if (disksList && Array.isArray(data.disks)) {
-        disksList.innerHTML = '';
-        data.disks.forEach(d => {
-          const card = document.createElement('div');
-          card.className = 'meter-card';
-          card.style.marginBottom = '8px';
-          card.innerHTML = `
-            <div class="meter-row">
-              <strong>${d.mount_point} (${d.name || d.fs_type})</strong>
-              <span>${d.used_gb} / ${d.total_gb} GB (${d.pct.toFixed(0)}%)</span>
-            </div>
-            <div class="meter-track"><div class="meter-fill" style="width:${d.pct}%;background:#10b981;"></div></div>
-          `;
-          disksList.appendChild(card);
-        });
-      }
-
-      // Top Apps Table
-      const procTbody = document.getElementById('procs-table-body');
-      if (procTbody && Array.isArray(data.top_apps)) {
-        procTbody.innerHTML = '';
-        data.top_apps.forEach(p => {
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td>${p.pid}</td>
-            <td style="color:#f8fafc;font-weight:600;">${escapeHtml(p.name)}</td>
-            <td style="color:var(--cyber-cyan);">${p.cpu.toFixed(1)}%</td>
-            <td>${p.memory_mb} MB</td>
-            <td><span class="status-chip-pill running">${p.status || 'running'}</span></td>
-            <td><button class="btn-kill-proc" data-kill-pid="${p.pid}">Kill</button></td>
-          `;
-          procTbody.appendChild(tr);
-        });
-      }
-    }).catch(err => console.log('Sensors error:', err));
+      applyTelemetryData(data);
+    }).catch(() => {
+      // Fallback
+      invokeTauri('launcher_get_detailed_sensors').then(data => {
+        if (data) applyTelemetryData(data);
+      }).catch(err => console.log('Sensors error:', err));
+    });
   }
 
-  // 9. SSH Remote Host Controller
+  function applyTelemetryData(data) {
+    // 1. Top Strip Chips
+    const cpuChip = document.getElementById('strip-cpu-text');
+    const ramChip = document.getElementById('strip-ram-text');
+    const storageChip = document.getElementById('strip-storage-text');
+    const uptimeChip = document.getElementById('strip-uptime-text');
+
+    if (cpuChip && data.cpu_brand) {
+      cpuChip.textContent = `${data.cpu_brand} ${data.cpu_cores_logical || 4}C/${data.cpu_cores_logical || 4}T`;
+    }
+    if (ramChip && data.mem_total_mb) {
+      ramChip.textContent = `${Math.round(data.mem_total_mb / 1024)}GB RAM`;
+    }
+    if (storageChip && data.storage_total_gb) {
+      storageChip.textContent = `${data.storage_total_gb.toFixed(1)} GB`;
+    }
+    if (uptimeChip && data.uptime_secs) {
+      const h = Math.floor(data.uptime_secs / 3600);
+      const m = Math.floor((data.uptime_secs % 3600) / 60);
+      uptimeChip.textContent = `Up ${h}h ${m}m`;
+    }
+
+    // 2. Overview 4 Stat Cards
+    const cpuVal = document.getElementById('ov-cpu-val');
+    const cpuSub = document.getElementById('ov-cpu-sub');
+    if (cpuVal) cpuVal.textContent = `${data.cpu_global.toFixed(1)} %`;
+    if (cpuSub && data.cpu_freq_mhz) {
+      cpuSub.textContent = `${data.cpu_cores_physical || 4} Core / ${data.cpu_cores_logical || 4}T • ${(data.cpu_freq_mhz / 1000).toFixed(2)} GHz`;
+    }
+
+    const ramVal = document.getElementById('ov-ram-val');
+    const ramSub = document.getElementById('ov-ram-sub');
+    if (ramVal) ramVal.textContent = `${data.mem_pct.toFixed(1)} %`;
+    if (ramSub) ramSub.textContent = `${data.mem_used_mb.toFixed(2)} MB / ${data.mem_total_mb.toFixed(2)} MB`;
+
+    const swapVal = document.getElementById('ov-swap-val');
+    const swapSub = document.getElementById('ov-swap-sub');
+    if (swapVal) swapVal.textContent = `${data.swap_pct.toFixed(1)} %`;
+    if (swapSub) swapSub.textContent = `${(data.swap_used_mb / 1024).toFixed(1)} GB / ${(data.swap_total_mb / 1024).toFixed(1)} GB`;
+
+    const storageVal = document.getElementById('ov-storage-val');
+    const storageSub = document.getElementById('ov-storage-sub');
+    const storageFree = document.getElementById('ov-storage-free');
+    if (storageVal) storageVal.textContent = `${data.storage_pct.toFixed(1)} %`;
+    if (storageSub && data.storage_total_gb) {
+      storageSub.textContent = `${data.storage_used_gb.toFixed(2)} GB / ${data.storage_total_gb.toFixed(2)} GB`;
+    }
+    if (storageFree && data.storage_total_gb) {
+      storageFree.textContent = `${(data.storage_total_gb - data.storage_used_gb).toFixed(2)} GB`;
+    }
+
+    // 3. Overall Speed & Sockets
+    const speedUp = document.getElementById('ov-speed-up');
+    const speedDown = document.getElementById('ov-speed-down');
+    if (speedUp && data.tx_bps !== undefined) {
+      speedUp.textContent = formatBytesRate(data.tx_bps);
+    }
+    if (speedDown && data.rx_bps !== undefined) {
+      speedDown.textContent = formatBytesRate(data.rx_bps);
+    }
+
+    const sockTotal = document.getElementById('ov-sockets-total');
+    const tcpCount = document.getElementById('ov-tcp-count');
+    const udpCount = document.getElementById('ov-udp-count');
+    if (sockTotal && data.open_sockets) sockTotal.textContent = `${data.open_sockets} open sockets`;
+    if (tcpCount && data.tcp_count !== undefined) tcpCount.textContent = data.tcp_count;
+    if (udpCount && data.udp_count !== undefined) udpCount.textContent = data.udp_count;
+
+    // 4. Top Apps Table
+    const procTbody = document.getElementById('procs-table-body');
+    if (procTbody && Array.isArray(data.top_apps)) {
+      procTbody.innerHTML = '';
+      data.top_apps.forEach(p => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${p.pid}</td>
+          <td style="color:#f8fafc;font-weight:600;">${escapeHtml(p.name)}</td>
+          <td style="color:var(--cyber-cyan);">${p.cpu.toFixed(1)}%</td>
+          <td>${p.memory_mb} MB</td>
+          <td><span class="status-chip-pill running">${p.status || 'running'}</span></td>
+          <td><button class="btn-kill-proc" data-kill-pid="${p.pid}">Kill</button></td>
+        `;
+        const killBtn = tr.querySelector('[data-kill-pid]');
+        if (killBtn) {
+          killBtn.onclick = () => {
+            invokeTauri('launcher_kill_process', { pid: p.pid, force: false })
+              .then(() => showToast(`Terminated ${p.name} (PID ${p.pid})`))
+              .catch(e => showToast(e));
+          };
+        }
+        procTbody.appendChild(tr);
+      });
+    }
+  }
+
+  function formatBytesRate(bps) {
+    if (bps >= 1024 * 1024) return `${(bps / (1024 * 1024)).toFixed(1)} MB/s`;
+    if (bps >= 1024) return `${(bps / 1024).toFixed(1)} KB/s`;
+    return `${Math.round(bps)} B/s`;
+  }
+
+  // 9. SSH Remote Host Controller (Image 5)
+  let currentRemoteHost = null;
+
   function loadRemoteHostView(host) {
+    currentRemoteHost = host;
     const title = document.getElementById('remote-host-title');
     const target = document.getElementById('remote-target-desc');
     const statusBadge = document.getElementById('remote-status-badge');
@@ -759,8 +1109,11 @@
     if (title) title.textContent = host.name;
     if (target) target.textContent = `ssh://${host.user}@${host.host}:${host.port || 22}`;
 
+    const promptEl = document.getElementById('remote-term-prompt-str');
+    if (promptEl) promptEl.textContent = `${host.user}@${host.host}:~$ `;
+
     // Test connection
-    invokeTauri('ssh_test_connection', { hostId: host.id }).then(res => {
+    invokeTauri('ssh_test_connection', { hostId: host.id }).then(() => {
       if (statusBadge) {
         statusBadge.textContent = '● Online';
         statusBadge.className = 'rh-status-badge online';
@@ -775,38 +1128,135 @@
     // Scan ports
     scanRemotePorts(host.id);
 
-    // Actions
-    document.getElementById('btn-remote-reconnect').onclick = () => loadRemoteHostView(host);
-    document.getElementById('btn-remote-scan-ports').onclick = () => scanRemotePorts(host.id);
-    document.getElementById('btn-remote-terminal').onclick = () => {
-      invokeTauri('ssh_open_terminal', { hostId: host.id }).then(() => showToast('SSH terminal opened')).catch(e => showToast(e));
-    };
-
-    // Remote Command runner
-    const runBtn = document.getElementById('btn-run-remote-cmd');
-    const cmdIn = document.getElementById('remote-cmd-input');
-    if (runBtn && cmdIn) {
-      runBtn.onclick = () => {
-        const cmdStr = cmdIn.value.trim();
-        if (!cmdStr) return;
-        const out = document.getElementById('remote-terminal-output');
-        if (out) out.textContent = `[SSH: ${host.name}] $ ${cmdStr}\n`;
-        invokeTauri('ssh_execute_command', { hostId: host.id, command: cmdStr }).then(res => {
-          if (out) out.textContent += res;
-        }).catch(e => {
-          if (out) out.textContent += `[Error] ` + e;
-        });
+    // Header Actions
+    const btnReboot = document.getElementById('btn-remote-reboot');
+    if (btnReboot) {
+      btnReboot.onclick = () => {
+        if (confirm(`Are you sure you want to restart device '${host.name}'?`)) {
+          invokeTauri('ssh_reboot', { hostId: host.id, sudoPassword: '' })
+            .then(() => showToast('Reboot command sent'))
+            .catch(e => showToast(e));
+        }
       };
     }
+
+    const btnShutdown = document.getElementById('btn-remote-shutdown');
+    if (btnShutdown) {
+      btnShutdown.onclick = () => {
+        if (confirm(`Are you sure you want to shut down remote host '${host.name}'?`)) {
+          invokeTauri('ssh_shutdown', { hostId: host.id, sudoPassword: '' })
+            .then(() => showToast('Shutdown command sent'))
+            .catch(e => showToast(e));
+        }
+      };
+    }
+
+    const btnScan = document.getElementById('btn-remote-scan-ports');
+    if (btnScan) btnScan.onclick = () => scanRemotePorts(host.id);
+
+    const btnTerm = document.getElementById('btn-remote-terminal');
+    if (btnTerm) {
+      btnTerm.onclick = () => {
+        invokeTauri('ssh_open_terminal', { hostId: host.id })
+          .then(() => showToast('SSH external terminal opened'))
+          .catch(e => showToast(e));
+      };
+    }
+
+    const btnReconnect = document.getElementById('btn-remote-reconnect');
+    if (btnReconnect) btnReconnect.onclick = () => loadRemoteHostView(host);
+
+    // Quick Command Chips
+    document.querySelectorAll('#remote-quick-chips .quick-chip[data-remote-cmd]').forEach(chip => {
+      chip.onclick = () => {
+        const cmd = chip.dataset.remoteCmd;
+        runRemoteCommand(host, cmd);
+      };
+    });
+
+    const clearRemoteBtn = document.getElementById('btn-clear-remote-term');
+    if (clearRemoteBtn) {
+      clearRemoteBtn.onclick = () => {
+        const con = document.getElementById('remote-terminal-console');
+        if (con) con.innerHTML = '<div class="term-log-line banner">[ssh] Terminal initialized. Ready to execute remote commands.</div>';
+      };
+    }
+
+    // Remote Interactive Command Bar
+    const runBtn = document.getElementById('btn-remote-term-execute');
+    const cmdIn = document.getElementById('remote-term-input');
+
+    if (runBtn && cmdIn) {
+      runBtn.onclick = () => {
+        const cmd = cmdIn.value.trim();
+        if (cmd) {
+          runRemoteCommand(host, cmd);
+          cmdIn.value = '';
+        }
+      };
+      if (!cmdIn.dataset.bound) {
+        cmdIn.dataset.bound = 'true';
+        cmdIn.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            const cmd = cmdIn.value.trim();
+            if (cmd) {
+              runRemoteCommand(host, cmd);
+              cmdIn.value = '';
+            }
+          }
+        });
+      }
+    }
+  }
+
+  function runRemoteCommand(host, cmdStr) {
+    const con = document.getElementById('remote-terminal-console');
+    if (!con) return;
+
+    const promptLine = document.createElement('div');
+    promptLine.className = 'term-log-line prompt-line';
+    promptLine.textContent = `${host.user}@${host.host}:~$ ${cmdStr}`;
+    con.appendChild(promptLine);
+    con.scrollTop = con.scrollHeight;
+
+    invokeTauri('ssh_terminal_run', { hostId: host.id, command: cmdStr }).then(res => {
+      if (res.clear) {
+        con.innerHTML = '<div class="term-log-line banner">[ssh] Terminal cleared.</div>';
+        return;
+      }
+      if (res.stdout) {
+        const outLine = document.createElement('div');
+        outLine.className = 'term-log-line stdout';
+        outLine.textContent = res.stdout;
+        con.appendChild(outLine);
+      }
+      if (res.stderr) {
+        const errLine = document.createElement('div');
+        errLine.className = 'term-log-line stderr';
+        errLine.textContent = res.stderr;
+        con.appendChild(errLine);
+      }
+      con.scrollTop = con.scrollHeight;
+    }).catch(err => {
+      const errLine = document.createElement('div');
+      errLine.className = 'term-log-line stderr';
+      errLine.textContent = `SSH execution error: ${err}`;
+      con.appendChild(errLine);
+      con.scrollTop = con.scrollHeight;
+    });
   }
 
   function scanRemotePorts(hostId) {
     const list = document.getElementById('remote-ports-list');
-    if (list) list.innerHTML = '<p class="empty-state-p">Scanning remote ports via SSH...</p>';
+    if (list) list.innerHTML = '<p class="empty-state-p">Scanning remote listeners via SSH...</p>';
 
     invokeTauri('ssh_fetch_listeners', { hostId }).then(listeners => {
       if (list && Array.isArray(listeners)) {
         list.innerHTML = '';
+        const countHeader = document.getElementById('remote-servers-count-header');
+        if (countHeader) countHeader.textContent = `REMOTE SERVERS (${listeners.length})`;
+
         if (listeners.length === 0) {
           list.innerHTML = '<p class="empty-state-p">No open listening ports detected on host.</p>';
           return;
@@ -814,14 +1264,45 @@
         listeners.forEach(l => {
           const card = document.createElement('div');
           card.className = 'server-card';
-          card.style.marginBottom = '6px';
+          card.style.marginBottom = '8px';
           card.innerHTML = `
             <div class="card-row-header">
-              <strong style="color:var(--cyber-cyan);">:${l.port} (${l.proto})</strong>
-              <span class="status-chip-pill running">${escapeHtml(l.name)}</span>
+              <div class="card-title-wrap">
+                <span style="color:var(--cyber-cyan);font-weight:700;font-family:var(--font-mono);">:${l.port} [${l.proto || 'TCP'}]</span>
+                <span class="card-title-text" style="margin-left:8px;">${escapeHtml(l.name || 'port_' + l.port)}</span>
+              </div>
+              <span class="status-chip-pill running">Running</span>
             </div>
-            <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);">${escapeHtml(l.cmd || '')}</div>
+            ${l.pid ? `<div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:6px;">PID ${l.pid} • Listening on :${l.port}</div>` : ''}
+            <div class="card-actions-row">
+              <div class="card-tools-cluster" style="margin-left:0;gap:6px;">
+                <button class="tool-btn tool-danger" data-ssh-action="stop" data-port="${l.port}" title="Stop Service">Stop</button>
+                <button class="tool-btn" data-ssh-action="restart" data-port="${l.port}" title="Restart Service">Restart</button>
+                <button class="tool-btn tool-danger" data-ssh-action="kill" data-pid="${l.pid || ''}" title="Kill Process">Kill</button>
+                <button class="tool-btn" data-ssh-action="curl" data-port="${l.port}" title="Curl HTTP">Curl</button>
+                <button class="tool-btn" data-ssh-action="info" data-port="${l.port}" title="Info">Info</button>
+              </div>
+            </div>
           `;
+
+          // Bind tools
+          card.querySelectorAll('[data-ssh-action]').forEach(btn => {
+            btn.onclick = () => {
+              const action = btn.dataset.sshAction;
+              if (action === 'curl') {
+                runRemoteCommand(currentRemoteHost, `curl -I http://localhost:${l.port}`);
+              } else if (action === 'kill' && l.pid) {
+                runRemoteCommand(currentRemoteHost, `kill -9 ${l.pid}`);
+              } else if (action === 'restart') {
+                runRemoteCommand(currentRemoteHost, `systemctl restart ${l.name}`);
+              } else if (action === 'stop') {
+                runRemoteCommand(currentRemoteHost, `systemctl stop ${l.name}`);
+              } else {
+                runRemoteCommand(currentRemoteHost, `ss -tulpn | grep :${l.port}`);
+              }
+            };
+          });
+
           list.appendChild(card);
         });
       }
@@ -1147,6 +1628,8 @@
     setupSidebarTabs();
     setupSubtabsRouter();
     setupSensorsNav();
+    initLocalTerminal();
+    loadSystemdServices();
     setupModals();
     setupClock();
     syncInitialBackendData();

@@ -1689,3 +1689,4 @@ function showToast(msg) {
 // Socket stats: updates active socket statistics
 // Top apps: renders ranked process table
 // Process kill: sends termination signal to selected PID
+// Remote connect: tests SSH connection and updates online badge

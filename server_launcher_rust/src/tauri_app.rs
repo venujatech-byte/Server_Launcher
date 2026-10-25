@@ -1202,3 +1202,4 @@ pub fn run() {
 /// Scans target directory prefix and returns common suffix completion or candidate vector
 // Path suffixing: directories append trailing '/' while files append trailing space
 // Autocomplete optimization: stream directory entries without loading entire filesystem tree
+/// Queries systemd units with either --user scope or default system scope via systemctl

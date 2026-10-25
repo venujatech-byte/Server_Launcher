@@ -1658,3 +1658,4 @@ function showToast(msg) {
 }
 // Scripts filter: filters custom scripts by name or code
 // Scripts empty: shows empty placeholder when list is empty
+// Scripts selection: displays active script code and metadata

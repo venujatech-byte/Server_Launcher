@@ -1693,3 +1693,4 @@ function showToast(msg) {
 // Remote listeners: scans remote listening ports over SSH
 // Remote actions: dispatches service actions to remote host
 // Remote terminal: executes interactive remote commands via SSH
+// Remote quick chips: runs preset system diagnostics on click

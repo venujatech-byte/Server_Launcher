@@ -1662,3 +1662,4 @@ function showToast(msg) {
 // Scripts execution: invokes backend and logs output stream
 // Terminal init: syncs cwd and prompt on startup
 // Terminal history: navigates history backwards and forwards
+// Terminal tab: requests path completion from backend

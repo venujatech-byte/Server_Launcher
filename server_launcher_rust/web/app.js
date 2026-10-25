@@ -1686,3 +1686,4 @@ function showToast(msg) {
 // Telemetry Storage: updates disk capacity and free space
 // Network formatting: formats bytes/sec into B/s, KB/s, MB/s
 // Network speed: updates real-time throughput metrics
+// Socket stats: updates active socket statistics

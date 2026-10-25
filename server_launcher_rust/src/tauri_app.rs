@@ -1205,3 +1205,4 @@ pub fn run() {
 /// Queries systemd units with either --user scope or default system scope via systemctl
 // Filter: ensures only '.service' units are parsed and returned to the frontend
 // Unit status: evaluates is_active and is_failed states according to systemd lifecycle
+/// Reads systemd journal stream with line limit and prevents interactive paging

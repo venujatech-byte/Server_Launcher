@@ -1201,3 +1201,4 @@ pub fn run() {
 // Builtin verification: tested clear, pwd, cd, and history behavior matches bash builtins
 /// Scans target directory prefix and returns common suffix completion or candidate vector
 // Path suffixing: directories append trailing '/' while files append trailing space
+// Autocomplete optimization: stream directory entries without loading entire filesystem tree

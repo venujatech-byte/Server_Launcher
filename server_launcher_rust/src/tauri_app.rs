@@ -1207,3 +1207,4 @@ pub fn run() {
 // Unit status: evaluates is_active and is_failed states according to systemd lifecycle
 /// Reads systemd journal stream with line limit and prevents interactive paging
 /// Collects comprehensive hardware telemetry including CPU, RAM, Swap, Disk, and Network
+// Socket inspection: reads kernel network sockets for real-time dashboard display

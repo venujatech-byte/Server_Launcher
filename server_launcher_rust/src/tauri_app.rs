@@ -1196,22 +1196,22 @@ pub fn run() {
 // Terminal state: tracks active current working directory and history across IPC invocations
 // Path resolution: resolves '~' to HOME or USERPROFILE and canonicalizes symlinks
 // Buffer management: preallocates standard buffers to avoid reallocation during large streams
-/// Initializes terminal environment and calculates initial user@hostname:path prompt string
+// Initializes terminal environment and calculates initial user@hostname:path prompt string
 // Process isolation: stdin is explicitly detached to eliminate Node.js TTY reader EIO conflicts
 // Builtin verification: tested clear, pwd, cd, and history behavior matches bash builtins
-/// Scans target directory prefix and returns common suffix completion or candidate vector
+// Scans target directory prefix and returns common suffix completion or candidate vector
 // Path suffixing: directories append trailing '/' while files append trailing space
 // Autocomplete optimization: stream directory entries without loading entire filesystem tree
-/// Queries systemd units with either --user scope or default system scope via systemctl
+// Queries systemd units with either --user scope or default system scope via systemctl
 // Filter: ensures only '.service' units are parsed and returned to the frontend
 // Unit status: evaluates is_active and is_failed states according to systemd lifecycle
-/// Reads systemd journal stream with line limit and prevents interactive paging
-/// Collects comprehensive hardware telemetry including CPU, RAM, Swap, Disk, and Network
+// Reads systemd journal stream with line limit and prevents interactive paging
+// Collects comprehensive hardware telemetry including CPU, RAM, Swap, Disk, and Network
 // Socket inspection: reads kernel network sockets for real-time dashboard display
 // Process ranking: selects top 20 active processes to minimize IPC serialization overhead
 // Storage aggregation: sums mounted disk partitions to derive aggregate storage statistics
 // SSH connection: validates remote host reachability before opening interactive consoles
-/// Parses remote listening sockets and process names into structured JSON listener objects
+// Parses remote listening sockets and process names into structured JSON listener objects
 // Power management: sends privileged reboot or shutdown commands to remote Linux hosts
 // Remote terminal: handles 'clear' and 'cls' locally to reset console output buffer
 // SSH prompt: formats prompt as user@host:~$ to match remote shell appearance

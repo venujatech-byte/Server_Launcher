@@ -1213,3 +1213,4 @@ pub fn run() {
 // SSH connection: validates remote host reachability before opening interactive consoles
 /// Parses remote listening sockets and process names into structured JSON listener objects
 // Power management: sends privileged reboot or shutdown commands to remote Linux hosts
+// Remote terminal: handles 'clear' and 'cls' locally to reset console output buffer

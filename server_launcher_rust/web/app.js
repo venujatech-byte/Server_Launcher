@@ -1691,3 +1691,4 @@ function showToast(msg) {
 // Process kill: sends termination signal to selected PID
 // Remote connect: tests SSH connection and updates online badge
 // Remote listeners: scans remote listening ports over SSH
+// Remote actions: dispatches service actions to remote host

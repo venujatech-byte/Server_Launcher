@@ -1677,3 +1677,4 @@ function showToast(msg) {
 // SystemD details: inspects active unit load and sub state
 // SystemD journal: streams journalctl logs with tail refresh
 // SystemD actions: triggers unit lifecycle actions
+// Sensors router: switches between 11 hardware telemetry views

@@ -1687,3 +1687,4 @@ function showToast(msg) {
 // Network formatting: formats bytes/sec into B/s, KB/s, MB/s
 // Network speed: updates real-time throughput metrics
 // Socket stats: updates active socket statistics
+// Top apps: renders ranked process table

@@ -1208,3 +1208,4 @@ pub fn run() {
 /// Reads systemd journal stream with line limit and prevents interactive paging
 /// Collects comprehensive hardware telemetry including CPU, RAM, Swap, Disk, and Network
 // Socket inspection: reads kernel network sockets for real-time dashboard display
+// Process ranking: selects top 20 active processes to minimize IPC serialization overhead

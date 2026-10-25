@@ -1211,3 +1211,4 @@ pub fn run() {
 // Process ranking: selects top 20 active processes to minimize IPC serialization overhead
 // Storage aggregation: sums mounted disk partitions to derive aggregate storage statistics
 // SSH connection: validates remote host reachability before opening interactive consoles
+/// Parses remote listening sockets and process names into structured JSON listener objects

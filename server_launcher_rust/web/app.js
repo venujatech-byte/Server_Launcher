@@ -1690,3 +1690,4 @@ function showToast(msg) {
 // Top apps: renders ranked process table
 // Process kill: sends termination signal to selected PID
 // Remote connect: tests SSH connection and updates online badge
+// Remote listeners: scans remote listening ports over SSH

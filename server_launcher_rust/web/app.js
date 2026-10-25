@@ -1676,3 +1676,4 @@ function showToast(msg) {
 // SystemD cards: renders unit cards matching egui design
 // SystemD details: inspects active unit load and sub state
 // SystemD journal: streams journalctl logs with tail refresh
+// SystemD actions: triggers unit lifecycle actions

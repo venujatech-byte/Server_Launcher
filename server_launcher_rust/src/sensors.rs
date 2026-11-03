@@ -769,14 +769,18 @@ impl SystemSensorsCollector {
             self.prev_proc_net = current_proc_net;
 
             // Sort by CPU usage descending by default, then network usage, then memory
-            top_apps.sort_by(|a, b| {
+            let compare_apps = |a: &ProcessSensorInfo, b: &ProcessSensorInfo| {
                 b.cpu_usage
                     .partial_cmp(&a.cpu_usage)
                     .unwrap_or(std::cmp::Ordering::Equal)
                     .then_with(|| (b.net_rx_bytes + b.net_tx_bytes).cmp(&(a.net_rx_bytes + a.net_tx_bytes)))
                     .then_with(|| b.memory_bytes.cmp(&a.memory_bytes))
-            });
+            };
+            if top_apps.len() > 250 {
+                top_apps.select_nth_unstable_by(250, compare_apps);
+            }
             top_apps.truncate(250);
+            top_apps.sort_unstable_by(compare_apps);
         }
 
         let cpu_governor = {

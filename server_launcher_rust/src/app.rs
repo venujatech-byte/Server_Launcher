@@ -564,7 +564,7 @@ pub struct LauncherApp {
     pub wifi_cached_custom_dates: ((i32, u32, u32), (i32, u32, u32)),
 
     // Cached telemetry for Wi-Fi Application Network Data Usage (prevents high CPU usage from running every frame)
-    pub wifi_cached_app_list: Vec<WifiAppNetItem>,
+    pub wifi_cached_app_list: Arc<Vec<WifiAppNetItem>>,
     pub wifi_cached_host_id: Option<String>,
     pub wifi_cached_snap_timestamp: Option<Instant>,
     pub wifi_cached_period: WifiAppPeriod,
@@ -1065,7 +1065,7 @@ impl LauncherApp {
             wifi_last_update_time: None,
             wifi_cached_raw_apps: Vec::new(),
             wifi_cached_custom_dates: ((0, 0, 0), (0, 0, 0)),
-            wifi_cached_app_list: Vec::new(),
+            wifi_cached_app_list: Arc::new(Vec::new()),
             wifi_cached_host_id: None,
             wifi_cached_snap_timestamp: None,
             wifi_cached_period: WifiAppPeriod::Monthly,
@@ -10998,7 +10998,7 @@ impl LauncherApp {
             self.current_sensors_host = cur_host_str.clone();
             self.wifi_cached_host_id = cur_host_str;
             self.wifi_cached_raw_apps.clear();
-            self.wifi_cached_app_list.clear();
+            self.wifi_cached_app_list = Arc::new(Vec::new());
             self.wifi_cached_snap_timestamp = None;
             self.cpu_history.clear();
             self.cpu_peak_usage = 0.0;
@@ -15610,7 +15610,7 @@ impl LauncherApp {
                         if host_changed {
                             self.wifi_cached_host_id = cur_host_str;
                             self.wifi_cached_raw_apps.clear();
-                            self.wifi_cached_app_list.clear();
+                            self.wifi_cached_app_list = Arc::new(Vec::new());
                             self.wifi_cached_snap_timestamp = None;
                         }
 
@@ -15798,7 +15798,7 @@ impl LauncherApp {
                             let total_visible_tx: u64 = app_list.iter().map(|a| ((a.tx_bytes as f64) * period_mult).round() as u64).sum();
                             let total_visible_rate: f64 = app_list.iter().map(|a| a.rate_bps).sum();
 
-                            self.wifi_cached_app_list = app_list;
+                            self.wifi_cached_app_list = Arc::new(app_list);
                             self.wifi_cached_period = self.wifi_app_period;
                             self.wifi_cached_search = self.wifi_app_search_query.clone();
                             self.wifi_cached_sort = self.wifi_app_sort.clone();
@@ -15811,7 +15811,7 @@ impl LauncherApp {
                             self.wifi_cached_total_rate = total_visible_rate;
                         }
 
-                        let app_list = self.wifi_cached_app_list.clone();
+                        let app_list = Arc::clone(&self.wifi_cached_app_list);
                         let max_data = self.wifi_cached_max_data;
                         let total_visible_data = self.wifi_cached_total_data;
                         let total_visible_rx = self.wifi_cached_total_rx;
@@ -16316,7 +16316,7 @@ impl LauncherApp {
                                                 // ═════════════════════════════════════════════════
                                                 // TABLE ROWS (Heatmap Tinted Cells matching Top Apps)
                                                 // ═════════════════════════════════════════════════
-                                                for app in app_list {
+                                                for app in app_list.iter() {
                                                     let disp_rx = ((app.rx_bytes as f64) * period_mult).round() as u64;
                                                     let disp_tx = ((app.tx_bytes as f64) * period_mult).round() as u64;
                                                     let disp_tot = disp_rx.saturating_add(disp_tx);

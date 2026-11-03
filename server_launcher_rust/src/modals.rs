@@ -1151,7 +1151,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
     };
 
     let screen = ctx.screen_rect();
-    let modal_w = 560.0_f32.min(screen.width() - 40.0).max(380.0);
+    let modal_w = (screen.width() - 40.0).clamp(320.0, 720.0);
     let max_h = (screen.height() - 40.0).max(400.0);
 
     let mut is_open = state.open;
@@ -1188,7 +1188,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
             ui.set_max_width(ui.available_width());
 
         // ── Subtitle + servers.json badge ──
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             ui.label(RichText::new("Saved to").size(11.0).color(palette.text_muted));
             egui::Frame::none()

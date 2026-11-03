@@ -470,7 +470,7 @@ pub struct LauncherApp {
     // Sensors State (Asynchronous background polling for zero UI lag)
     pub sensors_collector: Arc<Mutex<crate::sensors::SystemSensorsCollector>>,
     pub sensors_in_flight: Arc<std::sync::atomic::AtomicBool>,
-    pub sensors_shared_snapshot: Arc<Mutex<crate::sensors::SystemSensorsSnapshot>>,
+    pub sensors_shared_snapshot: Arc<Mutex<Arc<crate::sensors::SystemSensorsSnapshot>>>,
     pub sensors_snapshot: Arc<crate::sensors::SystemSensorsSnapshot>,
     pub sensors_refresh_interval: u32,
     pub last_sensors_refresh: Instant,
@@ -978,7 +978,7 @@ impl LauncherApp {
 
             sensors_collector: Arc::new(Mutex::new(crate::sensors::SystemSensorsCollector::new())),
             sensors_in_flight: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            sensors_shared_snapshot: Arc::new(Mutex::new(crate::sensors::SystemSensorsSnapshot::default())),
+            sensors_shared_snapshot: Arc::new(Mutex::new(Arc::new(crate::sensors::SystemSensorsSnapshot::default()))),
             sensors_snapshot: Arc::new(crate::sensors::SystemSensorsSnapshot::default()),
             sensors_refresh_interval: 1,
             last_sensors_refresh: Instant::now() - Duration::from_secs(10),
@@ -1237,7 +1237,7 @@ impl LauncherApp {
                 crate::sensors::SystemSensorsSnapshot::default()
             };
             if let Ok(mut shared) = shared_snap_arc.lock() {
-                *shared = snap;
+                *shared = Arc::new(snap);
             }
             in_flight_arc.store(false, std::sync::atomic::Ordering::SeqCst);
             if let Some(c) = ctx {
@@ -3879,7 +3879,7 @@ impl eframe::App for LauncherApp {
         // Sync background sensors snapshot if newly available
         if let Ok(shared) = self.sensors_shared_snapshot.try_lock() {
             if shared.timestamp != self.sensors_snapshot.timestamp && shared.timestamp.is_some() {
-                self.sensors_snapshot = Arc::new(shared.clone());
+                self.sensors_snapshot = Arc::clone(&shared);
             }
         }
 

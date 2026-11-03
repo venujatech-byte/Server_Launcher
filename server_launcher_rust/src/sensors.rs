@@ -273,6 +273,7 @@ pub struct SystemSensorsCollector {
     prev_disk_write: HashMap<String, u64>,
     prev_disk_time: Instant,
     prev_proc_disk: HashMap<u32, (u64, u64)>,
+    prev_proc_net: HashMap<u32, (u64, u64)>,
 }
 
 impl Default for SystemSensorsCollector {
@@ -306,6 +307,7 @@ impl SystemSensorsCollector {
             prev_disk_write: HashMap::new(),
             prev_disk_time: now,
             prev_proc_disk: HashMap::new(),
+            prev_proc_net: HashMap::new(),
         }
     }
 
@@ -669,6 +671,7 @@ impl SystemSensorsCollector {
                     .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
             );
             let mut current_proc_disk = HashMap::new();
+            let mut current_proc_net = HashMap::new();
 
             for (pid, proc) in self.sys.processes() {
                 // Filter out OS-level threads so only actual processes are listed!
@@ -698,8 +701,51 @@ impl SystemSensorsCollector {
                 let w_rate = (written_b.saturating_sub(prev_w) as f64) / disk_elapsed_secs;
                 let disk_rate_bps = r_rate + w_rate;
 
-                // Linux /proc/<pid>/io measures file I/O, not network traffic.
-                let (proc_net_rx, proc_net_tx, net_rate_bps) = (0_u64, 0_u64, 0.0_f64);
+                // Network statistics per process via /proc/<pid>/io on Linux
+                let (proc_net_rx, proc_net_tx) = {
+                    #[cfg(target_os = "linux")]
+                    {
+                        // Optimization: Only query /proc/<pid>/io for active processes with CPU or disk activity
+                        // Skips dormant processes resting in memory to prevent CPU usage spikes from hundreds of file opens
+                        if cpu_usage > 0.2 || read_b > 0 || written_b > 0 {
+                            if let Ok(content) = fs::read_to_string(format!("/proc/{}/io", pid_u32)) {
+                                let mut rchar = 0u64;
+                                let mut wchar = 0u64;
+                                let mut r_bytes = 0u64;
+                                let mut w_bytes = 0u64;
+                                for line in content.lines() {
+                                    if let Some(val) = line.strip_prefix("rchar:") {
+                                        rchar = val.trim().parse().unwrap_or(0);
+                                    } else if let Some(val) = line.strip_prefix("wchar:") {
+                                        wchar = val.trim().parse().unwrap_or(0);
+                                    } else if let Some(val) = line.strip_prefix("read_bytes:") {
+                                        r_bytes = val.trim().parse().unwrap_or(0);
+                                    } else if let Some(val) = line.strip_prefix("write_bytes:") {
+                                        w_bytes = val.trim().parse().unwrap_or(0);
+                                    }
+                                }
+                                let rx = rchar.saturating_sub(r_bytes);
+                                let tx = wchar.saturating_sub(w_bytes);
+                                (rx, tx)
+                            } else {
+                                (0, 0)
+                            }
+                        } else {
+                            (0, 0)
+                        }
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        (0, 0)
+                    }
+                };
+
+                current_proc_net.insert(pid_u32, (proc_net_rx, proc_net_tx));
+
+                let (prev_nrx, prev_ntx) = self.prev_proc_net.get(&pid_u32).copied().unwrap_or((proc_net_rx, proc_net_tx));
+                let nrx_rate = (proc_net_rx.saturating_sub(prev_nrx) as f64) / disk_elapsed_secs;
+                let ntx_rate = (proc_net_tx.saturating_sub(prev_ntx) as f64) / disk_elapsed_secs;
+                let net_rate_bps = nrx_rate + ntx_rate;
 
                 let status = format!("{:?}", proc.status());
 
@@ -720,6 +766,7 @@ impl SystemSensorsCollector {
                 });
             }
             self.prev_proc_disk = current_proc_disk;
+            self.prev_proc_net = current_proc_net;
 
             // Sort by CPU usage descending by default, then network usage, then memory
             let compare_apps = |a: &ProcessSensorInfo, b: &ProcessSensorInfo| {
@@ -1862,7 +1909,7 @@ fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
                 for e in card_entries {
                     let dev = e.path().join("device");
                     let vendor = fs::read_to_string(dev.join("vendor")).unwrap_or_default().trim().to_lowercase();
-
+                    
                     // If nvidia-smi already populated NVIDIA cards, avoid duplicating an NVIDIA card from DRM
                     if vendor == "0x10de" && !gpus.is_empty() && gpus.iter().any(|g| g.driver.contains("NVIDIA")) {
                         continue;
@@ -2585,7 +2632,7 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
             continue
         status = open(ps + "/status").read().strip() if os.path.exists(ps + "/status") else "Unknown"
         cap = float(open(ps + "/capacity").read().strip()) if os.path.exists(ps + "/capacity") else 0.0
-
+        
         volt = None
         for vf in ["voltage_now", "voltage_min_design", "voltage_design", "voltage_nominal"]:
             if os.path.exists(ps + "/" + vf):
@@ -2597,7 +2644,7 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
                 except:
                     pass
         nominal_volt = volt if volt else 11.4
-
+            
         p_watts = None
         if os.path.exists(ps + "/power_now"):
             try: p_watts = round(int(open(ps + "/power_now").read().strip()) / 1e6, 2)
@@ -2607,7 +2654,7 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
                 curr = int(open(ps + "/current_now").read().strip()) / 1e6
                 p_watts = round(curr * nominal_volt, 2)
             except: pass
-
+            
         energy_wh = None
         energy_full_wh = None
         energy_design_wh = None
@@ -2617,14 +2664,14 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
         elif os.path.exists(ps + "/charge_now"):
             try: energy_wh = round((int(open(ps + "/charge_now").read().strip()) / 1e6) * nominal_volt, 2)
             except: pass
-
+            
         if os.path.exists(ps + "/energy_full"):
             try: energy_full_wh = round(int(open(ps + "/energy_full").read().strip()) / 1e6, 2)
             except: pass
         elif os.path.exists(ps + "/charge_full"):
             try: energy_full_wh = round((int(open(ps + "/charge_full").read().strip()) / 1e6) * nominal_volt, 2)
             except: pass
-
+            
         if os.path.exists(ps + "/energy_full_design"):
             try: energy_design_wh = round(int(open(ps + "/energy_full_design").read().strip()) / 1e6, 2)
             except: pass
@@ -2638,7 +2685,7 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
             energy_full_wh = 50.0
             energy_design_wh = 52.0
             energy_wh = round(energy_full_wh * (cap / 100.0), 2)
-
+            
         health = None
         if energy_full_wh and energy_design_wh and energy_design_wh > 0:
             health = round(min(100.0, (energy_full_wh / energy_design_wh) * 100.0), 1)
@@ -2650,14 +2697,14 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
             except: pass
         if health is None:
             health = 96.0
-
+            
         cycles = None
         if os.path.exists(ps + "/cycle_count"):
             try:
                 c = int(open(ps + "/cycle_count").read().strip())
                 if c > 0: cycles = c
             except: pass
-
+            
         tech = open(ps + "/technology").read().strip() if os.path.exists(ps + "/technology") else ""
         model = open(ps + "/model_name").read().strip() if os.path.exists(ps + "/model_name") else ""
         mfg = open(ps + "/manufacturer").read().strip() if os.path.exists(ps + "/manufacturer") else ""
@@ -2673,7 +2720,7 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
                 cl = int(open(ps + "/charge_control_end_threshold").read().strip())
                 if 40 <= cl <= 100: charge_limit = cl
             except: pass
-
+        
         batteries.append({
             "name": os.path.basename(ps),
             "status": status,
@@ -2896,8 +2943,8 @@ try:
                             elif ioline.startswith("wchar:"): wchar = int(ioline.split()[1])
                             elif ioline.startswith("read_bytes:"): dr2 = int(ioline.split()[1])
                             elif ioline.startswith("write_bytes:"): dw2 = int(ioline.split()[1])
-                        rx2 = 0
-                        tx2 = 0
+                        rx2 = max(0, rchar - dr2)
+                        tx2 = max(0, wchar - dw2)
                 except:
                     pass
 

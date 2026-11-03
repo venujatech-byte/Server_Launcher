@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use sysinfo::{Components, Disks, Networks, System};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -263,6 +263,9 @@ pub struct SystemSensorsCollector {
     disks: Disks,
     networks: Networks,
     components: Components,
+    cached_physical_disks: Vec<PhysicalDiskInfo>,
+    cached_displays: Vec<DisplayInfo>,
+    last_hardware_scan: Instant,
     prev_net_rx: HashMap<String, u64>,
     prev_net_tx: HashMap<String, u64>,
     prev_net_time: Instant,
@@ -294,6 +297,9 @@ impl SystemSensorsCollector {
             disks,
             networks,
             components,
+            cached_physical_disks: Vec::new(),
+            cached_displays: Vec::new(),
+            last_hardware_scan: now - Duration::from_secs(30),
             prev_net_rx: HashMap::new(),
             prev_net_tx: HashMap::new(),
             prev_net_time: now,
@@ -318,6 +324,11 @@ impl SystemSensorsCollector {
         self.components.refresh();
 
         let now = Instant::now();
+        if self.last_hardware_scan.elapsed() >= Duration::from_secs(30) {
+            self.cached_physical_disks = collect_physical_disks();
+            self.cached_displays = detect_displays();
+            self.last_hardware_scan = now;
+        }
         let elapsed_secs = (now - self.prev_net_time).as_secs_f64().max(0.1);
 
         // 2. CPU
@@ -462,7 +473,7 @@ impl SystemSensorsCollector {
         // Deduplicate or sort by mount point
         disks.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
 
-        let mut physical_disks = collect_physical_disks();
+        let mut physical_disks = self.cached_physical_disks.clone();
         if physical_disks.is_empty() && !disks.is_empty() {
             let mut seen_names = std::collections::HashSet::new();
             for d in &disks {
@@ -643,7 +654,7 @@ impl SystemSensorsCollector {
 
         // 7. GPU & Displays detection (NVIDIA / Intel / AMD / DRM)
         let gpus = detect_gpus(gpu_temp);
-        let displays = detect_displays();
+        let displays = self.cached_displays.clone();
 
         // 8. Power Supply & Battery
         let power = collect_power_supply();

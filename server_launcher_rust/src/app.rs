@@ -7131,19 +7131,17 @@ impl LauncherApp {
                                         ).size().x
                                     }) + 14.0;
                                     let avail = ui.available_width();
-                                    let name_w = (avail - cat_w).max(40.0);
+                                    let cat_w = cat_w.min(avail * 0.4);
+                                    let name_w = (avail - cat_w - ui.spacing().item_spacing.x).max(40.0);
 
                                     ui.add_sized(
                                         [name_w, 16.0],
                                         egui::Label::new(RichText::new(&c.name).size(12.5).strong().color(p.text_primary)).truncate(),
                                     );
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(
-                                            RichText::new(cat_text)
-                                                .size(10.5)
-                                                .color(p.text_muted),
-                                        );
-                                    });
+                                    ui.add_sized(
+                                        [cat_w, 16.0],
+                                        egui::Label::new(RichText::new(&cat_text).size(10.5).color(p.text_muted)).truncate(),
+                                    ).on_hover_text(&cat_text);
                                 });
 
                                 ui.add_space(2.0);
@@ -7202,7 +7200,7 @@ impl LauncherApp {
                                     let label_color = if run_in_ext { p.info } else { p.text_secondary };
                                     let cb = ui.checkbox(
                                         &mut run_in_ext,
-                                        RichText::new("Run in external terminal")
+                                        RichText::new("External terminal")
                                             .size(10.5)
                                             .color(label_color),
                                     ).on_hover_text("When ticked, this command executes in an external desktop terminal window");

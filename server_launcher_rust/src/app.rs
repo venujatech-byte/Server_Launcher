@@ -501,6 +501,7 @@ pub struct LauncherApp {
     pub cpu_core_histories: Vec<VecDeque<f32>>,
     pub cpu_peak_usage: f32,
     pub ram_history: VecDeque<(f32, f32)>,
+    pub storage_history: VecDeque<f32>,
     pub disk_write_history: VecDeque<f32>,
     pub disk_read_history: VecDeque<f32>,
     pub net_tx_history: VecDeque<f32>,
@@ -979,7 +980,7 @@ impl LauncherApp {
             sensors_in_flight: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             sensors_shared_snapshot: Arc::new(Mutex::new(crate::sensors::SystemSensorsSnapshot::default())),
             sensors_snapshot: Arc::new(crate::sensors::SystemSensorsSnapshot::default()),
-            sensors_refresh_interval: 5,
+            sensors_refresh_interval: 1,
             last_sensors_refresh: Instant::now() - Duration::from_secs(10),
             remote_sensors_snapshots: Arc::new(Mutex::new(HashMap::new())),
             remote_sensors_in_flight: Arc::new(Mutex::new(HashSet::new())),
@@ -1000,70 +1001,21 @@ impl LauncherApp {
             sensors_top_apps_section_apps_expanded: true,
             sensors_top_apps_section_bg_expanded: true,
             current_sensors_host: None,
-            cpu_history: {
-                let mut d = VecDeque::with_capacity(60);
-                for _ in 0..60 { d.push_back(15.0); }
-                d
-            },
+            cpu_history: VecDeque::with_capacity(60),
             cpu_core_histories: Vec::new(),
-            cpu_peak_usage: 94.0,
-            ram_history: {
-                let mut d = VecDeque::with_capacity(60);
-                for _ in 0..60 { d.push_back((80.0, 17.5)); }
-                d
-            },
-            disk_write_history: {
-                let mut d = VecDeque::with_capacity(60);
-                for _ in 0..60 { d.push_back(38.6); }
-                d
-            },
-            disk_read_history: {
-                let mut d = VecDeque::with_capacity(60);
-                for _ in 0..60 { d.push_back(14.2); }
-                d
-            },
-            net_tx_history: {
-                let mut d = VecDeque::with_capacity(60);
-                for _ in 0..60 { d.push_back(2.70); }
-                d
-            },
-            net_rx_history: {
-                let mut d = VecDeque::with_capacity(60);
-                for _ in 0..60 { d.push_back(2.72); }
-                d
-            },
-            net_peak_mb: 3.49,
-            socket_tcp_history: {
-                let mut d = VecDeque::with_capacity(60);
-                for _ in 0..60 { d.push_back(174.0); }
-                d
-            },
-            socket_udp_history: {
-                let mut d = VecDeque::with_capacity(60);
-                for _ in 0..60 { d.push_back(49.0); }
-                d
-            },
-            gpu_load_history: {
-                let mut d = VecDeque::with_capacity(60);
-                for _ in 0..60 { d.push_back(13.3); }
-                d
-            },
-            gpu_3d_history: {
-                let mut d = VecDeque::with_capacity(20);
-                for i in 0..20 {
-                    let w = ((i as f32 / 19.0) * std::f32::consts::PI * 2.0).sin() * 5.0 + 3.2;
-                    d.push_back(w.clamp(0.5, 18.4));
-                }
-                d
-            },
-            gpu_copy_history: {
-                let mut d = VecDeque::with_capacity(20);
-                for i in 0..20 {
-                    let w = ((i as f32 / 19.0) * std::f32::consts::PI * 2.5).cos() * 2.5 + 1.1;
-                    d.push_back(w.clamp(0.2, 6.2));
-                }
-                d
-            },
+            cpu_peak_usage: 0.0,
+            ram_history: VecDeque::with_capacity(60),
+            storage_history: VecDeque::with_capacity(60),
+            disk_write_history: VecDeque::with_capacity(60),
+            disk_read_history: VecDeque::with_capacity(60),
+            net_tx_history: VecDeque::with_capacity(60),
+            net_rx_history: VecDeque::with_capacity(60),
+            net_peak_mb: 0.0,
+            socket_tcp_history: VecDeque::with_capacity(60),
+            socket_udp_history: VecDeque::with_capacity(60),
+            gpu_load_history: VecDeque::with_capacity(60),
+            gpu_3d_history: VecDeque::with_capacity(20),
+            gpu_copy_history: VecDeque::with_capacity(20),
             gpu_mode: 1, // Balanced
             selected_gpu_idx: 0,
             selected_disk_idx: 0,
@@ -5491,6 +5443,11 @@ fn draw_dotted_hline(
         painter.line_segment([egui::pos2(x, y), egui::pos2(seg_end, y)], stroke);
         x += dash_len + gap_len;
     }
+}
+
+fn push_telemetry<T>(history: &mut VecDeque<T>, value: T, capacity: usize) {
+    if history.len() == capacity { history.pop_front(); }
+    history.push_back(value);
 }
 
 fn draw_card_sparkline(
@@ -11043,77 +11000,60 @@ impl LauncherApp {
             self.wifi_cached_raw_apps.clear();
             self.wifi_cached_app_list.clear();
             self.wifi_cached_snap_timestamp = None;
-            self.cpu_history = VecDeque::from(vec![snap.cpu_global_usage; 60]);
-            self.cpu_peak_usage = snap.cpu_global_usage;
-            self.ram_history = VecDeque::from(vec![(snap.mem_usage_pct, snap.swap_usage_pct); 60]);
-            let init_w = (snap.total_disk_write_rate_bps / 1_000_000.0) as f32;
-            let init_r = (snap.total_disk_read_rate_bps / 1_000_000.0) as f32;
-            self.disk_write_history = VecDeque::from(vec![init_w; 60]);
-            self.disk_read_history = VecDeque::from(vec![init_r; 60]);
-            for p in &snap.physical_disks {
-                let pw = (p.write_rate_bps / 1_000_000.0) as f32;
-                let pr = (p.read_rate_bps / 1_000_000.0) as f32;
-                self.per_disk_write_history.insert(p.name.clone(), VecDeque::from(vec![pw; 60]));
-                self.per_disk_read_history.insert(p.name.clone(), VecDeque::from(vec![pr; 60]));
-            }
-            let init_tx = (snap.total_tx_rate_bps / 1_000_000.0) as f32;
-            let init_rx = (snap.total_rx_rate_bps / 1_000_000.0) as f32;
-            self.net_tx_history = VecDeque::from(vec![init_tx; 60]);
-            self.net_rx_history = VecDeque::from(vec![init_rx; 60]);
-            self.net_peak_mb = init_tx.max(init_rx);
-            let (init_tcp, init_udp) = (snap.socket_tcp as f32, snap.socket_udp as f32);
-            self.socket_tcp_history = VecDeque::from(vec![init_tcp; 60]);
-            self.socket_udp_history = VecDeque::from(vec![init_udp; 60]);
-            let init_gpu = snap.gpus.first().and_then(|g| g.load_pct).unwrap_or(0.0);
-            self.gpu_load_history = VecDeque::from(vec![init_gpu; 60]);
-            self.gpu_3d_history = VecDeque::from(vec![init_gpu * 0.25; 60]);
-            self.gpu_copy_history = VecDeque::from(vec![init_gpu * 0.10; 60]);
-            let num_cores = snap.cpu_core_usages.len().max(4);
-            self.cpu_core_histories = (0..num_cores)
-                .map(|idx| {
-                    let val = snap.cpu_core_usages.get(idx).copied().unwrap_or(0.0);
-                    VecDeque::from(vec![val; 30])
-                })
-                .collect();
+            self.cpu_history.clear();
+            self.cpu_peak_usage = 0.0;
+            self.ram_history.clear();
+            self.storage_history.clear();
+            self.disk_write_history.clear();
+            self.disk_read_history.clear();
+            self.per_disk_write_history.clear();
+            self.per_disk_read_history.clear();
+            self.net_tx_history.clear();
+            self.net_rx_history.clear();
+            self.net_peak_mb = 0.0;
+            self.socket_tcp_history.clear();
+            self.socket_udp_history.clear();
+            self.gpu_load_history.clear();
+            self.gpu_3d_history.clear();
+            self.gpu_copy_history.clear();
+            self.cpu_core_histories = (0..snap.cpu_core_usages.len())
+                .map(|_| VecDeque::with_capacity(30)).collect();
         }
 
         // Telemetry sampling (once per second)
         if self.last_telemetry_sample.elapsed() >= Duration::from_millis(1000) {
             self.last_telemetry_sample = Instant::now();
-            self.cpu_history.pop_front();
-            self.cpu_history.push_back(snap.cpu_global_usage);
+            push_telemetry(&mut self.cpu_history, snap.cpu_global_usage, 60);
             if snap.cpu_global_usage > self.cpu_peak_usage {
                 self.cpu_peak_usage = snap.cpu_global_usage;
             }
-            self.ram_history.pop_front();
-            self.ram_history.push_back((snap.mem_usage_pct, snap.swap_usage_pct));
+            push_telemetry(&mut self.ram_history, (snap.mem_usage_pct, snap.swap_usage_pct), 60);
+            let phys_total: u64 = snap.physical_disks.iter().map(|d| d.total_bytes).sum();
+            let mounted_total: u64 = snap.disks.iter().map(|d| d.total_bytes).sum();
+            let total_storage = if phys_total > 0 { phys_total } else { mounted_total };
+            if total_storage > 0 {
+                let used_storage: u64 = snap.disks.iter().map(|d| d.used_bytes).sum();
+                push_telemetry(&mut self.storage_history, (used_storage as f64 / total_storage as f64 * 100.0) as f32, 60);
+            }
 
-            self.disk_write_history.pop_front();
             let cur_write_mb = (snap.total_disk_write_rate_bps / 1_000_000.0) as f32;
-            self.disk_write_history.push_back(cur_write_mb);
+            push_telemetry(&mut self.disk_write_history, cur_write_mb, 60);
 
-            self.disk_read_history.pop_front();
             let cur_read_mb = (snap.total_disk_read_rate_bps / 1_000_000.0) as f32;
-            self.disk_read_history.push_back(cur_read_mb);
+            push_telemetry(&mut self.disk_read_history, cur_read_mb, 60);
 
             for p in &snap.physical_disks {
                 let pw = (p.write_rate_bps / 1_000_000.0) as f32;
                 let pr = (p.read_rate_bps / 1_000_000.0) as f32;
-                let w_q = self.per_disk_write_history.entry(p.name.clone()).or_insert_with(|| VecDeque::from(vec![pw; 60]));
-                w_q.pop_front();
-                w_q.push_back(pw);
-                let r_q = self.per_disk_read_history.entry(p.name.clone()).or_insert_with(|| VecDeque::from(vec![pr; 60]));
-                r_q.pop_front();
-                r_q.push_back(pr);
+                push_telemetry(self.per_disk_write_history.entry(p.name.clone()).or_default(), pw, 60);
+                push_telemetry(self.per_disk_read_history.entry(p.name.clone()).or_default(), pr, 60);
             }
 
-            self.net_tx_history.pop_front();
             let cur_tx_mb = (snap.total_tx_rate_bps / 1_000_000.0) as f32;
-            self.net_tx_history.push_back(cur_tx_mb);
+            push_telemetry(&mut self.net_tx_history, cur_tx_mb, 60);
 
-            self.net_rx_history.pop_front();
             let cur_rx_mb = (snap.total_rx_rate_bps / 1_000_000.0) as f32;
-            self.net_rx_history.push_back(cur_rx_mb);
+            push_telemetry(&mut self.net_rx_history, cur_rx_mb, 60);
 
             let max_cur = cur_tx_mb.max(cur_rx_mb);
             if max_cur > self.net_peak_mb {
@@ -11121,40 +11061,27 @@ impl LauncherApp {
             }
 
             let (cur_tcp, cur_udp) = (snap.socket_tcp as f32, snap.socket_udp as f32);
-            self.socket_tcp_history.pop_front();
-            self.socket_tcp_history.push_back(cur_tcp);
-            self.socket_udp_history.pop_front();
-            self.socket_udp_history.push_back(cur_udp);
+            push_telemetry(&mut self.socket_tcp_history, cur_tcp, 60);
+            push_telemetry(&mut self.socket_udp_history, cur_udp, 60);
 
-            self.gpu_load_history.pop_front();
             let cur_gpu_load = snap.gpus.first().and_then(|g| g.load_pct).unwrap_or(0.0);
-            self.gpu_load_history.push_back(cur_gpu_load);
+            push_telemetry(&mut self.gpu_load_history, cur_gpu_load, 60);
 
-            self.gpu_3d_history.pop_front();
             let cur_3d = (cur_gpu_load * 0.25).clamp(0.0, 100.0);
-            self.gpu_3d_history.push_back(cur_3d);
+            push_telemetry(&mut self.gpu_3d_history, cur_3d, 20);
 
-            self.gpu_copy_history.pop_front();
             let cur_copy = (cur_gpu_load * 0.1).clamp(0.0, 100.0);
-            self.gpu_copy_history.push_back(cur_copy);
+            push_telemetry(&mut self.gpu_copy_history, cur_copy, 20);
 
-            let num_cores = snap.cpu_core_usages.len().max(4);
+            let num_cores = snap.cpu_core_usages.len();
             if self.cpu_core_histories.len() != num_cores {
                 self.cpu_core_histories = (0..num_cores)
-                    .map(|idx| {
-                        let mut d = VecDeque::with_capacity(30);
-                        let val = snap.cpu_core_usages.get(idx).copied().unwrap_or(0.0);
-                        for _ in 0..30 {
-                            d.push_back(val);
-                        }
-                        d
-                    })
+                    .map(|_| VecDeque::with_capacity(30))
                     .collect();
             } else {
                 for (idx, q) in self.cpu_core_histories.iter_mut().enumerate() {
-                    q.pop_front();
                     let val = snap.cpu_core_usages.get(idx).copied().unwrap_or(0.0);
-                    q.push_back(val);
+                    push_telemetry(q, val, 30);
                 }
             }
 
@@ -11257,24 +11184,27 @@ impl LauncherApp {
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new(format!("{:.1}", snap.cpu_global_usage)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                ui.label(RichText::new(format!("{:.1}", snap.cpu_global_usage)).size(29.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                 ui.label(RichText::new("%").size(12.0).color(p.text_muted));
                             });
                             ui.add_space(2.0);
-                            let freq_ghz = if snap.cpu_frequency_mhz > 0 { snap.cpu_frequency_mhz as f64 / 1000.0 } else { 2.50 };
-                            let cores_str = format!("{} Core / {}T · {:.2} GHz", snap.cpu_cores_physical.max(1), snap.cpu_cores_logical.max(2), freq_ghz);
+                            let freq = (snap.cpu_frequency_mhz > 0).then(|| format!("{:.2} GHz", snap.cpu_frequency_mhz as f64 / 1000.0));
+                            let cores_str = [
+                                (snap.cpu_cores_physical > 0).then(|| format!("{} cores", snap.cpu_cores_physical)),
+                                freq,
+                            ].into_iter().flatten().collect::<Vec<_>>().join(" · ");
+                            let cores_str = if cores_str.is_empty() { "—" } else { &cores_str };
                             ui.label(RichText::new(cores_str).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                             ui.add_space(8.0);
-                            let cpu_avg = if !self.cpu_history.is_empty() { self.cpu_history.iter().sum::<f32>() / self.cpu_history.len() as f32 } else { snap.cpu_global_usage };
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(format!("AVG {:.0}%", cpu_avg)).size(8.5).monospace().color(p.text_muted));
+                                ui.label(RichText::new(if self.cpu_history.is_empty() { "AVG —".to_string() } else { format!("AVG {:.0}%", self.cpu_history.iter().sum::<f32>() / self.cpu_history.len() as f32) }).size(8.5).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(format!("PEAK {:.0}%", self.cpu_peak_usage)).size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(if self.cpu_history.is_empty() { "PEAK —".to_string() } else { format!("PEAK {:.0}%", self.cpu_peak_usage) }).size(8.5).monospace().color(p.text_muted));
                                 });
                             });
                             ui.add_space(4.0);
                             let cpu_slice: Vec<f32> = self.cpu_history.iter().copied().collect();
-                            draw_card_sparkline(ui, 32.0, &cpu_slice, 100.0, Some(0.12), accent);
+                            draw_card_sparkline(ui, 40.0, &cpu_slice, 100.0, Some(0.12), accent);
                         });
 
                     // Card 2: RAM
@@ -11292,7 +11222,7 @@ impl LauncherApp {
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new(format!("{:.1}", snap.mem_usage_pct)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                ui.label(RichText::new(format!("{:.1}", snap.mem_usage_pct)).size(29.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                 ui.label(RichText::new("%").size(12.0).color(p.text_muted));
                             });
                             ui.add_space(2.0);
@@ -11305,17 +11235,17 @@ impl LauncherApp {
                             };
                             ui.label(RichText::new(ram_str).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                             ui.add_space(8.0);
-                            let ram_avg = if !self.ram_history.is_empty() { self.ram_history.iter().map(|(r, _)| *r).sum::<f32>() / self.ram_history.len() as f32 } else { snap.mem_usage_pct };
-                            let ram_peak = self.ram_history.iter().map(|(r, _)| *r).fold(snap.mem_usage_pct, f32::max);
+                            let ram_avg = self.ram_history.iter().map(|(r, _)| *r).sum::<f32>() / self.ram_history.len().max(1) as f32;
+                            let ram_peak = self.ram_history.iter().map(|(r, _)| *r).fold(0.0_f32, f32::max);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(format!("AVG {:.0}%", ram_avg)).size(8.5).monospace().color(p.text_muted));
+                                ui.label(RichText::new(if self.ram_history.is_empty() { "AVG —".to_string() } else { format!("AVG {:.0}%", ram_avg) }).size(8.5).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(format!("PEAK {:.0}%", ram_peak)).size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(if self.ram_history.is_empty() { "PEAK —".to_string() } else { format!("PEAK {:.0}%", ram_peak) }).size(8.5).monospace().color(p.text_muted));
                                 });
                             });
                             ui.add_space(4.0);
                             let ram_slice: Vec<f32> = self.ram_history.iter().map(|(r, _)| *r).collect();
-                            draw_card_sparkline(ui, 32.0, &ram_slice, 100.0, Some(0.85), accent);
+                            draw_card_sparkline(ui, 40.0, &ram_slice, 100.0, Some(0.85), accent);
                         });
 
                     // Card 3: SWAP
@@ -11333,24 +11263,24 @@ impl LauncherApp {
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new(format!("{:.1}", snap.swap_usage_pct)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                ui.label(RichText::new(format!("{:.1}", snap.swap_usage_pct)).size(29.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                 ui.label(RichText::new("%").size(12.0).color(p.text_muted));
                             });
                             ui.add_space(2.0);
                             let swap_str = format!("{} / {}", crate::sensors::format_bytes(snap.swap_used_bytes), crate::sensors::format_bytes(snap.swap_total_bytes));
                             ui.label(RichText::new(swap_str).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                             ui.add_space(8.0);
-                            let swap_avg = if !self.ram_history.is_empty() { self.ram_history.iter().map(|(_, s)| *s).sum::<f32>() / self.ram_history.len() as f32 } else { snap.swap_usage_pct };
-                            let swap_peak = self.ram_history.iter().map(|(_, s)| *s).fold(snap.swap_usage_pct, f32::max);
+                            let swap_avg = self.ram_history.iter().map(|(_, s)| *s).sum::<f32>() / self.ram_history.len().max(1) as f32;
+                            let swap_peak = self.ram_history.iter().map(|(_, s)| *s).fold(0.0_f32, f32::max);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(format!("AVG {:.1}%", swap_avg)).size(8.5).monospace().color(p.text_muted));
+                                ui.label(RichText::new(if self.ram_history.is_empty() { "AVG —".to_string() } else { format!("AVG {:.1}%", swap_avg) }).size(8.5).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(format!("PEAK {:.1}%", swap_peak)).size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(if self.ram_history.is_empty() { "PEAK —".to_string() } else { format!("PEAK {:.1}%", swap_peak) }).size(8.5).monospace().color(p.text_muted));
                                 });
                             });
                             ui.add_space(4.0);
                             let swap_slice: Vec<f32> = self.ram_history.iter().map(|(_, s)| *s).collect();
-                            draw_card_sparkline(ui, 32.0, &swap_slice, 100.0, Some(0.08), accent);
+                            draw_card_sparkline(ui, 40.0, &swap_slice, 100.0, Some(0.08), accent);
                         });
 
                     // Card 4: STORAGE
@@ -11370,27 +11300,27 @@ impl LauncherApp {
                             let mounted_total: u64 = snap.disks.iter().map(|d| d.total_bytes).sum();
                             let total_bytes: u64 = if phys_total > 0 { phys_total } else { mounted_total };
                             let used_bytes: u64 = snap.disks.iter().map(|d| d.used_bytes).sum();
-                            let storage_pct = if total_bytes > 0 { (used_bytes as f64 / total_bytes as f64 * 100.0) as f32 } else { 0.0 };
+                            let storage_pct = if total_bytes > 0 { Some((used_bytes as f64 / total_bytes as f64 * 100.0) as f32) } else { None };
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new(format!("{:.1}", storage_pct)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                ui.label(RichText::new(storage_pct.map_or_else(|| "—".to_string(), |value| format!("{value:.1}"))).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                 ui.label(RichText::new("%").size(12.0).color(p.text_muted));
                             });
                             ui.add_space(2.0);
                             let used_gb = used_bytes as f64 / 1e9;
                             let tot_gb = total_bytes as f64 / 1e9;
-                            ui.label(RichText::new(format!("{:.2} GB / {:.2} GB", used_gb, tot_gb)).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                            ui.label(RichText::new(if total_bytes > 0 { format!("{used_gb:.2} / {tot_gb:.2} GB") } else { "—".to_string() }).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                             ui.add_space(8.0);
                             let free_gb = (total_bytes.saturating_sub(used_bytes)) as f64 / 1e9;
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(format!("FREE {:.2} GB", free_gb)).size(8.5).monospace().color(p.text_muted));
+                                ui.label(RichText::new(if total_bytes > 0 { format!("FREE {:.2} GB", free_gb) } else { "FREE —".to_string() }).size(8.5).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(format!("AVG {:.1}%", storage_pct)).size(8.5).monospace().color(p.text_muted));
+                                    let avg = (!self.storage_history.is_empty()).then(|| self.storage_history.iter().sum::<f32>() / self.storage_history.len() as f32);
+                                    ui.label(RichText::new(avg.map_or_else(|| "AVG —".to_string(), |value| format!("AVG {value:.1}%"))).size(8.5).monospace().color(p.text_muted));
                                 });
                             });
                             ui.add_space(4.0);
-                            let st_history = [storage_pct, storage_pct, storage_pct, storage_pct, storage_pct];
-                            draw_card_sparkline(ui, 32.0, &st_history, 100.0, Some(0.65), accent);
+                            draw_card_sparkline(ui, 40.0, &self.storage_history.iter().copied().collect::<Vec<_>>(), 100.0, None, accent);
                         });
                 });
 
@@ -11416,7 +11346,7 @@ impl LauncherApp {
                                     ui.vertical(|ui| {
                                         ui.label(RichText::new("OVERALL SPEED").size(11.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                                         ui.add_space(2.0);
-                                        let peak_str = format!("Interface total · peak {:.2} MB/s", self.net_peak_mb);
+                                        let peak_str = if self.net_tx_history.is_empty() { "Interface total · collecting".to_string() } else { format!("Interface total · peak {:.2} MB/s", self.net_peak_mb) };
                                         ui.label(RichText::new(peak_str).size(9.5).color(p.text_muted));
                                     });
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -11462,10 +11392,11 @@ impl LauncherApp {
                                     fcols[2].vertical(|ui| {
                                         ui.label(RichText::new("AVG OVER WINDOW").size(8.5).monospace().color(p.text_muted));
                                         ui.add_space(2.0);
-                                        let avg_tx: f32 = if !self.net_tx_history.is_empty() { self.net_tx_history.iter().sum::<f32>() / self.net_tx_history.len() as f32 } else { 0.6 };
-                                        let avg_rx: f32 = if !self.net_rx_history.is_empty() { self.net_rx_history.iter().sum::<f32>() / self.net_rx_history.len() as f32 } else { 0.54 };
-                                        let tx_label = if avg_tx < 1.0 { format!("{} {:.2} KB/s", crate::lucide::ARROW_UP, avg_tx * 1000.0) } else { format!("{} {:.2} MB/s", crate::lucide::ARROW_UP, avg_tx) };
-                                        let rx_label = if avg_rx < 1.0 { format!("{} {:.2} KB/s", crate::lucide::ARROW_DOWN, avg_rx * 1000.0) } else { format!("{} {:.2} MB/s", crate::lucide::ARROW_DOWN, avg_rx) };
+                                        let avg_tx = (!self.net_tx_history.is_empty()).then(|| self.net_tx_history.iter().sum::<f32>() / self.net_tx_history.len() as f32);
+                                        let avg_rx = (!self.net_rx_history.is_empty()).then(|| self.net_rx_history.iter().sum::<f32>() / self.net_rx_history.len() as f32);
+                                        let rate_label = |arrow, avg: Option<f32>| avg.map_or_else(|| format!("{} —", arrow), |v| if v < 1.0 { format!("{} {:.2} KB/s", arrow, v * 1000.0) } else { format!("{} {:.2} MB/s", arrow, v) });
+                                        let tx_label = rate_label(crate::lucide::ARROW_UP, avg_tx);
+                                        let rx_label = rate_label(crate::lucide::ARROW_DOWN, avg_rx);
                                         ui.label(RichText::new(tx_label).size(10.5).color(Color32::from_rgb(241, 245, 249)));
                                         ui.label(RichText::new(rx_label).size(10.5).color(Color32::from_rgb(203, 213, 225)));
                                     });
@@ -19920,18 +19851,18 @@ impl LauncherApp {
                             // Refresh Interval Pill ComboBox
                             let interval_label = match self.sensors_refresh_interval {
                                 0 => "Paused".to_string(),
-                                1 => "1s (High)".to_string(),
+                                1 => "1s (Default)".to_string(),
                                 2 => "2s (Fast)".to_string(),
-                                5 => "5s (Default)".to_string(),
+                                5 => "5s (Normal)".to_string(),
                                 10 => "10s (Low)".to_string(),
                                 n => format!("{}s", n),
                             };
                             egui::ComboBox::from_id_salt("tm_refresh_interval_combo")
                                 .selected_text(RichText::new(format!("{} {}", crate::lucide::CLOCK, interval_label)).size(11.0).color(p.text_secondary))
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.sensors_refresh_interval, 1, "1s (High)");
+                                    ui.selectable_value(&mut self.sensors_refresh_interval, 1, "1s (Default)");
                                     ui.selectable_value(&mut self.sensors_refresh_interval, 2, "2s (Fast)");
-                                    ui.selectable_value(&mut self.sensors_refresh_interval, 5, "5s (Default)");
+                                    ui.selectable_value(&mut self.sensors_refresh_interval, 5, "5s (Normal)");
                                     ui.selectable_value(&mut self.sensors_refresh_interval, 10, "10s (Low)");
                                     ui.selectable_value(&mut self.sensors_refresh_interval, 0, "Paused");
                                 });

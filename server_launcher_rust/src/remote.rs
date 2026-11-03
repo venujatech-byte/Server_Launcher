@@ -268,13 +268,17 @@ pub fn build_ssh_command(host: &SshRemoteHost, remote_cmd: &str) -> Command {
     cmd.arg(&target);
 
     let full_remote_cmd = if !host.remote_cwd.trim().is_empty() {
-        format!("cd \"{}\" 2>/dev/null || true; {}", host.remote_cwd.trim(), remote_cmd)
+        format!("cd {} 2>/dev/null || true; {}", shell_quote(host.remote_cwd.trim()), remote_cmd)
     } else {
         remote_cmd.to_string()
     };
 
     cmd.arg(full_remote_cmd);
     cmd
+}
+
+pub(crate) fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 /// Fetch listening ports and processes on the remote PC

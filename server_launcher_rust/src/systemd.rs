@@ -1,5 +1,5 @@
 use crate::config::SshRemoteHost;
-use crate::remote::build_ssh_command;
+use crate::remote::{build_ssh_command, shell_quote};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -99,11 +99,11 @@ pub fn list_remote_services(host: &SshRemoteHost, user_mode: bool) -> Result<Vec
         // then sudo -n (passwordless sudo), then password sudo, then --no-legend fallback.
         if !pass.is_empty() {
             format!(
-                "echo {pass} | sudo -S systemctl list-units --type=service --all --no-pager --plain --no-legend 2>/dev/null \
+                "printf '%s\\n' {pass} | sudo -S systemctl list-units --type=service --all --no-pager --plain --no-legend 2>/dev/null \
                  || sudo -n systemctl list-units --type=service --all --no-pager --plain --no-legend 2>/dev/null \
                  || systemctl list-units --type=service --all --no-pager --plain --no-legend 2>/dev/null \
                  || systemctl list-units --type=service --all --no-pager --plain 2>/dev/null",
-                pass = pass
+                pass = shell_quote(pass)
             )
         } else {
             "sudo -n systemctl list-units --type=service --all --no-pager --plain --no-legend 2>/dev/null \
@@ -244,6 +244,11 @@ pub fn control_local_service(unit: &str, action: &str, user_mode: bool, sudo_pas
 }
 
 pub fn control_remote_service(host: &SshRemoteHost, unit: &str, action: &str, user_mode: bool) -> Result<String, String> {
+    if !matches!(action, "start" | "stop" | "restart" | "reload" | "enable" | "disable" | "mask" | "unmask") {
+        return Err("Unsupported systemd action".to_string());
+    }
+    let unit = shell_quote(unit);
+    let action = shell_quote(action);
     let cmd_str = if user_mode {
         // Set XDG_RUNTIME_DIR so systemctl --user works in non-interactive SSH sessions
         format!(
@@ -256,8 +261,8 @@ pub fn control_remote_service(host: &SshRemoteHost, unit: &str, action: &str, us
         // Otherwise try sudo -n systemctl, then systemctl directly
         let pass = host.password.trim();
         if !pass.is_empty() {
-            format!("echo {} | sudo -S systemctl {} {} 2>/dev/null || sudo -n systemctl {} {} 2>/dev/null || systemctl {} {}",
-                pass, action, unit, action, unit, action, unit)
+            format!("printf '%s\\n' {} | sudo -S systemctl {} {} 2>/dev/null || sudo -n systemctl {} {} 2>/dev/null || systemctl {} {}",
+                shell_quote(pass), action, unit, action, unit, action, unit)
         } else {
             format!("sudo -n systemctl {} {} 2>/dev/null || systemctl {} {}",
                 action, unit, action, unit)
@@ -343,6 +348,7 @@ pub fn fetch_local_journal(unit: &str, user_mode: bool, lines: usize, sudo_passw
 
 pub fn fetch_remote_journal(host: &SshRemoteHost, unit: &str, user_mode: bool, lines: usize) -> Result<String, String> {
     let pass = host.password.trim();
+    let unit = shell_quote(unit);
     let cmd_str = if user_mode {
         // Set XDG_RUNTIME_DIR so journalctl --user works in non-interactive SSH sessions
         format!(
@@ -356,10 +362,10 @@ pub fn fetch_remote_journal(host: &SshRemoteHost, unit: &str, user_mode: bool, l
         // Final fallback: plain journalctl (works if user is in 'adm'/'systemd-journal' group)
         if !pass.is_empty() {
             format!(
-                "echo {pass} | sudo -S journalctl -u {unit} -n {lines} --no-pager 2>/dev/null \
+                "printf '%s\\n' {pass} | sudo -S journalctl -u {unit} -n {lines} --no-pager 2>/dev/null \
                  || sudo -n journalctl -u {unit} -n {lines} --no-pager 2>/dev/null \
                  || journalctl -u {unit} -n {lines} --no-pager 2>/dev/null",
-                pass = pass, unit = unit, lines = lines
+                pass = shell_quote(pass), unit = unit, lines = lines
             )
         } else {
             format!(
@@ -751,10 +757,11 @@ pub fn read_local_unit_file(path: &str, sudo_password: Option<&str>) -> Result<S
 
 pub fn read_remote_unit_file(host: &SshRemoteHost, path: &str) -> Result<String, String> {
     let pass = host.password.trim();
+    let path = shell_quote(path);
     let script = if !pass.is_empty() {
-        format!("cat '{path}' 2>/dev/null || (echo {pass} | sudo -S cat '{path}' 2>/dev/null) || sudo -n cat '{path}'", path = path, pass = pass)
+        format!("cat {path} 2>/dev/null || (printf '%s\\n' {pass} | sudo -S cat {path} 2>/dev/null) || sudo -n cat {path}", path = path, pass = shell_quote(pass))
     } else {
-        format!("cat '{path}' 2>/dev/null || sudo -n cat '{path}'", path = path)
+        format!("cat {path} 2>/dev/null || sudo -n cat {path}", path = path)
     };
     let mut cmd = build_ssh_command(host, &script);
     match cmd.output() {
@@ -840,26 +847,30 @@ pub fn write_local_unit_file(path: &str, content: &str, user_mode: bool, sudo_pa
 
 pub fn write_remote_unit_file(host: &SshRemoteHost, path: &str, content: &str, user_mode: bool) -> Result<String, String> {
     let pass = host.password.trim();
+    use base64::Engine;
+    let encoded_content = base64::engine::general_purpose::STANDARD.encode(content);
+    let quoted_path = shell_quote(path);
     let script = if user_mode {
         format!(
-            "mkdir -p \"$(dirname '{path}')\" && cat << 'EOF' > '{path}'\n{content}\nEOF\n\
+            "mkdir -p \"$(dirname {path})\" && printf '%s' {content} | base64 -d > {path}\n\
              uid=$(id -u); export XDG_RUNTIME_DIR=/run/user/$uid; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; \
              systemctl --user daemon-reload",
-            path = path, content = content
+            path = quoted_path, content = shell_quote(&encoded_content)
         )
     } else if !pass.is_empty() {
         format!(
-            "echo {pass} | sudo -S mkdir -p \"$(dirname '{path}')\" && \
-             echo '{pass}' | sudo -S tee '{path}' > /dev/null << 'EOF'\n{content}\nEOF\n\
-             echo {pass} | sudo -S systemctl daemon-reload",
-            path = path, content = content, pass = pass
+            "printf '%s\\n' {pass} | sudo -S mkdir -p \"$(dirname {path})\" && \
+             printf '%s\\n%s' {pass} {content} | sudo -S sh -c {write_script} && \
+             printf '%s\\n' {pass} | sudo -S systemctl daemon-reload",
+            path = quoted_path, content = shell_quote(&encoded_content), pass = shell_quote(pass),
+            write_script = shell_quote(&format!("base64 -d | tee {} > /dev/null", quoted_path))
         )
     } else {
         format!(
-            "sudo -n mkdir -p \"$(dirname '{path}')\" && \
-             sudo -n tee '{path}' > /dev/null << 'EOF'\n{content}\nEOF\n\
+            "sudo -n mkdir -p \"$(dirname {path})\" && \
+             printf '%s' {content} | base64 -d | sudo -n tee {path} > /dev/null && \
              sudo -n systemctl daemon-reload",
-            path = path, content = content
+            path = quoted_path, content = shell_quote(&encoded_content)
         )
     };
     let mut cmd = build_ssh_command(host, &script);
@@ -921,16 +932,17 @@ pub fn delete_local_drop_in(path: &str, user_mode: bool, sudo_password: Option<&
 
 pub fn delete_remote_drop_in(host: &SshRemoteHost, path: &str, user_mode: bool) -> Result<String, String> {
     let pass = host.password.trim();
+    let path = shell_quote(path);
     let script = if user_mode {
         format!(
-            "rm -f '{path}'; uid=$(id -u); export XDG_RUNTIME_DIR=/run/user/$uid; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; \
+            "rm -f {path}; uid=$(id -u); export XDG_RUNTIME_DIR=/run/user/$uid; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; \
              systemctl --user daemon-reload",
             path = path
         )
     } else if !pass.is_empty() {
-        format!("echo {pass} | sudo -S rm -f '{path}' && echo {pass} | sudo -S systemctl daemon-reload", path = path, pass = pass)
+        format!("printf '%s\\n' {pass} | sudo -S rm -f {path} && printf '%s\\n' {pass} | sudo -S systemctl daemon-reload", path = path, pass = shell_quote(pass))
     } else {
-        format!("sudo -n rm -f '{path}' && sudo -n systemctl daemon-reload", path = path)
+        format!("sudo -n rm -f {path} && sudo -n systemctl daemon-reload", path = path)
     };
     let mut cmd = build_ssh_command(host, &script);
     match cmd.output() {

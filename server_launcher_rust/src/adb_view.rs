@@ -97,7 +97,7 @@ impl LauncherApp {
 
         let p = self.palette();
         let screen = ctx.screen_rect();
-        let modal_w = (screen.width() - 32.0).clamp(320.0, 720.0);
+        let modal_w = 560.0_f32.min(screen.width() - 32.0);
 
         // 1. Semi-transparent backdrop overlay with click-outside dismissal
         let backdrop_area = egui::Area::new(egui::Id::new("add_device_selector_backdrop"))

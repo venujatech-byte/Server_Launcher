@@ -18295,24 +18295,45 @@ impl LauncherApp {
 
         let cpu_temp = snap.cpu_temp
             .or_else(|| snap.temp_sensors.iter().find(|s| s.name.to_lowercase().contains("cpu") || s.name.to_lowercase().contains("package") || s.name.to_lowercase().contains("core")).map(|s| s.temp))
-            .unwrap_or(if is_remote { 42.5 } else { 63.0 });
+            .unwrap_or(f32::NAN);
 
         let gpu_temp = snap.gpus.first().and_then(|g| g.temp)
             .or_else(|| snap.temp_sensors.iter().find(|s| s.name.to_lowercase().contains("gpu")).map(|s| s.temp))
-            .unwrap_or(if is_remote { 36.0 } else { 48.0 });
+            .unwrap_or(f32::NAN);
 
         let ram_temp = snap.ram_temp
             .or_else(|| snap.temp_sensors.iter().find(|s| s.name.to_lowercase().contains("ram") || s.name.to_lowercase().contains("sodimm") || s.name.to_lowercase().contains("memory")).map(|s| s.temp))
-            .unwrap_or(if is_remote { 38.0 } else { 42.0 });
+            .unwrap_or(f32::NAN);
 
         let nvme_temp = snap.storage_temp
             .or_else(|| snap.temp_sensors.iter().find(|s| s.name.to_lowercase().contains("nvme") || s.name.to_lowercase().contains("ssd") || s.name.to_lowercase().contains("composite")).map(|s| s.temp))
-            .unwrap_or(if is_remote { 34.0 } else { 39.8 });
+            .unwrap_or(f32::NAN);
 
         let vrm_temp = snap.temp_sensors.iter()
-            .find(|s| s.name.to_lowercase().contains("vrm") || s.name.to_lowercase().contains("motherboard") || s.name.to_lowercase().contains("pch") || s.name.to_lowercase().contains("acpitz"))
+            .find(|s| s.name.to_lowercase().contains("vrm") || s.name.to_lowercase().contains("motherboard") || s.name.to_lowercase().contains("pch"))
             .map(|s| s.temp)
-            .unwrap_or(if is_remote { 41.5 } else { 51.5 });
+            .unwrap_or(f32::NAN);
+
+        let temperature_text = |value: f32| if value.is_finite() { format!("{value:.1}") } else { "—".to_string() };
+        let history_id = egui::Id::new(("thermal_measured_history", host_id));
+        let history = ui.ctx().data_mut(|data| {
+            let history = data.get_temp_mut_or_default::<VecDeque<(Instant, f32, f32)>>(history_id);
+            if let Some(timestamp) = snap.timestamp {
+                if history.back().map(|sample| sample.0) != Some(timestamp) {
+                    history.push_back((timestamp, cpu_temp, gpu_temp));
+                }
+                while history.front().is_some_and(|sample| timestamp.saturating_duration_since(sample.0).as_secs_f32() > 60.0) || history.len() > 120 {
+                    history.pop_front();
+                }
+            }
+            debug_assert!(history.len() <= 120);
+            history.clone()
+        });
+        let cpu_peak = history.iter().map(|sample| sample.1).filter(|value| value.is_finite()).reduce(f32::max);
+        let gpu_peak = history.iter().map(|sample| sample.2).filter(|value| value.is_finite()).reduce(f32::max);
+        let sensor_limit = |words: &[&str]| snap.temp_sensors.iter()
+            .find(|sensor| words.iter().any(|word| sensor.name.to_lowercase().contains(word)))
+            .and_then(|sensor| sensor.crit.or(sensor.max)).filter(|limit| limit.is_finite() && *limit > 0.0).unwrap_or(f32::NAN);
 
         ScrollArea::vertical()
             .id_salt("sensors_temp_scroll_v2")
@@ -18341,7 +18362,7 @@ impl LauncherApp {
                         let sub_str = if is_remote {
                             "Direct Linux hwmon sysfs endpoints, processor package temperatures, and chassis airflow."
                         } else {
-                            "Dual dynamic blowers with customizable acoustic trigger thresholds and embedded zone sensors."
+                            "Reported hardware temperatures • cooling controls unavailable"
                         };
 
                         ui.vertical(|ui| {
@@ -18354,155 +18375,18 @@ impl LauncherApp {
 
                             ui.add_space(2.0);
 
-                            // Row 2: Title on Left, Fan Mode Buttons on Right
-                            let avail_w = ui.available_width();
-                            let right_w = 320.0_f32;
-                            let is_narrow = avail_w < 680.0;
-
-                            if is_narrow {
-                                // Narrow viewport: Title row followed by dedicated mode buttons row
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 8.0;
-                                    ui.label(RichText::new(&title_str).size(16.5).strong().color(p.text_primary));
-                                    Frame::none()
-                                        .fill(accent_with_alpha(accent, 25))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.spacing_mut().item_spacing.x = 4.0;
-                                                ui.label(RichText::new("●").size(6.0).color(accent));
-                                                let badge = if is_remote { "HWMON ACTIVE" } else { "EC-THERMAL OK" };
-                                                ui.label(RichText::new(badge).size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                            });
-                                        });
-                                });
-
-                                ui.add_space(6.0);
-
-                                // Mode Buttons on their own row
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 6.0;
-                                    let modes = [
-                                        ("Silent Mode", 0, "Silent acoustic profile with active dynamic fan curve"),
-                                        ("Balanced", 1, "Optimized performance and acoustic balance"),
-                                        ("Turbo Max", 2, "Maximum cooling duty cycle for sustained workloads"),
-                                    ];
-
-                                    for (mode_label, mode_idx, tooltip) in modes {
-                                        let is_active = self.fan_mode == mode_idx;
-                                        let bg = if is_active {
-                                            accent_with_alpha(accent, 28)
-                                        } else {
-                                            Color32::from_rgb(18, 28, 42)
-                                        };
-                                        let border_stroke = if is_active {
-                                            Stroke::new(1.0_f32, accent)
-                                        } else {
-                                            Stroke::NONE
-                                        };
-                                        let text_color = if is_active {
-                                            Color32::from_rgb(241, 245, 249)
-                                        } else {
-                                            Color32::from_rgb(148, 163, 184)
-                                        };
-
-                                        let pill_resp = Frame::none()
-                                            .fill(bg)
-                                            .stroke(border_stroke)
-                                            .rounding(Rounding::same(6.0))
-                                            .inner_margin(egui::Margin::symmetric(10.0, 5.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new(mode_label).size(10.0).monospace().strong().color(text_color));
-                                            }).response;
-
-                                        let pill_resp = pill_resp.on_hover_text(tooltip);
-                                        if pill_resp.interact(egui::Sense::click()).clicked() {
-                                            self.fan_mode = mode_idx;
-                                        }
-                                    }
-
-                                    // Settings button
-                                    let (btn_rect, btn_resp) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
-                                    let btn_bg = if btn_resp.hovered() { accent_with_alpha(accent, 30) } else { Color32::from_rgb(18, 28, 42) };
-                                    ui.painter().rect_filled(btn_rect, Rounding::same(6.0), btn_bg);
-                                    ui.painter().text(btn_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::SLIDERS, egui::FontId::monospace(12.0), Color32::from_rgb(148, 163, 184));
-                                    btn_resp.on_hover_text("Calibrate dynamic fan curve profiles");
-                                });
-                            } else {
-                                // Wide viewport: Title on Left, Mode Buttons on Right
-                                ui.horizontal(|ui| {
-                                    let left_w = (avail_w - right_w - 12.0).max(100.0);
-
-                                    ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                        ui.spacing_mut().item_spacing.x = 8.0;
-                                        ui.label(RichText::new(&title_str).size(16.5).strong().color(p.text_primary));
-                                        Frame::none()
-                                            .fill(accent_with_alpha(accent, 25))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 4.0;
-                                                    ui.label(RichText::new("●").size(6.0).color(accent));
-                                                    let badge = if is_remote { "HWMON ACTIVE" } else { "EC-THERMAL OK" };
-                                                    ui.label(RichText::new(badge).size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                                });
-                                            });
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                ui.label(RichText::new(&title_str).size(16.5).strong().color(p.text_primary));
+                                Frame::none()
+                                    .fill(accent_with_alpha(accent, 25))
+                                    .rounding(Rounding::same(4.0))
+                                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                    .show(ui, |ui| {
+                                        let badge = if snap.temp_sensors.is_empty() && !cpu_temp.is_finite() { "NO READINGS" } else { "SENSORS" };
+                                        ui.label(RichText::new(badge).size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                     });
-
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.spacing_mut().item_spacing.x = 6.0;
-
-                                        // Settings button (tonal borderless)
-                                        let (btn_rect, btn_resp) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
-                                        let btn_bg = if btn_resp.hovered() { accent_with_alpha(accent, 30) } else { Color32::from_rgb(18, 28, 42) };
-                                        ui.painter().rect_filled(btn_rect, Rounding::same(6.0), btn_bg);
-                                        ui.painter().text(btn_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::SLIDERS, egui::FontId::monospace(12.0), Color32::from_rgb(148, 163, 184));
-                                        btn_resp.on_hover_text("Calibrate dynamic fan curve profiles");
-
-                                        // Fan Mode Pills: Turbo Max, Balanced, Silent Mode (right-to-left layout places Silent Mode leftmost)
-                                        let modes = [
-                                            ("Turbo Max", 2, "Maximum cooling duty cycle for sustained workloads"),
-                                            ("Balanced", 1, "Optimized performance and acoustic balance"),
-                                            ("Silent Mode", 0, "Silent acoustic profile with active dynamic fan curve"),
-                                        ];
-
-                                        for (mode_label, mode_idx, tooltip) in modes {
-                                            let is_active = self.fan_mode == mode_idx;
-                                            let bg = if is_active {
-                                                accent_with_alpha(accent, 28)
-                                            } else {
-                                                Color32::from_rgb(18, 28, 42)
-                                            };
-                                            let border_stroke = if is_active {
-                                                Stroke::new(1.0_f32, accent)
-                                            } else {
-                                                Stroke::NONE
-                                            };
-                                            let text_color = if is_active {
-                                                Color32::from_rgb(241, 245, 249)
-                                            } else {
-                                                Color32::from_rgb(148, 163, 184)
-                                            };
-
-                                            let pill_resp = Frame::none()
-                                                .fill(bg)
-                                                .stroke(border_stroke)
-                                                .rounding(Rounding::same(6.0))
-                                                .inner_margin(egui::Margin::symmetric(10.0, 5.0))
-                                                .show(ui, |ui| {
-                                                    ui.label(RichText::new(mode_label).size(10.0).monospace().strong().color(text_color));
-                                                }).response;
-
-                                            let pill_resp = pill_resp.on_hover_text(tooltip);
-                                            if pill_resp.interact(egui::Sense::click()).clicked() {
-                                                self.fan_mode = mode_idx;
-                                            }
-                                        }
-                                    });
-                                });
-                            }
+                            });
 
                             ui.add_space(4.0);
 
@@ -18516,24 +18400,24 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 2. Row of 5 Sensor Cards (CPU, GPU/Ambient, RAM, Storage, VRM)
-                let has_gpu = !snap.gpus.is_empty();
-                let second_card_name = if is_remote && !has_gpu { "SYS AMBIENT" } else { "GPU CORE" };
-                let second_card_temp = if is_remote && !has_gpu { (cpu_temp - 10.0).max(28.0) } else { gpu_temp };
-                let second_card_limit = if is_remote && !has_gpu { 65.0_f32 } else { 87.0_f32 };
+                let has_gpu = gpu_temp.is_finite();
+                let second_card_name = "GPU CORE";
+                let second_card_temp = gpu_temp;
+                let second_card_limit = sensor_limit(&["gpu"]);
                 let ram_card_name = if is_remote { "SYSTEM RAM" } else { "SODIMM RAM" };
                 let storage_card_name = if is_remote { "STORAGE DRIVE" } else { "NVME M.2 SSD" };
 
-                let cpu_tj = snap.cpu_tjunction_max.unwrap_or(95.0);
+                let cpu_tj = snap.cpu_tjunction_max.unwrap_or_else(|| sensor_limit(&["cpu", "package", "core"]));
                 let sensor_cards = [
-                    ("CPU PACKAGE", cpu_temp, cpu_tj, "+1.8°C / min", accent),
-                    (second_card_name, second_card_temp, second_card_limit, "STEADY", Color32::from_rgb(96, 165, 250)),
-                    (ram_card_name, ram_temp, 75.0_f32, "STEADY", accent),
-                    (storage_card_name, nvme_temp, 75.0_f32, "STEADY", Color32::from_rgb(96, 165, 250)),
-                    ("MOTHERBOARD VRM", vrm_temp, 105.0_f32, "+0.2°C / min", Color32::from_rgb(203, 213, 225)),
+                    ("CPU PACKAGE", cpu_temp, cpu_tj, "", accent),
+                    (second_card_name, second_card_temp, second_card_limit, "", Color32::from_rgb(96, 165, 250)),
+                    (ram_card_name, ram_temp, sensor_limit(&["ram", "memory", "sodimm"]), "", accent),
+                    (storage_card_name, nvme_temp, sensor_limit(&["nvme", "ssd", "composite"]), "", Color32::from_rgb(96, 165, 250)),
+                    ("MOTHERBOARD VRM", vrm_temp, sensor_limit(&["vrm", "motherboard", "pch"]), "", Color32::from_rgb(203, 213, 225)),
                 ];
 
                 ui.columns(5, |cols| {
-                    for (i, (name, val, limit, delta, accent)) in sensor_cards.iter().enumerate() {
+                    for (i, (name, val, limit, _delta, accent)) in sensor_cards.iter().enumerate() {
                         let c = &mut cols[i];
                         Frame::none()
                             .fill(p.bg_card)
@@ -18544,21 +18428,13 @@ impl LauncherApp {
                                 ui.label(RichText::new(*name).size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                                 ui.add_space(4.0);
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new(format!("{:.1}", val)).size(21.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                    ui.label(RichText::new(temperature_text(*val)).size(21.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                     ui.label(RichText::new("°C").size(12.0).color(Color32::from_rgb(148, 163, 184)));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        Frame::none()
-                                            .fill(accent.gamma_multiply(0.12))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(5.0, 2.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new(*delta).size(8.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
-                                            });
-                                    });
+
                                 });
                                 ui.add_space(6.0);
                                 // Small progress line
-                                let pct = (val / limit).clamp(0.05, 1.0);
+                                let pct = if val.is_finite() && limit.is_finite() { (val / limit).clamp(0.0, 1.0) } else { 0.0 };
                                 let (bar_rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 3.5), egui::Sense::hover());
                                 ui.painter().rect_filled(bar_rect, Rounding::same(2.0), Color32::from_rgb(26, 34, 48));
                                 let mut filled_rect = bar_rect;
@@ -18566,7 +18442,7 @@ impl LauncherApp {
                                 ui.painter().rect_filled(filled_rect, Rounding::same(2.0), *accent);
 
                                 ui.add_space(4.0);
-                                ui.label(RichText::new(format!("LIMIT: {:.1}°C", limit)).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                ui.label(RichText::new(if limit.is_finite() { format!("LIMIT: {limit:.1}°C") } else { "Limit unavailable".to_string() }).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                             });
                     }
                 });
@@ -18580,13 +18456,13 @@ impl LauncherApp {
                     .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             ui.vertical(|ui| {
                                 ui.label(RichText::new("60-Second Thermal History Waveform").size(12.5).strong().color(p.text_primary));
-                                let sub_trace = if is_remote && !has_gpu {
-                                    "Synchronized dual-trace EC sensor loop: CPU Package vs Chassis Ambient".to_string()
+                                let sub_trace = if !has_gpu {
+                                    "CPU package • GPU unavailable".to_string()
                                 } else {
-                                    "Synchronized dual-trace EC sensor loop: CPU Package vs GPU Core".to_string()
+                                    "CPU package • GPU core • measured samples".to_string()
                                 };
                                 ui.label(RichText::new(sub_trace).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                             });
@@ -18599,10 +18475,10 @@ impl LauncherApp {
                                         ui.spacing_mut().item_spacing.x = 4.0;
                                         let (d_rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
                                         ui.painter().circle_filled(d_rect.center(), 3.5, Color32::from_rgb(148, 163, 184));
-                                        let second_lbl = if is_remote && !has_gpu {
-                                            format!("Chassis Ambient (Steady: {:.1}°C)", second_card_temp)
+                                        let second_lbl = if !has_gpu {
+                                            "GPU —".to_string()
                                         } else {
-                                            format!("GPU Core (Peak: {:.1}°C)", gpu_temp + 3.8)
+                                            format!("GPU peak {}°C", temperature_text(gpu_peak.unwrap_or(f32::NAN)))
                                         };
                                         ui.label(RichText::new(second_lbl).size(10.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     });
@@ -18612,47 +18488,23 @@ impl LauncherApp {
                                         ui.spacing_mut().item_spacing.x = 4.0;
                                         let (d_rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
                                         ui.painter().circle_filled(d_rect.center(), 3.5, accent);
-                                        ui.label(RichText::new(format!("CPU Package (Peak: {:.1}°C)", cpu_temp + 4.2)).size(10.0).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                        ui.label(RichText::new(format!("CPU peak {}°C", temperature_text(cpu_peak.unwrap_or(f32::NAN)))).size(10.0).monospace().color(Color32::from_rgb(203, 213, 225)));
                                     });
                                 });
                             });
                         });
 
                         ui.add_space(8.0);
-                        draw_thermal_dual_waveform(ui, 110.0, cpu_temp, second_card_temp, accent);
+                        draw_thermal_dual_waveform(ui, 110.0, &history, accent);
                     });
 
                 ui.add_space(8.0);
 
                 // 4. Two Columns: Left (Active Fan Deck / Passive Thermal Deck) vs Right (Fan Curve Calibrator)
-                let has_active_fans = if is_remote { false } else { crate::sensors::detect_active_fans() };
-
-                let cpu_fan_pct = if !has_active_fans {
-                    0.0_f32
-                } else if !is_remote && self.fan_full_blast {
-                    100.0_f32
-                } else {
-                    match self.fan_mode {
-                        0 => 42.0_f32,
-                        1 => 58.0_f32,
-                        _ => 85.0_f32,
-                    }
-                };
-
-                let exhaust_fan_pct = if !has_active_fans {
-                    0.0_f32
-                } else if !is_remote && self.fan_full_blast {
-                    100.0_f32
-                } else {
-                    match self.fan_mode {
-                        0 => 30.0_f32,
-                        1 => 44.0_f32,
-                        _ => 75.0_f32,
-                    }
-                };
-
-                let cpu_rpm = (cpu_fan_pct / 100.0 * 4800.0) as u32;
-                let exhaust_rpm = (exhaust_fan_pct / 100.0 * 3600.0) as u32;
+                // No fan RPM, PWM, or acoustics are supplied by the current snapshot.
+                let has_active_fans = false;
+                let cpu_fan_pct = f32::NAN;
+                let exhaust_fan_pct = f32::NAN;
 
                 ui.columns(2, |cols| {
                     // Left Column: Active Fan Deck / Passive Thermal Deck

@@ -14995,6 +14995,152 @@ impl LauncherApp {
     fn render_sensors_data_usage_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.palette();
         let accent = self.sensors_accent_color(&p);
+        let mut interfaces: Vec<_> = snap.networks.iter().collect();
+        interfaces.sort_by(|a, b| {
+            (b.rx_rate_bps + b.tx_rate_bps)
+                .partial_cmp(&(a.rx_rate_bps + a.tx_rate_bps))
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.name.cmp(&b.name))
+        });
+
+        ScrollArea::vertical()
+            .id_salt("sensors_data_usage_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+
+                Frame::none()
+                    .fill(p.bg_card)
+                    .rounding(Rounding::same(8.0))
+                    .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new("Network data usage").size(18.0).strong().color(p.text_primary));
+                                ui.label(
+                                    RichText::new(if host_id.is_some() { "Remote interface counters" } else { "Local interface counters" })
+                                        .size(10.5)
+                                        .color(p.text_muted),
+                                );
+                            });
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(RichText::new(format!("{} interfaces", interfaces.len())).size(10.5).color(p.text_secondary));
+                            });
+                        });
+                    });
+
+                ui.add_space(10.0);
+
+                Frame::none()
+                    .fill(p.bg_card)
+                    .rounding(Rounding::same(8.0))
+                    .inner_margin(egui::Margin::symmetric(16.0, 12.0))
+                    .show(ui, |ui| {
+                        ui.columns(4, |cols| {
+                            for (column, label, value, detail) in [
+                                (0, "Received", crate::sensors::format_bytes(snap.total_rx_bytes), crate::sensors::format_rate(snap.total_rx_rate_bps)),
+                                (1, "Sent", crate::sensors::format_bytes(snap.total_tx_bytes), crate::sensors::format_rate(snap.total_tx_rate_bps)),
+                                (2, "Live rate", crate::sensors::format_rate(snap.total_rx_rate_bps + snap.total_tx_rate_bps), "RX + TX".to_string()),
+                                (3, "Active", interfaces.iter().filter(|net| net.rx_rate_bps > 0.0 || net.tx_rate_bps > 0.0).count().to_string(), "interfaces with traffic".to_string()),
+                            ] {
+                                cols[column].vertical(|ui| {
+                                    ui.label(RichText::new(label).size(10.5).color(p.text_muted));
+                                    ui.add_space(3.0);
+                                    ui.label(RichText::new(value).size(18.0).strong().monospace().color(p.text_primary));
+                                    ui.label(RichText::new(detail).size(9.5).monospace().color(p.text_muted));
+                                });
+                            }
+                        });
+                    });
+
+                ui.add_space(10.0);
+
+                Frame::none()
+                    .fill(p.bg_card)
+                    .rounding(Rounding::same(8.0))
+                    .inner_margin(egui::Margin::symmetric(16.0, 12.0))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new("Interfaces").size(14.0).strong().color(p.text_primary));
+                        ui.add_space(8.0);
+
+                        if interfaces.is_empty() {
+                            ui.label(RichText::new("No network interface counters were reported.").size(11.0).color(p.text_muted));
+                            return;
+                        }
+
+                        const NAME_W: f32 = 150.0;
+                        const TYPE_W: f32 = 90.0;
+                        const VALUE_W: f32 = 130.0;
+                        const RATE_W: f32 = 150.0;
+                        let max_total = interfaces.iter().map(|net| net.rx_bytes + net.tx_bytes).max().unwrap_or(1).max(1);
+
+                        ScrollArea::horizontal()
+                            .id_salt("data_usage_interfaces_h")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                egui::Grid::new("data_usage_interfaces_grid")
+                                    .num_columns(6)
+                                    .spacing(egui::vec2(12.0, 6.0))
+                                    .show(ui, |ui| {
+                                        for (width, heading) in [
+                                            (NAME_W, "Interface"),
+                                            (TYPE_W, "Type"),
+                                            (VALUE_W, "Received"),
+                                            (VALUE_W, "Sent"),
+                                            (VALUE_W, "Total"),
+                                            (RATE_W, "Live rate"),
+                                        ] {
+                                            ui.allocate_ui_with_layout(
+                                                egui::vec2(width, 22.0),
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| { ui.label(RichText::new(heading).size(10.0).color(p.text_muted)); },
+                                            );
+                                        }
+                                        ui.end_row();
+
+                                        for net in &interfaces {
+                                            ui.allocate_ui_with_layout(egui::vec2(NAME_W, 28.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                ui.label(RichText::new(&net.name).size(11.5).strong().color(p.text_primary));
+                                            });
+                                            ui.allocate_ui_with_layout(egui::vec2(TYPE_W, 28.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                let kind = if net.name == "lo" { "Loopback" } else if net.is_wireless { "Wi-Fi" } else { "Wired" };
+                                                ui.label(RichText::new(kind).size(10.5).color(p.text_secondary));
+                                            });
+                                            for (width, value) in [
+                                                (VALUE_W, crate::sensors::format_bytes(net.rx_bytes)),
+                                                (VALUE_W, crate::sensors::format_bytes(net.tx_bytes)),
+                                            ] {
+                                                ui.allocate_ui_with_layout(egui::vec2(width, 28.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    ui.label(RichText::new(value).size(11.0).monospace().color(p.text_secondary));
+                                                });
+                                            }
+
+                                            let total = net.rx_bytes + net.tx_bytes;
+                                            ui.allocate_ui_with_layout(egui::vec2(VALUE_W, 28.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.label(RichText::new(crate::sensors::format_bytes(total)).size(11.0).monospace().color(p.text_primary));
+                                                let bar_width = 34.0 * total as f32 / max_total as f32;
+                                                let (bar, _) = ui.allocate_exact_size(egui::vec2(34.0, 3.0), egui::Sense::hover());
+                                                ui.painter().rect_filled(bar, Rounding::same(1.5), p.bg_button);
+                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar.min, egui::vec2(bar_width, bar.height())), Rounding::same(1.5), accent);
+                                            });
+
+                                            let rx_rate = crate::sensors::format_rate(net.rx_rate_bps);
+                                            let tx_rate = crate::sensors::format_rate(net.tx_rate_bps);
+                                            ui.allocate_ui_with_layout(egui::vec2(RATE_W, 28.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.label(RichText::new(format!("↓ {rx_rate}  ↑ {tx_rate}")).size(10.5).monospace().color(p.text_secondary));
+                                            });
+                                            ui.end_row();
+                                        }
+                                    });
+                            });
+                    });
+            });
+    }
+
+    #[allow(dead_code)]
+    fn render_sensors_data_usage_page_legacy(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
+        let p = self.palette();
+        let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
 
         let wifi_snap = if !is_remote {

@@ -10678,7 +10678,7 @@ impl LauncherApp {
                             };
 
                             let cpu_disp = if ui.available_width() < 240.0 && cpu_clean.len() > 18 {
-                                format!("{}…", &cpu_clean[..17])
+                                format!("{}…", cpu_clean.chars().take(17).collect::<String>())
                             } else {
                                 cpu_clean
                             };
@@ -10692,7 +10692,7 @@ impl LauncherApp {
                         if ui.available_width() > 65.0 {
                             ui.label(RichText::new("•").size(9.5).color(p.border));
                             let ram_gb = (snap.mem_total_bytes as f64 / (1024.0 * 1024.0 * 1024.0)).round() as u64;
-                            let ram_label = if ram_gb > 0 { format!("{}GB RAM", ram_gb) } else { "8GB RAM".to_string() };
+                            let ram_label = if ram_gb > 0 { format!("{}GB RAM", ram_gb) } else { "RAM —".to_string() };
                             ui.label(RichText::new(format!("{} {}", crate::lucide::RAM, ram_label)).size(10.0).color(p.text_secondary));
                         }
 
@@ -10780,6 +10780,7 @@ impl LauncherApp {
             } else {
                 if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
                     let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited)
+                        || self.sensors_subtab == SensorsSubTab::Ram
                         || self.sensors_subtab == SensorsSubTab::DataUsage
                         || self.wifi_app_force_refresh;
                     self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
@@ -10810,7 +10811,8 @@ impl LauncherApp {
                                         }
                                     } else {
                                         let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited)
-                                            || self.sensors_subtab == SensorsSubTab::DataUsage
+                                            || self.sensors_subtab == SensorsSubTab::Ram
+                        || self.sensors_subtab == SensorsSubTab::DataUsage
                                             || self.wifi_app_force_refresh;
                                         self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
                                         self.last_sensors_refresh = Instant::now();
@@ -10944,7 +10946,8 @@ impl LauncherApp {
         } else {
             if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
                 let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited)
-                    || self.sensors_subtab == SensorsSubTab::DataUsage
+                    || self.sensors_subtab == SensorsSubTab::Ram
+                        || self.sensors_subtab == SensorsSubTab::DataUsage
                     || self.wifi_app_force_refresh;
                 self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
                 self.last_sensors_refresh = Instant::now();

@@ -99,6 +99,9 @@ pub struct DiskInfo {
 pub struct PhysicalDiskInfo {
     pub name: String,
     pub model: String,
+    pub bus_interface: String,
+    pub smart_status: String,
+    pub discard_supported: Option<bool>,
     pub total_bytes: u64,
     pub is_ssd: bool,
     pub partition_count: usize,
@@ -486,6 +489,9 @@ impl SystemSensorsCollector {
                     physical_disks.push(PhysicalDiskInfo {
                         name: clean_name.clone(),
                         model,
+                        bus_interface: String::new(),
+                        smart_status: String::new(),
+                        discard_supported: None,
                         total_bytes: d.total_bytes,
                         is_ssd,
                         partition_count: 1,
@@ -974,10 +980,41 @@ pub fn collect_physical_disks() -> Vec<PhysicalDiskInfo> {
             }
             partitions.sort_by_key(|p| p.partition_num);
 
+            let bus_interface = Path::new(&format!("{}/device/subsystem", p))
+                .canonicalize()
+                .ok()
+                .and_then(|path| path.file_name().map(|name| name.to_string_lossy().to_string()))
+                .map(|bus| match bus.as_str() {
+                    "nvme" => "NVMe".to_string(),
+                    "scsi" => "SCSI".to_string(),
+                    "virtio" => "VirtIO".to_string(),
+                    other => other.to_uppercase(),
+                })
+                .unwrap_or_default();
+            let discard_supported = fs::read_to_string(format!("{}/queue/discard_max_bytes", p))
+                .ok()
+                .and_then(|value| value.trim().parse::<u64>().ok())
+                .map(|limit| limit > 0);
+            let smart_status = Command::new("timeout")
+                .args(["3s", "smartctl", "-H", "-j", "-n", "standby", &format!("/dev/{dev}")])
+                .output()
+                .ok()
+                .and_then(|output| serde_json::from_slice::<serde_json::Value>(&output.stdout).ok())
+                .and_then(|report| {
+                    report["smart_status"]["passed"]
+                        .as_bool()
+                        .or_else(|| report["nvme_smart_health_information_log"]["critical_warning"].as_u64().map(|warning| warning == 0))
+                })
+                .map(|passed| if passed { "PASSED" } else { "WARNING" }.to_string())
+                .unwrap_or_default();
+
             let partition_count = partitions.len();
             physical_disks.push(PhysicalDiskInfo {
                 name: dev,
                 model,
+                bus_interface,
+                smart_status,
+                discard_supported,
                 total_bytes: size_bytes,
                 is_ssd,
                 partition_count,
@@ -3027,6 +3064,9 @@ try:
         phys_disks.append({
             "name": dev_name,
             "model": model,
+            "bus_interface": os.path.basename(os.path.realpath(dev + "/device/subsystem")).upper(),
+            "discard_supported": (int(open(dev + "/queue/discard_max_bytes").read().strip()) > 0) if os.path.exists(dev + "/queue/discard_max_bytes") else None,
+            "smart_status": "",
             "total_bytes": sz,
             "is_ssd": is_ssd,
             "partition_count": len(parts),
@@ -3046,6 +3086,9 @@ if not phys_disks and disks:
             phys_disks.append({
                 "name": nm,
                 "model": "Storage Volume (" + d.get("mount", "/") + ")",
+                "bus_interface": "",
+                "discard_supported": None,
+                "smart_status": "",
                 "total_bytes": d.get("total", 0),
                 "is_ssd": True,
                 "partition_count": 1,
@@ -3391,6 +3434,9 @@ print(json.dumps(data))
         for p in arr {
             let name = p["name"].as_str().unwrap_or("").to_string();
             let model = p["model"].as_str().unwrap_or("Disk Drive").to_string();
+            let bus_interface = p["bus_interface"].as_str().unwrap_or("").to_string();
+            let smart_status = p["smart_status"].as_str().unwrap_or("").to_string();
+            let discard_supported = p["discard_supported"].as_bool();
             let total_bytes = p["total_bytes"].as_u64().unwrap_or(0);
             let is_ssd = p["is_ssd"].as_bool().unwrap_or(false);
             let partition_count = p["partition_count"].as_u64().unwrap_or(0) as usize;
@@ -3409,6 +3455,9 @@ print(json.dumps(data))
             physical_disks.push(PhysicalDiskInfo {
                 name,
                 model,
+                bus_interface,
+                smart_status,
+                discard_supported,
                 total_bytes,
                 is_ssd,
                 partition_count,
@@ -3434,6 +3483,9 @@ print(json.dumps(data))
                 physical_disks.push(PhysicalDiskInfo {
                     name: nm.clone(),
                     model,
+                    bus_interface: String::new(),
+                    smart_status: String::new(),
+                    discard_supported: None,
                     total_bytes: d.total_bytes,
                     is_ssd: true,
                     partition_count: 1,

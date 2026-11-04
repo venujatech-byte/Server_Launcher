@@ -13771,11 +13771,17 @@ impl LauncherApp {
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new("—").size(22.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                let smart_status = d1_phys.map(|disk| disk.smart_status.as_str()).filter(|status| !status.is_empty()).unwrap_or("Unavailable");
+                                let smart_color = match smart_status {
+                                    "PASSED" => accent,
+                                    "WARNING" => Color32::from_rgb(239, 68, 68),
+                                    _ => p.text_muted,
+                                };
+                                ui.label(RichText::new(smart_status).size(18.0).strong().color(smart_color));
                             });
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("SMART not queried").size(9.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new("SMART self-test status").size(9.0).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new("").size(9.0).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
                                 });
@@ -13798,12 +13804,12 @@ impl LauncherApp {
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 3.0;
-                                ui.label(RichText::new("—").size(22.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("").size(11.0).color(Color32::from_rgb(203, 213, 225)));
+                                let bus = d1_phys.map(|disk| disk.bus_interface.as_str()).filter(|bus| !bus.is_empty()).unwrap_or("—");
+                                ui.label(RichText::new(bus).size(18.0).strong().color(p.text_primary));
                             });
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("Link not queried").size(9.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new("Reported device bus").size(9.0).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new("").size(9.0).monospace().color(p.text_muted));
                                 });
@@ -13826,11 +13832,18 @@ impl LauncherApp {
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new("—").size(22.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                let discard = d1_phys.and_then(|disk| disk.discard_supported);
+                                let discard_label = match discard {
+                                    Some(true) => "SUPPORTED",
+                                    Some(false) => "UNSUPPORTED",
+                                    None => "—",
+                                };
+                                let discard_color = if discard == Some(true) { accent } else { p.text_muted };
+                                ui.label(RichText::new(discard_label).size(15.0).strong().color(discard_color));
                             });
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("Discard not queried").size(9.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new("Queue discard capability").size(9.0).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new("").size(9.0).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
                                 });

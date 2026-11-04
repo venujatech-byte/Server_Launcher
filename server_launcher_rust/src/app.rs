@@ -19263,10 +19263,8 @@ impl LauncherApp {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                 let mut new_sort = None;
-                egui::Grid::new("top_apps_task_manager_header")
-                    .num_columns(7)
-                    .spacing(egui::vec2(COL_SPACING, 4.0))
-                    .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = COL_SPACING;
                         for (width, title, key, total) in [
                             (col_name_w, "Name", "name", String::new()),
                             (COL_CPU_W, "CPU", "cpu", format!("{:.0}%", snap.cpu_global_usage)),
@@ -19276,7 +19274,8 @@ impl LauncherApp {
                             (COL_GPU_W, "GPU", "gpu", total_gpu_pct.map(|v| format!("{v:.0}%")).unwrap_or_else(|| "—".to_string())),
                             (COL_POWER_W, "Power", "power", "—".to_string()),
                         ] {
-                            ui.allocate_ui_with_layout(egui::vec2(width, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
+                            let name_column = key == "name";
+                            ui.allocate_ui_with_layout(egui::vec2(width, 36.0), if name_column { egui::Layout::top_down(egui::Align::Min) } else { egui::Layout::top_down(egui::Align::Max) }, |ui| {
                                 let is_sel = self.sensors_top_apps_sort == key;
                                 if !total.is_empty() {
                                     ui.label(RichText::new(total).size(11.5).strong().color(p.text_primary));
@@ -19289,8 +19288,7 @@ impl LauncherApp {
                                 }
                             });
                         }
-                        ui.end_row();
-                    });
+                });
                 if let Some(col) = new_sort {
                     if self.sensors_top_apps_sort == col {
                         self.sensors_top_apps_sort_desc = !self.sensors_top_apps_sort_desc;

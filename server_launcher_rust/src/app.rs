@@ -11027,14 +11027,12 @@ impl LauncherApp {
             push_telemetry(&mut self.socket_tcp_history, cur_tcp, 60);
             push_telemetry(&mut self.socket_udp_history, cur_udp, 60);
 
-            let cur_gpu_load = snap.gpus.first().and_then(|g| g.load_pct).unwrap_or(0.0);
-            push_telemetry(&mut self.gpu_load_history, cur_gpu_load, 60);
-
-            let cur_3d = (cur_gpu_load * 0.25).clamp(0.0, 100.0);
-            push_telemetry(&mut self.gpu_3d_history, cur_3d, 20);
-
-            let cur_copy = (cur_gpu_load * 0.1).clamp(0.0, 100.0);
-            push_telemetry(&mut self.gpu_copy_history, cur_copy, 20);
+            if let Some(load) = snap.gpus.get(self.selected_gpu_idx).and_then(|g| g.load_pct) {
+                push_telemetry(&mut self.gpu_load_history, load, 60);
+            }
+            // Per-engine counters cannot be inferred from total GPU utilization.
+            self.gpu_3d_history.clear();
+            self.gpu_copy_history.clear();
 
             let num_cores = snap.cpu_core_usages.len();
             if self.cpu_core_histories.len() != num_cores {

@@ -12366,7 +12366,7 @@ impl LauncherApp {
                                         ui.add_space(3.0);
                                         let (mr, mp) = ui.allocate_painter(egui::vec2(ui.available_width(), 2.5), egui::Sense::hover());
                                         mp.rect_filled(mr.rect, Rounding::same(1.5), Color32::from_rgb(18, 26, 40));
-                                        let mw = (mr.rect.width() * frac * 3.5).clamp(3.0, mr.rect.width());
+                                        let mw = mr.rect.width() * frac;
                                         mp.rect_filled(egui::Rect::from_min_size(mr.rect.min, egui::vec2(mw, 2.5)), Rounding::same(1.5), accent);
                                     })
                                     .response
@@ -12381,10 +12381,7 @@ impl LauncherApp {
                             };
 
                             if apps.is_empty() {
-                                for (name, pid, desc, mem_bytes, mem_str, ico) in default_apps {
-                                    render_proc_row(ui, name, pid, desc, mem_bytes, mem_str, ico);
-                                    ui.add_space(3.0);
-                                }
+                                ui.label(RichText::new("Waiting for process telemetry…").size(10.5).color(p.text_muted));
                             } else {
                                 for app in apps.iter().take(4) {
                                     let mem_str = crate::sensors::format_bytes(app.memory_bytes);
@@ -12397,7 +12394,7 @@ impl LauncherApp {
 
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
-                        
+
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     let btn = egui::Button::new(RichText::new("Full Process Tree →").size(9.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)))
                                         .fill(accent_with_alpha(accent, 18))
@@ -12434,36 +12431,14 @@ impl LauncherApp {
                 let gpu_name = gpu
                     .map(|g| g.name.as_str())
                     .filter(|n| !n.trim().is_empty() && *n != "Unknown GPU")
-                    .unwrap_or(if is_remote { "Headless Server / Kernel Framebuffer" } else { "Hardware Accelerated Graphics" });
+                    .unwrap_or(if is_remote { "GPU information unavailable" } else { "GPU information unavailable" });
 
                 let gpu_name_lower = gpu_name.to_lowercase();
                 let is_intel = gpu_name_lower.contains("intel") || gpu_name_lower.contains("uhd") || gpu_name_lower.contains("iris") || gpu_name_lower.contains("arc") || gpu_name_lower.contains("hd graphics");
                 let is_amd = gpu_name_lower.contains("amd") || gpu_name_lower.contains("radeon");
                 let is_nvidia = gpu_name_lower.contains("nvidia") || gpu_name_lower.contains("geforce") || gpu_name_lower.contains("rtx") || gpu_name_lower.contains("gtx");
 
-                let gpu_spec_label = if let Some(g) = gpu {
-                    if !g.driver.trim().is_empty() {
-                        g.driver.as_str()
-                    } else if is_nvidia {
-                        "NVIDIA NVDEC / CUDA"
-                    } else if is_amd {
-                        "AMD RDNA / RADV"
-                    } else if is_intel {
-                        "Intel QuickSync / DRM"
-                    } else {
-                        "Direct Rendering Infrastructure"
-                    }
-                } else if is_remote {
-                    "Virtual Display / Kernel Framebuffer"
-                } else if is_nvidia {
-                    "NVIDIA Unified Architecture"
-                } else if is_amd {
-                    "AMD Radeon Unified Architecture"
-                } else if is_intel {
-                    "Intel Gen Graphics EUs"
-                } else {
-                    "Direct Rendering Infrastructure"
-                };
+                let gpu_spec_label = gpu.map(|g| g.driver.as_str()).filter(|driver| !driver.trim().is_empty()).unwrap_or("Driver unavailable");
 
                 // Multi-GPU Dispatch Switcher Pills (when host has 2+ GPUs)
                 if snap.gpus.len() > 1 {
@@ -12544,35 +12519,16 @@ impl LauncherApp {
                                             .fill(Color32::from_rgb(18, 28, 42))
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(4.0))).clicked() {
-                                            // Reset or re-query
-                                        }
-
-                                        let modes = ["TURBO", "BALANCED", "ECO"];
-                                        let mode_indices = [2, 1, 0];
-                                        for (&m_idx, &m_name) in mode_indices.iter().zip(modes.iter()) {
-                                            let is_selected = self.gpu_mode == m_idx;
-                                            let btn_fill = if is_selected {
-                                                accent_with_alpha(accent, 35)
+                                            if let Some(hid) = host_id {
+                                                if let Some(host) = self.ssh_hosts.iter().find(|host| host.id == hid).cloned() {
+                                                    self.trigger_remote_sensors_query(host);
+                                                }
                                             } else {
-                                                Color32::from_rgb(18, 28, 42)
-                                            };
-                                            let btn_stroke = if is_selected {
-                                                Stroke::new(1.0_f32, accent)
-                                            } else {
-                                                Stroke::NONE
-                                            };
-                                            let text_color = if is_selected {
-                                                Color32::from_rgb(241, 245, 249)
-                                            } else {
-                                                p.text_muted
-                                            };
-                                            if ui.add(egui::Button::new(RichText::new(m_name).size(9.5).monospace().strong().color(text_color))
-                                                .fill(btn_fill)
-                                                .stroke(btn_stroke)
-                                                .rounding(Rounding::same(4.0))).clicked() {
-                                                self.gpu_mode = m_idx;
+                                                self.trigger_local_sensors_query(false, Some(ui.ctx().clone()));
                                             }
                                         }
+
+                                        ui.label(RichText::new("Power controls unavailable").size(9.0).color(p.text_muted));
                                     });
                                 });
                             });
@@ -12580,25 +12536,9 @@ impl LauncherApp {
                             ui.add_space(3.0);
 
                             // Row 3: Subtitle spanning the full card width underneath Row 2
-                            let driver_str = gpu.map(|g| g.driver.as_str()).filter(|s| !s.trim().is_empty()).unwrap_or_else(|| {
-                                if is_remote {
-                                    "Kernel Direct Rendering Manager (DRM / KMS)"
-                                } else if is_nvidia {
-                                    "NVIDIA Proprietary / Nouveau DRM"
-                                } else if is_amd {
-                                    "AMDGPU / Mesa RADV"
-                                } else if is_intel {
-                                    "i915 / Xe (Mesa Direct Rendering)"
-                                } else {
-                                    "Direct Rendering Manager (DRM)"
-                                }
-                            });
-                            let topo_str = if is_remote {
-                                if gpu.is_some() { format!("Topology: PCIe Bus GPU {}", active_gpu_idx + 1) } else { "Topology: Headless Server / Hypervisor".to_string() }
-                            } else {
-                                format!("Topology: PCI bus 0, device {}, func 0", 2 + active_gpu_idx)
-                            };
-                            let date_or_link = if is_remote { "Telemetry: Streaming via SSH" } else { "Kernel Direct Rendering Online" };
+                            let driver_str = gpu_spec_label;
+                            let topo_str = "PCI topology unavailable";
+                            let date_or_link = if is_remote { "Remote telemetry" } else { "Local telemetry" };
 
                             ui.horizontal_wrapped(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
@@ -12614,128 +12554,60 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 2. Row of 4 Big Metric Cards
-                let cur_gpu_load = gpu.and_then(|g| g.load_pct).unwrap_or_else(|| self.gpu_load_history.back().copied().unwrap_or(0.0));
-                let cur_3d = if is_remote && gpu.is_none() { 0.0 } else { self.gpu_3d_history.back().copied().unwrap_or(3.0) };
-                let cur_copy = if is_remote && gpu.is_none() { 0.0 } else { self.gpu_copy_history.back().copied().unwrap_or(1.1) };
-                let power_val = gpu.and_then(|g| g.power_watts).unwrap_or(if is_remote { 0.0 } else { 2.9 });
-
-                let (min_clk, max_clk) = if is_nvidia {
-                    (300, 2600)
-                } else if is_amd {
-                    (300, 2400)
-                } else if is_intel {
-                    (200, 1150)
-                } else {
-                    (200, 1000)
-                };
-                let clock_val = gpu.and_then(|g| g.clock_mhz).unwrap_or(if is_remote { 0 } else { (min_clk + max_clk) / 2 });
-
-                let gpu_slice: Vec<f32> = self.gpu_load_history.iter().copied().collect();
-                let gpu_3d_slice: Vec<f32> = self.gpu_3d_history.iter().copied().collect();
-                let gpu_clock_slice: Vec<f32> = if !gpu_slice.is_empty() {
-                    gpu_slice.iter().map(|&u| if is_remote && gpu.is_none() { 0.0 } else { min_clk as f32 + (u / 100.0) * (max_clk - min_clk) as f32 }).collect()
-                } else {
-                    vec![clock_val as f32; 5]
-                };
-
-                let sys_total_ram_mb = snap.mem_total_bytes / (1024 * 1024);
-                let default_shared_vram_mb = (sys_total_ram_mb / 2).max(1024);
-                let (vram_val, vram_sub, vram_peak, vram_pwr, has_dedicated, total_vram_mb, used_vram_mb) = if let Some(g) = gpu {
-                    if let (Some(used), Some(total)) = (g.mem_used_mb, g.mem_total_mb) {
-                        let u_gb = used as f64 / 1024.0;
-                        let t_gb = total as f64 / 1024.0;
-                        let pct = if total > 0 { (used as f64 / total as f64 * 100.0) as f32 } else { 0.0 };
-                        (
-                            format!("{:.1}", u_gb),
-                            format!("/ {:.1} GB", t_gb),
-                            format!("VRAM {:.0}%", pct),
-                            format!("POWER {:.1}W", power_val),
-                            true,
-                            total,
-                            used,
-                        )
-                    } else if is_remote {
-                        ("0.0".to_string(), "/ N/A".to_string(), "HEADLESS SYSTEM".to_string(), format!("POWER {:.1}W", power_val), false, 0, 0)
+                let clock_val = gpu.and_then(|g| g.clock_mhz).unwrap_or(0);
+                let max_clk = clock_val.max(1);
+                let gpu_slice: Vec<f32> = if gpu.and_then(|g| g.load_pct).is_some() {
+                    self.gpu_load_history.iter().copied().collect()
+                } else { Vec::new() };
+                // Per-engine, clock and VRAM histories are not collected.
+                let gpu_3d_slice: Vec<f32> = Vec::new();
+                let gpu_clock_slice: Vec<f32> = Vec::new();
+                let gpu_vram_slice: Vec<f32> = Vec::new();
+                let (vram_val, vram_sub, vram_peak, vram_pwr, has_dedicated, total_vram_mb, used_vram_mb) =
+                    if let Some((used, total)) = gpu.and_then(|g| g.mem_used_mb.zip(g.mem_total_mb)).filter(|(_, total)| *total > 0) {
+                        let pct = used as f64 / total.max(1) as f64 * 100.0;
+                        (format!("{:.1}", used as f64 / 1024.0), format!("/ {:.1} GB", total as f64 / 1024.0),
+                         format!("USED {:.0}%", pct), gpu.and_then(|g| g.power_watts).map(|w| format!("POWER {:.1}W", w)).unwrap_or_else(|| "Power unavailable".to_string()), true, total, used)
                     } else {
-                        let u_mb = ((default_shared_vram_mb as f64 * 0.08) + (cur_gpu_load as f64 * 4.0)).min(default_shared_vram_mb as f64 * 0.9) as u64;
-                        let u_gb = u_mb as f64 / 1024.0;
-                        let t_gb = default_shared_vram_mb as f64 / 1024.0;
-                        let pct = (u_mb as f64 / default_shared_vram_mb as f64 * 100.0) as f32;
-                        (
-                            format!("{:.1}", u_gb),
-                            format!("/ {:.1} GB", t_gb),
-                            format!("UTILIZATION {:.0}%", pct),
-                            format!("POWER {:.1}W", power_val),
-                            false,
-                            default_shared_vram_mb,
-                            u_mb,
-                        )
-                    }
-                } else if is_remote {
-                    ("0.0".to_string(), "/ N/A".to_string(), "HEADLESS SYSTEM".to_string(), "POWER 0.0W".to_string(), false, 0, 0)
-                } else {
-                    let u_mb = ((default_shared_vram_mb as f64 * 0.08) + (cur_gpu_load as f64 * 4.0)).min(default_shared_vram_mb as f64 * 0.9) as u64;
-                    let u_gb = u_mb as f64 / 1024.0;
-                    let t_gb = default_shared_vram_mb as f64 / 1024.0;
-                    let pct = (u_mb as f64 / default_shared_vram_mb as f64 * 100.0) as f32;
-                    (
-                        format!("{:.1}", u_gb),
-                        format!("/ {:.1} GB", t_gb),
-                        format!("UTILIZATION {:.0}%", pct),
-                        format!("POWER {:.1}W", power_val),
-                        false,
-                        default_shared_vram_mb,
-                        u_mb,
-                    )
-                };
-                let gpu_vram_slice: Vec<f32> = vec![if is_remote && gpu.is_none() { 0.0 } else { (used_vram_mb as f32 / 1024.0).max(0.1) }; 5];
+                        ("—".to_string(), String::new(), "Unavailable".to_string(), String::new(), false, 0, 0)
+                    };
 
                 ui.columns(4, |cols| {
                     // Card 1: GPU CORE LOAD
-                    let mode_lbl = match self.gpu_mode { 2 => "MODE: TURBO", 0 => "MODE: ECO", _ => "MODE: BALANCED" };
-                    let compute_array_lbl = if is_remote && gpu.is_none() {
-                        "Headless / Kernel SimpleDRM"
-                    } else if is_nvidia {
-                        "CUDA & Tensor Cores"
-                    } else if is_amd {
-                        "RDNA Compute Units"
-                    } else if is_intel {
-                        "EU Shading Compute Array"
-                    } else {
-                        "Hardware Shader Pipeline"
-                    };
+                    let mode_lbl = "";
+                    let compute_array_lbl = "Reported GPU utilization";
                     render_big_stat_card(
                         &mut cols[0],
                         crate::lucide::GAUGE,
                         "GPU CORE LOAD",
-                        &format!("{:.1}", cur_gpu_load),
+                        &gpu.and_then(|g| g.load_pct).map(|v| format!("{:.1}", v)).unwrap_or_else(|| "—".to_string()),
                         "%",
                         compute_array_lbl,
                         mode_lbl,
-                        if is_remote && gpu.is_none() { "STANDBY" } else { "DYNAMIC" },
+                        "",
                         &gpu_slice,
                         100.0,
-                        Some(if cur_gpu_load > 0.0 { cur_gpu_load / 100.0 } else { 0.05 }),
+                        gpu.and_then(|g| g.load_pct).map(|v| v / 100.0),
                         accent,
                         p.bg_card,
                         p.text_muted,
                     );
 
                     // Card 2: CORE CLOCK
-                    let min_clk_str = if is_remote && gpu.is_none() { "HEADLESS".to_string() } else { format!("MIN {} MHz", min_clk) };
-                    let max_clk_str = if is_remote && gpu.is_none() { "N/A".to_string() } else { format!("MAX {} MHz", max_clk) };
+                    let min_clk_str = "Clock range unavailable";
+                    let max_clk_str = "";
                     render_big_stat_card(
                         &mut cols[1],
                         crate::lucide::ZAP,
                         "CORE CLOCK",
-                        &format!("{}", clock_val),
+                        &gpu.and_then(|g| g.clock_mhz).map(|v| v.to_string()).unwrap_or_else(|| "—".to_string()),
                         "MHz",
-                        if is_remote && gpu.is_none() { "Direct Kernel Display Clock" } else { "Dynamic Frequency Scaling" },
+                        "Reported GPU clock",
                         &min_clk_str,
                         &max_clk_str,
                         &gpu_clock_slice,
                         max_clk as f32 * 1.05,
-                        Some(if clock_val > 0 { (clock_val as f32 / max_clk as f32).clamp(0.1, 1.0) } else { 0.05 }),
+                        None,
                         accent,
                         p.bg_card,
                         p.text_muted,
@@ -12746,22 +12618,22 @@ impl LauncherApp {
                         &mut cols[2],
                         crate::lucide::BOX,
                         "3D RENDER ENGINE",
-                        &format!("{:.1}", cur_3d),
+                        "—",
                         "%",
-                        if is_remote && gpu.is_none() { "Software / Headless Pipeline" } else { "Direct3D & Vulkan Pipeline" },
-                        "ACTIVE ENGINE",
-                        if is_remote && gpu.is_none() { "TTY 0 FPS" } else { "60 FPS" },
+                        "Per-engine data unavailable",
+                        "",
+                        "",
                         &gpu_3d_slice,
                         100.0,
-                        Some(if cur_3d > 0.0 { cur_3d / 100.0 } else { 0.05 }),
+                        None,
                         accent,
                         p.bg_card,
                         p.text_muted,
                     );
 
                     // Card 4: SHARED / DEDICATED VRAM
-                    let card_title = if has_dedicated { "DEDICATED VRAM" } else { "SHARED VRAM" };
-                    let card_subtitle = if has_dedicated { "High-Bandwidth GDDR VRAM Pool" } else { "Dynamic Unified Memory Pool" };
+                    let card_title = "GPU MEMORY";
+                    let card_subtitle = "Reported GPU memory";
 
                     render_big_stat_card(
                         &mut cols[3],
@@ -12774,7 +12646,7 @@ impl LauncherApp {
                         &vram_pwr,
                         &gpu_vram_slice,
                         (total_vram_mb as f32 / 1024.0).max(4.0),
-                        Some(if is_remote && gpu.is_none() { 0.02 } else { 0.1 }),
+                        None,
                         accent,
                         p.bg_card,
                         p.text_muted,
@@ -12860,7 +12732,7 @@ impl LauncherApp {
                             ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(accent));
                             ui.label(RichText::new("ENGINE UTILIZATION TRACE (60S WINDOW)").size(12.5).strong().color(p.text_primary));
 
-                      
+
                         });
 
                         ui.add_space(8.0);
@@ -12877,33 +12749,23 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         ui.vertical(|ui| {
                                             ui.label(RichText::new("3D Engine / Render").size(11.0).strong().color(p.text_primary));
-                                            let engine_api_desc = if is_remote && gpu.is_none() {
-                                                "Headless TTY • Framebuffer"
-                                            } else if is_nvidia {
-                                                "Direct3D 12 • Vulkan 1.3 • CUDA"
-                                            } else if is_amd {
-                                                "Direct3D 12 • Vulkan 1.3 • ROCm"
-                                            } else if is_intel {
-                                                "Direct3D 12 • Vulkan 1.3 • oneAPI"
-                                            } else {
-                                                "Vulkan 1.3 • OpenGL 4.6"
-                                            };
+                                            let engine_api_desc = "Per-engine data unavailable";
                                             ui.label(RichText::new(engine_api_desc).size(8.5).monospace().color(p.text_muted));
                                         });
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             ui.vertical(|ui| {
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new(format!("{:.1} %", cur_3d)).size(15.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
+                                                    ui.label(RichText::new("—").size(15.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
                                                 });
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new(if is_remote && gpu.is_none() { "Idle: 0.0%" } else { "Peak: 18.4%" }).size(8.5).monospace().color(p.text_muted));
+                                                    ui.label(RichText::new("Unavailable").size(8.5).monospace().color(p.text_muted));
                                                 });
                                             });
                                         });
                                     });
                                     ui.add_space(6.0);
                                     let spark_w = ui.available_width();
-                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, self.gpu_3d_history.make_contiguous(), accent, false);
+                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, &[], accent, false);
                                 });
 
                             // Sub-card 2: Copy Engine (Blitter)
@@ -12921,17 +12783,17 @@ impl LauncherApp {
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             ui.vertical(|ui| {
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new(format!("{:.1} %", cur_copy)).size(15.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
+                                                    ui.label(RichText::new("—").size(15.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
                                                 });
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new(if is_remote && gpu.is_none() { "Idle: 0.0%" } else { "Peak: 6.2%" }).size(8.5).monospace().color(p.text_muted));
+                                                    ui.label(RichText::new("Unavailable").size(8.5).monospace().color(p.text_muted));
                                                 });
                                             });
                                         });
                                     });
                                     ui.add_space(6.0);
                                     let spark_w = ui.available_width();
-                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, self.gpu_copy_history.make_contiguous(), accent, false);
+                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, &[], accent, false);
                                 });
                         });
 
@@ -12960,14 +12822,14 @@ impl LauncherApp {
                                                 "Video Decode (VA-API)"
                                             };
                                             ui.label(RichText::new(vdec_hdr).size(11.0).strong().color(p.text_primary));
-                                            ui.label(RichText::new("H.264 • HEVC 10-bit • VP9 Profile 2").size(8.5).monospace().color(p.text_muted));
+                                            ui.label(RichText::new("Capabilities unavailable").size(8.5).monospace().color(p.text_muted));
                                         });
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             ui.vertical(|ui| {
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new("0.0 %").size(15.0).monospace().strong().color(p.text_muted));
+                                                    ui.label(RichText::new("—").size(15.0).monospace().strong().color(p.text_muted));
                                                 });
-                                               
+
                                             });
                                         });
                                     });
@@ -12986,21 +12848,20 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         ui.vertical(|ui| {
                                             ui.label(RichText::new("Video Processing").size(11.0).strong().color(p.text_primary));
-                                            ui.label(RichText::new("Color Correction • Deinterlacing • Scaling").size(8.5).monospace().color(p.text_muted));
+                                            ui.label(RichText::new("Per-engine data unavailable").size(8.5).monospace().color(p.text_muted));
                                         });
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             ui.vertical(|ui| {
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new(if is_remote && gpu.is_none() { "0.0 %" } else { "0.8 %" }).size(15.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
+                                                    ui.label(RichText::new("—").size(15.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
                                                 });
-                                               
+
                                             });
                                         });
                                     });
                                     ui.add_space(6.0);
                                     let spark_w = ui.available_width();
-                                    static VP_SPARK: [f32; 16] = [0.6, 0.7, 0.8, 0.9, 0.8, 0.8, 0.7, 0.8, 0.9, 0.8, 0.8, 0.7, 0.9, 0.8, 0.8, 0.8];
-                                    let vp_slice: &[f32] = if is_remote && gpu.is_none() { &[] } else { &VP_SPARK };
+                                    let vp_slice: &[f32] = &[];
                                     draw_gpu_engine_sparkline(ui, spark_w, 48.0, vp_slice, Color32::from_rgb(96, 165, 250), is_remote && gpu.is_none());
                                 });
                         });
@@ -13010,7 +12871,7 @@ impl LauncherApp {
 
                 // 4. Memory Subsystem Breakdown Card
                 let free_vram_mb = total_vram_mb.saturating_sub(used_vram_mb);
-                let ded_mb_val = if has_dedicated { total_vram_mb } else { 128 };
+                let ded_mb_val = total_vram_mb;
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(8.0))
@@ -13024,9 +12885,7 @@ impl LauncherApp {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 10.0;
-                                    if is_remote && gpu.is_none() {
-                                        ui.label(RichText::new("Headless Architecture • Dedicated System RAM").size(9.0).monospace().color(p.text_muted));
-                                    } else {
+                                    if has_dedicated {
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 4.0;
                                             let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.5, 6.5), egui::Sense::hover());
@@ -13057,21 +12916,12 @@ impl LauncherApp {
                         let br = bar_res.rect;
                         bar_p.rect_filled(br, Rounding::same(4.0), Color32::from_rgb(10, 15, 29));
 
-                        if is_remote && gpu.is_none() {
-                            bar_p.rect_filled(br, Rounding::same(3.0), Color32::from_rgb(30, 41, 59));
+                        if has_dedicated {
+                            let used_width = br.width() * (used_vram_mb as f32 / total_vram_mb.max(1) as f32).clamp(0.0, 1.0);
+                            bar_p.rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(used_width, br.height())), Rounding::same(3.0), accent);
+                            bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + used_width, br.min.y), egui::vec2(br.width() - used_width, br.height())), Rounding::same(3.0), Color32::from_rgb(51, 65, 85));
                         } else {
-                            let (w_ded, w_dyn, w_free) = if total_vram_mb > 0 {
-                                let r_ded = (ded_mb_val as f32 / total_vram_mb as f32).clamp(0.02, 0.40);
-                                let r_dyn = (used_vram_mb as f32 / total_vram_mb as f32).clamp(0.04, 0.70);
-                                let r_free = (1.0 - r_ded - r_dyn).max(0.05);
-                                (br.width() * r_ded, br.width() * r_dyn, br.width() * r_free)
-                            } else {
-                                (br.width() * 0.05, br.width() * 0.15, br.width() * 0.8)
-                            };
-
-                            bar_p.rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(w_ded, br.height())), Rounding::same(3.0), accent);
-                            bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w_ded + 1.0, br.min.y), egui::vec2(w_dyn, br.height())), Rounding::ZERO, Color32::from_rgb(96, 165, 250));
-                            bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w_ded + w_dyn + 2.0, br.min.y), egui::vec2(w_free, br.height())), Rounding::same(3.0), Color32::from_rgb(51, 65, 85));
+                            bar_p.text(br.center(), egui::Align2::CENTER_CENTER, "Unavailable", egui::FontId::monospace(8.5), p.text_muted);
                         }
 
                         ui.add_space(8.0);
@@ -13082,18 +12932,15 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.5, 6.5), egui::Sense::hover());
                                     ui.painter().rect_filled(d_rect, Rounding::same(1.5), accent);
-                                    ui.label(RichText::new("DEDICATED VIDEO").size(9.0).monospace().strong().color(p.text_muted));
+                                    ui.label(RichText::new("REPORTED MEMORY").size(9.0).monospace().strong().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
-                                if is_remote && gpu.is_none() {
-                                    ui.label(RichText::new("0 MB (Headless)").size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                    ui.label(RichText::new("Shared Framebuffer").size(8.5).monospace().color(p.text_muted));
-                                } else if has_dedicated {
+                                if has_dedicated {
                                     ui.label(RichText::new(format!("{} MB", total_vram_mb)).size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                    ui.label(RichText::new("Dedicated VRAM").size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new("GPU memory capacity").size(8.5).monospace().color(p.text_muted));
                                 } else {
-                                    ui.label(RichText::new(format!("{:.1} MB", ded_mb_val as f32)).size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                    ui.label(RichText::new("BIOS Allocated").size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new("—").size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                    ui.label(RichText::new("Unavailable").size(8.5).monospace().color(p.text_muted));
                                 }
                             });
 
@@ -13101,16 +12948,15 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.5, 6.5), egui::Sense::hover());
                                     ui.painter().rect_filled(d_rect, Rounding::same(1.5), Color32::from_rgb(96, 165, 250));
-                                    ui.label(RichText::new("SHARED MEMORY").size(9.0).monospace().strong().color(p.text_muted));
+                                    ui.label(RichText::new("MEMORY USED").size(9.0).monospace().strong().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
-                                if is_remote {
-                                    let host_ram_gb = snap.mem_total_bytes as f64 / 1e9;
-                                    ui.label(RichText::new(format!("{:.1} GB System RAM", host_ram_gb)).size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                    ui.label(RichText::new("Host Managed").size(8.5).monospace().color(p.text_muted));
-                                } else {
+                                if has_dedicated {
                                     ui.label(RichText::new(format!("{:.1} MB / {:.1} GB", used_vram_mb as f64, total_vram_mb as f64 / 1024.0)).size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                    ui.label(RichText::new("OS Managed").size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new("Reported GPU memory").size(8.5).monospace().color(p.text_muted));
+                                } else {
+                                    ui.label(RichText::new("—").size(14.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new("Unavailable").size(8.5).monospace().color(p.text_muted));
                                 }
                             });
 
@@ -13121,25 +12967,8 @@ impl LauncherApp {
                                     ui.label(RichText::new("BANDWIDTH").size(9.0).monospace().strong().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
-                                if is_remote {
-                                    ui.label(RichText::new("System Bus Direct").size(14.0).strong().color(p.text_primary));
-                                    ui.label(RichText::new("Interconnect").size(8.5).monospace().color(p.text_muted));
-                                } else {
-                                    let (bw_rate, ch_desc) = if has_dedicated {
-                                        ("448.0 GB/s".to_string(), "Dedicated GDDR".to_string())
-                                    } else if let Some(ref hw) = snap.memory_hw {
-                                        let bw = if hw.topology.contains("DUAL") {
-                                            if hw.memory_type.contains("DDR5") { "89.6 GB/s" } else { "38.4 GB/s" }
-                                        } else {
-                                            if hw.memory_type.contains("DDR5") { "44.8 GB/s" } else { "19.2 GB/s" }
-                                        };
-                                        (bw.to_string(), hw.topology.clone())
-                                    } else {
-                                        ("25.6 GB/s".to_string(), "System Bus".to_string())
-                                    };
-                                    ui.label(RichText::new(bw_rate).size(14.0).strong().color(p.text_primary));
-                                    ui.label(RichText::new(ch_desc).size(8.5).monospace().color(p.text_muted));
-                                }
+                                ui.label(RichText::new("—").size(14.0).strong().color(p.text_primary));
+                                ui.label(RichText::new("Unavailable").size(8.5).monospace().color(p.text_muted));
                             });
                         });
                     });
@@ -13169,9 +12998,7 @@ impl LauncherApp {
                                         ui.label(RichText::new(crate::lucide::MONITOR).size(12.0).color(accent));
                                     });
 
-                                let disp_title = if is_remote && gpu.is_none() {
-                                    "Virtual Console"
-                                } else if let Some(d) = active_disp {
+                                let disp_title = if let Some(d) = active_disp {
                                     if d.name.starts_with("eDP") { "Display (eDP)" } else { "Display" }
                                 } else {
                                     "Display"
@@ -13191,7 +13018,7 @@ impl LauncherApp {
                                                 let disp_badge = if let Some(d) = active_disp {
                                                     format!("Active ({})", d.name)
                                                 } else if is_remote && gpu.is_none() {
-                                                    "Headless (SSH)".to_string()
+                                                    "Not reported".to_string()
                                                 } else {
                                                     "No Display".to_string()
                                                 };
@@ -13204,16 +13031,7 @@ impl LauncherApp {
                             ui.add_space(14.0);
 
                             // Hero Resolution & Refresh
-                            if is_remote && gpu.is_none() {
-                                ui.label(RichText::new("Virtual TTY").size(24.0).strong().color(p.text_primary));
-                                ui.add_space(2.0);
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 6.0;
-                                    ui.label(RichText::new("@ SSH Console").size(10.0).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
-                                    ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
-                                    ui.label(RichText::new("UTF-8 ANSI").size(10.0).monospace().color(p.text_muted));
-                                });
-                            } else if let Some(d) = active_disp {
+                            if let Some(d) = active_disp {
                                 ui.label(RichText::new(&d.resolution).size(26.0).strong().color(p.text_primary));
                                 ui.add_space(2.0);
                                 ui.horizontal(|ui| {
@@ -13245,7 +13063,7 @@ impl LauncherApp {
                                              ui.set_width(ui.available_width());
                                             ui.label(RichText::new("Color Space").size(9.0).monospace().color(p.text_muted));
                                             ui.add_space(3.0);
-                                            let cs_txt = if is_remote && gpu.is_none() { "ANSI (256)" } else if let Some(d) = active_disp { d.color_space.as_str() } else { "sRGB" };
+                                            let cs_txt = active_disp.map(|d| d.color_space.as_str()).unwrap_or("Unavailable");
                                             ui.label(RichText::new(cs_txt).size(11.0).monospace().strong().color(p.text_primary));
                                         });
 

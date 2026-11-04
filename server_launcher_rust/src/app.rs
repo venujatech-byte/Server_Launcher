@@ -14030,90 +14030,20 @@ impl LauncherApp {
 
                         ui.add_space(8.0);
 
-                        // 4 Key Partition Summary Columns Underneath
-                        if is_remote {
-                            let mounts: Vec<&crate::sensors::DiskInfo> = snap.disks.iter().take(4).collect();
-                            ui.columns(4, |cols| {
-                                if !mounts.is_empty() {
-                                    for (i, mnt) in mounts.iter().enumerate() {
-                                        let col = &mut cols[i];
-                                        let u_gb = mnt.used_bytes as f64 / 1e9;
-                                        let t_gb = mnt.total_bytes as f64 / 1e9;
-                                        col.vertical(|ui| {
-                                            ui.label(RichText::new(format!("MOUNT: {}", mnt.mount_point)).size(9.0).monospace().strong().color(p.text_muted));
-                                            ui.add_space(2.0);
-                                            ui.label(RichText::new(format!("{:.1} GB {}", t_gb, mnt.fs_type)).size(13.0).strong().color(p.text_primary));
-                                            ui.label(RichText::new(format!("{} • {:.1} GB Used", mnt.name, u_gb)).size(9.0).monospace().color(p.text_muted));
-                                        });
-                                    }
-                                    for i in mounts.len()..4 {
-                                        let col = &mut cols[i];
-                                        col.vertical(|ui| {
-                                            ui.label(RichText::new("AUXILIARY VOLUME").size(9.0).monospace().strong().color(p.text_muted));
-                                            ui.add_space(2.0);
-                                            ui.label(RichText::new("Unmounted Slot").size(13.0).color(p.text_muted));
-                                            ui.label(RichText::new("Ready for Mount").size(9.0).monospace().color(p.text_muted));
-                                        });
-                                    }
+                        // Keep the four summary columns, populated from reported mounts on either host.
+                        ui.columns(4, |cols| {
+                            for (i, col) in cols.iter_mut().enumerate() {
+                                if let Some(mount) = snap.disks.get(i) {
+                                    col.label(RichText::new(format!("MOUNT: {}", mount.mount_point)).size(9.0).monospace().color(p.text_muted));
+                                    col.add_space(2.0);
+                                    col.label(RichText::new(format!("{:.1} GB {}", mount.total_bytes as f64 / 1e9, mount.fs_type)).size(13.0).strong().color(p.text_primary));
+                                    col.label(RichText::new(format!("{} • {:.1} GB used", mount.name, mount.used_bytes as f64 / 1e9)).size(9.0).monospace().color(p.text_muted));
                                 } else {
-                                    cols[0].vertical(|ui| {
-                                        ui.label(RichText::new("ROOT SYSTEM").size(9.0).monospace().strong().color(p.text_muted));
-                                        ui.add_space(2.0);
-                                        ui.label(RichText::new(format!("{:.1} GB {}", d1_tot, d1_fs)).size(13.0).strong().color(p.text_primary));
-                                        ui.label(RichText::new("/ (Primary Rootfs)").size(9.0).monospace().color(p.text_muted));
-                                    });
-                                    cols[1].vertical(|ui| {
-                                        ui.label(RichText::new("TMPFS RUNTIME").size(9.0).monospace().strong().color(p.text_muted));
-                                        ui.add_space(2.0);
-                                        ui.label(RichText::new("Shared Runtime tmpfs").size(13.0).strong().color(p.text_primary));
-                                        ui.label(RichText::new("/run • In-Memory").size(9.0).monospace().color(p.text_muted));
-                                    });
-                                    cols[2].vertical(|ui| {
-                                        ui.label(RichText::new("SWAP SPACE").size(9.0).monospace().strong().color(p.text_muted));
-                                        ui.add_space(2.0);
-                                        ui.label(RichText::new("Kernel Paging Pool").size(13.0).strong().color(p.text_primary));
-                                        ui.label(RichText::new("Dynamic Linux Swap").size(9.0).monospace().color(p.text_muted));
-                                    });
-                                    cols[3].vertical(|ui| {
-                                        ui.label(RichText::new("BLOCK DEVICE").size(9.0).monospace().strong().color(p.text_muted));
-                                        ui.add_space(2.0);
-                                        ui.label(RichText::new(format!("/dev/{}", d1_name)).size(13.0).strong().color(p.text_primary));
-                                        ui.label(RichText::new("Healthy Host Volume").size(9.0).monospace().color(p.text_muted));
-                                    });
+                                    col.label(RichText::new("—").size(13.0).color(p.text_muted));
+                                    col.label(RichText::new("No mount reported").size(9.0).color(p.text_muted));
                                 }
-                            });
-                        } else {
-                            // Local PC 4 Columns (Original dual-boot partitioning layout)
-                            ui.columns(4, |cols| {
-                                cols[0].vertical(|ui| {
-                                    ui.label(RichText::new("P1 • EFI SYSTEM").size(9.0).monospace().strong().color(p.text_muted));
-                                    ui.add_space(2.0);
-                                    ui.label(RichText::new("100 MB vfat").size(13.0).strong().color(p.text_primary));
-                                    ui.label(RichText::new("/boot/efi (ESP)").size(9.0).monospace().color(p.text_muted));
-                                });
-
-                                cols[1].vertical(|ui| {
-                                    ui.label(RichText::new("P3 • BASIC DATA").size(9.0).monospace().strong().color(p.text_muted));
-                                    ui.add_space(2.0);
-                                    ui.label(RichText::new("117.1 GB ntfs").size(13.0).strong().color(p.text_primary));
-                                    ui.label(RichText::new("Data / Windows C:").size(9.0).monospace().color(p.text_muted));
-                                });
-
-                                cols[2].vertical(|ui| {
-                                    ui.label(RichText::new(format!("P7 • ROOT /DEV/{}P7", d1_name.to_uppercase())).size(9.0).monospace().strong().color(p.text_muted));
-                                    ui.add_space(2.0);
-                                    ui.label(RichText::new(format!("{:.1} GB {}", d1_tot, d1_fs)).size(13.0).strong().color(p.text_primary));
-                                    ui.label(RichText::new(format!("Mounted / • {:.1} GB Used", d1_used)).size(9.0).monospace().color(p.text_muted));
-                                });
-
-                                cols[3].vertical(|ui| {
-                                    ui.label(RichText::new("P8 • LINUX SWAP").size(9.0).monospace().strong().color(p.text_muted));
-                                    ui.add_space(2.0);
-                                    ui.label(RichText::new("7.8 GB swap").size(13.0).strong().color(p.text_primary));
-                                    ui.label(RichText::new("zram0 / [SWAP] Active").size(9.0).monospace().color(p.text_muted));
-                                });
-                            });
-                        }
+                            }
+                        });
                     });
 
                 ui.add_space(10.0);
@@ -14146,9 +14076,9 @@ impl LauncherApp {
         let primary_net = snap.networks.iter().find(|n| n.name != "lo" && (n.rx_bytes > 0 || n.tx_bytes > 0))
             .or_else(|| snap.networks.iter().find(|n| n.name != "lo"))
             .or_else(|| snap.networks.first());
-        let iface_name = primary_net.map(|n| n.name.as_str()).unwrap_or("eth0");
+        let iface_name = primary_net.map(|n| n.name.as_str()).unwrap_or("Unavailable");
         let is_wireless = if is_remote { primary_net.map(|n| n.is_wireless).unwrap_or(false) } else { true };
-        let is_connected = if is_remote { primary_net.map(|n| n.rx_bytes + n.tx_bytes > 0).unwrap_or(true) } else { wifi_snap.is_connected };
+        let is_connected = if is_remote { primary_net.is_some() } else { wifi_snap.is_connected };
 
         ScrollArea::vertical()
             .id_salt("sensors_wifi_scroll_v2")
@@ -14186,7 +14116,7 @@ impl LauncherApp {
                             let title = if is_remote && !is_wireless { "Network Subsystem & Host Interface" } else { "Wireless Network & Wi-Fi" };
                             let (status_text, dot_col) = if is_connected {
                                 if is_remote && !is_wireless {
-                                    ("CONNECTED (WIRED / SSH)", accent)
+                                    ("INTERFACE FOUND", accent)
                                 } else {
                                     ("CONNECTED", accent)
                                 }
@@ -14248,7 +14178,7 @@ impl LauncherApp {
                                         let ch_text = if wifi_snap.channel > 0 {
                                             format!("Channel {} ({} MHz)", wifi_snap.channel, wifi_snap.frequency_mhz)
                                         } else {
-                                            format!("{} MHz", wifi_snap.frequency_mhz)
+                                            "Channel unavailable".to_string()
                                         };
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 14, 22))
@@ -14318,7 +14248,7 @@ impl LauncherApp {
                                             let ch_text = if wifi_snap.channel > 0 {
                                                 format!("Channel {} ({} MHz)", wifi_snap.channel, wifi_snap.frequency_mhz)
                                             } else {
-                                                format!("{} MHz", wifi_snap.frequency_mhz)
+                                                "Channel unavailable".to_string()
                                             };
                                             Frame::none()
                                                 .fill(Color32::from_rgb(10, 14, 22))
@@ -14358,7 +14288,7 @@ impl LauncherApp {
                                 if is_remote {
                                     ui.label(RichText::new(format!("SSH link to host '{}'", self.host_display_name(host_id))).size(10.0).color(Color32::from_rgb(148, 163, 184)));
                                 } else {
-                                    ui.label(RichText::new("802.11ac Wi-Fi • Auto-rate").size(10.0).color(Color32::from_rgb(148, 163, 184)));
+                                    ui.label(RichText::new("Wireless interface telemetry").size(10.0).color(Color32::from_rgb(148, 163, 184)));
                                 }
                             });
 
@@ -14400,8 +14330,8 @@ impl LauncherApp {
                 // 2. Top Two Columns: 60-Second Realtime Waveform vs Access Point / Link Infrastructure
                 let total_w = ui.available_width();
                 let gap = 10.0_f32;
-                let left_w = ((total_w - gap) * 0.58).max(350.0);
-                let right_w = (total_w - left_w - gap).max(280.0);
+                let left_w = (total_w - gap) * 0.58;
+                let right_w = total_w - left_w - gap;
 
                 ui.horizontal(|ui| {
                     // Left Column: 60-Second Realtime Waveform
@@ -14412,19 +14342,12 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
-                                let (disp_rx_bps, disp_tx_bps) = if !is_remote {
-                                    snap.networks.iter()
-                                        .find(|n| n.name == wifi_snap.interface || n.is_wireless)
-                                        .map(|n| (n.rx_rate_bps, n.tx_rate_bps))
-                                        .unwrap_or((snap.total_rx_rate_bps, snap.total_tx_rate_bps))
-                                } else {
-                                    (snap.total_rx_rate_bps, snap.total_tx_rate_bps)
-                                };
+                                let (disp_rx_bps, disp_tx_bps) = (snap.total_rx_rate_bps, snap.total_tx_rate_bps);
 
                                 ui.horizontal(|ui| {
                                     ui.vertical(|ui| {
                                         ui.label(RichText::new("Live Waveform").size(12.5).strong().color(p.text_primary));
-                                        ui.label(RichText::new("RX (Cyan) • TX (Slate)").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                        ui.label(RichText::new("All interfaces • RX / TX").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     });
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -14495,7 +14418,7 @@ impl LauncherApp {
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         let qual_str = if is_remote {
-                                            if is_connected { "DUPLEX" } else { "DOWN" }.to_string()
+                                            if is_connected { "PRESENT" } else { "DOWN" }.to_string()
                                         } else if wifi_snap.signal_pct >= 80 {
                                             format!("EXC ({}%)", wifi_snap.signal_pct)
                                         } else if wifi_snap.signal_pct >= 50 {
@@ -14528,7 +14451,7 @@ impl LauncherApp {
                                                 let main_lbl = if is_remote { format!("Interface /dev/{}", iface_name) } else { wifi_snap.ssid.clone() };
                                                 ui.label(RichText::new(main_lbl).size(13.0).strong().color(p.text_primary));
                                                 let band_str = if is_remote {
-                                                    format!("State: {} • MTU 1500", if is_connected { "UP" } else { "DOWN" })
+                                                    format!("State: {}", if is_connected { "UP" } else { "DOWN" })
                                                 } else {
                                                     format!("{:.1} GHz • {} ({})", wifi_snap.frequency_mhz as f32 / 1000.0, wifi_snap.security, wifi_snap.driver)
                                                 };
@@ -14541,13 +14464,13 @@ impl LauncherApp {
                                                     if is_remote {
                                                         let (d_rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
                                                         ui.painter().circle_filled(d_rect.center(), 3.5, accent);
-                                                        ui.label(RichText::new("1 Gbps").size(12.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
+                                                        ui.label(RichText::new("—").size(12.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
                                                     } else {
                                                         // 5 Signal Bars
                                                         let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 18.0), egui::Sense::hover());
                                                         let bar_w = 3.5_f32;
                                                         let gap = 2.5_f32;
-                                                        let active_bars = ((wifi_snap.signal_pct as f32 / 20.0).round() as usize).clamp(1, 5);
+                                                        let active_bars = ((wifi_snap.signal_pct as f32 / 20.0).round() as usize).clamp(0, 5);
                                                         for i in 0..5 {
                                                             let h = 4.0_f32 + (i as f32 + 1.0) * 2.8_f32;
                                                             let x = rect.left() + i as f32 * (bar_w + gap);
@@ -14556,7 +14479,7 @@ impl LauncherApp {
                                                             let col = if i < active_bars { accent } else { Color32::from_rgb(30, 41, 59) };
                                                             ui.painter().rect_filled(b_rect, Rounding::same(1.0), col);
                                                         }
-                                                        ui.label(RichText::new(format!("{} dBm", wifi_snap.signal_dbm)).size(12.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
+                                                        ui.label(RichText::new(if is_connected { format!("{}%", wifi_snap.signal_pct) } else { "—".to_string() }).size(12.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
                                                     }
                                                 });
                                             });
@@ -14599,17 +14522,17 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 3. Middle 4 Big Stat Cards (Bytes Sent, Bytes Received, Gateway Latency / Socket Count, Packet Loss)
-                let tx_gb = (snap.total_tx_bytes as f32 / 1e9).max(0.01);
-                let rx_gb = (snap.total_rx_bytes as f32 / 1e9).max(0.01);
-                let tx_slice = [tx_gb; 5];
-                let rx_slice = [rx_gb; 5];
-                let lat_slice = [2.1_f32, 2.3_f32, 2.0_f32, 2.1_f32, 2.2_f32];
-                let sock_slice = [snap.socket_total as f32; 5];
-                let loss_slice = [0.0_f32; 5];
+                let tx_gb = snap.total_tx_bytes as f32 / 1e9;
+                let rx_gb = snap.total_rx_bytes as f32 / 1e9;
+                let tx_slice: Vec<f32> = self.net_tx_history.iter().copied().collect();
+                let rx_slice: Vec<f32> = self.net_rx_history.iter().copied().collect();
+                let lat_slice: [f32; 0] = [];
+                let sock_slice: [f32; 0] = [];
+                let loss_slice: [f32; 0] = [];
 
                 ui.columns(4, |cols| {
                     // Card 1: BYTES SENT
-                    let egress_sub = if is_remote { format!("Egress: {}", iface_name) } else { format!("Egress: {}", wifi_snap.interface) };
+                    let egress_sub = "All interfaces • since boot";
                     render_big_stat_card(
                         &mut cols[0],
                         crate::lucide::UPLOAD,
@@ -14617,18 +14540,18 @@ impl LauncherApp {
                         &format!("{:.2}", tx_gb),
                         "GB",
                         &egress_sub,
-                        "OK",
-                        "DROP 0",
+                        "",
+                        "",
                         &tx_slice,
-                        (tx_gb * 1.5).max(5.0),
-                        Some(0.4),
+                        self.net_peak_mb.max(0.001),
+                        None,
                         accent,
                         p.bg_card,
                         p.text_muted,
                     );
 
                     // Card 2: BYTES RECV
-                    let ingress_sub = if is_remote { format!("Ingress: {}", iface_name) } else { format!("Ingress: {}", wifi_snap.interface) };
+                    let ingress_sub = "All interfaces • since boot";
                     render_big_stat_card(
                         &mut cols[1],
                         crate::lucide::DOWNLOAD,
@@ -14636,11 +14559,11 @@ impl LauncherApp {
                         &format!("{:.2}", rx_gb),
                         "GB",
                         &ingress_sub,
-                        "OK",
-                        "ERR 0",
+                        "",
+                        "",
                         &rx_slice,
-                        (rx_gb * 1.5).max(15.0),
-                        Some(0.6),
+                        self.net_peak_mb.max(0.001),
+                        None,
                         accent,
                         p.bg_card,
                         p.text_muted,
@@ -14655,11 +14578,11 @@ impl LauncherApp {
                             &format!("{}", snap.socket_total),
                             "TOTAL",
                             &format!("{} TCP • {} UDP", snap.socket_tcp, snap.socket_udp),
-                            "ESTAB",
-                            "ACTIVE",
+                            "",
+                            "",
                             &sock_slice,
                             (snap.socket_total as f32 * 1.5).max(20.0),
-                            Some(0.5),
+                            None,
                             Color32::from_rgb(96, 165, 250),
                             p.bg_card,
                             p.text_muted,
@@ -14670,14 +14593,14 @@ impl LauncherApp {
                             &mut cols[2],
                             crate::lucide::ACTIVITY,
                             "LATENCY",
-                            "2.1",
-                            "MS",
+                            "—",
+                            "",
                             &gw_sub,
-                            "JITTER 0.3ms",
-                            "STABLE",
+                            "Not measured",
+                            "",
                             &lat_slice,
                             10.0,
-                            Some(0.21),
+                            None,
                             Color32::from_rgb(96, 165, 250),
                             p.bg_card,
                             p.text_muted,
@@ -14689,14 +14612,14 @@ impl LauncherApp {
                         &mut cols[3],
                         crate::lucide::CHECK,
                         "LOSS",
-                        "0.0",
-                        "%",
-                        if is_remote { "Direct stream" } else { "ICMP ping" },
-                        "PING 120",
-                        "LOSS 0",
+                        "—",
+                        "",
+                        "Not measured",
+                        "",
+                        "",
                         &loss_slice,
                         10.0,
-                        Some(0.0),
+                        None,
                         accent,
                         p.bg_card,
                         p.text_muted,
@@ -14707,20 +14630,14 @@ impl LauncherApp {
 
                 // 4. Top Link State & Telemetry Bar
                 let iface_display = if is_remote { iface_name } else { wifi_snap.interface.as_str() };
-                let link_rate_str = if is_remote { "1.0 Gbps" } else { wifi_snap.rate.as_str() };
-                let jitter_val = if is_remote { 0.4 } else { wifi_snap.jitter_ms };
-                let tunnel_id_str = if is_remote {
-                    let h_prefix = self.host_display_name(host_id);
-                    format!("ID: SSH-0x{:X}", h_prefix.as_bytes().iter().fold(0u16, |acc, &b| acc.wrapping_add(b as u16)))
-                } else {
-                    format!("ID: {}", wifi_snap.tunnel_id)
-                };
+                let link_rate_str = if is_remote { "Unavailable" } else { wifi_snap.rate.as_str() };
+                let tunnel_id_str = if is_remote { "SSH telemetry" } else { "Local telemetry" };
 
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                     ui.painter().circle_filled(d_rect.center(), 2.8, accent);
-                    ui.label(RichText::new("LINK: UP").size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                    ui.label(RichText::new(if is_connected { "LINK: UP" } else { "LINK: DOWN" }).size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                     ui.label(RichText::new("/").size(9.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                     ui.label(RichText::new(iface_display).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
 
@@ -14734,11 +14651,11 @@ impl LauncherApp {
                             .rounding(Rounding::same(4.0))
                             .inner_margin(egui::Margin::symmetric(8.0, 3.0))
                             .show(ui, |ui| {
-                                ui.label(RichText::new(&tunnel_id_str).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                ui.label(RichText::new(tunnel_id_str).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                             });
 
                         // Jitter
-                        ui.label(RichText::new(format!("{:.1} ms", jitter_val)).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                        ui.label(RichText::new("Latency unavailable").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
 
                         // Throughput Rate
                         ui.horizontal(|ui| {
@@ -14755,42 +14672,18 @@ impl LauncherApp {
                 let half_w = (total_w - gap) * 0.50;
 
                 // Prepare Data for Left & Right Cards
-                let raw_ip = if is_remote {
-                    if let Some(hid) = host_id {
-                        self.ssh_hosts.iter().find(|h| h.id == hid).map(|h| h.host.clone()).unwrap_or_else(|| "192.168.1.100".to_string())
-                    } else {
-                        "192.168.1.100".to_string()
-                    }
-                } else {
-                    wifi_snap.ip_v4.clone()
-                };
-
-                let (ip_without_cidr, cidr_str) = if let Some(idx) = raw_ip.find('/') {
-                    (&raw_ip[..idx], &raw_ip[idx..])
-                } else {
-                    (raw_ip.as_str(), "/24")
-                };
-
-                let octets: Vec<&str> = ip_without_cidr.split('.').collect();
-
-                let subnet_mask_str = if is_remote { "255.255.255.0 (/24)" } else { wifi_snap.subnet_mask.as_str() };
-                let gateway_str = if is_remote {
-                    if octets.len() == 4 { format!("{}.{}.{}.1", octets[0], octets[1], octets[2]) } else { "192.168.1.1".to_string() }
-                } else {
-                    wifi_snap.gateway.clone()
-                };
-                let dns_resolvers_str = if is_remote { "127.0.0.53" } else { wifi_snap.dns_resolvers.as_str() };
-                let ip_v6_str = if is_remote { "fe80::1/64" } else { wifi_snap.ip_v6.as_str() };
-                let mac_str = if is_remote {
-                    primary_net.map(|n| format!("02:42:{:02X}:{:02X}:{:02X}:{:02X}", (n.rx_bytes & 0xFF), (n.tx_bytes & 0xFF), (n.rx_rate_bps as u64 & 0xFF), (n.tx_rate_bps as u64 & 0xFF))).unwrap_or_else(|| "72:21:C5:69:3E:75".to_string())
-                } else {
-                    wifi_snap.mac_address.clone()
-                };
-                let driver_str = if is_remote { "virtio_net" } else { wifi_snap.driver.as_str() };
-                let pci_str = if is_remote { "0000:00:03.0" } else { wifi_snap.pci_slot.as_str() };
-                let mtu_val = if is_remote { 1500 } else { wifi_snap.mtu };
+                let raw_ip = if is_remote { "Unavailable".to_string() } else { wifi_snap.ip_v4.clone() };
+                let (ip_without_cidr, cidr_str) = raw_ip.split_once('/').map(|(ip, _)| (ip, &raw_ip[ip.len()..])).unwrap_or((raw_ip.as_str(), ""));
+                let subnet_mask_str = if is_remote { "Unavailable" } else { wifi_snap.subnet_mask.as_str() };
+                let gateway_str = if is_remote { "Unavailable" } else { wifi_snap.gateway.as_str() };
+                let dns_resolvers_str = if is_remote { "Unavailable" } else { wifi_snap.dns_resolvers.as_str() };
+                let ip_v6_str = if is_remote { "Unavailable" } else { wifi_snap.ip_v6.as_str() };
+                let mac_str = if is_remote { "Unavailable" } else { wifi_snap.mac_address.as_str() };
+                let driver_str = if is_remote { "Unavailable" } else { wifi_snap.driver.as_str() };
+                let pci_str = if is_remote { "—" } else { wifi_snap.pci_slot.as_str() };
+                let mtu_val = if is_remote || wifi_snap.mtu == 0 { "—".to_string() } else { wifi_snap.mtu.to_string() };
                 let tx_bytes_val = if is_remote { snap.total_tx_bytes } else { wifi_snap.tx_bytes };
-                let lease_time_str = if is_remote { "Permanent / Static" } else { wifi_snap.lease_time_remaining.as_str() };
+                let lease_time_str = if is_remote { "Unavailable" } else { wifi_snap.lease_time_remaining.as_str() };
                 let _kernel_str = if is_remote { snap.os_version.as_str() } else { wifi_snap.kernel_version.as_str() };
 
                 ui.horizontal(|ui| {
@@ -14821,7 +14714,7 @@ impl LauncherApp {
                                         ui.vertical(|ui| {
                                             ui.horizontal(|ui| {
                                                 ui.label(RichText::new("IP Config").size(13.5).strong().color(p.text_primary));
-                                                let badge_txt = if is_remote { "DHCP" } else { "DHCP" };
+                                                let badge_txt = "NETWORK";
                                                 Frame::none()
                                                     .fill(accent_with_alpha(accent, 20))
                                                     .rounding(Rounding::same(4.0))
@@ -14830,7 +14723,7 @@ impl LauncherApp {
                                                         ui.label(RichText::new(badge_txt).size(8.0).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
                                                     });
                                             });
-                                            let sub = format!("DHCP on {}", iface_display);
+                                            let sub = format!("Interface {}", iface_display);
                                             ui.label(RichText::new(sub).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                         });
                                     });
@@ -14887,7 +14780,7 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new("GATEWAY").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new(&gateway_str).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                        ui.label(RichText::new(gateway_str).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                     });
                                 });
                                 ui.add_space(4.0);
@@ -14903,24 +14796,13 @@ impl LauncherApp {
                                         let f_bg = if flush_resp.hovered() { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(20, 28, 44) };
                                         ui.painter().rect_filled(flush_rect, Rounding::same(3.0), f_bg);
                                         ui.painter().text(flush_rect.center(), egui::Align2::CENTER_CENTER, "Flush", egui::FontId::monospace(8.0), Color32::from_rgb(203, 213, 225));
-                                        if flush_resp.clicked() {
-                                            if let Some(hid) = host_id {
-                                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                                    let host_name = host.name.clone();
-                                                    std::thread::spawn(move || {
-                                                        let mut cmd = crate::remote::build_ssh_command(&host, "sudo systemd-resolve --flush-caches 2>/dev/null || sudo resolvectl flush-caches 2>/dev/null || true");
-                                                        let _ = cmd.output();
-                                                    });
-                                                    self.wifi_status_msg = Some((format!("Flushed DNS resolver caches on remote host {}", host_name), false, Instant::now()));
-                                                }
-                                            } else {
-                                                match crate::wifi::trigger_flush_dns() {
-                                                    Ok(msg) => self.wifi_status_msg = Some((msg, false, Instant::now())),
-                                                    Err(err) => self.wifi_status_msg = Some((err, true, Instant::now())),
-                                                }
+                                        if flush_resp.clicked() && !is_remote {
+                                            match crate::wifi::trigger_flush_dns() {
+                                                Ok(msg) => self.wifi_status_msg = Some((msg, false, Instant::now())),
+                                                Err(err) => self.wifi_status_msg = Some((err, true, Instant::now())),
                                             }
                                         }
-                                        flush_resp.on_hover_text("Flush system DNS cache");
+                                        flush_resp.on_hover_text(if is_remote { "Remote DNS flush unavailable" } else { "Flush system DNS cache" });
 
                                         Frame::none()
                                             .fill(Color32::from_rgb(20, 28, 44))
@@ -14961,7 +14843,7 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new("MAC").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new(&mac_str).size(9.5).monospace().color(Color32::from_rgb(226, 232, 240)));
+                                        ui.label(RichText::new(mac_str).size(9.5).monospace().color(Color32::from_rgb(226, 232, 240)));
                                     });
                                 });
                                 ui.add_space(4.0);

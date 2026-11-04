@@ -226,7 +226,7 @@ pub fn query_wifi_status() -> WifiSnapshot {
 
     // 5. Query active Wi-Fi connection via nmcli
     let nmcli_out = Command::new("nmcli")
-        .args(["-t", "-f", "active,ssid,bssid,chan,rate,signal,security", "dev", "wifi"])
+        .args(["-t", "-f", "active,ssid,bssid,chan,rate,signal,security,freq", "dev", "wifi"])
         .output();
 
     if let Ok(out) = nmcli_out {
@@ -242,16 +242,12 @@ pub fn query_wifi_status() -> WifiSnapshot {
                     let normalized = raw.replace(r"\:", placeholder);
                     let parts: Vec<&str> = normalized.split(':').collect();
 
-                    if parts.len() >= 6 {
+                    if parts.len() >= 7 {
                         snap.ssid = parts[0].replace(placeholder, ":").trim().to_string();
                         snap.bssid = parts[1].replace(placeholder, ":").trim().to_string();
                         if let Ok(ch) = parts[2].trim().parse::<u32>() {
                             snap.channel = ch;
-                            if ch <= 14 {
-                                snap.frequency_mhz = 2407 + ch * 5;
-                            } else {
-                                snap.frequency_mhz = 5000 + ch * 5;
-                            }
+                            snap.frequency_mhz = parts[6].split_whitespace().next().and_then(|value| value.parse().ok()).unwrap_or(0);
                         }
                         let raw_rate = parts[3].replace(placeholder, ":").trim().to_string();
                         if !raw_rate.is_empty() {

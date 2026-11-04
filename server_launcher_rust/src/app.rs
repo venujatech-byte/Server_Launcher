@@ -18516,19 +18516,19 @@ impl LauncherApp {
                             ui.set_width(ui.available_width());
 
                             let deck_title = if is_remote {
-                                "Server Chassis Airflow"
+                                "Cooling telemetry"
                             } else if !has_active_fans {
-                                "Passive Thermal Dissipation"
+                                "Cooling telemetry"
                             } else {
                                 "Active Fan Deck"
                             };
 
                             let deck_sub = if is_remote {
-                                "Dynamic server chassis airflow managed by remote kernel ACPI / BMC"
+                                "Fan sensors are not exposed by the current collector"
                             } else if !has_active_fans {
-                                "Passive solid-state chassis cooling • Natural convection & heat-pipes"
+                                "Fan sensors are not exposed by the current collector"
                             } else {
-                                "Dual asynchronous hydro-bearing pwm centrifugal blowers"
+                                "Reported cooling sensors"
                             };
 
                             // Header Row 1: Title on left, Acoustics/BMC badge on right
@@ -18545,14 +18545,14 @@ impl LauncherApp {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 if is_remote {
                                                     ui.label(RichText::new("●").size(6.0).color(accent));
-                                                    ui.label(RichText::new("BMC / ACPI ACTIVE").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                                    ui.label(RichText::new("UNAVAILABLE").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                                 } else if !has_active_fans {
                                                     ui.label(RichText::new("●").size(6.0).color(Color32::from_rgb(52, 211, 153)));
-                                                    ui.label(RichText::new("FANLESS • 0 dBA (SILENT)").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                                    ui.label(RichText::new("UNAVAILABLE").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                                 } else {
-                                                    let dba = 28.4_f32 + (cpu_fan_pct / 100.0 * 18.0);
+                                                    let dba = "—";
                                                     ui.label(RichText::new("●").size(6.0).color(accent));
-                                                    ui.label(RichText::new(format!("ACOUSTICS: {:.1} dBA", dba)).size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                                    ui.label(RichText::new(format!("ACOUSTICS: {dba}")).size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                                 }
                                             });
                                         });
@@ -18569,15 +18569,13 @@ impl LauncherApp {
                             ui.add_space(10.0);
 
                             // Two Tachometers: using ui.columns(2) to GUARANTEE 50/50 equal width!
-                            let fan1_name = if is_remote { "Chassis Intake" } else if !has_active_fans { "Cooling State" } else { "CPU Blower" };
-                            let fan2_name = if is_remote { "Chassis Exhaust" } else if !has_active_fans { "Acoustic Noise" } else { "Chassis Exhaust" };
-
-                            let fan1_val_str = if !has_active_fans { "Passive".to_string() } else { format!("{},{:03} RPM", cpu_rpm / 1000, cpu_rpm % 1000) };
-                            let fan1_sub = if !has_active_fans { "0 RPM • Solid-State" } else { "MAX: 4,800 RPM" };
-
-                            let fan2_val_str = if !has_active_fans { "0.0 dBA".to_string() } else { format!("{},{:03} RPM", exhaust_rpm / 1000, exhaust_rpm % 1000) };
-                            let fan2_sub = if !has_active_fans { "Zero Rotor Noise" } else { "MAX: 3,600 RPM" };
-                            let fan2_col = if !has_active_fans { Color32::from_rgb(52, 211, 153) } else { Color32::from_rgb(96, 165, 250) };
+                            let fan1_name = "Fan speed";
+                            let fan2_name = "Acoustics";
+                            let fan1_val_str = "—";
+                            let fan1_sub = "RPM unavailable";
+                            let fan2_val_str = "—";
+                            let fan2_sub = "Noise unavailable";
+                            let fan2_col = Color32::from_rgb(148, 163, 184);
 
                             ui.columns(2, |fcols| {
                                 // Fan 1 (CPU Blower / Passive State)
@@ -18649,8 +18647,8 @@ impl LauncherApp {
                                             ui.label(RichText::new(crate::lucide::SHIELD).size(13.0).color(Color32::from_rgb(52, 211, 153)));
                                             ui.add_space(4.0);
                                             ui.vertical(|ui| {
-                                                ui.label(RichText::new("Acoustic Pulse Test: Passive System").size(11.0).strong().color(Color32::from_rgb(203, 213, 225)));
-                                                ui.label(RichText::new("Hardware uses fanless passive cooling. No mechanical rotors or PWM controllers present.").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                                ui.label(RichText::new("Fan test unavailable").size(11.0).strong().color(Color32::from_rgb(203, 213, 225)));
+                                                ui.label(RichText::new("No supported fan-control interface is connected.").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                                             });
                                         });
                                     });
@@ -18674,15 +18672,12 @@ impl LauncherApp {
                                             ui.vertical(|ui| {
                                                 let title = if is_blasting { "STOP 100% Full Blast Test" } else { "100% Full Blast Test (10s pulse)" };
                                                 ui.label(RichText::new(title).size(11.0).strong().color(if is_blasting { Color32::from_rgb(241, 245, 249) } else { p.text_primary }));
-                                                ui.label(RichText::new("Forces EC fan controllers to maximum duty cycle for acoustic check").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                                ui.label(RichText::new("Fan control is unavailable").size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                                             });
                                         });
                                     }).response;
 
-                                if blast_resp.interact(egui::Sense::click()).clicked() {
-                                    self.fan_full_blast = !self.fan_full_blast;
-                                    self.fan_test_start = if self.fan_full_blast { Some(Instant::now()) } else { None };
-                                }
+                                blast_resp.on_hover_text("Fan control is unavailable");
                             }
                         });
 
@@ -18702,7 +18697,7 @@ impl LauncherApp {
                                 ui.set_width(right_avail_w);
 
                                 ui.allocate_ui_with_layout(egui::vec2(left_title_w, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                    let curve_title = if !has_active_fans { "Thermal Governor Curve" } else { "Fan Curve Calibrator" };
+                                    let curve_title = if !has_active_fans { "Cooling curve" } else { "Fan Curve Calibrator" };
                                     ui.add(egui::Label::new(RichText::new(curve_title).size(12.0).strong().color(p.text_primary)).truncate());
                                 });
 
@@ -18716,7 +18711,7 @@ impl LauncherApp {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 ui.label(RichText::new("●").size(6.0).color(accent));
-                                                ui.label(RichText::new("HYST: 3°C").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                                ui.label(RichText::new("HYST: —").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                             });
                                         });
                                     Frame::none()
@@ -18724,11 +18719,7 @@ impl LauncherApp {
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(6.0, 3.0))
                                         .show(ui, |ui| {
-                                            let prof_str = match self.fan_mode {
-                                                0 => "SILENT",
-                                                1 => "BALANCED",
-                                                _ => "TURBO",
-                                            };
+                                            let prof_str = "UNAVAILABLE";
                                             ui.label(RichText::new(prof_str).size(8.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                                         });
                                 });
@@ -18737,9 +18728,9 @@ impl LauncherApp {
                             ui.add_space(2.0);
 
                             let curve_sub = if !has_active_fans {
-                                "Dynamic CPU thermal throttling & passive heat-sink dissipation curve"
+                                "No hardware cooling curve reported"
                             } else {
-                                "Embedded Controller Duty Cycle: 4 Control Nodes"
+                                "No hardware cooling curve reported"
                             };
 
                             ui.horizontal_wrapped(|ui| {
@@ -18751,21 +18742,12 @@ impl LauncherApp {
 
                             ui.add_space(8.0);
                             ui.columns(4, |cols| {
-                                let node_chips: [(&str, Color32, &str); 4] = if !has_active_fans {
-                                    [
-                                        ("P1: 30°C → Ambient", Color32::from_rgb(203, 213, 225), "P1 Node: 30°C (Ambient baseline)"),
-                                        ("P2: 50°C → Nominal", Color32::from_rgb(203, 213, 225), "P2 Node: 50°C (Nominal operating temp)"),
-                                        ("P3: 75°C → Warm", Color32::from_rgb(203, 213, 225), "P3 Node: 75°C (Warm sustained workload)"),
-                                        ("P4: 90°C → Throttle", Color32::from_rgb(248, 113, 113), "P4 Node: 90°C (Thermal throttle threshold - CRIT)"),
-                                    ]
-                                } else {
-                                    [
-                                        ("P1: 30°C → 20%", Color32::from_rgb(203, 213, 225), "P1 Node: 30°C → 20% minimum duty cycle"),
-                                        ("P2: 50°C → 45%", Color32::from_rgb(203, 213, 225), "P2 Node: 50°C → 45% nominal duty cycle"),
-                                        ("P3: 75°C → 75%", Color32::from_rgb(203, 213, 225), "P3 Node: 75°C → 75% high load duty cycle"),
-                                        ("P4: 90°C → 100%", Color32::from_rgb(248, 113, 113), "P4 Node: 90°C → 100% maximum duty cycle (CRIT)"),
-                                    ]
-                                };
+                                let node_chips = [
+                                    ("P1: —", p.text_muted, "Control point unavailable"),
+                                    ("P2: —", p.text_muted, "Control point unavailable"),
+                                    ("P3: —", p.text_muted, "Control point unavailable"),
+                                    ("P4: —", p.text_muted, "Control point unavailable"),
+                                ];
                                 for (i, (lbl, col, tip)) in node_chips.iter().enumerate() {
                                     Frame::none()
                                         .fill(Color32::from_rgb(10, 14, 22))
@@ -18808,7 +18790,7 @@ impl LauncherApp {
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 4.0;
                                             ui.label(RichText::new("●").size(6.0).color(accent));
-                                            ui.label(RichText::new("POLL RATE: 500MS").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                            ui.label(RichText::new(if self.sensors_refresh_interval == 0 { "PAUSED".to_string() } else { format!("POLL: {}s", self.sensors_refresh_interval) }).size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                         });
                                     });
                             });
@@ -18816,38 +18798,15 @@ impl LauncherApp {
 
                         ui.add_space(10.0);
 
-                        let thermistors: Vec<(String, f32, f32, String, &'static str, Color32)> = if is_remote {
-                            if !snap.temp_sensors.is_empty() {
-                                snap.temp_sensors.iter().map(|s| {
-                                    let (stat, col) = if s.temp < 60.0 {
-                                        ("NOMINAL", accent)
-                                    } else if s.temp < 80.0 {
-                                        ("WARM", Color32::from_rgb(96, 165, 250))
-                                    } else {
-                                        ("HOT", Color32::from_rgb(251, 146, 60))
-                                    };
-                                    (s.name.clone(), s.temp, 100.0_f32, "hwmon sysfs".to_string(), stat, col)
-                                }).collect()
-                            } else {
-                                vec![
-                                    ("CPU Core Package (SoC)".to_string(), cpu_temp, 100.0_f32, "TjMax 100°C".to_string(), "NOMINAL", accent),
-                                    ("System Board ACPI Zone".to_string(), vrm_temp, 105.0_f32, "ACPI Thermal Zone".to_string(), "NOMINAL", Color32::from_rgb(203, 213, 225)),
-                                    ("PCIe Storage Thermal Zone".to_string(), nvme_temp, 75.0_f32, "Operating Limit: 75°C".to_string(), "OPTIMAL", Color32::from_rgb(96, 165, 250)),
-                                    ("Chassis Ambient Airflow".to_string(), (cpu_temp - 12.0).max(28.0), 55.0_f32, "Rack Ambient 24°C".to_string(), "NORMAL", Color32::from_rgb(148, 163, 184)),
-                                ]
-                            }
-                        } else {
-                            vec![
-                                ("CPU Core 0-3 (SoC)".to_string(), cpu_temp - 4.8, 100.0_f32, "TjMax 100°C".to_string(), "NOMINAL", accent),
-                                ("GPU Edge Temp".to_string(), gpu_temp, 87.0_f32, "TjMax 87°C".to_string(), "NOMINAL", Color32::from_rgb(96, 165, 250)),
-                                ("GPU Hotspot (Junction)".to_string(), gpu_temp + 6.3, 105.0_f32, "Delta: +6.3°C".to_string(), "NOMINAL", Color32::from_rgb(96, 165, 250)),
-                                ("Memory SODIMM #1".to_string(), ram_temp, 70.0_f32, "Threshold 70°C".to_string(), "COOL", accent),
-                                ("PCIe M.2 Slot 0 (SSD)".to_string(), nvme_temp, 75.0_f32, "Throttle: 75°C".to_string(), "OPTIMAL", Color32::from_rgb(96, 165, 250)),
-                                ("VRM Vcore Phase 1-6".to_string(), vrm_temp, 105.0_f32, "Max Rated: 105°C".to_string(), "PASS", Color32::from_rgb(203, 213, 225)),
-                                ("Ambient Chassis Exhaust".to_string(), 34.1_f32, 50.0_f32, "Room Amb: 24.0°C".to_string(), "NORMAL", Color32::from_rgb(148, 163, 184)),
-                                ("Chassis Palmrest".to_string(), 29.4_f32, 40.0_f32, "Ergonomic Cap: 38°C".to_string(), "EXCELLENT", accent),
-                            ]
-                        };
+                        let thermistors: Vec<(String, f32, f32, String, &'static str, Color32)> = snap.temp_sensors.iter().filter(|sensor| sensor.temp.is_finite()).map(|sensor| {
+                            let limit = sensor.crit.or(sensor.max).filter(|value| value.is_finite() && *value > 0.0);
+                            let status = if limit.is_some_and(|limit| sensor.temp >= limit) { "LIMIT" } else { "READING" };
+                            let note = limit.map(|limit| format!("Limit {limit:.0}°C")).unwrap_or_else(|| "Limit unavailable".to_string());
+                            (sensor.name.clone(), sensor.temp, limit.unwrap_or(f32::NAN), note, status, accent)
+                        }).collect();
+                        if thermistors.is_empty() {
+                            ui.label(RichText::new("No additional thermal sensors reported").size(11.0).color(p.text_muted));
+                        }
 
                         // 4 columns x N rows
                         for chunk in thermistors.chunks(4) {
@@ -18869,7 +18828,7 @@ impl LauncherApp {
 
                                             ui.add_space(3.0);
                                             ui.horizontal(|ui| {
-                                                ui.label(RichText::new(format!("{:.1}", val)).size(16.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                                ui.label(RichText::new(temperature_text(*val)).size(16.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                                 ui.label(RichText::new("°C").size(10.0).color(Color32::from_rgb(148, 163, 184)));
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                     ui.label(RichText::new(sub_note).size(8.0).monospace().color(Color32::from_rgb(100, 116, 139)));
@@ -18877,7 +18836,7 @@ impl LauncherApp {
                                             });
 
                                             ui.add_space(4.0);
-                                            let pct = (val / max_t).clamp(0.05, 1.0);
+                                            let pct = if max_t.is_finite() { (val / max_t).clamp(0.0, 1.0) } else { 0.0 };
                                             let (b_rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 3.0), egui::Sense::hover());
                                             ui.painter().rect_filled(b_rect, Rounding::same(1.5), Color32::from_rgb(26, 34, 48));
                                             let mut f_rect = b_rect;
@@ -18957,13 +18916,10 @@ impl LauncherApp {
             0.0
         };
 
-        // Total disk usage estimation for header
         let total_disk_mb_s = (snap.total_disk_read_rate_bps + snap.total_disk_write_rate_bps) / (1024.0 * 1024.0);
-        let disk_header_pct = if total_disk_mb_s < 0.05 { "0%".to_string() } else { format!("{:.0}%", (total_disk_mb_s * 2.0).clamp(1.0, 100.0)) };
 
         // Total GPU & Power values for header & rows
-        let total_gpu_pct = snap.gpus.iter().filter_map(|g| g.load_pct).next().unwrap_or(0.0);
-        let sys_watts = snap.power.total_power_watts.or(snap.cpu_power_watts).unwrap_or(24.0);
+        let total_gpu_pct = snap.gpus.iter().find_map(|g| g.load_pct);
 
         // Heatmap color helper: Windows 11 Task Manager uses subtle accent blue tint blocks
         let get_tm_cpu_bg = |norm_cpu: f32| -> Color32 {
@@ -19022,19 +18978,6 @@ impl LauncherApp {
             }
         };
 
-        let get_tm_power_bg = |watts: f32, norm_cpu: f32| -> Color32 {
-            if watts < 0.6 && norm_cpu < 1.0 {
-                Color32::TRANSPARENT
-            } else if watts < 2.5 && norm_cpu < 6.0 {
-                Color32::from_rgba_unmultiplied(0, 120, 215, 30)
-            } else if watts < 7.0 && norm_cpu < 16.0 {
-                Color32::from_rgba_unmultiplied(0, 120, 215, 60)
-            } else if watts < 15.0 && norm_cpu < 32.0 {
-                Color32::from_rgba_unmultiplied(245, 158, 11, 65)
-            } else {
-                Color32::from_rgba_unmultiplied(239, 68, 68, 80)
-            }
-        };
 
         // Text formatting helpers matching Image 2
         let format_tm_cpu = |norm_cpu: f32| -> String {
@@ -19060,29 +19003,6 @@ impl LauncherApp {
                 "0 MB/s".to_string()
             } else {
                 format!("{:.1} MB/s", rate / (1024.0 * 1024.0))
-            }
-        };
-
-        let is_gpu_app = |name: &str| -> bool {
-            let s = name.to_lowercase();
-            s.contains("chrome") || s.contains("firefox") || s.contains("edge") || s.contains("brave")
-                || s.contains("code") || s.contains("electron") || s.contains("xorg") || s.contains("wayland")
-                || s.contains("mutter") || s.contains("kwin") || s.contains("gnome-shell") || s.contains("steam")
-                || s.contains("obs") || s.contains("vlc") || s.contains("mpv") || s.contains("blender")
-                || s.contains("server_launcher") || s.contains("gl") || s.contains("gpu")
-        };
-
-        let format_tm_power_rating = |watts: f32, norm_cpu: f32| -> &'static str {
-            if watts < 0.8 && norm_cpu < 1.0 {
-                "Very low"
-            } else if watts < 2.5 && norm_cpu < 6.0 {
-                "Low"
-            } else if watts < 7.0 && norm_cpu < 16.0 {
-                "Moderate"
-            } else if watts < 15.0 && norm_cpu < 32.0 {
-                "High"
-            } else {
-                "Very high"
             }
         };
 
@@ -19316,17 +19236,9 @@ impl LauncherApp {
                         let sum_net_rate: f64 = list.iter().map(|p| p.net_rate_bps).sum();
                         let sum_net_bytes: u64 = list.iter().map(|p| p.net_rx_bytes + p.net_tx_bytes).sum();
                         let pids: Vec<u32> = list.iter().map(|p| p.pid).collect();
-                        let sum_gpu: f32 = if total_gpu_pct > 0.1 && (is_gpu_app(&disp_name) || is_app) {
-                            let share = (sum_cpu / snap.cpu_global_usage.max(1.0)).clamp(0.0, 1.0);
-                            (total_gpu_pct * share).clamp(0.0, 100.0)
-                        } else {
-                            0.0
-                        };
-                        let group_norm_cpu = sum_cpu / norm_factor;
-                        let group_cpu_frac = (group_norm_cpu / 100.0).clamp(0.0, 1.0);
-                        let sum_power_watts: f32 = (sys_watts * 0.75 * group_cpu_frac)
-                            + (if sum_gpu > 0.0 { sys_watts * 0.2 * (sum_gpu / 100.0) } else { 0.0 })
-                            + (sum_disk_rate as f32 / 100_000_000.0).clamp(0.0, 2.0);
+                        // Linux does not expose per-process GPU attribution through this collector.
+                        let sum_gpu = 0.0;
+                        let sum_power_watts = 0.0;
                         ProcessGroupSummary {
                             key,
                             display_name: disp_name,
@@ -19439,141 +19351,61 @@ impl LauncherApp {
                 let total_fixed_w = COL_CPU_W + COL_MEM_W + COL_DISK_W + COL_NET_W + COL_GPU_W + COL_POWER_W + 6.0 * COL_SPACING + 24.0;
                 let col_name_w = (avail_w - total_fixed_w).max(180.0);
 
-                // Helper to return crisp Lucide arrow or empty string for sort indicators
-                let current_sort = self.sensors_top_apps_sort.clone();
-                let current_desc = self.sensors_top_apps_sort_desc;
-                let get_sort_arrow = move |col: &str| -> &str {
-                    if current_sort == col {
-                        if current_desc {
-                            crate::lucide::ARROW_DOWN
-                        } else {
-                            crate::lucide::ARROW_UP
-                        }
-                    } else {
-                        ""
-                    }
-                };
-
                 // ═════════════════════════════════════════════════════════════
                 // WINDOWS TASK MANAGER PROCESS TABLE
                 // ═════════════════════════════════════════════════════════════
+                // Keep the column headings fixed while only process rows scroll.
+                ScrollArea::horizontal()
+                    .id_salt("top_apps_h_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                let mut new_sort = None;
+                egui::Grid::new("top_apps_task_manager_header")
+                    .num_columns(7)
+                    .spacing(egui::vec2(COL_SPACING, 4.0))
+                    .show(ui, |ui| {
+                        for (width, title, key, total) in [
+                            (col_name_w, "Name", "name", String::new()),
+                            (COL_CPU_W, "CPU", "cpu", format!("{:.0}%", snap.cpu_global_usage)),
+                            (COL_MEM_W, "Memory", "mem", format!("{:.0}%", mem_total_pct)),
+                            (COL_DISK_W, "Disk", "disk", format_tm_disk(total_disk_mb_s * 1024.0 * 1024.0)),
+                            (COL_NET_W, "Network", "net", "—".to_string()),
+                            (COL_GPU_W, "GPU", "gpu", total_gpu_pct.map(|v| format!("{v:.0}%")).unwrap_or_else(|| "—".to_string())),
+                            (COL_POWER_W, "Power", "power", "—".to_string()),
+                        ] {
+                            ui.allocate_ui_with_layout(egui::vec2(width, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
+                                let is_sel = self.sensors_top_apps_sort == key;
+                                if !total.is_empty() {
+                                    ui.label(RichText::new(total).size(11.5).strong().color(p.text_primary));
+                                } else {
+                                    ui.add_space(16.0);
+                                }
+                                let arrow = if is_sel { if self.sensors_top_apps_sort_desc { crate::lucide::ARROW_DOWN } else { crate::lucide::ARROW_UP } } else { "" };
+                                if ui.add(egui::Button::new(RichText::new(format!("{title} {arrow}")).size(10.0).color(if is_sel { p.text_primary } else { p.text_secondary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE)).clicked() {
+                                    new_sort = Some(key);
+                                }
+                            });
+                        }
+                        ui.end_row();
+                    });
+                if let Some(col) = new_sort {
+                    if self.sensors_top_apps_sort == col {
+                        self.sensors_top_apps_sort_desc = !self.sensors_top_apps_sort_desc;
+                    } else {
+                        self.sensors_top_apps_sort = col.to_string();
+                        self.sensors_top_apps_sort_desc = col != "name";
+                    }
+                }
+
                 ScrollArea::vertical()
                     .id_salt("top_apps_v_scroll")
                     .auto_shrink([false, false])
+                    .max_height(ui.available_height())
                     .show(ui, |ui| {
-                        ScrollArea::horizontal()
-                            .id_salt("top_apps_h_scroll")
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
                                 egui::Grid::new("top_apps_task_manager_grid")
                                     .num_columns(7)
                                     .spacing(egui::vec2(COL_SPACING, 4.0))
                                     .show(ui, |ui| {
-                                        // ═════════════════════════════════════
-                                        // STACKED TWO-TIER COLUMN HEADERS (Image 2)
-                                        // ═════════════════════════════════════
-                                        let mut new_sort = None;
-
-                                        // 1. Name
-                                        ui.allocate_ui_with_layout(egui::vec2(col_name_w, 36.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                            let is_sel = self.sensors_top_apps_sort == "name";
-                                            let arr = get_sort_arrow("name");
-                                            let title = if arr.is_empty() { "Name".to_string() } else { format!("Name {}", arr) };
-                                            let btn = egui::Button::new(
-                                                RichText::new(title)
-                                                    .size(11.5)
-                                                    .strong()
-                                                    .color(if is_sel { Color32::from_rgb(241, 245, 249) } else { p.text_secondary }),
-                                            )
-                                            .fill(Color32::TRANSPARENT)
-                                            .stroke(Stroke::NONE);
-                                            if ui.add(btn).clicked() {
-                                                new_sort = Some("name");
-                                            }
-                                        });
-
-                                        // 2. CPU (Stacked: Total % top, CPU bottom)
-                                        ui.allocate_ui_with_layout(egui::vec2(COL_CPU_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
-                                            let is_sel = self.sensors_top_apps_sort == "cpu";
-                                            let arr = get_sort_arrow("cpu");
-                                            let title = if arr.is_empty() { "CPU".to_string() } else { format!("CPU {}", arr) };
-                                            let btn1 = ui.add(egui::Button::new(RichText::new(format!("{:.0}%", snap.cpu_global_usage)).size(11.5).strong().color(Color32::from_rgb(241, 245, 249))).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
-                                            let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(if is_sel { Color32::from_rgb(226, 232, 240) } else { p.text_secondary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
-                                            if btn1.clicked() || btn2.clicked() {
-                                                new_sort = Some("cpu");
-                                            }
-                                        });
-
-                                        // 3. Memory (Stacked: Total % top, Memory bottom)
-                                        ui.allocate_ui_with_layout(egui::vec2(COL_MEM_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
-                                            let is_sel = self.sensors_top_apps_sort == "mem";
-                                            let arr = get_sort_arrow("mem");
-                                            let title = if arr.is_empty() { "Memory".to_string() } else { format!("Memory {}", arr) };
-                                            let btn1 = ui.add(egui::Button::new(RichText::new(format!("{:.0}%", mem_total_pct)).size(11.5).strong().color(Color32::from_rgb(241, 245, 249))).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
-                                            let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(if is_sel { Color32::from_rgb(226, 232, 240) } else { p.text_secondary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
-                                            if btn1.clicked() || btn2.clicked() {
-                                                new_sort = Some("mem");
-                                            }
-                                        });
-
-                                        // 4. Disk (Stacked: Rate % top, Disk bottom)
-                                        ui.allocate_ui_with_layout(egui::vec2(COL_DISK_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
-                                            let is_sel = self.sensors_top_apps_sort == "disk";
-                                            let arr = get_sort_arrow("disk");
-                                            let title = if arr.is_empty() { "Disk".to_string() } else { format!("Disk {}", arr) };
-                                            let btn1 = ui.add(egui::Button::new(RichText::new(&disk_header_pct).size(11.5).strong().color(Color32::from_rgb(241, 245, 249))).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
-                                            let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(if is_sel { Color32::from_rgb(226, 232, 240) } else { p.text_secondary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
-                                            if btn1.clicked() || btn2.clicked() {
-                                                new_sort = Some("disk");
-                                            }
-                                        });
-
-                                        // 5. Network (Stacked: 0% top, Network bottom)
-                                        ui.allocate_ui_with_layout(egui::vec2(COL_NET_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
-                                            let is_sel = self.sensors_top_apps_sort == "net";
-                                            let arr = get_sort_arrow("net");
-                                            let title = if arr.is_empty() { "Network".to_string() } else { format!("Network {}", arr) };
-                                            let btn1 = ui.add(egui::Button::new(RichText::new("0%").size(11.5).strong().color(Color32::from_rgb(241, 245, 249))).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
-                                            let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(if is_sel { Color32::from_rgb(226, 232, 240) } else { p.text_secondary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
-                                            if btn1.clicked() || btn2.clicked() {
-                                                new_sort = Some("net");
-                                            }
-                                        });
-
-                                        // 6. GPU (Stacked: Total % top, GPU bottom)
-                                        ui.allocate_ui_with_layout(egui::vec2(COL_GPU_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
-                                            let is_sel = self.sensors_top_apps_sort == "gpu";
-                                            let arr = get_sort_arrow("gpu");
-                                            let title = if arr.is_empty() { "GPU".to_string() } else { format!("GPU {}", arr) };
-                                            let btn1 = ui.add(egui::Button::new(RichText::new(format!("{:.0}%", total_gpu_pct)).size(11.5).strong().color(Color32::from_rgb(241, 245, 249))).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
-                                            let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(if is_sel { Color32::from_rgb(226, 232, 240) } else { p.text_secondary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
-                                            if btn1.clicked() || btn2.clicked() {
-                                                new_sort = Some("gpu");
-                                            }
-                                        });
-
-                                        // 7. Power (Stacked: Total W top, Power bottom)
-                                        ui.allocate_ui_with_layout(egui::vec2(COL_POWER_W, 36.0), egui::Layout::top_down(egui::Align::Max), |ui| {
-                                            let is_sel = self.sensors_top_apps_sort == "power";
-                                            let arr = get_sort_arrow("power");
-                                            let title = if arr.is_empty() { "Power".to_string() } else { format!("Power {}", arr) };
-                                            let btn1 = ui.add(egui::Button::new(RichText::new(format!("{:.0} W", sys_watts)).size(11.5).strong().color(Color32::from_rgb(241, 245, 249))).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
-                                            let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(if is_sel { Color32::from_rgb(226, 232, 240) } else { p.text_secondary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
-                                            if btn1.clicked() || btn2.clicked() {
-                                                new_sort = Some("power");
-                                            }
-                                        });
-                                        ui.end_row();
-
-                                        if let Some(col) = new_sort {
-                                            if self.sensors_top_apps_sort == col {
-                                                self.sensors_top_apps_sort_desc = !self.sensors_top_apps_sort_desc;
-                                            } else {
-                                                self.sensors_top_apps_sort = col.to_string();
-                                                self.sensors_top_apps_sort_desc = col != "name";
-                                            }
-                                        }
-
                                         // Helper closure to render a process group
                                         let mut render_group_row = |ui: &mut Ui, grp: &ProcessGroupSummary, is_app_sec: bool| {
                                             let is_multi = grp.children.len() > 1;
@@ -19825,11 +19657,11 @@ impl LauncherApp {
                                                     row_bg,
                                                 );
                                             }
-                                            let pwr_fill = get_tm_power_bg(grp.sum_power_watts, norm_cpu);
+                                            let pwr_fill = Color32::TRANSPARENT;
                                             if pwr_fill != Color32::TRANSPARENT {
                                                 ui.painter().rect_filled(pwr_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, pwr_fill);
                                             }
-                                            let pwr_rating = format_tm_power_rating(grp.sum_power_watts, norm_cpu);
+                                            let pwr_rating = "—";
                                             let pwr_color = if pwr_fill != Color32::TRANSPARENT {
                                                 Color32::from_rgb(245, 245, 250)
                                             } else {
@@ -19842,7 +19674,7 @@ impl LauncherApp {
                                                 egui::FontId::proportional(11.0),
                                                 pwr_color,
                                             );
-                                            let _ = pwr_resp.on_hover_text(format!("{:.2} W (Estimated power draw)\nUsage rating: {}", grp.sum_power_watts, pwr_rating));
+                                            let _ = pwr_resp.on_hover_text("Per-process power is not available from this collector".to_string());
 
                                             let row_interactive_rect = if is_multi && expander_rect.width() > 0.0 {
                                                 egui::Rect::from_min_max(
@@ -19962,11 +19794,7 @@ impl LauncherApp {
                                                         let bg_rect = egui::Rect::from_min_max(c_net_rect.min, egui::pos2(c_net_rect.max.x + COL_SPACING, c_net_rect.max.y));
                                                         ui.painter().rect_filled(bg_rect, Rounding::ZERO, c_row_bg);
                                                     }
-                                                    let c_net_txt = if child.net_rate_bps > 0.0 {
-                                                        crate::sensors::format_rate(child.net_rate_bps)
-                                                    } else {
-                                                        "0 Mbps".to_string()
-                                                    };
+                                                    let c_net_txt = "—";
                                                     let c_net_color = if child.net_rate_bps > 1024.0 {
                                                         Color32::from_rgb(203, 213, 225)
                                                     } else {
@@ -19986,12 +19814,8 @@ impl LauncherApp {
                                                         let bg_rect = egui::Rect::from_min_max(c_gpu_rect.min, egui::pos2(c_gpu_rect.max.x + COL_SPACING, c_gpu_rect.max.y));
                                                         ui.painter().rect_filled(bg_rect, Rounding::ZERO, c_row_bg);
                                                     }
-                                                    let c_gpu = if is_gpu_app(&child.name) && total_gpu_pct > 0.1 {
-                                                        (total_gpu_pct * (child.cpu_usage / snap.cpu_global_usage.max(1.0)).clamp(0.0, 1.0)).clamp(0.0, 100.0)
-                                                    } else {
-                                                        0.0
-                                                    };
-                                                    let c_gpu_txt = if c_gpu < 0.05 { "0%".to_string() } else { format!("{:.1}%", c_gpu) };
+                                                    let c_gpu = 0.0;
+                                                    let c_gpu_txt = "—";
                                                     ui.painter().text(
                                                         egui::pos2(c_gpu_rect.right() - 8.0, c_gpu_rect.center().y),
                                                         egui::Align2::RIGHT_CENTER,
@@ -20006,9 +19830,7 @@ impl LauncherApp {
                                                     if c_row_bg != Color32::TRANSPARENT {
                                                         ui.painter().rect_filled(c_pwr_rect, Rounding { nw: 0.0, sw: 0.0, ne: 4.0, se: 4.0 }, c_row_bg);
                                                     }
-                                                    let c_cpu_frac = (child_norm_cpu / 100.0).clamp(0.0, 1.0);
-                                                    let c_pwr_watts = (sys_watts * 0.75 * c_cpu_frac) + (if c_gpu > 0.0 { sys_watts * 0.2 * (c_gpu / 100.0) } else { 0.0 }) + (child.disk_rate_bps as f32 / 100_000_000.0).clamp(0.0, 2.0);
-                                                    let c_pwr_rating = format_tm_power_rating(c_pwr_watts, child_norm_cpu);
+                                                    let c_pwr_rating = "—";
                                                     ui.painter().text(
                                                         egui::pos2(c_pwr_rect.right() - 8.0, c_pwr_rect.center().y),
                                                         egui::Align2::RIGHT_CENTER,
@@ -20016,7 +19838,7 @@ impl LauncherApp {
                                                         egui::FontId::proportional(10.5),
                                                         Color32::from_rgb(140, 145, 155),
                                                     );
-                                                    let _ = c_pwr_resp.on_hover_text(format!("{:.2} W (Estimated power draw)\nUsage rating: {}", c_pwr_watts, c_pwr_rating));
+                                                    let _ = c_pwr_resp.on_hover_text("Per-process power is not available from this collector");
 
                                                     let c_row_resp = ui.interact(child_row_rect, egui::Id::new("child_row_full_clk").with(child.pid), egui::Sense::click());
                                                     if c_row_resp.clicked() {
@@ -20097,8 +19919,8 @@ impl LauncherApp {
                                             }
                                         }
                                     });
-                            });
                     });
+                });
             });
 
         // Global shortcuts for selected process when not typing into a search text field

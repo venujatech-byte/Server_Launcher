@@ -186,7 +186,8 @@ impl LauncherApp {
                             });
                         ui.add_space(8.0);
                         ui.vertical(|ui| {
-                            ui.horizontal(|ui| {
+                            ui.set_width((ui.available_width() - 32.0).max(100.0));
+                            ui.horizontal_wrapped(|ui| {
                                 ui.label(RichText::new("SSH Remote PC / Server").size(13.5).strong().color(p.text_primary));
                                 ui.label(RichText::new("Linux • Unix • Cloud").size(9.5).monospace().color(p.accent));
                             });
@@ -229,12 +230,13 @@ impl LauncherApp {
                             });
                         ui.add_space(8.0);
                         ui.vertical(|ui| {
-                            ui.horizontal(|ui| {
+                            ui.set_width((ui.available_width() - 32.0).max(100.0));
+                            ui.horizontal_wrapped(|ui| {
                                 ui.label(RichText::new("Android / ADB Device").size(13.5).strong().color(p.text_primary));
                                 ui.label(RichText::new("USB & Wireless ADB").size(9.5).monospace().color(Color32::from_rgb(56, 189, 248)));
                             });
                             ui.add_space(3.0);
-                            ui.label(RichText::new("Full Android control suite: screen mirror (built-in & scrcpy), bidirectional clipboard share, interactive shell terminal, storage explorer, and firmware / recovery tools.")
+                            ui.label(RichText::new("Full Android control suite: screen mirroring, clipboard, terminal, files, and recovery tools in the separate Android Cockpit app.")
                                 .size(10.5).color(p.text_muted));
                         });
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

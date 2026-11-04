@@ -19460,7 +19460,7 @@ impl LauncherApp {
                             (COL_CPU_W, "CPU", "cpu", format!("{:.0}%", snap.cpu_global_usage)),
                             (COL_MEM_W, "Memory", "mem", format!("{:.0}%", mem_total_pct)),
                             (COL_DISK_W, "Disk", "disk", format_tm_disk(total_disk_mb_s * 1024.0 * 1024.0)),
-                            (COL_NET_W, "Network", "net", "—".to_string()),
+                            (COL_NET_W, "Network", "net", crate::sensors::format_rate(snap.total_rx_rate_bps + snap.total_tx_rate_bps)),
                             (COL_GPU_W, "GPU", "gpu", total_gpu_pct.map(|v| format!("{v:.0}%")).unwrap_or_else(|| "—".to_string())),
                             (COL_POWER_W, "Power", "power", "—".to_string()),
                         ] {
@@ -19711,13 +19711,13 @@ impl LauncherApp {
                                             );
 
                                             // 5. Network (Strictly bounded, right aligned)
-                                            let (net_rect, _net_resp) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 22.0), egui::Sense::hover());
+                                            let (net_rect, net_resp) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 22.0), egui::Sense::hover());
                                             if row_bg != Color32::TRANSPARENT {
                                                 let bg_rect = egui::Rect::from_min_max(net_rect.min, egui::pos2(net_rect.max.x + COL_SPACING, net_rect.max.y));
                                                 ui.painter().rect_filled(bg_rect, Rounding::ZERO, row_bg);
                                             }
-                                            let net_txt = "—";
-                                            let net_color = Color32::from_rgb(160, 165, 175);
+                                            let net_txt = if grp.sum_net_bytes > 0 { crate::sensors::format_rate(grp.sum_net_rate) } else { "—".to_string() };
+                                            let net_color = if grp.sum_net_rate > 1024.0 { Color32::from_rgb(203, 213, 225) } else { Color32::from_rgb(160, 165, 175) };
                                             ui.painter().text(
                                                 egui::pos2(net_rect.right() - 8.0, net_rect.center().y),
                                                 egui::Align2::RIGHT_CENTER,
@@ -19725,6 +19725,10 @@ impl LauncherApp {
                                                 egui::FontId::monospace(11.0),
                                                 net_color,
                                             );
+                                            let _ = net_resp.on_hover_text(format!(
+                                                "{} received + sent across visible TCP sockets",
+                                                crate::sensors::format_bytes(grp.sum_net_bytes),
+                                            ));
 
                                             // 6. GPU (Heatmap tinted cell, strictly bounded, right aligned)
                                             let (gpu_rect, gpu_resp) = ui.allocate_exact_size(egui::vec2(COL_GPU_W, 22.0), egui::Sense::hover());
@@ -19894,12 +19898,12 @@ impl LauncherApp {
                                                     );
 
                                                     // Child Network
-                                                    let (c_net_rect, _c_net_resp) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 20.0), egui::Sense::hover());
+                                                    let (c_net_rect, c_net_resp) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 20.0), egui::Sense::hover());
                                                     if c_row_bg != Color32::TRANSPARENT {
                                                         let bg_rect = egui::Rect::from_min_max(c_net_rect.min, egui::pos2(c_net_rect.max.x + COL_SPACING, c_net_rect.max.y));
                                                         ui.painter().rect_filled(bg_rect, Rounding::ZERO, c_row_bg);
                                                     }
-                                                    let c_net_txt = "—";
+                                                    let c_net_txt = if child.net_rx_bytes + child.net_tx_bytes > 0 { crate::sensors::format_rate(child.net_rate_bps) } else { "—".to_string() };
                                                     let c_net_color = if child.net_rate_bps > 1024.0 {
                                                         Color32::from_rgb(203, 213, 225)
                                                     } else {
@@ -19912,6 +19916,10 @@ impl LauncherApp {
                                                         egui::FontId::monospace(10.5),
                                                         c_net_color,
                                                     );
+                                                    let _ = c_net_resp.on_hover_text(format!(
+                                                        "{} received + sent across visible TCP sockets",
+                                                        crate::sensors::format_bytes(child.net_rx_bytes + child.net_tx_bytes),
+                                                    ));
 
                                                     // Child GPU
                                                     let (c_gpu_rect, c_gpu_resp) = ui.allocate_exact_size(egui::vec2(COL_GPU_W, 20.0), egui::Sense::hover());

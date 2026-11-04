@@ -7063,7 +7063,7 @@ impl LauncherApp {
             ScrollArea::vertical()
                 .id_salt("saved_commands_scroll")
                 .auto_shrink([false, false])
-                .show_rows(ui, 96.0, filtered_indices.len(), |ui, row_range| {
+                .show_rows(ui, 100.0, filtered_indices.len(), |ui, row_range| {
                     ui.set_width(ui.available_width());
                     ui.set_max_width(ui.available_width());
                     let mut to_run_cmd: Option<(String, bool)> = None;
@@ -7082,6 +7082,7 @@ impl LauncherApp {
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.set_max_width(ui.available_width());
+                                ui.set_min_height(78.0);
                                 ui.horizontal(|ui| {
                                     let cat_text = format!("[{}]", c.category);
                                     let cat_w = ui.fonts(|f| {
@@ -7118,7 +7119,7 @@ impl LauncherApp {
                                     .truncate(),
                                 );
 
-                                if !c.description.is_empty() {
+                                {
                                     ui.add_space(2.0);
                                     let desc_w = (ui.available_width() - 4.0).max(40.0);
                                     ui.add_sized(

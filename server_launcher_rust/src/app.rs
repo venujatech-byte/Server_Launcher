@@ -6371,7 +6371,8 @@ impl LauncherApp {
                         (SidebarTab::Sensors, SidebarTab::Sensors.label()),
                     ];
 
-                    let btn_w = ((avail_w - 20.0) / 5.0).max(10.0);
+                    // Keep tab edges stable when the Sensors header shares its row with host telemetry.
+                    let btn_w = 68.0;
                     let text_sz = if is_narrow { 9.0 } else { 10.0 };
 
                     for (tab, label) in tabs {
@@ -6397,7 +6398,7 @@ impl LauncherApp {
                         .rounding(Rounding::same(999.0))
                         .min_size(egui::vec2(btn_w, 24.0));
 
-                        if ui.add(btn).clicked() {
+                        if ui.add_sized(egui::vec2(btn_w, 24.0), btn).clicked() {
                             self.active_sidebar_tab = tab;
                             if tab == SidebarTab::Commands {
                                 if self.selected_machine == "local" {
@@ -15082,7 +15083,35 @@ impl LauncherApp {
                             }
 
                             ui.add_space(2.0);
-                            ui.label(RichText::new("Process list • Per-app traffic and date history are unavailable with the current collector.").size(10.5).color(p.text_muted));
+                            ui.label(RichText::new("Live interface totals are collected below. Per-process network accounting is not provided by the current collector.").size(10.5).color(p.text_muted));
+                        });
+                    });
+
+                ui.add_space(10.0);
+
+                // Interface byte counters and rates are available even when process attribution is not.
+                Frame::none()
+                    .fill(p.bg_card)
+                    .rounding(Rounding::same(8.0))
+                    .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(RichText::new("NETWORK TOTALS").size(9.0).monospace().strong().color(p.text_muted));
+                        ui.add_space(8.0);
+                        ui.columns(4, |cols| {
+                            for (column, title, value, detail, color) in [
+                                (0, "RECEIVED", crate::sensors::format_bytes(snap.total_rx_bytes), crate::sensors::format_rate(snap.total_rx_rate_bps), accent),
+                                (1, "SENT", crate::sensors::format_bytes(snap.total_tx_bytes), crate::sensors::format_rate(snap.total_tx_rate_bps), Color32::from_rgb(148, 163, 184)),
+                                (2, "INTERFACES", snap.networks.iter().filter(|net| net.rx_bytes > 0 || net.tx_bytes > 0).count().to_string(), "with traffic counters".to_string(), accent),
+                                (3, "PER-APP", "Unavailable".to_string(), "collector has no process counters".to_string(), p.text_muted),
+                            ] {
+                                cols[column].vertical(|ui| {
+                                    ui.label(RichText::new(title).size(9.0).monospace().strong().color(p.text_muted));
+                                    ui.add_space(3.0);
+                                    ui.label(RichText::new(value).size(16.0).strong().color(color));
+                                    ui.label(RichText::new(detail).size(9.0).monospace().color(p.text_muted));
+                                });
+                            }
                         });
                     });
 

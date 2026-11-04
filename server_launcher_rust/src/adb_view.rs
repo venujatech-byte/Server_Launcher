@@ -98,6 +98,8 @@ impl LauncherApp {
         let p = self.palette();
         let screen = ctx.screen_rect();
         let modal_w = 560.0_f32.min(screen.width() - 32.0);
+        let compact = screen.height() < 420.0;
+        let option_height = if compact { 82.0 } else { 100.0 };
 
         // 1. Semi-transparent backdrop overlay with click-outside dismissal
         let backdrop_area = egui::Area::new(egui::Id::new("add_device_selector_backdrop"))
@@ -133,7 +135,7 @@ impl LauncherApp {
                         spread: 0.0,
                         color: Color32::from_black_alpha(180),
                     })
-                    .inner_margin(egui::Margin::symmetric(20.0, 18.0)),
+                    .inner_margin(egui::Margin::symmetric(20.0, if compact { 12.0 } else { 18.0 })),
             )
             .show(ctx, |ui| {
                 // Header
@@ -161,11 +163,11 @@ impl LauncherApp {
                     });
                 });
 
-                ui.add_space(14.0);
+                ui.add_space(if compact { 8.0 } else { 14.0 });
 
                 // Option 1: SSH Remote PC
                 let mut choose_ssh = false;
-                let (ssh_rect, ssh_resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 100.0), egui::Sense::click());
+                let (ssh_rect, ssh_resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), option_height), egui::Sense::click());
                 if ssh_resp.hovered() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
@@ -205,11 +207,11 @@ impl LauncherApp {
                     choose_ssh = true;
                 }
 
-                ui.add_space(10.0);
+                ui.add_space(if compact { 6.0 } else { 10.0 });
 
                 // Option 2: Android / ADB Device
                 let mut choose_adb = false;
-                let (adb_rect, adb_resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 100.0), egui::Sense::click());
+                let (adb_rect, adb_resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), option_height), egui::Sense::click());
                 if adb_resp.hovered() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }

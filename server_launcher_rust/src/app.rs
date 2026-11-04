@@ -11819,12 +11819,12 @@ impl LauncherApp {
                 let cache_gb = cache_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                 let cache_mb = cache_bytes / (1024 * 1024);
 
-                let total_ram_str = format!("{:.1} GB", if total_ram_gb > 0.1 { total_ram_gb } else { 8.0 });
-                let used_gb_val = if used_ram_gb > 0.05 { used_ram_gb } else { 6.4 };
-                let avail_gb_val = if free_ram_gb > 0.05 { free_ram_gb } else { 1.4 };
-                let cached_gb_val = if cache_gb > 0.05 { cache_gb } else { 1.4 };
-                let used_pct = snap.mem_usage_pct.clamp(5.0, 99.0);
-                let avail_pct = (100.0 - used_pct).clamp(1.0, 95.0);
+                let total_ram_str = format!("{:.1} GB", total_ram_gb);
+                let used_gb_val = used_ram_gb;
+                let avail_gb_val = free_ram_gb;
+                let cached_gb_val = cache_gb;
+                let used_pct = snap.mem_usage_pct.clamp(0.0, 100.0);
+                let avail_pct = (snap.mem_free_bytes as f32 / snap.mem_total_bytes.max(1) as f32 * 100.0).clamp(0.0, 100.0);
 
                 let (slot_label, topol_label, mem_type_str, ram_mod_str) = if let Some(ref hw) = snap.memory_hw {
                     let slot = if host_id.is_some() { "REMOTE : ACTIVE".to_string() } else { hw.slot_summary.clone() };
@@ -11833,10 +11833,10 @@ impl LauncherApp {
                     let mspec = hw.module_spec.clone();
                     (slot, topol, mtype, mspec)
                 } else {
-                    let slot = if host_id.is_some() { "REMOTE : ACTIVE".to_string() } else { "SLOT 1 : ACTIVE".to_string() };
-                    let topol = if host_id.is_some() { "HOST MEMORY POOL".to_string() } else { "SINGLE-CHANNEL".to_string() };
-                    let mtype = format!("{} DDR4-2400", total_ram_str);
-                    let mspec = if host_id.is_some() { "ECC/Non-ECC Managed Pool".to_string() } else { format!("{} SODIMM", total_ram_str) };
+                    let slot = if host_id.is_some() { "REMOTE : ACTIVE".to_string() } else { "SLOTS UNAVAILABLE".to_string() };
+                    let topol = if host_id.is_some() { "HOST MEMORY POOL".to_string() } else { "TOPOLOGY UNAVAILABLE".to_string() };
+                    let mtype = total_ram_str.clone();
+                    let mspec = if host_id.is_some() { "Module details unavailable".to_string() } else { "Module details unavailable".to_string() };
                     (slot, topol, mtype, mspec)
                 };
 
@@ -11929,9 +11929,9 @@ impl LauncherApp {
                                 ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
                                 ui.label(RichText::new(&ram_mod_str).size(10.0).monospace().color(p.text_muted));
                                 ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
-                                ui.label(RichText::new("Hardware Reserved Pool").size(10.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new("Memory telemetry").size(10.0).monospace().color(p.text_muted));
                                 ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
-                                ui.label(RichText::new("Normal Voltage").size(10.0).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                ui.label(RichText::new("Voltage unavailable").size(10.0).monospace().color(Color32::from_rgb(203, 213, 225)));
                             });
                         });
                     });
@@ -11983,7 +11983,7 @@ impl LauncherApp {
                         &format!("PEAK {:.0}%", ram_peak),
                         &ram_slice,
                         100.0,
-                        Some(0.85),
+                        None,
                         accent,
                         p.bg_card,
                         p.text_muted,
@@ -11994,34 +11994,34 @@ impl LauncherApp {
                     render_big_stat_card(
                         &mut cols[1],
                         crate::lucide::CHECK,
-                        "AVAILABLE MEMORY",
+                        "FREE MEMORY",
                         &format!("{:.1}", avail_gb_val),
                         "GB",
                         &format!("Free Headroom {:.1}%", avail_pct),
                         &format!("TOTAL {}", total_ram_str),
-                        "RESERVED 195 MB",
+                        "",
                         &avail_slice,
                         100.0,
-                        Some(0.5),
+                        None,
                         accent,
                         p.bg_card,
                         p.text_muted,
                     );
 
                     // Card 3: CACHED & BUFFERS
-                    let cache_slice: Vec<f32> = ram_slice.iter().map(|&u| (cached_gb_val as f32 * (0.95 + 0.05 * (u / 100.0))).max(0.1)).collect();
+                    let cache_slice: Vec<f32> = Vec::new();
                     render_big_stat_card(
                         &mut cols[2],
                         crate::lucide::FILE_TEXT,
-                        "CACHED & BUFFERS",
+                        "RECLAIMABLE ESTIMATE",
                         &format!("{:.1}", cached_gb_val),
                         "GB",
-                        "Kernel Page Cache & Dentries",
-                        &format!("CACHE {} MB", if cache_mb > 0 { cache_mb } else { 1433 }),
-                        "STANDBY LIST",
+                        "Total − used − free",
+                        &format!("CACHE {} MB", cache_mb),
+                        "ESTIMATE",
                         &cache_slice,
                         (cached_gb_val as f32 * 1.5).max(4.0),
-                        Some(0.6),
+                        None,
                         accent,
                         p.bg_card,
                         p.text_muted,
@@ -12039,7 +12039,7 @@ impl LauncherApp {
                         &format!("PEAK {:.1}%", swap_peak),
                         &swap_slice,
                         100.0,
-                        Some(0.08),
+                        None,
                         accent,
                         p.bg_card,
                         p.text_muted,
@@ -12058,8 +12058,8 @@ impl LauncherApp {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                             ui.painter().circle_filled(d_rect.center(), 2.8, accent);
-                            ui.label(RichText::new("Real-Time Memmory Allocation").size(12.5).strong().color(p.text_primary));
-        
+                            ui.label(RichText::new("Memory Usage History").size(12.5).strong().color(p.text_primary));
+
 
 
                         });
@@ -12089,7 +12089,7 @@ impl LauncherApp {
                             ui.label(RichText::new(crate::lucide::LAYERS).size(12.0).color(accent));
                             ui.label(RichText::new("Physical Memory Composition").size(12.5).strong().color(p.text_primary));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let pool_mb = (snap.mem_total_bytes / (1024 * 1024)).max(8000);
+                                let pool_mb = snap.mem_total_bytes / (1024 * 1024);
                                 ui.label(RichText::new(format!("{} MB TOTAL RESIDENT POOL", pool_mb)).size(10.0).monospace().color(p.text_muted));
                             });
                         });
@@ -12097,14 +12097,12 @@ impl LauncherApp {
                         ui.add_space(8.0);
 
                         // Segmented Bar (In Use: cyan, Modified: coral, Standby: soft blue, Free: dark slate)
-                        let in_use_frac = (used_pct / 100.0).clamp(0.05, 0.85);
-                        let mod_frac = if let Some(dirty) = snap.mem_dirty_bytes {
-                            (dirty as f32 / snap.mem_total_bytes.max(1) as f32).clamp(0.005, 0.20)
-                        } else {
-                            0.02_f32
-                        };
-                        let standby_frac = (cache_bytes as f32 / snap.mem_total_bytes.max(1) as f32).clamp(0.05, 0.35);
-                        let free_frac = (1.0 - in_use_frac - mod_frac - standby_frac).max(0.04);
+                        let used_frac = (used_pct / 100.0).clamp(0.0, 1.0);
+                        // Dirty pages are part of used memory, not an additional allocation.
+                        let mod_frac = (snap.mem_dirty_bytes.unwrap_or(0) as f32 / snap.mem_total_bytes.max(1) as f32).min(used_frac);
+                        let in_use_frac = used_frac - mod_frac;
+                        let standby_frac = (cache_bytes as f32 / snap.mem_total_bytes.max(1) as f32).min(1.0 - used_frac);
+                        let free_frac = (1.0 - used_frac - standby_frac).max(0.0);
 
                         let (bar_res, bar_p) = ui.allocate_painter(egui::vec2(ui.available_width(), 16.0), egui::Sense::hover());
                         let br = bar_res.rect;
@@ -12116,9 +12114,9 @@ impl LauncherApp {
                         let w4 = br.width() * free_frac;
 
                         bar_p.rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(w1, br.height())), Rounding::same(3.0), Color32::from_rgb(112, 213, 228));
-                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w1 + 1.0, br.min.y), egui::vec2(w2, br.height())), Rounding::ZERO, Color32::from_rgb(148, 163, 184));
-                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w1 + w2 + 2.0, br.min.y), egui::vec2(w3, br.height())), Rounding::ZERO, Color32::from_rgb(96, 165, 250));
-                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w1 + w2 + w3 + 3.0, br.min.y), egui::vec2(w4, br.height())), Rounding::same(3.0), Color32::from_rgb(51, 65, 85));
+                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w1, br.min.y), egui::vec2(w2, br.height())), Rounding::ZERO, Color32::from_rgb(148, 163, 184));
+                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w1 + w2, br.min.y), egui::vec2(w3, br.height())), Rounding::ZERO, Color32::from_rgb(96, 165, 250));
+                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w1 + w2 + w3, br.min.y), egui::vec2(w4, br.height())), Rounding::same(3.0), Color32::from_rgb(51, 65, 85));
 
                         ui.add_space(8.0);
 
@@ -12170,7 +12168,7 @@ impl LauncherApp {
                                 });
                                 ui.add_space(2.0);
                                 let free_mb = snap.mem_free_bytes / (1024 * 1024);
-                                ui.label(RichText::new(format!("{} MB", if free_mb > 0 { free_mb } else { 567 })).size(14.0).strong().color(p.text_primary));
+                                ui.label(RichText::new(format!("{} MB", free_mb)).size(14.0).strong().color(p.text_primary));
                                 ui.label(RichText::new("Unallocated").size(9.0).monospace().color(p.text_muted));
                             });
                         });
@@ -12190,19 +12188,19 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 ui.label(RichText::new(crate::lucide::ZAP).size(12.0).color(accent));
-                                ui.label(RichText::new("Linux ZRAM Dynamic Swap").size(12.5).strong().color(p.text_primary));
+                                ui.label(RichText::new("Swap & Compression").size(12.5).strong().color(p.text_primary));
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |_ui| {
                                     Frame::none()
                                         .fill(accent_with_alpha(accent, 25))
                                         .rounding(Rounding::same(999.0))
                                         .inner_margin(egui::Margin::symmetric(7.0, 2.0))
-                                     
+
                                 });
                             });
 
                             ui.add_space(2.0);
-                            
+
 
                             ui.add_space(8.0);
 
@@ -12217,18 +12215,18 @@ impl LauncherApp {
                                         ui.set_width(ui.available_width());
                                         ui.label(RichText::new("SWAP ALLOCATED").size(8.5).monospace().strong().color(p.text_muted));
                                         ui.add_space(2.0);
-                                        let sw_pct = if snap.swap_usage_pct > 0.1 { snap.swap_usage_pct } else { 29.3 };
+                                        let sw_pct = snap.swap_usage_pct;
                                         ui.label(RichText::new(format!("{:.1}%", sw_pct)).size(19.0).strong().color(p.text_primary));
                                         ui.add_space(4.0);
 
                                         let (br, bp) = ui.allocate_painter(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
                                         bp.rect_filled(br.rect, Rounding::same(2.0), Color32::from_rgb(18, 28, 44));
-                                        let fw = br.rect.width() * (sw_pct / 100.0).clamp(0.02, 1.0);
+                                        let fw = br.rect.width() * (sw_pct / 100.0).clamp(0.0, 1.0);
                                         bp.rect_filled(egui::Rect::from_min_size(br.rect.min, egui::vec2(fw, 4.0)), Rounding::same(2.0), accent);
 
                                         ui.add_space(5.0);
-                                        let sw_used = if snap.swap_used_bytes > 0 { crate::sensors::format_bytes(snap.swap_used_bytes) } else { "4.4 GB".to_string() };
-                                        let sw_tot = if snap.swap_total_bytes > 0 { crate::sensors::format_bytes(snap.swap_total_bytes) } else { "14.9 GB".to_string() };
+                                        let sw_used = crate::sensors::format_bytes(snap.swap_used_bytes);
+                                        let sw_tot = crate::sensors::format_bytes(snap.swap_total_bytes);
                                         ui.label(RichText::new(format!("{} / {} virtual", sw_used, sw_tot)).size(8.5).monospace().color(p.text_muted));
                                     });
 
@@ -12242,7 +12240,7 @@ impl LauncherApp {
                                         ui.set_width(ui.available_width());
                                         ui.label(RichText::new("COMPRESSION").size(8.5).monospace().strong().color(p.text_muted));
                                         ui.add_space(2.0);
-                                        ui.label(RichText::new("2.4x").size(19.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                        ui.label(RichText::new("—").size(19.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                         ui.add_space(4.0);
 
                                         Frame::none()
@@ -12250,7 +12248,7 @@ impl LauncherApp {
                                             .rounding(Rounding::same(999.0))
                                             .inner_margin(egui::Margin::symmetric(6.0, 1.5))
                                             .show(ui, |ui| {
-                                                ui.label(RichText::new("+58.3% saved").size(8.0).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
+                                                ui.label(RichText::new("Unavailable").size(8.0).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
                                             });
 
                                         ui.add_space(4.0);
@@ -12268,7 +12266,7 @@ impl LauncherApp {
                                         ui.add_space(2.0);
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 2.0;
-                                            ui.label(RichText::new("0.0").size(19.0).strong().color(p.text_primary));
+                                            ui.label(RichText::new("—").size(19.0).strong().color(p.text_primary));
                                             ui.label(RichText::new("KB/s").size(10.5).color(p.text_muted));
                                         });
                                         ui.add_space(4.0);
@@ -12282,7 +12280,7 @@ impl LauncherApp {
                                                     ui.spacing_mut().item_spacing.x = 3.0;
                                                     let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
                                                     ui.painter().circle_filled(dot_rect.center(), 2.0, accent);
-                                                    ui.label(RichText::new("Zero Thrashing").size(8.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                                    ui.label(RichText::new("Unavailable").size(8.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                                 });
                                             });
 
@@ -12305,14 +12303,14 @@ impl LauncherApp {
                             });
 
                             ui.add_space(2.0);
-                            
+
 
                             ui.add_space(8.0);
 
-                            let mut apps = snap.top_apps.clone();
+                            let mut apps: Vec<_> = snap.top_apps.iter().collect();
                             apps.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
 
-                            let total_mem = snap.mem_total_bytes.max(16 * 1024 * 1024 * 1024);
+                            let total_mem = snap.mem_total_bytes.max(1);
 
                             let get_app_icon = |name: &str| -> &'static str {
                                 let lower = name.to_lowercase();
@@ -12329,16 +12327,9 @@ impl LauncherApp {
                                 }
                             };
 
-                            let default_apps: [(&str, u32, &str, u64, &str, &'static str); 4] = [
-                                ("brave-browser", 24911, "14 threads", 1_820_000_000, "1.82 GB", crate::lucide::MONITOR),
-                                ("rust-analyzer-server", 31088, "cargo worker", 942_000_000, "942 MB", crate::lucide::FILE_CODE),
-                                ("gnome-shell", 1842, "Mutter Wayland", 488_000_000, "488 MB", crate::lucide::LAYERS),
-                                ("containerd-shim", 4410, "Docker daemon", 276_000_000, "276 MB", crate::lucide::BOX),
-                            ];
-
                             let render_proc_row = |ui: &mut egui::Ui, name: &str, pid: u32, desc: &str, mem_bytes: u64, mem_str: &str, ico: &'static str| {
-                                let frac = (mem_bytes as f32 / total_mem as f32).clamp(0.005, 1.0);
-                                let pct_val = (frac * 100.0).clamp(0.1, 100.0);
+                                let frac = (mem_bytes as f32 / total_mem as f32).clamp(0.0, 1.0);
+                                let pct_val = frac * 100.0;
                                 let short_name = if name.chars().count() > 22 { format!("{}…", name.chars().take(20).collect::<String>()) } else { name.to_string() };
 
                                 Frame::none()
@@ -12348,7 +12339,7 @@ impl LauncherApp {
                                     .inner_margin(egui::Margin::symmetric(8.0, 4.5))
                                     .show(ui, |ui| {
                                         ui.set_width(ui.available_width());
-                                        ui.horizontal(|ui| {
+                                        ui.horizontal_wrapped(|ui| {
                                             ui.spacing_mut().item_spacing.x = 6.0;
                                             ui.label(RichText::new(ico).size(11.0).color(accent));
                                             ui.label(RichText::new(&short_name).size(10.5).strong().color(p.text_primary));

@@ -15088,45 +15088,48 @@ impl LauncherApp {
                                             (VALUE_W, "Total"),
                                             (RATE_W, "Live rate"),
                                         ] {
-                                            ui.allocate_ui_with_layout(
-                                                egui::vec2(width, 22.0),
-                                                egui::Layout::right_to_left(egui::Align::Center),
-                                                |ui| { ui.label(RichText::new(heading).size(10.0).color(p.text_muted)); },
+                                            let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 22.0), egui::Sense::hover());
+                                            ui.painter().text(
+                                                egui::pos2(if heading == "Interface" { rect.left() } else { rect.right() }, rect.center().y),
+                                                if heading == "Interface" { egui::Align2::LEFT_CENTER } else { egui::Align2::RIGHT_CENTER },
+                                                heading,
+                                                egui::FontId::proportional(10.0),
+                                                p.text_muted,
                                             );
                                         }
                                         ui.end_row();
 
                                         for net in &interfaces {
-                                            ui.allocate_ui_with_layout(egui::vec2(NAME_W, 28.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                                ui.label(RichText::new(&net.name).size(11.5).strong().color(p.text_primary));
-                                            });
-                                            ui.allocate_ui_with_layout(egui::vec2(TYPE_W, 28.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                let kind = if net.name == "lo" { "Loopback" } else if net.is_wireless { "Wi-Fi" } else { "Wired" };
-                                                ui.label(RichText::new(kind).size(10.5).color(p.text_secondary));
-                                            });
+                                            let (name_rect, _) = ui.allocate_exact_size(egui::vec2(NAME_W, 28.0), egui::Sense::hover());
+                                            ui.painter().text(name_rect.left_center(), egui::Align2::LEFT_CENTER, &net.name, egui::FontId::proportional(11.5), p.text_primary);
+
+                                            let (type_rect, _) = ui.allocate_exact_size(egui::vec2(TYPE_W, 28.0), egui::Sense::hover());
+                                            let kind = if net.name == "lo" { "Loopback" } else if net.is_wireless { "Wi-Fi" } else { "Wired" };
+                                            ui.painter().text(type_rect.right_center(), egui::Align2::RIGHT_CENTER, kind, egui::FontId::proportional(10.5), p.text_secondary);
+
                                             for (width, value) in [
                                                 (VALUE_W, crate::sensors::format_bytes(net.rx_bytes)),
                                                 (VALUE_W, crate::sensors::format_bytes(net.tx_bytes)),
                                             ] {
-                                                ui.allocate_ui_with_layout(egui::vec2(width, 28.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new(value).size(11.0).monospace().color(p.text_secondary));
-                                                });
+                                                let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 28.0), egui::Sense::hover());
+                                                ui.painter().text(rect.right_center(), egui::Align2::RIGHT_CENTER, value, egui::FontId::monospace(11.0), p.text_secondary);
                                             }
 
                                             let total = net.rx_bytes + net.tx_bytes;
-                                            ui.allocate_ui_with_layout(egui::vec2(VALUE_W, 28.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.label(RichText::new(crate::sensors::format_bytes(total)).size(11.0).monospace().color(p.text_primary));
-                                                let bar_width = 34.0 * total as f32 / max_total as f32;
-                                                let (bar, _) = ui.allocate_exact_size(egui::vec2(34.0, 3.0), egui::Sense::hover());
-                                                ui.painter().rect_filled(bar, Rounding::same(1.5), p.bg_button);
-                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar.min, egui::vec2(bar_width, bar.height())), Rounding::same(1.5), accent);
-                                            });
+                                            let (total_rect, _) = ui.allocate_exact_size(egui::vec2(VALUE_W, 28.0), egui::Sense::hover());
+                                            let bar = egui::Rect::from_min_size(
+                                                egui::pos2(total_rect.left(), total_rect.center().y - 1.5),
+                                                egui::vec2(34.0, 3.0),
+                                            );
+                                            let bar_width = 34.0 * total as f32 / max_total as f32;
+                                            ui.painter().rect_filled(bar, Rounding::same(1.5), p.bg_button);
+                                            ui.painter().rect_filled(egui::Rect::from_min_size(bar.min, egui::vec2(bar_width, bar.height())), Rounding::same(1.5), accent);
+                                            ui.painter().text(total_rect.right_center(), egui::Align2::RIGHT_CENTER, crate::sensors::format_bytes(total), egui::FontId::monospace(11.0), p.text_primary);
 
                                             let rx_rate = crate::sensors::format_rate(net.rx_rate_bps);
                                             let tx_rate = crate::sensors::format_rate(net.tx_rate_bps);
-                                            ui.allocate_ui_with_layout(egui::vec2(RATE_W, 28.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.label(RichText::new(format!("↓ {rx_rate}  ↑ {tx_rate}")).size(10.5).monospace().color(p.text_secondary));
-                                            });
+                                            let (rate_rect, _) = ui.allocate_exact_size(egui::vec2(RATE_W, 28.0), egui::Sense::hover());
+                                            ui.painter().text(rate_rect.right_center(), egui::Align2::RIGHT_CENTER, format!("↓ {rx_rate}  ↑ {tx_rate}"), egui::FontId::monospace(10.5), p.text_secondary);
                                             ui.end_row();
                                         }
                                     });

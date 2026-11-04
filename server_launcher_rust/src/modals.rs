@@ -1151,8 +1151,8 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
     };
 
     let screen = ctx.screen_rect();
-    let modal_w = 560.0_f32.min(screen.width() - 40.0).max(380.0);
-    let max_h = (screen.height() - 40.0).max(400.0);
+    let modal_w = 560.0_f32.min((screen.width() - 68.0).max(200.0));
+    let max_h = 640.0_f32.min((screen.height() - 60.0).max(200.0));
 
     let mut is_open = state.open;
     let window_id = egui::Id::new("add_edit_server_modal_window");
@@ -1167,7 +1167,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
         .pivot(egui::Align2::CENTER_CENTER)
         .min_width(modal_w)
         .max_width(modal_w)
-        .default_height(640.0)
+        .default_height(max_h)
         .max_height(max_h)
         .frame(
             egui::Frame::none()
@@ -1228,7 +1228,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .max_width(ui.available_width())
-                .max_height((ui.available_height() - 55.0).max(100.0))
+                .max_height((max_h - 145.0).max(80.0))
                 .show(ui, |ui| {
                     ui.set_max_width(ui.available_width());
 

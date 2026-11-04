@@ -276,6 +276,8 @@ pub struct SystemSensorsCollector {
     prev_disk_write: HashMap<String, u64>,
     prev_disk_time: Instant,
     prev_proc_disk: HashMap<u32, (u64, u64)>,
+    prev_proc_net: HashMap<u32, (u64, u64)>,
+    prev_proc_net_time: Instant,
 }
 
 impl Default for SystemSensorsCollector {
@@ -309,6 +311,8 @@ impl SystemSensorsCollector {
             prev_disk_write: HashMap::new(),
             prev_disk_time: now,
             prev_proc_disk: HashMap::new(),
+            prev_proc_net: HashMap::new(),
+            prev_proc_net_time: now,
         }
     }
 
@@ -666,6 +670,8 @@ impl SystemSensorsCollector {
         // 9. Top Applications & Resource Consumers
         let mut top_apps = Vec::new();
         if include_top_apps {
+            let proc_net_elapsed_secs = (now - self.prev_proc_net_time).as_secs_f64().max(0.1);
+            let current_proc_net = collect_process_tcp_counters();
             self.sys.refresh_processes_specifics(
                 sysinfo::ProcessesToUpdate::All,
                 sysinfo::ProcessRefreshKind::new()
@@ -704,8 +710,10 @@ impl SystemSensorsCollector {
                 let w_rate = (written_b.saturating_sub(prev_w) as f64) / disk_elapsed_secs;
                 let disk_rate_bps = r_rate + w_rate;
 
-                // /proc/PID/io measures file I/O; no per-process network accounting source is installed.
-                let (proc_net_rx, proc_net_tx, net_rate_bps) = (0_u64, 0_u64, 0.0_f64);
+                let (proc_net_rx, proc_net_tx) = current_proc_net.get(&pid_u32).copied().unwrap_or_default();
+                let (prev_net_rx, prev_net_tx) = self.prev_proc_net.get(&pid_u32).copied().unwrap_or((proc_net_rx, proc_net_tx));
+                let net_rate_bps = (proc_net_rx.saturating_sub(prev_net_rx) + proc_net_tx.saturating_sub(prev_net_tx)) as f64
+                    / proc_net_elapsed_secs;
 
                 let status = format!("{:?}", proc.status());
 
@@ -726,6 +734,8 @@ impl SystemSensorsCollector {
                 });
             }
             self.prev_proc_disk = current_proc_disk;
+            self.prev_proc_net = current_proc_net;
+            self.prev_proc_net_time = now;
 
             // Sort by CPU usage descending by default, then network usage, then memory
             let compare_apps = |a: &ProcessSensorInfo, b: &ProcessSensorInfo| {
@@ -2314,6 +2324,63 @@ pub fn format_rate(bps: f64) -> String {
     }
 }
 
+/// Returns cumulative TCP payload counters for sockets whose owning PID is visible to this user.
+fn collect_process_tcp_counters() -> HashMap<u32, (u64, u64)> {
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(output) = Command::new("ss").args(["-tinpHO"]).output() else {
+            return HashMap::new();
+        };
+        if !output.status.success() {
+            return HashMap::new();
+        }
+
+        parse_process_tcp_counters(&String::from_utf8_lossy(&output.stdout))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        HashMap::new()
+    }
+}
+
+fn parse_process_tcp_counters(output: &str) -> HashMap<u32, (u64, u64)> {
+    let mut counters = HashMap::new();
+    for line in output.lines() {
+            let sent = line.split_whitespace()
+                .find_map(|field| field.strip_prefix("bytes_sent:")?.parse::<u64>().ok())
+                .unwrap_or(0);
+            let received = line.split_whitespace()
+                .find_map(|field| field.strip_prefix("bytes_received:")?.parse::<u64>().ok())
+                .unwrap_or(0);
+            if sent == 0 && received == 0 {
+                continue;
+            }
+
+            let mut remaining = line;
+            let mut socket_pids = Vec::new();
+            while let Some(offset) = remaining.find("pid=") {
+                remaining = &remaining[offset + 4..];
+                let digits = remaining.chars().take_while(char::is_ascii_digit).count();
+                if digits == 0 {
+                    break;
+                }
+                if let Ok(pid) = remaining[..digits].parse::<u32>() {
+                    if !socket_pids.contains(&pid) {
+                        socket_pids.push(pid);
+                    }
+                }
+                remaining = &remaining[digits..];
+            }
+
+            for pid in socket_pids {
+                let entry = counters.entry(pid).or_insert((0_u64, 0_u64));
+                entry.0 = entry.0.saturating_add(received);
+                entry.1 = entry.1.saturating_add(sent);
+            }
+    }
+    counters
+}
+
 use crate::config::SshRemoteHost;
 use crate::remote::build_ssh_command;
 use egui::Color32;
@@ -2394,6 +2461,33 @@ def read_proc_io_map(pids):
             pass
     return pio
 
+def read_proc_net_map():
+    counters = {}
+    try:
+        for line in os.popen("ss -tinpHO 2>/dev/null").read().splitlines():
+            fields = line.split()
+            sent = next((int(f.split(":", 1)[1]) for f in fields if f.startswith("bytes_sent:")), 0)
+            received = next((int(f.split(":", 1)[1]) for f in fields if f.startswith("bytes_received:")), 0)
+            pids = set()
+            rest = line
+            while "pid=" in rest:
+                rest = rest.split("pid=", 1)[1]
+                digits = ""
+                for c in rest:
+                    if not c.isdigit():
+                        break
+                    digits += c
+                if not digits:
+                    break
+                pids.add(int(digits))
+                rest = rest[len(digits):]
+            for pid in pids:
+                old_rx, old_tx = counters.get(pid, (0, 0))
+                counters[pid] = (old_rx + received, old_tx + sent)
+    except:
+        pass
+    return counters
+
 t_start = time.time()
 c1 = read_cpu_stats()
 d1 = read_disk_stats()
@@ -2407,6 +2501,7 @@ try:
 except:
     pass
 p1_io = read_proc_io_map(init_pids)
+p1_net = read_proc_net_map()
 rapl_e1 = {}
 for p in glob.glob("/sys/class/powercap/intel-rapl*/energy_uj") + glob.glob("/sys/class/powercap/intel-rapl*/*/energy_uj"):
     try:
@@ -2776,6 +2871,7 @@ c2 = read_cpu_stats()
 d2 = read_disk_stats()
 n2 = read_net_dev()
 t_disk_elapsed = max(time.time() - t_start, 0.05)
+p2_net = read_proc_net_map()
 
 networks = []
 total_rx_rate = 0.0
@@ -2938,8 +3034,7 @@ try:
                 rss_bytes = int(p[3]) * 1024
                 comm = " ".join(p[4:])
 
-                rx2 = 0
-                tx2 = 0
+                rx2, tx2 = p2_net.get(pid, (0, 0))
                 dr2 = 0
                 dw2 = 0
                 try:
@@ -2950,7 +3045,8 @@ try:
                 except:
                     pass
 
-                net_rate = 0.0
+                rx1, tx1 = p1_net.get(pid, (rx2, tx2))
+                net_rate = max(0.0, (rx2 - rx1 + tx2 - tx1) / t_disk_elapsed)
                 dr_rate = 0.0
                 dw_rate = 0.0
                 disk_rate = 0.0
@@ -3589,6 +3685,18 @@ mod tests {
         assert_eq!(format_rate(500.0), "500 B/s");
         assert_eq!(format_rate(1024.0 * 250.0), "250.0 KB/s");
         assert_eq!(format_rate(1024.0 * 1024.0 * 12.5), "12.5 MB/s");
+    }
+
+    #[test]
+    fn parses_and_aggregates_process_tcp_counters() {
+        let output = concat!(
+            "ESTAB 0 0 a b users:((\"app\",pid=42,fd=3)) bytes_sent:120 bytes_received:80\n",
+            "ESTAB 0 0 a b users:((\"app\",pid=42,fd=4)) bytes_sent:30 bytes_received:20\n",
+            "ESTAB 0 0 a b bytes_sent:999 bytes_received:999\n",
+        );
+        let counters = parse_process_tcp_counters(output);
+        assert_eq!(counters.get(&42), Some(&(100, 150)));
+        assert_eq!(counters.len(), 1);
     }
 
     #[test]

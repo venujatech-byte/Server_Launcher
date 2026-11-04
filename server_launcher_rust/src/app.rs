@@ -139,14 +139,7 @@ impl WifiAppPeriod {
         }
     }
 
-    pub fn multiplier(&self, custom_days: u32) -> f64 {
-        match self {
-            Self::Daily => 1.0 / 30.0,
-            Self::Monthly => 1.0,
-            Self::Yearly => 12.0,
-            Self::Custom => (custom_days.max(1) as f64) / 30.0,
-        }
-    }
+
 }
 
 /// Aggregated application network usage record for Wi-Fi telemetry page.
@@ -14903,14 +14896,7 @@ impl LauncherApp {
                                 ui.set_width(ui.available_width());
 
                                 // Sockets to display
-                                let default_remote_socks = [
-                                    ("daemon (sshd)", "TCP", ":22", "LISTEN"),
-                                    ("kernel (sockstat)", "TCP", ":40369", "LISTEN"),
-                                    ("kernel (sockstat)", "TCP", ":35983", "LISTEN"),
-                                    ("kernel (sockstat)", "TCP", ":43273", "LISTEN"),
-                                    ("kernel (sockstat)", "UDP", ":53", "BOUND"),
-                                    ("kernel (sockstat)", "RAW", ":icmp", "LISTEN"),
-                                ];
+                                let default_remote_socks: [(&str, &str, &str, &str); 0] = [];
 
                                 let endpoint_count = if is_remote {
                                     if !snap.active_sockets.is_empty() {
@@ -15072,12 +15058,12 @@ impl LauncherApp {
                                         ui.label(RichText::new("Filter: TCP Listen").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     });
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new("Queue: 0 / 128").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                        ui.label(RichText::new("Queue unavailable").size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                     });
                                 });
                             });
 
-          
+
                     });
                 });
 
@@ -15151,7 +15137,7 @@ impl LauncherApp {
                                             ui.spacing_mut().item_spacing.x = 5.0;
                                             let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                             ui.painter().circle_filled(d_rect.center(), 2.8, accent);
-                                            ui.label(RichText::new("ACTIVE MONITORING").size(9.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                            ui.label(RichText::new("PROCESS LIST").size(9.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                         });
                                     });
                             } else {
@@ -15172,7 +15158,7 @@ impl LauncherApp {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                                     ui.painter().circle_filled(d_rect.center(), 2.8, accent);
-                                                    ui.label(RichText::new("ACTIVE MONITORING").size(9.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                                    ui.label(RichText::new("PROCESS LIST").size(9.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                                 });
                                             });
                                     });
@@ -15180,7 +15166,7 @@ impl LauncherApp {
                             }
 
                             ui.add_space(2.0);
-                            ui.label(RichText::new("Per-process cumulative network telemetry & accumulated socket bandwidth across time periods.").size(10.5).color(p.text_muted));
+                            ui.label(RichText::new("Process list • Per-app traffic and date history are unavailable with the current collector.").size(10.5).color(p.text_muted));
                         });
                     });
 
@@ -15308,7 +15294,8 @@ impl LauncherApp {
                             (Some(s), Some(e)) => (e - s).num_days().max(1) as u32,
                             _ => 30,
                         };
-                        let period_mult = self.wifi_app_period.multiplier(custom_days);
+                        // Network counters cannot be extrapolated into daily/monthly totals.
+                        let period_mult = 1.0;
 
                         let need_view_update = need_raw_update
                             || (self.wifi_cached_app_list.is_empty() && !self.wifi_cached_raw_apps.is_empty())
@@ -15403,9 +15390,9 @@ impl LauncherApp {
 
                         let app_list = Arc::clone(&self.wifi_cached_app_list);
                         let max_data = self.wifi_cached_max_data;
-                        let total_visible_data = self.wifi_cached_total_data;
-                        let total_visible_rx = self.wifi_cached_total_rx;
-                        let total_visible_tx = self.wifi_cached_total_tx;
+                        let _total_visible_data = self.wifi_cached_total_data;
+                        let _total_visible_rx = self.wifi_cached_total_rx;
+                        let _total_visible_tx = self.wifi_cached_total_tx;
                         let total_visible_rate = self.wifi_cached_total_rate;
 
                         // Heatmap tint color helper matching Windows 11 Task Manager / Top Apps
@@ -15436,7 +15423,7 @@ impl LauncherApp {
                         };
 
                         ui.vertical(|ui| {
-                     
+
 
 
                             // Row 2: Title & Badges on Left, Search & Sort Toolbar on Right
@@ -15491,7 +15478,7 @@ impl LauncherApp {
                                                   toggle_picker: &mut bool,
                                                   clear_s: &mut bool,
                                                   search_str: &mut String,
-                                                  p_label: &str,
+                                                  _p_label: &str,
                                                   picker_open: bool| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 6.0;
@@ -15515,7 +15502,7 @@ impl LauncherApp {
 
                                     // Date Picker Button
                                     let picker_btn = egui::Button::new(
-                                        RichText::new(format!("{} {} ▾", crate::lucide::CLOCK, p_label))
+                                        RichText::new(format!("{} History unavailable", crate::lucide::CLOCK))
                                             .size(9.5)
                                             .monospace()
                                             .color(if picker_open { accent } else { Color32::from_rgb(226, 232, 240) })
@@ -15525,7 +15512,7 @@ impl LauncherApp {
                                     .rounding(Rounding::same(999.0))
                                     .min_size(egui::vec2(90.0, 22.0));
 
-                                    if ui.add(picker_btn).on_hover_text("Select date range or timeframe preset").clicked() {
+                                    if ui.add_enabled(false, picker_btn).on_hover_text("Date ranges require recorded per-process traffic history").clicked() {
                                         *toggle_picker = true;
                                     }
 

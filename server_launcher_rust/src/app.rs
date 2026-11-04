@@ -19500,16 +19500,8 @@ impl LauncherApp {
                                                 let bg_rect = egui::Rect::from_min_max(net_rect.min, egui::pos2(net_rect.max.x + COL_SPACING, net_rect.max.y));
                                                 ui.painter().rect_filled(bg_rect, Rounding::ZERO, row_bg);
                                             }
-                                            let net_txt = if grp.sum_net_rate > 0.0 {
-                                                crate::sensors::format_rate(grp.sum_net_rate)
-                                            } else {
-                                                "0 Mbps".to_string()
-                                            };
-                                            let net_color = if grp.sum_net_rate > 1024.0 {
-                                                Color32::from_rgb(226, 232, 240)
-                                            } else {
-                                                Color32::from_rgb(160, 165, 175)
-                                            };
+                                            let net_txt = "—";
+                                            let net_color = Color32::from_rgb(160, 165, 175);
                                             ui.painter().text(
                                                 egui::pos2(net_rect.right() - 8.0, net_rect.center().y),
                                                 egui::Align2::RIGHT_CENTER,
@@ -19528,13 +19520,7 @@ impl LauncherApp {
                                             if gpu_fill != Color32::TRANSPARENT {
                                                 ui.painter().rect_filled(gpu_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, gpu_fill);
                                             }
-                                            let gpu_txt = if grp.sum_gpu < 0.05 {
-                                                "0%".to_string()
-                                            } else if grp.sum_gpu < 10.0 {
-                                                format!("{:.1}%", grp.sum_gpu)
-                                            } else {
-                                                format!("{:.0}%", grp.sum_gpu)
-                                            };
+                                            let gpu_txt = "—";
                                             let gpu_color = if gpu_fill != Color32::TRANSPARENT {
                                                 Color32::from_rgb(245, 245, 250)
                                             } else {
@@ -19547,7 +19533,7 @@ impl LauncherApp {
                                                 egui::FontId::monospace(11.0),
                                                 gpu_color,
                                             );
-                                            let _ = gpu_resp.on_hover_text(format!("{:.1}% GPU Load", grp.sum_gpu));
+                                            let _ = gpu_resp.on_hover_text("Per-process GPU utilization is unavailable");
 
                                             // 7. Power (Heatmap tinted cell, strictly bounded, right aligned, right-most rounded corners)
                                             let (pwr_rect, pwr_resp) = ui.allocate_exact_size(egui::vec2(COL_POWER_W, 22.0), egui::Sense::hover());

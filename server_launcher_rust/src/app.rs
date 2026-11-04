@@ -15795,9 +15795,9 @@ impl LauncherApp {
                                 };
 
                                 // Dedicated non-collapsing scroll area ensuring full process list is scrollable
-                                ScrollArea::vertical()
+                                ScrollArea::both()
                                     .id_salt("data_usage_app_scroll")
-                                    .min_scrolled_height(480.0)
+                                    .max_height(ui.available_height().max(120.0))
                                     .auto_shrink([false, false])
                                     .scroll_bar_visibility(egui::containers::scroll_area::ScrollBarVisibility::AlwaysVisible)
                                     .show(ui, |ui| {
@@ -15833,7 +15833,7 @@ impl LauncherApp {
                                                     let is_sel = self.wifi_app_sort == "rx";
                                                     let arr = get_sort_arrow("rx");
                                                     let title = if arr.is_empty() { "Download".to_string() } else { format!("Download {}", arr) };
-                                                    let tot_rx_disp = crate::sensors::format_bytes(total_visible_rx);
+                                                    let tot_rx_disp = "—".to_string();
                                                     let btn1 = ui.add(egui::Button::new(RichText::new(tot_rx_disp).size(11.5).strong().color(Color32::from_rgb(241, 245, 249))).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                                     let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(if is_sel { Color32::from_rgb(226, 232, 240) } else { p.text_secondary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                                     if btn1.clicked() || btn2.clicked() {
@@ -15846,7 +15846,7 @@ impl LauncherApp {
                                                     let is_sel = self.wifi_app_sort == "tx";
                                                     let arr = get_sort_arrow("tx");
                                                     let title = if arr.is_empty() { "Upload".to_string() } else { format!("Upload {}", arr) };
-                                                    let tot_tx_disp = crate::sensors::format_bytes(total_visible_tx);
+                                                    let tot_tx_disp = "—".to_string();
                                                     let btn1 = ui.add(egui::Button::new(RichText::new(tot_tx_disp).size(11.5).strong().color(Color32::from_rgb(241, 245, 249))).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                                     let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(if is_sel { Color32::from_rgb(226, 232, 240) } else { p.text_secondary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                                     if btn1.clicked() || btn2.clicked() {
@@ -15859,7 +15859,7 @@ impl LauncherApp {
                                                     let is_sel = self.wifi_app_sort == "data";
                                                     let arr = get_sort_arrow("data");
                                                     let title = if arr.is_empty() { total_col_label.to_string() } else { format!("{} {}", total_col_label, arr) };
-                                                    let tot_all_disp = crate::sensors::format_bytes(total_visible_data);
+                                                    let tot_all_disp = "—".to_string();
                                                     let btn1 = ui.add(egui::Button::new(RichText::new(tot_all_disp).size(11.5).strong().color(Color32::from_rgb(241, 245, 249))).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                                     let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(if is_sel { Color32::from_rgb(226, 232, 240) } else { p.text_secondary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                                     if btn1.clicked() || btn2.clicked() {
@@ -15872,7 +15872,7 @@ impl LauncherApp {
                                                     let is_sel = self.wifi_app_sort == "rate";
                                                     let arr = get_sort_arrow("rate");
                                                     let title = if arr.is_empty() { "Live Rate".to_string() } else { format!("Live Rate {}", arr) };
-                                                    let tot_rate_disp = if total_visible_rate > 0.0 { crate::sensors::format_rate(total_visible_rate) } else { "0 B/s".to_string() };
+                                                    let tot_rate_disp = if total_visible_rate > 0.0 { crate::sensors::format_rate(total_visible_rate) } else { "—".to_string() };
                                                     let btn1 = ui.add(egui::Button::new(RichText::new(tot_rate_disp).size(11.5).strong().color(Color32::from_rgb(241, 245, 249))).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                                     let btn2 = ui.add(egui::Button::new(RichText::new(title).size(10.0).color(if is_sel { Color32::from_rgb(226, 232, 240) } else { p.text_secondary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE));
                                                     if btn1.clicked() || btn2.clicked() {
@@ -15939,7 +15939,7 @@ impl LauncherApp {
                                                         let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                                         ui.painter().circle_filled(d_rect.center(), 2.5, dot_col);
 
-                                                        ui.label(RichText::new(&app.name).size(11.5).strong().color(p.text_primary));
+                                                        ui.add_sized([(col_app_w - 110.0).max(60.0), 22.0], egui::Label::new(RichText::new(&app.name).size(11.5).strong().color(p.text_primary)).truncate()).on_hover_text(&app.name);
 
                                                         if !app.pids.is_empty() {
                                                             let pid_lbl = if app.pids.len() == 1 {
@@ -15966,7 +15966,7 @@ impl LauncherApp {
                                                     if rx_fill != Color32::TRANSPARENT {
                                                         ui.painter().rect_filled(rx_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, rx_fill);
                                                     }
-                                                    let rx_str = crate::sensors::format_bytes(disp_rx);
+                                                    let rx_str = "—".to_string();
                                                     let rx_col = if rx_fill != Color32::TRANSPARENT { Color32::from_rgb(245, 245, 250) } else { Color32::from_rgb(170, 175, 185) };
                                                     ui.painter().text(egui::pos2(rx_rect.right() - 8.0, rx_rect.center().y), egui::Align2::RIGHT_CENTER, &rx_str, egui::FontId::monospace(11.0), rx_col);
 
@@ -15979,7 +15979,7 @@ impl LauncherApp {
                                                     if tx_fill != Color32::TRANSPARENT {
                                                         ui.painter().rect_filled(tx_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, tx_fill);
                                                     }
-                                                    let tx_str = crate::sensors::format_bytes(disp_tx);
+                                                    let tx_str = "—".to_string();
                                                     let tx_col = if tx_fill != Color32::TRANSPARENT { Color32::from_rgb(245, 245, 250) } else { Color32::from_rgb(170, 175, 185) };
                                                     ui.painter().text(egui::pos2(tx_rect.right() - 8.0, tx_rect.center().y), egui::Align2::RIGHT_CENTER, &tx_str, egui::FontId::monospace(11.0), tx_col);
 
@@ -16003,7 +16003,7 @@ impl LauncherApp {
                                                         let fill_rect = egui::Rect::from_min_size(bar_rect.min, egui::vec2(fill_w, bar_h));
                                                         ui.painter().rect_filled(fill_rect, Rounding::same(1.5), accent);
                                                     }
-                                                    let tot_str = crate::sensors::format_bytes(disp_tot);
+                                                    let tot_str = "—".to_string();
                                                     let tot_col = if tot_fill != Color32::TRANSPARENT { Color32::from_rgb(245, 245, 250) } else { Color32::from_rgb(226, 232, 240) };
                                                     ui.painter().text(egui::pos2(tot_rect.right() - 8.0, tot_rect.center().y), egui::Align2::RIGHT_CENTER, &tot_str, egui::FontId::monospace(11.0), tot_col);
 
@@ -16036,7 +16036,7 @@ impl LauncherApp {
                                     });
                             }
 
-                            
+
                         });
                     });
 

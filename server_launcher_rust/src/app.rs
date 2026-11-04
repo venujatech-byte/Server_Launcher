@@ -12169,125 +12169,13 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 5. Two-column bottom section: Linux ZRAM Dynamic Swap & Top Memory Consumers
-                ui.columns(2, |cols| {
-                    // Left Column: Linux ZRAM Dynamic Swap
+                // 5. Top Memory Consumers
+                ui.vertical(|ui| {
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 11.0))
-                        .show(&mut cols[0], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::ZAP).size(12.0).color(accent));
-                                ui.label(RichText::new("Swap & Compression").size(12.5).strong().color(p.text_primary));
-
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |_ui| {
-                                    Frame::none()
-                                        .fill(accent_with_alpha(accent, 25))
-                                        .rounding(Rounding::same(999.0))
-                                        .inner_margin(egui::Margin::symmetric(7.0, 2.0))
-
-                                });
-                            });
-
-                            ui.add_space(2.0);
-
-
-                            ui.add_space(8.0);
-
-                            ui.columns(3, |zcols| {
-                                // Sub-col 1: SWAP SPACE ALLOCATED
-                                Frame::none()
-                                    .fill(Color32::from_rgb(10, 15, 26))
-                                    .stroke(Stroke::NONE)
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(9.0, 7.0))
-                                    .show(&mut zcols[0], |ui| {
-                                        ui.set_width(ui.available_width());
-                                        ui.label(RichText::new("SWAP ALLOCATED").size(8.5).monospace().strong().color(p.text_muted));
-                                        ui.add_space(2.0);
-                                        let sw_pct = snap.swap_usage_pct;
-                                        ui.label(RichText::new(format!("{:.1}%", sw_pct)).size(19.0).strong().color(p.text_primary));
-                                        ui.add_space(4.0);
-
-                                        let (br, bp) = ui.allocate_painter(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                                        bp.rect_filled(br.rect, Rounding::same(2.0), Color32::from_rgb(18, 28, 44));
-                                        let fw = br.rect.width() * (sw_pct / 100.0).clamp(0.0, 1.0);
-                                        bp.rect_filled(egui::Rect::from_min_size(br.rect.min, egui::vec2(fw, 4.0)), Rounding::same(2.0), accent);
-
-                                        ui.add_space(5.0);
-                                        let sw_used = crate::sensors::format_bytes(snap.swap_used_bytes);
-                                        let sw_tot = crate::sensors::format_bytes(snap.swap_total_bytes);
-                                        ui.label(RichText::new(format!("{} / {} virtual", sw_used, sw_tot)).size(8.5).monospace().color(p.text_muted));
-                                    });
-
-                                // Sub-col 2: COMPRESSION RATIO
-                                Frame::none()
-                                    .fill(Color32::from_rgb(10, 15, 26))
-                                    .stroke(Stroke::NONE)
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(9.0, 7.0))
-                                    .show(&mut zcols[1], |ui| {
-                                        ui.set_width(ui.available_width());
-                                        ui.label(RichText::new("COMPRESSION").size(8.5).monospace().strong().color(p.text_muted));
-                                        ui.add_space(2.0);
-                                        ui.label(RichText::new("—").size(19.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                        ui.add_space(4.0);
-
-                                        Frame::none()
-                                            .fill(accent_with_alpha(accent, 20))
-                                            .rounding(Rounding::same(999.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 1.5))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new("Unavailable").size(8.0).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
-                                            });
-
-                                        ui.add_space(4.0);
-                                    });
-
-                                // Sub-col 3: PAGE I/O TRANSFER
-                                Frame::none()
-                                    .fill(Color32::from_rgb(10, 15, 26))
-                                    .stroke(Stroke::NONE)
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(9.0, 7.0))
-                                    .show(&mut zcols[2], |ui| {
-                                        ui.set_width(ui.available_width());
-                                        ui.label(RichText::new("PAGE ACTIVITY").size(8.5).monospace().strong().color(p.text_muted));
-                                        ui.add_space(2.0);
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 2.0;
-                                            ui.label(RichText::new("—").size(19.0).strong().color(p.text_primary));
-                                            ui.label(RichText::new("KB/s").size(10.5).color(p.text_muted));
-                                        });
-                                        ui.add_space(4.0);
-
-                                        Frame::none()
-                                            .fill(Color32::from_rgba_unmultiplied(52, 211, 153, 20))
-                                            .rounding(Rounding::same(999.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 1.5))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 3.0;
-                                                    let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
-                                                    ui.painter().circle_filled(dot_rect.center(), 2.0, accent);
-                                                    ui.label(RichText::new("Unavailable").size(8.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                                });
-                                            });
-
-                                        ui.add_space(4.0);
-                                    });
-                            });
-                        });
-
-                    // Right Column: Top Memory Consumers
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 11.0))
-                        .show(&mut cols[1], |ui| {
+                        .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;

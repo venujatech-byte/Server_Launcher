@@ -2338,13 +2338,11 @@ def read_proc_io_map(pids):
     for pid in pids:
         try:
             with open("/proc/" + str(pid) + "/io") as f:
-                rc = 0; wc = 0; dr = 0; dw = 0
+                dr = 0; dw = 0
                 for l in f:
-                    if l.startswith("rchar:"): rc = int(l.split()[1])
-                    elif l.startswith("wchar:"): wc = int(l.split()[1])
-                    elif l.startswith("read_bytes:"): dr = int(l.split()[1])
+                    if l.startswith("read_bytes:"): dr = int(l.split()[1])
                     elif l.startswith("write_bytes:"): dw = int(l.split()[1])
-                pio[pid] = (max(0, rc - dr), max(0, wc - dw), dr, dw)
+                pio[pid] = (dr, dw)
         except:
             pass
     return pio
@@ -2889,15 +2887,9 @@ try:
                 dw2 = 0
                 try:
                     with open("/proc/" + str(pid) + "/io") as fio:
-                        rchar = 0
-                        wchar = 0
                         for ioline in fio:
-                            if ioline.startswith("rchar:"): rchar = int(ioline.split()[1])
-                            elif ioline.startswith("wchar:"): wchar = int(ioline.split()[1])
-                            elif ioline.startswith("read_bytes:"): dr2 = int(ioline.split()[1])
+                            if ioline.startswith("read_bytes:"): dr2 = int(ioline.split()[1])
                             elif ioline.startswith("write_bytes:"): dw2 = int(ioline.split()[1])
-                        rx2 = max(0, rchar - dr2)
-                        tx2 = max(0, wchar - dw2)
                 except:
                     pass
 
@@ -2906,8 +2898,7 @@ try:
                 dw_rate = 0.0
                 disk_rate = 0.0
                 if pid in p1_io:
-                    rx1, tx1, dr1, dw1 = p1_io[pid]
-                    net_rate = max(0.0, (rx2 - rx1) / t_disk_elapsed + (tx2 - tx1) / t_disk_elapsed)
+                    dr1, dw1 = p1_io[pid]
                     dr_rate = max(0.0, (dr2 - dr1) / t_disk_elapsed)
                     dw_rate = max(0.0, (dw2 - dw1) / t_disk_elapsed)
                     disk_rate = dr_rate + dw_rate

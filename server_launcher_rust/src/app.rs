@@ -6357,12 +6357,14 @@ impl LauncherApp {
             .rounding(Rounding::same(999.0))
             .inner_margin(egui::Margin::symmetric(4.0, 3.5))
             .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                let avail_w = ui.available_width().max(60.0);
+                const TAB_W: f32 = 66.0;
+                const TAB_GAP: f32 = 3.0;
+                let tabs_width = 5.0 * TAB_W + 4.0 * TAB_GAP;
+                ui.set_min_width(tabs_width);
+                ui.set_max_width(tabs_width);
                 ui.horizontal(|ui| {
-                    let is_narrow = avail_w < 260.0;
-                    ui.spacing_mut().item_spacing.x = if is_narrow { 2.0 } else { 3.0 };
-                    ui.spacing_mut().button_padding = if is_narrow { egui::vec2(1.0, 3.0) } else { egui::vec2(3.0, 4.0) };
+                    ui.spacing_mut().item_spacing.x = TAB_GAP;
+                    ui.spacing_mut().button_padding = egui::vec2(3.0, 4.0);
                     let tabs = [
                         (SidebarTab::Servers, SidebarTab::Servers.label()),
                         (SidebarTab::Scripts, SidebarTab::Scripts.label()),
@@ -6370,10 +6372,6 @@ impl LauncherApp {
                         (SidebarTab::SystemMD, SidebarTab::SystemMD.label()),
                         (SidebarTab::Sensors, SidebarTab::Sensors.label()),
                     ];
-
-                    // Keep tab edges stable when the Sensors header shares its row with host telemetry.
-                    let btn_w = 68.0;
-                    let text_sz = if is_narrow { 9.0 } else { 10.0 };
 
                     for (tab, label) in tabs {
                         let is_active = self.active_sidebar_tab == tab;
@@ -6389,16 +6387,16 @@ impl LauncherApp {
                         };
                         let btn = egui::Button::new(
                             RichText::new(label)
-                                .size(text_sz)
+                                .size(10.0)
                                 .strong()
                                 .color(fg),
                         )
                         .fill(bg)
                         .stroke(Stroke::NONE)
-                        .rounding(Rounding::same(999.0))
-                        .min_size(egui::vec2(btn_w, 24.0));
+                        .rounding(Rounding::same(999.0));
 
-                        if ui.add_sized(egui::vec2(btn_w, 24.0), btn).clicked() {
+                        let (rect, _) = ui.allocate_exact_size(egui::vec2(TAB_W, 24.0), egui::Sense::hover());
+                        if ui.put(rect, btn).clicked() {
                             self.active_sidebar_tab = tab;
                             if tab == SidebarTab::Commands {
                                 if self.selected_machine == "local" {

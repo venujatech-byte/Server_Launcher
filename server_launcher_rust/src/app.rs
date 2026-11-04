@@ -19295,6 +19295,7 @@ impl LauncherApp {
                 let avail_w = ui.available_width();
                 let total_fixed_w = COL_CPU_W + COL_MEM_W + COL_DISK_W + COL_NET_W + COL_GPU_W + COL_POWER_W + 6.0 * COL_SPACING + 24.0;
                 let col_name_w = (avail_w - total_fixed_w).max(180.0);
+                let row_w = col_name_w + COL_CPU_W + COL_MEM_W + COL_DISK_W + COL_NET_W + COL_GPU_W + COL_POWER_W + 6.0 * COL_SPACING;
 
                 // ═════════════════════════════════════════════════════════════
                 // WINDOWS TASK MANAGER PROCESS TABLE
@@ -19305,9 +19306,9 @@ impl LauncherApp {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                 let mut new_sort = None;
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = COL_SPACING;
-                        for (width, title, key, total) in [
+                let (header_rect, _) = ui.allocate_exact_size(egui::vec2(row_w, 36.0), egui::Sense::hover());
+                let mut header_x = header_rect.left();
+                for (width, title, key, total) in [
                             (col_name_w, "Name", "name", String::new()),
                             (COL_CPU_W, "CPU", "cpu", format!("{:.0}%", snap.cpu_global_usage)),
                             (COL_MEM_W, "Memory", "mem", format!("{:.0}%", mem_total_pct)),
@@ -19316,21 +19317,46 @@ impl LauncherApp {
                             (COL_GPU_W, "GPU", "gpu", total_gpu_pct.map(|v| format!("{v:.0}%")).unwrap_or_else(|| "—".to_string())),
                             (COL_POWER_W, "Power", "power", "—".to_string()),
                         ] {
-                            let name_column = key == "name";
-                            ui.allocate_ui_with_layout(egui::vec2(width, 36.0), if name_column { egui::Layout::top_down(egui::Align::Min) } else { egui::Layout::top_down(egui::Align::Max) }, |ui| {
-                                let is_sel = self.sensors_top_apps_sort == key;
-                                if !total.is_empty() {
-                                    ui.label(RichText::new(total).size(11.5).strong().color(p.text_primary));
-                                } else {
-                                    ui.add_space(16.0);
-                                }
-                                let arrow = if is_sel { if self.sensors_top_apps_sort_desc { crate::lucide::ARROW_DOWN } else { crate::lucide::ARROW_UP } } else { "" };
-                                if ui.add(egui::Button::new(RichText::new(format!("{title} {arrow}")).size(10.0).color(if is_sel { p.text_primary } else { p.text_secondary })).fill(Color32::TRANSPARENT).stroke(Stroke::NONE)).clicked() {
-                                    new_sort = Some(key);
-                                }
-                            });
+                            let cell_rect = egui::Rect::from_min_size(
+                                egui::pos2(header_x, header_rect.top()),
+                                egui::vec2(width, header_rect.height()),
+                            );
+                            let is_sel = self.sensors_top_apps_sort == key;
+                            let arrow = if is_sel {
+                                if self.sensors_top_apps_sort_desc { crate::lucide::ARROW_DOWN } else { crate::lucide::ARROW_UP }
+                            } else {
+                                ""
+                            };
+                            let align = if key == "name" { egui::Align2::LEFT_CENTER } else { egui::Align2::RIGHT_CENTER };
+                            let text_x = if key == "name" { cell_rect.left() + 8.0 } else { cell_rect.right() - 8.0 };
+
+                            if !total.is_empty() {
+                                ui.painter().text(
+                                    egui::pos2(text_x, cell_rect.top() + 9.0),
+                                    align,
+                                    total,
+                                    egui::FontId::proportional(11.5),
+                                    p.text_primary,
+                                );
+                            }
+                            ui.painter().text(
+                                egui::pos2(text_x, cell_rect.bottom() - 9.0),
+                                align,
+                                format!("{title} {arrow}"),
+                                egui::FontId::proportional(10.0),
+                                if is_sel { p.text_primary } else { p.text_secondary },
+                            );
+
+                            let response = ui.interact(
+                                cell_rect,
+                                ui.id().with(("top_apps_header", key)),
+                                egui::Sense::click(),
+                            );
+                            if response.clicked() {
+                                new_sort = Some(key);
+                            }
+                            header_x += width + COL_SPACING;
                         }
-                });
                 if let Some(col) = new_sort {
                     if self.sensors_top_apps_sort == col {
                         self.sensors_top_apps_sort_desc = !self.sensors_top_apps_sort_desc;
@@ -19361,7 +19387,6 @@ impl LauncherApp {
                                             let mem_fill = get_tm_mem_bg(grp.sum_mem);
                                             let disk_fill = get_tm_disk_bg(grp.sum_disk_rate);
 
-                                            let row_w = col_name_w + COL_CPU_W + COL_MEM_W + COL_DISK_W + COL_NET_W + COL_GPU_W + COL_POWER_W + 6.0 * COL_SPACING;
                                             let row_start_pos = ui.cursor().min;
                                             let row_rect = egui::Rect::from_min_size(row_start_pos, egui::vec2(row_w, 22.0));
                                             let is_row_hovered = ui.rect_contains_pointer(row_rect);

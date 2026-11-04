@@ -5888,7 +5888,7 @@ fn draw_circular_tachometer(ui: &mut Ui, size: f32, pct: f32, accent_color: Colo
     painter.circle_stroke(center, radius, Stroke::new(4.5_f32, Color32::from_rgb(26, 34, 48)));
 
     let n_segs = 36;
-    let sweep = (pct / 100.0).clamp(0.02, 1.0) * std::f32::consts::TAU;
+    let sweep = (if pct.is_finite() { (pct / 100.0).clamp(0.0, 1.0) } else { 0.0 }) * std::f32::consts::TAU;
     let start_angle = -std::f32::consts::FRAC_PI_2;
     let step = sweep / n_segs as f32;
 
@@ -5900,7 +5900,7 @@ fn draw_circular_tachometer(ui: &mut Ui, size: f32, pct: f32, accent_color: Colo
         painter.line_segment([p1, p2], Stroke::new(4.5_f32, accent_color));
     }
 
-    let text = format!("{:.0}%", pct);
+    let text = if pct.is_finite() { format!("{pct:.0}%") } else { "—".to_string() };
     painter.text(center, egui::Align2::CENTER_CENTER, text, egui::FontId::monospace(size * 0.28), Color32::from_rgb(241, 245, 249));
 }
 
@@ -5909,6 +5909,15 @@ fn draw_interactive_fan_curve(ui: &mut Ui, height: f32, active_temp: f32, active
     let rect = response.rect;
 
     painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
+
+    if !active_duty.is_finite() {
+        for ratio in [0.25_f32, 0.5, 0.75] {
+            let y = rect.top() + rect.height() * ratio;
+            draw_dotted_hline(&painter, y, rect.left() + 16.0, rect.right() - 16.0, Stroke::new(1.0_f32, Color32::from_white_alpha(12)), 4.0, 4.0);
+        }
+        painter.text(rect.center(), egui::Align2::CENTER_CENTER, "Cooling curve unavailable", egui::FontId::proportional(11.0), Color32::from_rgb(148, 163, 184));
+        return;
+    }
 
     let pad_x = 24.0_f32;
     let pad_y = 16.0_f32;
@@ -6017,33 +6026,10 @@ fn draw_interactive_fan_curve(ui: &mut Ui, height: f32, active_temp: f32, active
     painter.text(tag_rect.center(), egui::Align2::CENTER_CENTER, tag_str, egui::FontId::monospace(9.0), Color32::from_rgb(241, 245, 249));
 }
 
-fn draw_rf_frequency_waveform(ui: &mut Ui, height: f32, accent: Color32) {
+fn draw_rf_frequency_waveform(ui: &mut Ui, height: f32, _accent: Color32) {
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
-    let rect = response.rect;
-
-    painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
-
-    let y_mid = rect.center().y;
-    let n = 40;
-    let step_x = (rect.width() - 20.0) / (n - 1) as f32;
-
-    let pts: Vec<egui::Pos2> = (0..n).map(|i| {
-        let x = rect.left() + 10.0 + i as f32 * step_x;
-        let angle = i as f32 / n as f32 * std::f32::consts::TAU * 1.5;
-        let y = y_mid + (angle.sin() * (rect.height() * 0.32));
-        egui::pos2(x, y)
-    }).collect();
-
-    draw_dotted_hline(&painter, y_mid, rect.left() + 10.0, rect.right() - 10.0, Stroke::new(1.0_f32, accent_with_alpha(accent, 80)), 4.0, 4.0);
-
-    for i in 0..(pts.len() - 1) {
-        painter.line_segment([pts[i], pts[i + 1]], Stroke::new(2.0_f32, accent));
-    }
-
-    if let Some(&mid_pt) = pts.get(n / 2) {
-        painter.circle_filled(mid_pt, 6.0, accent_with_alpha(accent, 90));
-        painter.circle_filled(mid_pt, 3.5, Color32::from_rgb(241, 245, 249));
-    }
+    painter.rect_filled(response.rect, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
+    painter.text(response.rect.center(), egui::Align2::CENTER_CENTER, "RF measurements unavailable", egui::FontId::proportional(11.0), Color32::from_rgb(148, 163, 184));
 }
 
 fn draw_wifi_realtime_waveform(ui: &mut Ui, height: f32, rx_history: &VecDeque<f32>, tx_history: &VecDeque<f32>, accent: Color32) {
@@ -6174,76 +6160,51 @@ fn draw_wifi_realtime_waveform(ui: &mut Ui, height: f32, rx_history: &VecDeque<f
     }
 }
 
-fn draw_thermal_dual_waveform(ui: &mut Ui, height: f32, cpu_temp: f32, gpu_temp: f32, accent: Color32) {
+fn draw_thermal_dual_waveform(ui: &mut Ui, height: f32, samples: &VecDeque<(Instant, f32, f32)>, accent: Color32) {
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let rect = response.rect;
-
     painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
-
-    let y_bot = rect.bottom() - 14.0;
-    let y_top = rect.top() + 14.0;
-    let plot_h = y_bot - y_top;
-
-    for ratio in [0.25_f32, 0.50_f32, 0.75_f32] {
-        let y = y_bot - ratio * plot_h;
-        draw_dotted_hline(&painter, y, rect.left() + 12.0, rect.right() - 12.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 12)), 4.0, 4.0);
+    let plot = rect.shrink2(egui::vec2(12.0, 14.0));
+    for ratio in [0.25_f32, 0.5, 0.75] {
+        let y = plot.bottom() - ratio * plot.height();
+        draw_dotted_hline(&painter, y, plot.left(), plot.right(), Stroke::new(1.0_f32, Color32::from_white_alpha(12)), 4.0, 4.0);
     }
-
-    let n = 50;
-    let step_x = (rect.width() - 24.0) / (n - 1) as f32;
-
-    let to_y = |temp: f32| -> f32 {
-        let norm = ((temp - 30.0) / 70.0).clamp(0.05, 0.95);
-        y_bot - norm * plot_h
+    let Some(latest) = samples.back().map(|sample| sample.0) else {
+        painter.text(rect.center(), egui::Align2::CENTER_CENTER, "Waiting for temperature samples", egui::FontId::proportional(11.0), Color32::from_rgb(148, 163, 184));
+        return;
     };
-
-    let cpu_pts: Vec<egui::Pos2> = (0..n).map(|i| {
-        let x = rect.left() + 12.0 + i as f32 * step_x;
-        let wiggle = (i as f32 * 0.45).sin() * 2.8 + (i as f32 * 0.15).cos() * 1.5;
-        let t = (cpu_temp - 4.0 + (i as f32 / n as f32) * 4.0 + wiggle).clamp(35.0, 95.0);
-        egui::pos2(x, to_y(t))
-    }).collect();
-
-    let mut mesh = egui::Mesh::default();
-    let c_top = accent_with_alpha(accent, 40);
-    let c_bot = accent_with_alpha(accent, 2);
-    for i in 0..(cpu_pts.len() - 1) {
-        let p1 = cpu_pts[i];
-        let p2 = cpu_pts[i + 1];
-        let b1 = egui::pos2(p1.x, y_bot);
-        let b2 = egui::pos2(p2.x, y_bot);
-        let idx = mesh.vertices.len() as u32;
-        mesh.vertices.push(egui::epaint::Vertex { pos: p1, uv: egui::epaint::WHITE_UV, color: c_top });
-        mesh.vertices.push(egui::epaint::Vertex { pos: p2, uv: egui::epaint::WHITE_UV, color: c_top });
-        mesh.vertices.push(egui::epaint::Vertex { pos: b2, uv: egui::epaint::WHITE_UV, color: c_bot });
-        mesh.vertices.push(egui::epaint::Vertex { pos: b1, uv: egui::epaint::WHITE_UV, color: c_bot });
-        mesh.indices.extend_from_slice(&[idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
+    let ceiling = samples.iter().flat_map(|sample| [sample.1, sample.2]).filter(|value| value.is_finite()).fold(100.0_f32, f32::max) + 5.0;
+    let mut any_reading = false;
+    for (channel, color) in [(0, accent), (1, Color32::from_rgb(148, 163, 184))] {
+        let mut previous: Option<egui::Pos2> = None;
+        for &(timestamp, cpu, gpu) in samples {
+            let value = if channel == 0 { cpu } else { gpu };
+            if !value.is_finite() {
+                previous = None;
+                continue;
+            }
+            any_reading = true;
+            let age = latest.saturating_duration_since(timestamp).as_secs_f32();
+            let point = egui::pos2(plot.right() - (age / 60.0).clamp(0.0, 1.0) * plot.width(), plot.bottom() - (value / ceiling).clamp(0.0, 1.0) * plot.height());
+            if let Some(last) = previous {
+                if channel == 0 {
+                    let mut mesh = egui::Mesh::default();
+                    for (pos, color) in [(last, accent_with_alpha(color, 40)), (point, accent_with_alpha(color, 40)), (egui::pos2(point.x, plot.bottom()), accent_with_alpha(color, 2)), (egui::pos2(last.x, plot.bottom()), accent_with_alpha(color, 2))] {
+                        mesh.vertices.push(egui::epaint::Vertex { pos, uv: egui::epaint::WHITE_UV, color });
+                    }
+                    mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+                    painter.add(egui::Shape::mesh(mesh));
+                }
+                painter.line_segment([last, point], Stroke::new(if channel == 0 { 2.2_f32 } else { 1.8_f32 }, color));
+            }
+            previous = Some(point);
+        }
+        if let Some(point) = previous {
+            painter.circle_filled(point, 3.0, color);
+        }
     }
-    painter.add(egui::Shape::mesh(mesh));
-
-    for i in 0..(cpu_pts.len() - 1) {
-        painter.line_segment([cpu_pts[i], cpu_pts[i + 1]], Stroke::new(2.2_f32, accent));
-    }
-
-    let gpu_pts: Vec<egui::Pos2> = (0..n).map(|i| {
-        let x = rect.left() + 12.0 + i as f32 * step_x;
-        let wiggle = (i as f32 * 0.35 + 1.2).sin() * 1.8;
-        let t = (gpu_temp - 2.0 + (i as f32 / n as f32) * 2.0 + wiggle).clamp(32.0, 85.0);
-        egui::pos2(x, to_y(t))
-    }).collect();
-
-    for i in 0..(gpu_pts.len() - 1) {
-        painter.line_segment([gpu_pts[i], gpu_pts[i + 1]], Stroke::new(1.8_f32, Color32::from_rgb(148, 163, 184)));
-    }
-
-    if let Some(&last_cpu) = cpu_pts.last() {
-        painter.circle_filled(last_cpu, 5.0, accent_with_alpha(accent, 90));
-        painter.circle_filled(last_cpu, 2.8, Color32::from_rgb(241, 245, 249));
-
-        let tag_rect = egui::Rect::from_min_size(egui::pos2(last_cpu.x - 76.0, last_cpu.y - 20.0), egui::vec2(72.0, 16.0));
-        painter.rect_filled(tag_rect, Rounding::same(3.0), Color32::from_rgb(18, 28, 42));
-        painter.rect_stroke(tag_rect, Rounding::same(3.0), Stroke::new(1.0_f32, accent));
-        painter.text(tag_rect.center(), egui::Align2::CENTER_CENTER, format!("{:.1}°C CPU", cpu_temp), egui::FontId::monospace(9.0), Color32::from_rgb(241, 245, 249));
+    if !any_reading {
+        painter.text(rect.center(), egui::Align2::CENTER_CENTER, "Temperature readings unavailable", egui::FontId::proportional(11.0), Color32::from_rgb(148, 163, 184));
     }
 }
 

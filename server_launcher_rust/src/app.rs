@@ -12450,7 +12450,20 @@ impl LauncherApp {
                         (format!("{:.1}", used as f64 / 1024.0), format!("/ {:.1} GB", total as f64 / 1024.0),
                          format!("USED {:.0}%", pct), gpu.and_then(|g| g.power_watts).map(|w| format!("POWER {:.1}W", w)).unwrap_or_else(|| "Power unavailable".to_string()), true, total, used)
                     } else {
-                        ("—".to_string(), String::new(), "Unavailable".to_string(), String::new(), false, 0, 0)
+                        // Integrated GPUs share system RAM; report host totals, not guessed per-GPU allocation.
+                        let shared_memory = gpu.is_some_and(|g| {
+                            g.name.to_ascii_lowercase().contains("intel")
+                                || g.driver.contains("i915")
+                                || g.driver.contains("xe")
+                        });
+                        let total = (snap.mem_total_bytes / (1024 * 1024)) as u64;
+                        let used = (snap.mem_used_bytes / (1024 * 1024)) as u64;
+                        if shared_memory && total > 0 {
+                            (format!("{:.1}", used as f64 / 1024.0), format!("/ {:.1} GB shared", total as f64 / 1024.0),
+                             "SYSTEM-WIDE USE".to_string(), "Shared system memory".to_string(), false, total, used.min(total))
+                        } else {
+                            ("—".to_string(), String::new(), "Unavailable".to_string(), String::new(), false, 0, 0)
+                        }
                     };
 
                 ui.columns(4, |cols| {
@@ -12766,7 +12779,7 @@ impl LauncherApp {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 10.0;
-                                    if has_dedicated {
+                                    if total_vram_mb > 0 {
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 4.0;
                                             let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.5, 6.5), egui::Sense::hover());
@@ -12797,7 +12810,7 @@ impl LauncherApp {
                         let br = bar_res.rect;
                         bar_p.rect_filled(br, Rounding::same(4.0), Color32::from_rgb(10, 15, 29));
 
-                        if has_dedicated {
+                        if total_vram_mb > 0 {
                             let used_width = br.width() * (used_vram_mb as f32 / total_vram_mb.max(1) as f32).clamp(0.0, 1.0);
                             bar_p.rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(used_width, br.height())), Rounding::same(3.0), accent);
                             bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + used_width, br.min.y), egui::vec2(br.width() - used_width, br.height())), Rounding::same(3.0), Color32::from_rgb(51, 65, 85));
@@ -12816,9 +12829,9 @@ impl LauncherApp {
                                     ui.label(RichText::new("REPORTED MEMORY").size(9.0).monospace().strong().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
-                                if has_dedicated {
+                                if total_vram_mb > 0 {
                                     ui.label(RichText::new(format!("{} MB", total_vram_mb)).size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                    ui.label(RichText::new("GPU memory capacity").size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(if has_dedicated { "GPU memory capacity" } else { "Shared system memory" }).size(8.5).monospace().color(p.text_muted));
                                 } else {
                                     ui.label(RichText::new("—").size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                     ui.label(RichText::new("Unavailable").size(8.5).monospace().color(p.text_muted));
@@ -12832,9 +12845,9 @@ impl LauncherApp {
                                     ui.label(RichText::new("MEMORY USED").size(9.0).monospace().strong().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
-                                if has_dedicated {
+                                if total_vram_mb > 0 {
                                     ui.label(RichText::new(format!("{:.1} MB / {:.1} GB", used_vram_mb as f64, total_vram_mb as f64 / 1024.0)).size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                    ui.label(RichText::new("Reported GPU memory").size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(if has_dedicated { "Reported GPU memory" } else { "System-wide memory use" }).size(8.5).monospace().color(p.text_muted));
                                 } else {
                                     ui.label(RichText::new("—").size(14.0).strong().color(p.text_primary));
                                     ui.label(RichText::new("Unavailable").size(8.5).monospace().color(p.text_muted));

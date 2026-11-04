@@ -1980,6 +1980,16 @@ fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
                         }
                     });
 
+                    // DRM drivers expose VRAM counters when the device has a
+                    // queryable local-memory pool (for example amdgpu).
+                    let memory_mb = |names: &[&str]| {
+                        names.iter().find_map(|name| {
+                            fs::read_to_string(dev.join(name)).ok()?.trim().parse::<u64>().ok()
+                        }).map(|bytes| bytes / (1024 * 1024))
+                    };
+                    let mem_used_mb = memory_mb(&["mem_info_vram_used", "mem_info_lmem_used"]);
+                    let mem_total_mb = memory_mb(&["mem_info_vram_total", "mem_info_lmem_total"]);
+
                     let mut core_clock = freq_mhz.map(|f| f as u32);
                     let mut mem_clock = None;
                     let mut power_watts = None;
@@ -2067,8 +2077,8 @@ fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
                         name: vendor_name.to_string(),
                         load_pct,
                         temp: card_temp.or(known_temp),
-                        mem_used_mb: None,
-                        mem_total_mb: None,
+                        mem_used_mb,
+                        mem_total_mb,
                         clock_mhz: core_clock,
                         mem_clock_mhz: mem_clock,
                         power_watts,
@@ -2552,6 +2562,16 @@ for card in sorted(glob.glob("/sys/class/drm/card[0-9]*")):
         if act_freq and max_freq and max_freq > 0:
             load = round((act_freq / max_freq) * 100.0, 1)
 
+        def memory_mb(*names):
+            for name in names:
+                try:
+                    return int(open(card + "/device/" + name).read().strip()) // (1024 * 1024)
+                except:
+                    pass
+            return None
+        mem_used = memory_mb("mem_info_vram_used", "mem_info_lmem_used")
+        mem_total = memory_mb("mem_info_vram_total", "mem_info_lmem_total")
+
         p_watts = None
         mem_clk = None
         c_temp = None
@@ -2578,8 +2598,8 @@ for card in sorted(glob.glob("/sys/class/drm/card[0-9]*")):
             "name": v_name,
             "temp": c_temp,
             "load": load,
-            "mem_used": None,
-            "mem_total": None,
+            "mem_used": mem_used,
+            "mem_total": mem_total,
             "clock_mhz": act_freq,
             "mem_clock_mhz": mem_clk,
             "power_watts": p_watts,

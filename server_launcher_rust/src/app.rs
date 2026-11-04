@@ -13928,10 +13928,12 @@ impl LauncherApp {
                         ui.columns(4, |cols| {
                             for (i, col) in cols.iter_mut().enumerate() {
                                 if let Some(mount) = snap.disks.get(i) {
-                                    col.label(RichText::new(format!("MOUNT: {}", mount.mount_point)).size(9.0).monospace().color(p.text_muted));
+                                    col.add(egui::Label::new(RichText::new(format!("MOUNT: {}", mount.mount_point)).size(9.0).monospace().color(p.text_muted)).truncate())
+                                        .on_hover_text(&mount.mount_point);
                                     col.add_space(2.0);
                                     col.label(RichText::new(format!("{:.1} GB {}", mount.total_bytes as f64 / 1e9, mount.fs_type)).size(13.0).strong().color(p.text_primary));
-                                    col.label(RichText::new(format!("{} • {:.1} GB used", mount.name, mount.used_bytes as f64 / 1e9)).size(9.0).monospace().color(p.text_muted));
+                                    col.add(egui::Label::new(RichText::new(format!("{} • {:.1} GB used", mount.name, mount.used_bytes as f64 / 1e9)).size(9.0).monospace().color(p.text_muted)).truncate())
+                                        .on_hover_text(format!("{} • {:.1} GB used", mount.name, mount.used_bytes as f64 / 1e9));
                                 } else {
                                     col.label(RichText::new("—").size(13.0).color(p.text_muted));
                                     col.label(RichText::new("No mount reported").size(9.0).color(p.text_muted));

@@ -273,7 +273,6 @@ pub struct SystemSensorsCollector {
     prev_disk_write: HashMap<String, u64>,
     prev_disk_time: Instant,
     prev_proc_disk: HashMap<u32, (u64, u64)>,
-    prev_proc_net: HashMap<u32, (u64, u64)>,
 }
 
 impl Default for SystemSensorsCollector {
@@ -307,7 +306,6 @@ impl SystemSensorsCollector {
             prev_disk_write: HashMap::new(),
             prev_disk_time: now,
             prev_proc_disk: HashMap::new(),
-            prev_proc_net: HashMap::new(),
         }
     }
 
@@ -671,7 +669,6 @@ impl SystemSensorsCollector {
                     .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
             );
             let mut current_proc_disk = HashMap::new();
-            let mut current_proc_net = HashMap::new();
 
             for (pid, proc) in self.sys.processes() {
                 // Filter out OS-level threads so only actual processes are listed!
@@ -701,51 +698,8 @@ impl SystemSensorsCollector {
                 let w_rate = (written_b.saturating_sub(prev_w) as f64) / disk_elapsed_secs;
                 let disk_rate_bps = r_rate + w_rate;
 
-                // Network statistics per process via /proc/<pid>/io on Linux
-                let (proc_net_rx, proc_net_tx) = {
-                    #[cfg(target_os = "linux")]
-                    {
-                        // Optimization: Only query /proc/<pid>/io for active processes with CPU or disk activity
-                        // Skips dormant processes resting in memory to prevent CPU usage spikes from hundreds of file opens
-                        if cpu_usage > 0.2 || read_b > 0 || written_b > 0 {
-                            if let Ok(content) = fs::read_to_string(format!("/proc/{}/io", pid_u32)) {
-                                let mut rchar = 0u64;
-                                let mut wchar = 0u64;
-                                let mut r_bytes = 0u64;
-                                let mut w_bytes = 0u64;
-                                for line in content.lines() {
-                                    if let Some(val) = line.strip_prefix("rchar:") {
-                                        rchar = val.trim().parse().unwrap_or(0);
-                                    } else if let Some(val) = line.strip_prefix("wchar:") {
-                                        wchar = val.trim().parse().unwrap_or(0);
-                                    } else if let Some(val) = line.strip_prefix("read_bytes:") {
-                                        r_bytes = val.trim().parse().unwrap_or(0);
-                                    } else if let Some(val) = line.strip_prefix("write_bytes:") {
-                                        w_bytes = val.trim().parse().unwrap_or(0);
-                                    }
-                                }
-                                let rx = rchar.saturating_sub(r_bytes);
-                                let tx = wchar.saturating_sub(w_bytes);
-                                (rx, tx)
-                            } else {
-                                (0, 0)
-                            }
-                        } else {
-                            (0, 0)
-                        }
-                    }
-                    #[cfg(not(target_os = "linux"))]
-                    {
-                        (0, 0)
-                    }
-                };
-
-                current_proc_net.insert(pid_u32, (proc_net_rx, proc_net_tx));
-
-                let (prev_nrx, prev_ntx) = self.prev_proc_net.get(&pid_u32).copied().unwrap_or((proc_net_rx, proc_net_tx));
-                let nrx_rate = (proc_net_rx.saturating_sub(prev_nrx) as f64) / disk_elapsed_secs;
-                let ntx_rate = (proc_net_tx.saturating_sub(prev_ntx) as f64) / disk_elapsed_secs;
-                let net_rate_bps = nrx_rate + ntx_rate;
+                // /proc/PID/io measures file I/O; no per-process network accounting source is installed.
+                let (proc_net_rx, proc_net_tx, net_rate_bps) = (0_u64, 0_u64, 0.0_f64);
 
                 let status = format!("{:?}", proc.status());
 
@@ -766,7 +720,6 @@ impl SystemSensorsCollector {
                 });
             }
             self.prev_proc_disk = current_proc_disk;
-            self.prev_proc_net = current_proc_net;
 
             // Sort by CPU usage descending by default, then network usage, then memory
             let compare_apps = |a: &ProcessSensorInfo, b: &ProcessSensorInfo| {

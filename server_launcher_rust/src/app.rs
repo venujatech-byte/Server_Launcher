@@ -17994,7 +17994,7 @@ impl LauncherApp {
                                 .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                                 .show(c, |ui| {
                                     ui.set_width(ui.available_width());
-                                    
+
                                     // Device Icon
                                     let icon = if dev.icon.contains("audio") || dev.icon.contains("head") {
                                         crate::lucide::HEADPHONES
@@ -18042,7 +18042,7 @@ impl LauncherApp {
                                     ui.label(RichText::new(&dev.mac).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
 
                                     ui.add_space(8.0);
-                                    
+
                                     // Device metadata rows
                                     let dev_type = if !dev.icon.is_empty() { &dev.icon } else { "peripheral" };
                                     let status_str = if dev.connected { "ACTIVE LINK" } else { "STANDBY" };
@@ -18209,7 +18209,7 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
-                                
+
                                 // Header row with title on left and badge on right (no vertical overlap)
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new("Radio Diagnostics & Channel Stability").size(12.5).strong().color(p.text_primary));
@@ -18219,12 +18219,12 @@ impl LauncherApp {
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(7.0, 3.0))
                                             .show(ui, |ui| {
-                                                ui.label(RichText::new("AFH: 79 CHANNELS ACTIVE").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                                ui.label(RichText::new("AFH: UNAVAILABLE").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                             });
                                     });
                                 });
                                 ui.add_space(2.0);
-                                ui.label(RichText::new("AFH (Adaptive Frequency Hopping) spectrum analysis across 79 channels").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                ui.label(RichText::new("Controller does not report RF channel measurements").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
 
                                 ui.add_space(8.0);
                                 draw_rf_frequency_waveform(ui, 100.0, accent);
@@ -18232,9 +18232,9 @@ impl LauncherApp {
                                 ui.add_space(10.0);
                                 ui.columns(3, |cols| {
                                     let diag_items = [
-                                        ("L2CAP MTU", "1024 BYTES", "Optimal payload throughput"),
-                                        ("HCI BUFFER", "18.4%", "No overrun drops"),
-                                        ("SCO AUDIO", "ACTIVE (16 kHz)", "mSBC wideband voice channel"),
+                                        ("L2CAP MTU", "—", "Not reported"),
+                                        ("HCI BUFFER", "—", "Not reported"),
+                                        ("SCO AUDIO", "—", "Not reported"),
                                     ];
                                     for (j, (k, v, sub)) in diag_items.iter().enumerate() {
                                         let c = &mut cols[j];
@@ -18256,7 +18256,7 @@ impl LauncherApp {
 
                     ui.add_space(gap);
 
-                    // Right Column: Audio Profiles & Routing
+                    // Audio routing controls require a sound-server integration.
                     ui.allocate_ui_with_layout(egui::vec2(half_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
                         Frame::none()
                             .fill(p.bg_card)
@@ -18264,95 +18264,9 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
-                                ui.vertical(|ui| {
-                                    ui.label(RichText::new("Audio Profiles & Routing").size(12.5).strong().color(p.text_primary));
-                                    ui.label(RichText::new("Bluetooth sound server daemon & dynamic codec switcher").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                });
-
-                                ui.add_space(10.0);
-
-                                // Tabs: A2DP Sink vs HFP/HSP (borderless pills)
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 8.0;
-                                    let tabs = [
-                                        ("A2DP Sink (High Fidelity)", 0),
-                                        ("HFP / HSP (Voice Calls)", 1),
-                                    ];
-                                    for (t_name, t_idx) in tabs {
-                                        let is_sel = self.bt_audio_profile == t_idx;
-                                        let bg = if is_sel { accent_with_alpha(accent, 26) } else { Color32::from_rgb(10, 14, 22) };
-                                        let txt_col = if is_sel { Color32::from_rgb(241, 245, 249) } else { Color32::from_rgb(148, 163, 184) };
-
-                                        let resp = Frame::none()
-                                            .fill(bg)
-                                            .rounding(Rounding::same(6.0))
-                                            .inner_margin(egui::Margin::symmetric(10.0, 5.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new(t_name).size(9.5).monospace().strong().color(txt_col));
-                                            }).response;
-
-                                        if resp.interact(egui::Sense::click()).clicked() {
-                                            self.bt_audio_profile = t_idx;
-                                        }
-                                    }
-                                });
-
-                                ui.add_space(10.0);
-
-                                // Codecs List
-                                let codecs = [
-                                    ("Sony LDAC (990/660/330 kbps High-Res)", 0),
-                                    ("Qualcomm aptX HD (24-bit / 48 kHz)", 1),
-                                    ("AAC-LC (Apple Ecosystem Native)", 2),
-                                ];
-
-                                for (c_name, c_idx) in codecs {
-                                    let is_active = self.bt_codec == c_idx;
-                                    let (row_rect, row_resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::click());
-                                    let row_bg = if is_active {
-                                        accent_with_alpha(accent, 16)
-                                    } else if row_resp.hovered() {
-                                        Color32::from_rgb(18, 28, 42)
-                                    } else {
-                                        Color32::from_rgb(10, 14, 22)
-                                    };
-
-                                    ui.painter().rect_filled(row_rect, Rounding::same(6.0), row_bg);
-                                    let dot_col = if is_active { accent } else { Color32::from_rgb(100, 116, 139) };
-                                    ui.painter().circle_filled(egui::pos2(row_rect.left() + 12.0, row_rect.center().y), 3.0, dot_col);
-
-                                    let text_col = if is_active { Color32::from_rgb(241, 245, 249) } else { Color32::from_rgb(203, 213, 225) };
-                                    ui.painter().text(egui::pos2(row_rect.left() + 24.0, row_rect.center().y), egui::Align2::LEFT_CENTER, c_name, egui::FontId::monospace(9.5), text_col);
-
-                                    if is_active {
-                                        ui.painter().text(egui::pos2(row_rect.right() - 10.0, row_rect.center().y), egui::Align2::RIGHT_CENTER, "ACTIVE", egui::FontId::monospace(8.0), Color32::from_rgb(226, 232, 240));
-                                    }
-
-                                    if row_resp.clicked() {
-                                        self.bt_codec = c_idx;
-                                    }
-                                    ui.add_space(2.0);
-                                }
-
-                                ui.add_space(10.0);
-
-                                // Auto-switch toggle row
-                                Frame::none()
-                                    .fill(Color32::from_rgb(10, 14, 22))
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(10.0, 7.0))
-                                    .show(ui, |ui| {
-                                        ui.set_width(ui.available_width());
-                                        ui.horizontal(|ui| {
-                                            ui.vertical(|ui| {
-                                                ui.label(RichText::new("Auto-Switch to HFP for Incoming Calls").size(10.0).strong().color(p.text_primary));
-                                                ui.label(RichText::new("Temporarily lowers fidelity to enable microphone bus").size(8.0).color(Color32::from_rgb(100, 116, 139)));
-                                            });
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                render_custom_toggle_switch(ui, &mut self.bt_auto_switch, accent);
-                                            });
-                                        });
-                                    });
+                                ui.label(RichText::new("Audio Routing").size(12.5).strong().color(p.text_primary));
+                                ui.add_space(6.0);
+                                ui.label(RichText::new("No audio routing backend is available on this host.").size(9.5).color(p.text_muted));
                             });
                     });
                 });

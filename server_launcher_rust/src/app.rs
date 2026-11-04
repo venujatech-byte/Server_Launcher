@@ -19553,8 +19553,9 @@ impl LauncherApp {
                                             let mut row_clicked = false;
 
                                             // 1. Name & Expander
-                                            let (name_rect, _) = ui.allocate_exact_size(egui::vec2(col_name_w, 22.0), egui::Sense::hover());
-                                            let name_cell_resp = ui.allocate_new_ui(egui::UiBuilder::new().max_rect(name_rect).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
+                                            let name_cell_resp = ui.allocate_ui_with_layout(egui::vec2(col_name_w, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                ui.set_min_width(col_name_w);
+                                                ui.set_max_width(col_name_w);
                                                 let cell_rect = ui.max_rect();
                                                 if row_bg != Color32::TRANSPARENT {
                                                     let bg_rect = egui::Rect::from_min_max(cell_rect.min, egui::pos2(cell_rect.max.x + COL_SPACING, cell_rect.max.y));
@@ -19830,8 +19831,9 @@ impl LauncherApp {
                                                     };
 
                                                     // Child Name
-                                                    let (child_name_rect, _) = ui.allocate_exact_size(egui::vec2(col_name_w, 20.0), egui::Sense::hover());
-                                                    let _c_name_resp = ui.allocate_new_ui(egui::UiBuilder::new().max_rect(child_name_rect).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
+                                                    let _c_name_resp = ui.allocate_ui_with_layout(egui::vec2(col_name_w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                        ui.set_min_width(col_name_w);
+                                                        ui.set_max_width(col_name_w);
                                                         let cell_rect = ui.max_rect();
                                                         if c_row_bg != Color32::TRANSPARENT {
                                                             let bg_rect = egui::Rect::from_min_max(cell_rect.min, egui::pos2(cell_rect.max.x + COL_SPACING, cell_rect.max.y));

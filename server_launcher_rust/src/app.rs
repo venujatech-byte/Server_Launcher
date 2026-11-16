@@ -20926,145 +20926,84 @@ impl LauncherApp {
 
             let mut to_switch_tab: Option<String> = None;
 
-            ScrollArea::horizontal()
-                .id_salt("notebook_tabs_scroll")
-                .auto_shrink([false, true])
-                .max_height(38.0)
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
-                    ui.horizontal(|ui| {
-                        // Tab 0: Server Overview
-                        let is_ov_active = self.active_tab == "overview";
-                        let ov_bg = if is_ov_active {
-                            p.bg_card
-                        } else {
-                            p.bg_sidebar.gamma_multiply(0.65)
-                        };
-                        let ov_stroke = if is_ov_active {
-                            Stroke::new(1.5_f32, p.accent)
-                        } else {
-                            Stroke::new(1.0_f32, p.border.gamma_multiply(0.4))
-                        };
-
-                        let ov_frame = Frame::none()
-                            .fill(ov_bg)
-                            .stroke(ov_stroke)
-                            .rounding(Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 })
-                            .inner_margin(egui::Margin::symmetric(10.0, 6.0));
-
-                        let ov_resp = ov_frame.show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-                                ui.label(
-                                    RichText::new(format!("{} Server Overview", crate::lucide::SERVER))
-                                        .size(12.0)
-                                        .strong()
-                                        .color(if is_ov_active { p.text_primary } else { p.text_secondary }),
-                                );
-
-                                // Chip: online count
-                                let chip_bg = if is_ov_active {
-                                    p.accent.gamma_multiply(0.2)
-                                } else {
-                                    p.bg_card.gamma_multiply(0.5)
-                                };
-                                let chip_color = if online_count > 0 {
-                                    Color32::from_rgb(52, 211, 153)
-                                } else {
-                                    p.text_muted
-                                };
-                                Frame::none()
-                                    .fill(chip_bg)
-                                    .rounding(Rounding::same(999.0))
-                                    .inner_margin(egui::Margin::symmetric(6.0, 1.5))
-                                    .show(ui, |ui| {
-                                        ui.label(
-                                            RichText::new(format!("{}/{}", online_count, total_count))
-                                                .size(10.0)
-                                                .monospace()
-                                                .color(chip_color),
-                                        );
-                                    });
+            // Native buttons provide consistent hover, focus and keyboard activation.
+            ui.scope(|ui| {
+                ui.visuals_mut().selection.bg_fill = p.bg_card_active;
+                ui.visuals_mut().selection.stroke = Stroke::new(1.0_f32, p.border_subtle);
+                ScrollArea::horizontal()
+                    .id_salt("notebook_tabs_scroll")
+                    .auto_shrink([false, true])
+                    .max_height(44.0)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            let overview_active = self.active_tab == "overview";
+                            let mut label = egui::text::LayoutJob::default();
+                            label.append(&format!("{} Overview", crate::lucide::SERVER), 0.0, egui::TextFormat {
+                                font_id: egui::FontId::proportional(13.0),
+                                color: if overview_active { p.text_primary } else { p.text_secondary },
+                                ..Default::default()
                             });
-                        }).response;
+                            label.append(&format!("  {online_count}/{total_count}"), 0.0, egui::TextFormat {
+                                font_id: egui::FontId::proportional(12.0),
+                                color: if online_count > 0 { p.success } else { p.text_muted },
+                                ..Default::default()
+                            });
+                            let response = ui.push_id("tab_overview", |ui| {
+                                ui.add_sized([148.0, 34.0], egui::Button::new(label)
+                                    .selected(overview_active).rounding(Rounding::same(8.0)))
+                            }).inner.on_hover_text(format!("{online_count} of {total_count} configured servers running"));
+                            if overview_active {
+                                ui.painter().rect_filled(egui::Rect::from_min_max(
+                                    egui::pos2(response.rect.left() + 12.0, response.rect.bottom() - 2.0),
+                                    egui::pos2(response.rect.right() - 12.0, response.rect.bottom()),
+                                ), Rounding::same(1.0), p.accent);
+                            }
+                            if response.clicked() { to_switch_tab = Some("overview".to_string()); }
 
-                        let ov_interact = ui.interact(ov_resp.rect, ui.id().with("tab_overview"), egui::Sense::click());
-                        if ov_interact.hovered() {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                        }
-                        if ov_interact.clicked() {
-                            to_switch_tab = Some("overview".to_string());
-                        }
-
-                        // Server tabs
-                        for s in &self.services {
-                            let is_active = self.active_tab == s.config.key;
-                            let (dot_char, dot_color) = match s.state {
-                                ServiceState::Running => ("●", Color32::from_rgb(52, 211, 153)),
-                                ServiceState::Starting => ("●", Color32::from_rgb(251, 191, 36)),
-                                ServiceState::Stopping => ("●", Color32::from_rgb(249, 115, 22)),
-                                ServiceState::Errored => ("●", Color32::from_rgb(239, 68, 68)),
-                                ServiceState::Stopped => ("○", Color32::from_rgb(148, 163, 184)),
-                            };
-
-                            let bg = if is_active {
-                                p.bg_card
-                            } else {
-                                p.bg_sidebar.gamma_multiply(0.65)
-                            };
-                            let stroke = if is_active {
-                                Stroke::new(1.5_f32, p.accent)
-                            } else {
-                                Stroke::new(1.0_f32, p.border.gamma_multiply(0.4))
-                            };
-
-                            let tab_frame = Frame::none()
-                                .fill(bg)
-                                .stroke(stroke)
-                                .rounding(Rounding { nw: 6.0, ne: 6.0, sw: 0.0, se: 0.0 })
-                                .inner_margin(egui::Margin::symmetric(10.0, 6.0));
-
-                            let tab_resp = tab_frame.show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing = egui::vec2(5.0, 0.0);
-                                    ui.label(RichText::new(dot_char).size(11.0).color(dot_color));
-                                    ui.label(
-                                        RichText::new(&s.config.name)
-                                            .size(12.0)
-                                            .strong()
-                                            .color(if is_active { p.text_primary } else { p.text_secondary }),
-                                    );
-
-                                    if s.config.port > 0 {
-                                        let port_color = if s.state == ServiceState::Running {
-                                            Color32::from_rgb(96, 165, 250)
-                                        } else {
-                                            p.text_muted
-                                        };
-                                        ui.label(
-                                            RichText::new(format!(":{}", s.config.port))
-                                                .size(10.5)
-                                                .monospace()
-                                                .color(port_color),
-                                        );
-                                    }
+                            for server in &self.services {
+                                let active = self.active_tab == server.config.key;
+                                let (dot, color, state) = match server.state {
+                                    ServiceState::Running => ("●", p.success, "Running"),
+                                    ServiceState::Starting => ("●", p.warning, "Starting"),
+                                    ServiceState::Stopping => ("●", p.warning, "Stopping"),
+                                    ServiceState::Errored => ("●", p.danger, "Failed"),
+                                    ServiceState::Stopped => ("○", p.text_muted, "Stopped"),
+                                };
+                                let mut label = egui::text::LayoutJob::default();
+                                label.append(&format!("{dot}  "), 0.0, egui::TextFormat {
+                                    font_id: egui::FontId::proportional(12.0), color,
+                                    ..Default::default()
                                 });
-                            }).response;
-
-                            let tab_interact = ui.interact(tab_resp.rect, ui.id().with(&s.config.key), egui::Sense::click());
-                            if tab_interact.hovered() {
-                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                label.append(&server.config.name, 0.0, egui::TextFormat {
+                                    font_id: egui::FontId::proportional(13.0),
+                                    color: if active { p.text_primary } else { p.text_secondary },
+                                    ..Default::default()
+                                });
+                                if server.config.port > 0 {
+                                    label.append(&format!("  :{}", server.config.port), 0.0, egui::TextFormat {
+                                        font_id: egui::FontId::monospace(11.5), color: p.text_muted,
+                                        ..Default::default()
+                                    });
+                                }
+                                let width = ui.fonts(|fonts| fonts.layout_job(label.clone()).size().x + 24.0).clamp(84.0, 220.0);
+                                let response = ui.push_id(("server_tab", &server.config.key), |ui| {
+                                    ui.add_sized([width, 34.0], egui::Button::new(label).truncate()
+                                        .selected(active).rounding(Rounding::same(8.0)))
+                                }).inner.on_hover_text(format!("{} · {}\n{}", server.config.name, state, server.config.command));
+                                if active {
+                                    ui.painter().rect_filled(egui::Rect::from_min_max(
+                                        egui::pos2(response.rect.left() + 12.0, response.rect.bottom() - 2.0),
+                                        egui::pos2(response.rect.right() - 12.0, response.rect.bottom()),
+                                    ), Rounding::same(1.0), p.accent);
+                                }
+                                if response.clicked() { to_switch_tab = Some(server.config.key.clone()); }
                             }
-                            if tab_interact.clicked() {
-                                to_switch_tab = Some(s.config.key.clone());
-                            }
-                        }
+                        });
                     });
-                });
+            });
 
-            if let Some(target) = to_switch_tab {
-                self.active_tab = target;
-            }
+            if let Some(target) = to_switch_tab { self.active_tab = target; }
 
             // Outer Frame for the tab content (FILLS 100% OF REMAINING SPACE!)
             Frame::none()
@@ -21089,102 +21028,60 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     fn render_overview_content(&mut self, ui: &mut Ui) {
         let p = self.palette();
-        // Heading Row: Servers running on this PC | last scan: HH:MM:SS | Search Box | Refresh button
+        // Separate status from controls so the search field never competes with the heading.
+        let is_scanning = self.scanner.is_scanning.lock().map(|value| *value).unwrap_or(false);
         ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("Servers running on this PC")
-                    .size(16.0)
-                    .strong()
-                    .color(p.text_primary),
-            );
-            ui.add_space(8.0);
-            let is_scanning = self.scanner.is_scanning.lock().map(|s| *s).unwrap_or(false);
-            if is_scanning {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(
-                        RichText::new("refreshing…")
-                            .size(11.5)
-                            .color(p.accent),
-                    );
-                });
-            } else {
-                let scan_time = self.scanner.get_last_scan_time();
-                ui.label(
-                    RichText::new(format!("last scan: {}", scan_time))
-                        .size(11.5)
-                        .color(p.text_muted),
-                );
-            }
-
+            ui.label(RichText::new("Servers on this PC").size(16.0).strong().color(p.text_primary));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let btn_refresh = egui::Button::new(
-                    RichText::new(format!("{} Refresh", crate::lucide::REFRESH_CW))
-                        .size(11.5)
-                        .strong()
-                        .color(p.accent),
-                )
-                .fill(p.bg_button)
-                .stroke(Stroke::NONE)
-                .rounding(Rounding::same(999.0))
-                .min_size(egui::vec2(86.0, 26.0));
-                if ui.add(btn_refresh).clicked() {
-                    self.refresh_server_list();
+                if is_scanning {
+                    ui.label(RichText::new("Scanning…").size(11.5).color(p.text_muted));
+                    ui.spinner();
+                } else {
+                    ui.label(RichText::new(format!("Last scan {}", self.scanner.get_last_scan_time()))
+                        .size(11.5).color(p.text_muted));
                 }
-
-                // Search Box with search icon, hint, clear button, and Ctrl+F focus support
-                Frame::none()
-                    .fill(p.bg_input)
-                    .stroke(Stroke::NONE)
-                    .rounding(Rounding::same(999.0))
-                    .inner_margin(egui::Margin::symmetric(10.0, 4.0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new(crate::lucide::SEARCH)
-                                    .size(11.5)
-                                    .color(p.text_muted),
-                            );
-                            let resp = ui.add(
-                                egui::TextEdit::singleline(&mut self.overview_search_query)
-                                    .hint_text(
-                                        RichText::new("Search servers, ports, commands... (Ctrl+F)")
-                                            .size(11.5)
-                                            .color(p.text_muted),
-                                    )
-                                    .desired_width(240.0)
-                                    .frame(false),
-                            );
-                            if self.focus_overview_search {
-                                resp.request_focus();
-                                self.focus_overview_search = false;
-                                self.refresh_server_list();
-                            }
-                            if resp.changed() {
-                                self.refresh_server_list();
-                            }
-                            if resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                                self.refresh_server_list();
-                            }
-                            if !self.overview_search_query.is_empty() {
-                                if ui
-                                    .add(
-                                        egui::Button::new(
-                                            RichText::new(crate::lucide::X)
-                                                .size(10.5)
-                                                .color(p.text_muted),
-                                        )
-                                        .frame(false),
-                                    )
-                                    .clicked()
-                                {
-                                    self.overview_search_query.clear();
-                                    self.refresh_server_list();
-                                }
-                            }
-                        });
-                    });
             });
+        });
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            let search_width = (ui.available_width() - 96.0 - ui.spacing().item_spacing.x).max(60.0);
+            Frame::none().fill(p.bg_input).stroke(Stroke::new(1.0_f32, p.border_subtle))
+                .rounding(Rounding::same(8.0)).inner_margin(egui::Margin::symmetric(10.0, 7.0))
+                .show(ui, |ui| {
+                    ui.set_width((search_width - 20.0).max(40.0));
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(crate::lucide::SEARCH).size(14.0).color(p.text_muted));
+                        let clear_width = if self.overview_search_query.is_empty() { 0.0 } else { 24.0 + ui.spacing().item_spacing.x };
+                        let input_width = (ui.available_width() - clear_width).max(24.0);
+                        let response = ui.add_sized([input_width, 20.0],
+                            egui::TextEdit::singleline(&mut self.overview_search_query)
+                                .font(egui::FontId::proportional(13.0))
+                                .hint_text("Search servers, ports or commands")
+                                .desired_width(input_width).frame(false))
+                            .on_hover_text("Search by server name, port or command · Ctrl+F");
+                        if self.focus_overview_search {
+                            response.request_focus();
+                            self.focus_overview_search = false;
+                            self.refresh_server_list();
+                        }
+                        if response.changed() || (response.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter))) {
+                            self.refresh_server_list();
+                        }
+                        if !self.overview_search_query.is_empty() && ui.add_sized([24.0, 20.0],
+                            egui::Button::new(RichText::new(crate::lucide::X).size(12.0)).frame(false))
+                            .on_hover_text("Clear search").clicked() {
+                            self.overview_search_query.clear();
+                            self.refresh_server_list();
+                        }
+                    });
+                });
+            let refresh_label = if is_scanning { "Scanning…" } else { "Refresh" };
+            if ui.add_enabled(!is_scanning, egui::Button::new(
+                RichText::new(format!("{} {refresh_label}", crate::lucide::REFRESH_CW)).size(12.0).color(p.accent))
+                .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(8.0))
+                .min_size(egui::vec2(96.0, 34.0))).on_hover_text("Scan for running servers").clicked() {
+                self.refresh_server_list();
+            }
         });
 
         ui.add_space(6.0);

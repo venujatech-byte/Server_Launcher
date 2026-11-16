@@ -21864,6 +21864,54 @@ impl LauncherApp {
                         if ui.add(find_btn).on_hover_text("Find in output · Ctrl+F").clicked() {
                             self.search_open.insert(key.to_string(), !search_is_open);
                         }
+                        if is_running {
+                            let pending = state == ServiceState::Starting && pid.is_none();
+                            let mut readings = vec![
+                                (crate::lucide::ACTIVITY, if pending { "—".into() } else { format!("{cpu:.1}%") }, "CPU usage reported for the server process tree".to_string(), None),
+                                (crate::lucide::RAM, if pending { "—".into() } else { format!("{mem:.1} MiB") }, "Resident memory reported for the server process tree".to_string(), None),
+                            ];
+                            if port > 0 {
+                                let address = format!("127.0.0.1:{port}");
+                                let listener = if port_open { "Listening" } else { "Waiting for listener" };
+                                readings.insert(0, (crate::lucide::PLUG, format!(":{port}"), format!("{listener} · Click to copy {address}"), Some(address)));
+                            }
+                            if !uptime.is_empty() {
+                                readings.push((crate::lucide::TIMER, uptime.clone(), "Time since this server started".to_string(), None));
+                            }
+                            let metrics: Vec<_> = readings.into_iter().map(|(icon, value, tooltip, copy)| {
+                                let mut label = egui::text::LayoutJob::default();
+                                label.append(icon, 0.0, egui::TextFormat {
+                                    font_id: egui::FontId::proportional(11.0),
+                                    color: if copy.is_some() && port_open { p.info } else { p.text_muted },
+                                    ..Default::default()
+                                });
+                                label.append(&format!(" {value}"), 0.0, egui::TextFormat {
+                                    font_id: egui::FontId::monospace(10.5), color: p.text_secondary, ..Default::default()
+                                });
+                                (label, tooltip, copy)
+                            }).collect();
+                            let metrics_width = ui.fonts(|fonts| metrics.iter().map(|(label, _, copy)| {
+                                fonts.layout_job(label.clone()).size().x + if copy.is_some() { 12.0 } else { 0.0 }
+                            }).sum::<f32>()) + 6.0 * metrics.len().saturating_sub(1) as f32;
+                            let render_metrics = |ui: &mut Ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                for (label, tooltip, copy) in &metrics {
+                                    if let Some(address) = copy {
+                                        if ui.add(egui::Button::new(label.clone()).small().frame(false))
+                                            .on_hover_text(tooltip).clicked() { ui.ctx().copy_text(address.clone()); }
+                                    } else {
+                                        ui.add(egui::Label::new(label.clone())).on_hover_text(tooltip);
+                                    }
+                                }
+                            };
+                            // Keep the title readable without adding another row above the output.
+                            if ui.available_width() >= metrics_width + 150.0 {
+                                ui.allocate_ui_with_layout(egui::vec2(metrics_width, 22.0), egui::Layout::left_to_right(egui::Align::Center), render_metrics);
+                            } else {
+                                ui.menu_button(RichText::new(format!("{} Stats", crate::lucide::ACTIVITY)).size(10.5), render_metrics)
+                                    .response.on_hover_text("Show port, CPU, memory and uptime");
+                            }
+                        }
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                             let mut title = egui::text::LayoutJob::default();
                             title.append(&name, 0.0, egui::TextFormat {
@@ -21880,47 +21928,6 @@ impl LauncherApp {
                     .id_salt(("server_console_tools", key))
                     .default_open(false)
                     .show(ui, |ui| {
-                        if is_running {
-                            ui.horizontal_wrapped(|ui| {
-                                if port > 0 {
-                                    let port_color = if port_open {
-                                        Color32::from_rgb(96, 165, 250)
-                                    } else {
-                                        Color32::from_rgb(148, 163, 184)
-                                    };
-                                    render_metric_pill(
-                                        ui,
-                                        crate::lucide::NETWORK,
-                                        &format!(":{}", port),
-                                        port_color,
-                                    );
-                                }
-                                render_metric_pill(
-                                    ui,
-                                    crate::lucide::CPU,
-                                    &format!("{:.1}%", cpu),
-                                    Color32::from_rgb(96, 165, 250),
-                                );
-                                render_metric_pill(
-                                    ui,
-                                    crate::lucide::RAM,
-                                    &format!("{:.1} MB", mem),
-                                    Color32::from_rgb(52, 211, 153),
-                                );
-                                if !uptime.is_empty() {
-                                    render_metric_pill(
-                                        ui,
-                                        crate::lucide::CLOCK,
-                                        &uptime,
-                                        Color32::from_rgb(251, 191, 36),
-                                    );
-                                }
-
-
-                            });
-                        }
-                        ui.add_space(4.0);
-
                         // Row 2: Secondary Tool Buttons & Service / Log Options
                         ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);

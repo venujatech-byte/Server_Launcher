@@ -93,6 +93,7 @@ pub const FILE_TEXT: &str = "\u{e0cc}"; // file-text
 pub const CODE: &str = "\u{e093}"; // code
 pub const LOCK: &str = "\u{e10b}"; // lock
 pub const CLOCK: &str = "\u{e087}"; // clock
+pub const TIMER: &str = "\u{e1e0}"; // timer
 pub const CHECK: &str = "\u{e06c}"; // check
 pub const X: &str = "\u{e1b2}"; // x
 pub const CLOSE: &str = "\u{e1b2}"; // x

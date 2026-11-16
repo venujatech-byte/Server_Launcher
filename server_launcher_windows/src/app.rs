@@ -21979,9 +21979,9 @@ impl LauncherApp {
                             }).collect();
                             let metrics_width = ui.fonts(|fonts| metrics.iter().map(|(label, _, copy)| {
                                 fonts.layout_job(label.clone()).size().x + if copy.is_some() { 12.0 } else { 0.0 }
-                            }).sum::<f32>()) + 6.0 * metrics.len().saturating_sub(1) as f32;
+                            }).sum::<f32>()) + 10.0 * metrics.len().saturating_sub(1) as f32;
                             let render_metrics = |ui: &mut Ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
+                                ui.spacing_mut().item_spacing.x = 10.0;
                                 for (label, tooltip, copy) in &metrics {
                                     if let Some(address) = copy {
                                         if ui.add(egui::Button::new(label.clone()).small().frame(false))

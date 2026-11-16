@@ -4178,17 +4178,17 @@ impl eframe::App for LauncherApp {
 
                     // Right: Actions buttons in modern pill layout
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 8.0;
-                        ui.spacing_mut().button_padding = egui::vec2(7.0, 3.0);
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        ui.spacing_mut().button_padding = egui::vec2(6.0, 2.0);
 
                         // Settings uses the same height as the adjacent actions.
                         let btn_settings = egui::Button::new(
-                            RichText::new(crate::lucide::SETTINGS).size(12.0).color(p.text_secondary),
+                            RichText::new(crate::lucide::SETTINGS).size(10.5).color(p.text_secondary),
                         )
                         .fill(p.bg_button)
                         .stroke(Stroke::NONE)
                         .rounding(Rounding::same(6.0))
-                        .min_size(egui::vec2(28.0, 28.0));
+                        .min_size(egui::vec2(22.0, 22.0));
                         if ui.add(btn_settings).on_hover_text("Settings & Preferences (Ctrl+,)").clicked() {
                             self.settings_modal_open = true;
                         }
@@ -4288,58 +4288,67 @@ impl eframe::App for LauncherApp {
                         } else {
                             // Local actions share one height; shortcuts live in tooltips.
                             let add = egui::Button::new(RichText::new(format!("{} Add Server", crate::lucide::PLUS))
-                                .size(12.0).strong().color(p.accent_text))
+                                .size(11.0).strong().color(p.accent_text))
                                 .fill(p.accent).stroke(Stroke::NONE).rounding(Rounding::same(6.0))
-                                .min_size(egui::vec2(100.0, 28.0));
+                                .min_size(egui::vec2(90.0, 22.0));
                             if ui.add(add).on_hover_text("Configure a new server").clicked() {
                                 self.add_edit_modal.open_new();
                             }
                             let compact_actions = ui.available_width() < 320.0;
                             let quick_label = if compact_actions { crate::lucide::ZAP.to_string() } else { format!("{} Quick Launch", crate::lucide::ZAP) };
                             let quick = egui::Button::new(RichText::new(quick_label)
-                                .size(12.0).color(p.text_secondary))
+                                .size(11.0).color(p.text_secondary))
                                 .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0))
-                                .min_size(egui::vec2(if compact_actions { 28.0 } else { 104.0 }, 28.0));
+                                .min_size(egui::vec2(if compact_actions { 22.0 } else { 92.0 }, 22.0));
                             if ui.add(quick).on_hover_text("Quick Launch · Ctrl+P or Ctrl+K").clicked() {
                                 self.palette_modal.open = true;
                                 self.palette_modal.query.clear();
                             }
 
-                            let search_width = ui.available_width().clamp(48.0, 480.0);
-                            Frame::none().fill(p.bg_input).stroke(Stroke::new(1.0_f32, p.border_subtle))
-                                .rounding(Rounding::same(6.0)).inner_margin(egui::Margin::symmetric(10.0, 4.0))
-                                .show(ui, |ui| {
-                                    ui.set_width((search_width - 20.0).max(40.0));
-                                    // The parent toolbar flows right-to-left; text entry must not inherit it.
-                                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                        ui.spacing_mut().item_spacing.x = 6.0;
-                                        ui.label(RichText::new(crate::lucide::SEARCH).size(12.0).color(p.text_muted));
-                                        let show_shortcut = search_width >= 300.0 && self.active_tab == "overview";
-                                        let shortcut_width = if show_shortcut { 46.0 } else { 0.0 };
-                                        let clear_width = if self.overview_search_query.is_empty() { 0.0 } else { 30.0 };
-                                        let input_width = (ui.available_width() - shortcut_width - clear_width).max(24.0);
-                                        let response = ui.add_sized([input_width, 20.0],
-                                            egui::TextEdit::singleline(&mut self.overview_search_query)
-                                                .font(egui::FontId::proportional(12.5))
-                                                .hint_text(if search_width < 180.0 { "Search…" } else { "Search servers or ports" })
-                                                .desired_width(input_width).frame(false))
-                                            .on_hover_text("Filter servers by name, port or command · Ctrl+F in Overview");
-                                        if self.focus_overview_search {
-                                            response.request_focus();
-                                            self.focus_overview_search = false;
-                                        }
-                                        if response.changed() { self.refresh_server_list(); }
-                                        if !self.overview_search_query.is_empty() && ui.add_sized([24.0, 20.0],
-                                            egui::Button::new(RichText::new(crate::lucide::X).size(12.0)).frame(false))
-                                            .on_hover_text("Clear search").clicked() {
-                                            self.overview_search_query.clear();
-                                            self.refresh_server_list();
-                                        }
-                                        if show_shortcut {
-                                            ui.label(RichText::new("Ctrl+F").size(10.5).color(p.text_muted));
-                                        }
+                            let available = ui.available_rect_before_wrap();
+                            // The header is drawn before the tabs; use their last layout position.
+                            let tabs_left = ui.ctx().data_mut(|data| data.get_temp::<f32>(egui::Id::new("server_tabs_left")))
+                                .unwrap_or(available.left());
+                            let slot_width = (available.right() - tabs_left.max(available.left()))
+                                .clamp(48.0, available.width().max(48.0));
+                            ui.allocate_ui_with_layout(egui::vec2(slot_width, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                let search_width = slot_width.min(280.0);
+                                Frame::none().fill(p.bg_input).stroke(Stroke::new(1.0_f32, p.border_subtle))
+                                    .rounding(Rounding::same(6.0)).inner_margin(egui::Margin::symmetric(8.0, 3.0))
+                                    .show(ui, |ui| {
+                                        ui.set_width((search_width - 16.0).max(32.0));
+                                        // The parent toolbar flows right-to-left; text entry must not inherit it.
+                                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                            ui.spacing_mut().item_spacing.x = 6.0;
+                                            ui.label(RichText::new(crate::lucide::SEARCH).size(11.0).color(p.text_muted));
+                                            let show_shortcut = search_width >= 250.0 && self.active_tab == "overview";
+                                            let shortcut_width = if show_shortcut { 40.0 } else { 0.0 };
+                                            let clear_width = if self.overview_search_query.is_empty() { 0.0 } else { 24.0 };
+                                            let input_width = (ui.available_width() - shortcut_width - clear_width).max(24.0);
+                                            let response = ui.add_sized([input_width, 16.0],
+                                                egui::TextEdit::singleline(&mut self.overview_search_query)
+                                                    .font(egui::FontId::proportional(11.5))
+                                                    .margin(egui::Vec2::ZERO)
+                                                    .hint_text(if search_width < 180.0 { "Search…" } else { "Search servers or ports" })
+                                                    .desired_width(input_width).frame(false))
+                                                .on_hover_text("Filter servers by name, port or command · Ctrl+F in Overview");
+                                            if self.focus_overview_search {
+                                                response.request_focus();
+                                                self.focus_overview_search = false;
+                                            }
+                                            if response.changed() { self.refresh_server_list(); }
+                                            if !self.overview_search_query.is_empty() && ui.add_sized([18.0, 16.0],
+                                                egui::Button::new(RichText::new(crate::lucide::X).size(11.0)).frame(false))
+                                                .on_hover_text("Clear search").clicked() {
+                                                self.overview_search_query.clear();
+                                                self.refresh_server_list();
+                                            }
+                                            if show_shortcut {
+                                                ui.label(RichText::new("Ctrl+F").size(9.5).color(p.text_muted));
+                                            }
+                                        });
                                     });
-                                });
+                            });
 
                         }
 
@@ -20887,6 +20896,14 @@ impl LauncherApp {
     // RIGHT PANEL: Notebook Tabs Bar + Overview / Server Log View
     // ═════════════════════════════════════════════════════════════════════════
     fn render_servers_right_panel(&mut self, ui: &mut Ui) {
+        let tabs_left = ui.available_rect_before_wrap().left();
+        let moved = ui.ctx().data_mut(|data| {
+            let id = egui::Id::new("server_tabs_left");
+            let previous = data.get_temp::<f32>(id);
+            data.insert_temp(id, tabs_left);
+            previous != Some(tabs_left)
+        });
+        if moved { ui.ctx().request_repaint(); }
         let p = self.palette();
         ui.vertical(|ui| {
             // Notebook Tabs Strip (Material 3 Dark Cockpit)

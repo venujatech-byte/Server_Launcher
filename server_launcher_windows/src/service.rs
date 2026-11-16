@@ -204,6 +204,7 @@ fn spawn_child(mut cmd: Command) -> std::io::Result<(Child, SpawnedIo)> {
 
 #[cfg(not(unix))]
 fn spawn_child(mut cmd: Command) -> std::io::Result<(Child, SpawnedIo)> {
+    crate::commands::hide_console(&mut cmd);
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -454,10 +455,7 @@ impl Service {
         if let Some(pid) = self.pid {
             #[cfg(target_os = "windows")]
             {
-                // Kill process tree cleanly on Windows
-                let _ = Command::new("taskkill")
-                    .args(&["/F", "/T", "/PID", &pid.to_string()])
-                    .output();
+                crate::commands::stop_process_tree(pid);
             }
 
             #[cfg(not(target_os = "windows"))]
@@ -551,10 +549,10 @@ impl Service {
             }
             #[cfg(target_os = "windows")]
             {
-                // On Windows fallback to sending empty line or stopping
-                self.send_input("\x03");
+                // Pipes cannot deliver console control events; terminate the owned tree.
+                crate::commands::stop_process_tree(pid);
             }
-            self.append_log("[launcher] Sent interrupt (SIGINT)".to_string(), LogKind::Launcher);
+            self.append_log(if cfg!(windows) { "[launcher] Stopped process tree" } else { "[launcher] Sent interrupt (SIGINT)" }.to_string(), LogKind::Launcher);
         }
     }
 
@@ -1089,10 +1087,8 @@ exec bash
 
     #[cfg(target_os = "windows")]
     {
-        let mut cmd = Command::new("cmd.exe");
-        let title = format!("Server: {} (: {})", name, port);
-        cmd.args(&["/K", &format!("title {} && cd /d \"{}\"", title, cwd_path)]);
-        cmd.spawn().map_err(|e| format!("Failed to spawn cmd: {}", e))?;
+        let _ = (name, port);
+        crate::commands::open_system_terminal(std::path::Path::new(&cwd_path))?;
         Ok(())
     }
 }
@@ -1106,33 +1102,15 @@ fn spawn_own_console(
 ) -> std::io::Result<Child> {
     #[cfg(target_os = "windows")]
     {
-        let temp_dir = std::env::temp_dir();
-        let batch_path = temp_dir.join(format!("launcher_{}.cmd", key));
-        let mut lines = Vec::new();
-        lines.push("@echo off".to_string());
-        lines.push(format!("title Server - {}", name));
-        if !cwd_str.is_empty() && cwd_str != "." {
-            lines.push(format!("cd /d \"{}\"", cwd_str));
-        }
-        for (k, v) in env_vars {
-            lines.push(format!("set \"{}={}\"", k, v));
-        }
-        lines.push(cmd_str.to_string());
-        lines.push("pause".to_string());
-        let _ = std::fs::write(&batch_path, lines.join("\r\n"));
-
+        use std::os::windows::process::CommandExt;
+        let _ = (key, name);
         let mut cmd = Command::new("cmd.exe");
-        cmd.args(&[
-            "/C",
-            "start",
-            &format!("Server - {}", name),
-            "cmd.exe",
-            "/K",
-            &batch_path.to_string_lossy(),
-        ]);
+        cmd.args(["/D", "/K", cmd_str]);
+        cmd.creation_flags(0x00000010); // CREATE_NEW_CONSOLE keeps this child tracked.
         if !cwd_str.is_empty() && cwd_str != "." {
             cmd.current_dir(cwd_str);
         }
+        cmd.envs(env_vars);
         cmd.spawn()
     }
 

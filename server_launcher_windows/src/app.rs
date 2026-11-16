@@ -646,7 +646,7 @@ fn render_window_button(
     kind: WindowButtonKind,
     palette: &crate::theme::ThemePalette,
 ) -> bool {
-    let size = egui::vec2(38.0, 26.0);
+    let size = egui::vec2(34.0, 22.0);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     let hovered = resp.hovered();
 
@@ -3968,10 +3968,10 @@ impl eframe::App for LauncherApp {
         let p = self.palette();
 
         // ═════════════════════════════════════════════════════════════════════
-        // 0. DEDICATED SLIM CUSTOM TITLEBAR (Height 28px)
+        // 0. DEDICATED SLIM CUSTOM TITLEBAR (Height 24px)
         // ═════════════════════════════════════════════════════════════════════
         egui::TopBottomPanel::top("custom_titlebar")
-            .exact_height(28.0)
+            .exact_height(24.0)
             .frame(
                 Frame::none()
                     .fill(p.bg_header)
@@ -4041,8 +4041,8 @@ impl eframe::App for LauncherApp {
                     .inner_margin(egui::Margin {
                         left: 14.0,
                         right: 14.0,
-                        top: 8.0,
-                        bottom: 8.0,
+                        top: 6.0,
+                        bottom: 6.0,
                     }),
             )
             .show(ctx, |ui| {
@@ -4054,7 +4054,7 @@ impl eframe::App for LauncherApp {
                     };
 
                     // Left: App Icon + Server Launcher / Host title & status line
-                    render_app_logo(ui, 40.0, p.bg_header);
+                    render_app_logo(ui, 30.0, p.bg_header);
                     ui.add_space(8.0);
 
                     if let Some(ref host) = remote_host_opt {
@@ -4182,16 +4182,16 @@ impl eframe::App for LauncherApp {
                     // Right: Actions buttons in modern pill layout
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
-                        ui.spacing_mut().button_padding = egui::vec2(8.0, 5.0);
+                        ui.spacing_mut().button_padding = egui::vec2(7.0, 3.0);
 
                         // Settings uses the same height as the adjacent actions.
                         let btn_settings = egui::Button::new(
-                            RichText::new(crate::lucide::SETTINGS).size(14.0).color(p.text_secondary),
+                            RichText::new(crate::lucide::SETTINGS).size(12.0).color(p.text_secondary),
                         )
                         .fill(p.bg_button)
                         .stroke(Stroke::NONE)
-                        .rounding(Rounding::same(8.0))
-                        .min_size(egui::vec2(34.0, 34.0));
+                        .rounding(Rounding::same(6.0))
+                        .min_size(egui::vec2(28.0, 28.0));
                         if ui.add(btn_settings).on_hover_text("Settings & Preferences (Ctrl+,)").clicked() {
                             self.settings_modal_open = true;
                         }
@@ -4292,8 +4292,8 @@ impl eframe::App for LauncherApp {
                             // Local actions share one height; shortcuts live in tooltips.
                             let add = egui::Button::new(RichText::new(format!("{} Add Server", crate::lucide::PLUS))
                                 .size(12.0).strong().color(p.accent_text))
-                                .fill(p.accent).stroke(Stroke::NONE).rounding(Rounding::same(8.0))
-                                .min_size(egui::vec2(112.0, 34.0));
+                                .fill(p.accent).stroke(Stroke::NONE).rounding(Rounding::same(6.0))
+                                .min_size(egui::vec2(100.0, 28.0));
                             if ui.add(add).on_hover_text("Configure a new server").clicked() {
                                 self.add_edit_modal.open_new();
                             }
@@ -4301,8 +4301,8 @@ impl eframe::App for LauncherApp {
                             let quick_label = if compact_actions { crate::lucide::ZAP.to_string() } else { format!("{} Quick Launch", crate::lucide::ZAP) };
                             let quick = egui::Button::new(RichText::new(quick_label)
                                 .size(12.0).color(p.text_secondary))
-                                .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(8.0))
-                                .min_size(egui::vec2(if compact_actions { 34.0 } else { 116.0 }, 34.0));
+                                .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0))
+                                .min_size(egui::vec2(if compact_actions { 28.0 } else { 104.0 }, 28.0));
                             if ui.add(quick).on_hover_text("Quick Launch · Ctrl+P or Ctrl+K").clicked() {
                                 self.palette_modal.open = true;
                                 self.palette_modal.query.clear();
@@ -4310,13 +4310,13 @@ impl eframe::App for LauncherApp {
 
                             let search_width = ui.available_width().clamp(48.0, 480.0);
                             Frame::none().fill(p.bg_input).stroke(Stroke::new(1.0_f32, p.border_subtle))
-                                .rounding(Rounding::same(8.0)).inner_margin(egui::Margin::symmetric(10.0, 7.0))
+                                .rounding(Rounding::same(6.0)).inner_margin(egui::Margin::symmetric(10.0, 4.0))
                                 .show(ui, |ui| {
                                     ui.set_width((search_width - 20.0).max(40.0));
                                     // The parent toolbar flows right-to-left; text entry must not inherit it.
                                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
-                                        ui.label(RichText::new(crate::lucide::SEARCH).size(14.0).color(p.text_muted));
+                                        ui.label(RichText::new(crate::lucide::SEARCH).size(12.0).color(p.text_muted));
                                         let show_shortcut = search_width >= 300.0 && self.active_tab == "overview";
                                         let shortcut_width = if show_shortcut { 46.0 } else { 0.0 };
                                         let clear_width = if self.overview_search_query.is_empty() { 0.0 } else { 30.0 };
@@ -20989,25 +20989,25 @@ impl LauncherApp {
                 ScrollArea::horizontal()
                     .id_salt("notebook_tabs_scroll")
                     .auto_shrink([false, true])
-                    .max_height(44.0)
+                    .max_height(36.0)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
+                            ui.spacing_mut().item_spacing.x = 4.0;
                             let overview_active = self.active_tab == "overview";
                             let mut label = egui::text::LayoutJob::default();
                             label.append(&format!("{} Overview", crate::lucide::SERVER), 0.0, egui::TextFormat {
-                                font_id: egui::FontId::proportional(13.0),
+                                font_id: egui::FontId::proportional(12.0),
                                 color: if overview_active { p.text_primary } else { p.text_secondary },
                                 ..Default::default()
                             });
                             label.append(&format!("  {online_count}/{total_count}"), 0.0, egui::TextFormat {
-                                font_id: egui::FontId::proportional(12.0),
+                                font_id: egui::FontId::proportional(10.5),
                                 color: if online_count > 0 { p.success } else { p.text_muted },
                                 ..Default::default()
                             });
                             let response = ui.push_id("tab_overview", |ui| {
-                                ui.add_sized([148.0, 34.0], egui::Button::new(label)
-                                    .selected(overview_active).rounding(Rounding::same(8.0)))
+                                ui.add_sized([132.0, 28.0], egui::Button::new(label)
+                                    .selected(overview_active).rounding(Rounding::same(6.0)))
                             }).inner.on_hover_text(format!("{online_count} of {total_count} configured servers running"));
                             if overview_active {
                                 ui.painter().rect_filled(egui::Rect::from_min_max(
@@ -21028,24 +21028,24 @@ impl LauncherApp {
                                 };
                                 let mut label = egui::text::LayoutJob::default();
                                 label.append(&format!("{dot}  "), 0.0, egui::TextFormat {
-                                    font_id: egui::FontId::proportional(12.0), color,
+                                    font_id: egui::FontId::proportional(10.5), color,
                                     ..Default::default()
                                 });
                                 label.append(&server.config.name, 0.0, egui::TextFormat {
-                                    font_id: egui::FontId::proportional(13.0),
+                                    font_id: egui::FontId::proportional(12.0),
                                     color: if active { p.text_primary } else { p.text_secondary },
                                     ..Default::default()
                                 });
                                 if server.config.port > 0 {
                                     label.append(&format!("  :{}", server.config.port), 0.0, egui::TextFormat {
-                                        font_id: egui::FontId::monospace(11.5), color: p.text_muted,
+                                        font_id: egui::FontId::monospace(10.5), color: p.text_muted,
                                         ..Default::default()
                                     });
                                 }
-                                let width = ui.fonts(|fonts| fonts.layout_job(label.clone()).size().x + 24.0).clamp(84.0, 220.0);
+                                let width = ui.fonts(|fonts| fonts.layout_job(label.clone()).size().x + 20.0).clamp(76.0, 200.0);
                                 let response = ui.push_id(("server_tab", &server.config.key), |ui| {
-                                    ui.add_sized([width, 34.0], egui::Button::new(label).truncate()
-                                        .selected(active).rounding(Rounding::same(8.0)))
+                                    ui.add_sized([width, 28.0], egui::Button::new(label).truncate()
+                                        .selected(active).rounding(Rounding::same(6.0)))
                                 }).inner.on_hover_text(format!("{} · {}\n{}", server.config.name, state, server.config.command));
                                 if active {
                                     ui.painter().rect_filled(egui::Rect::from_min_max(
@@ -21102,11 +21102,11 @@ impl LauncherApp {
         ui.horizontal(|ui| {
             let search_width = (ui.available_width() - 96.0 - ui.spacing().item_spacing.x).max(60.0);
             Frame::none().fill(p.bg_input).stroke(Stroke::new(1.0_f32, p.border_subtle))
-                .rounding(Rounding::same(8.0)).inner_margin(egui::Margin::symmetric(10.0, 7.0))
+                .rounding(Rounding::same(6.0)).inner_margin(egui::Margin::symmetric(10.0, 4.0))
                 .show(ui, |ui| {
                     ui.set_width((search_width - 20.0).max(40.0));
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(crate::lucide::SEARCH).size(14.0).color(p.text_muted));
+                        ui.label(RichText::new(crate::lucide::SEARCH).size(12.0).color(p.text_muted));
                         let clear_width = if self.overview_search_query.is_empty() { 0.0 } else { 24.0 + ui.spacing().item_spacing.x };
                         let input_width = (ui.available_width() - clear_width).max(24.0);
                         let response = ui.add_sized([input_width, 20.0],
@@ -21134,8 +21134,8 @@ impl LauncherApp {
             let refresh_label = if is_scanning { "Scanning…" } else { "Refresh" };
             if ui.add_enabled(!is_scanning, egui::Button::new(
                 RichText::new(format!("{} {refresh_label}", crate::lucide::REFRESH_CW)).size(12.0).color(p.accent))
-                .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(8.0))
-                .min_size(egui::vec2(96.0, 34.0))).on_hover_text("Scan for running servers").clicked() {
+                .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0))
+                .min_size(egui::vec2(96.0, 28.0))).on_hover_text("Scan for running servers").clicked() {
                 self.refresh_server_list();
             }
         });

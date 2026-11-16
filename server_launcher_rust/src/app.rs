@@ -7621,14 +7621,14 @@ impl LauncherApp {
             ui.set_width(ui.available_width());
             ui.set_max_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.label(RichText::new("SYSTEMD SERVICES").size(13.0).strong().color(p.text_muted));
+                ui.label(RichText::new(if cfg!(windows) && host_id.is_none() { "Windows services" } else { "systemd services" }).size(13.0).strong().color(p.text_muted));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_new = egui::Button::new(
                         RichText::new(format!("{} New Service", crate::lucide::PLUS)).size(13.0).strong().color(Color32::WHITE),
                     )
                     .fill(p.accent)
                     .rounding(Rounding::same(4.0));
-                    if ui.add(btn_new).clicked() {
+                    if ui.add_enabled(!cfg!(windows) || host_id.is_some(), btn_new).on_disabled_hover_text("Local Windows services are configured in Windows Services. Unit creation is available for Linux hosts.").clicked() {
                         self.systemd_modal.open();
                     }
                 });
@@ -7637,15 +7637,15 @@ impl LauncherApp {
             ui.add_space(6.0);
 
             // Scope & Refresh Row
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 let user_btn = egui::Button::new(
-                    RichText::new("User (--user)")
+                    RichText::new("User services")
                         .size(13.0)
                         .color(if user_mode { p.accent_text } else { p.text_secondary }),
                 )
                 .fill(if user_mode { p.accent } else { p.bg_button })
                 .rounding(Rounding::same(4.0));
-                if ui.add(user_btn).clicked() {
+                if ui.add_enabled(!cfg!(windows) || host_id.is_some(), user_btn).on_disabled_hover_text("Windows services use system scope.").clicked() {
                     if let Some(hid) = host_id {
                         self.remote_services_user.insert(hid.to_string(), true);
                         if let Some(host) = &host_opt {
@@ -7658,7 +7658,7 @@ impl LauncherApp {
                 }
 
                 let sys_btn = egui::Button::new(
-                    RichText::new("System")
+                    RichText::new("System services")
                         .size(13.0)
                         .color(if !user_mode { p.accent_text } else { p.text_secondary }),
                 )
@@ -7702,6 +7702,12 @@ impl LauncherApp {
             });
 
             ui.add_space(6.0);
+
+            if host_id.is_none() && cfg!(windows) {
+                ui.label(RichText::new("Service changes may require running Server Launcher as administrator.").color(p.text_muted));
+            } else if !user_mode {
+                ui.label(RichText::new("System service changes require administrator privileges; sudo may be requested.").color(p.text_muted));
+            }
 
             // Auto-load services on first open
             if host_id.is_none() && !self.local_services_loaded {
@@ -7762,7 +7768,7 @@ impl LauncherApp {
                     if is_services_loading {
                         ui.spinner();
                         ui.add_space(6.0);
-                        ui.label(RichText::new("Loading systemd services...").size(13.0).color(p.text_muted));
+                        ui.label(RichText::new("Loading services...").size(13.0).color(p.text_muted));
                     } else if let Some(ref key) = s_key {
                         let err_opt = self.remote_services_errors.lock().ok()
                             .and_then(|e| e.get(key).cloned())
@@ -7774,12 +7780,12 @@ impl LauncherApp {
                             ui.add_space(8.0);
                             ui.label(RichText::new(format!("Click '{}' to retry.", crate::lucide::REFRESH_CW)).size(13.0).color(p.text_muted));
                         } else {
-                            ui.label(RichText::new("No systemd services found").size(13.0).color(p.text_muted));
+                            ui.label(RichText::new("No services found").size(13.0).color(p.text_muted));
                             ui.add_space(4.0);
                             ui.label(RichText::new(format!("Click '{}' to refresh or switch scope (User / System).", crate::lucide::REFRESH_CW)).size(13.0).color(p.text_muted));
                         }
                     } else {
-                        ui.label(RichText::new("No systemd services found").size(13.0).color(p.text_muted));
+                        ui.label(RichText::new("No services found").size(13.0).color(p.text_muted));
                         ui.add_space(4.0);
                         ui.label(RichText::new(format!("Click '{}' to scan or switch scope.", crate::lucide::REFRESH_CW)).size(13.0).color(p.text_muted));
                     }
@@ -8195,7 +8201,7 @@ impl LauncherApp {
                         SystemdTab::Status => {
                             // Journalctl Logs Viewer
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("Service Logs (journalctl -n 100)").size(13.0).strong().color(p.text_muted));
+                                ui.label(RichText::new(if cfg!(windows) && host_id.is_none() { "Service events · Windows Event Log" } else { "Service logs · system journal" }).size(13.0).strong().color(p.text_muted));
                                 if is_journal_in_flight {
                                     ui.add_space(4.0);
                                     ui.spinner();

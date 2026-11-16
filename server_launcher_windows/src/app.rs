@@ -646,7 +646,7 @@ fn render_window_button(
     kind: WindowButtonKind,
     palette: &crate::theme::ThemePalette,
 ) -> bool {
-    let size = egui::vec2(32.0, 20.0);
+    let size = egui::vec2(38.0, 26.0);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     let hovered = resp.hovered();
 
@@ -3968,10 +3968,10 @@ impl eframe::App for LauncherApp {
         let p = self.palette();
 
         // ═════════════════════════════════════════════════════════════════════
-        // 0. DEDICATED SLIM CUSTOM TITLEBAR (Height 22px)
+        // 0. DEDICATED SLIM CUSTOM TITLEBAR (Height 28px)
         // ═════════════════════════════════════════════════════════════════════
         egui::TopBottomPanel::top("custom_titlebar")
-            .exact_height(22.0)
+            .exact_height(28.0)
             .frame(
                 Frame::none()
                     .fill(p.bg_header)
@@ -4001,13 +4001,10 @@ impl eframe::App for LauncherApp {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
 
-                    // Left title: Green dot + SERVER LAUNCHER
-                    ui.label(RichText::new("●").size(8.0).color(p.success));
+                    // Window caption stays neutral; server state is shown in the server tabs.
                     ui.label(
-                        RichText::new("SERVER LAUNCHER")
-                            .size(10.5)
-                            .monospace()
-                            .strong()
+                        RichText::new("Server Launcher")
+                            .size(11.5)
                             .color(p.text_muted),
                     );
 
@@ -4042,10 +4039,10 @@ impl eframe::App for LauncherApp {
                 Frame::none()
                     .fill(p.bg_header)
                     .inner_margin(egui::Margin {
-                        left: 10.0,
-                        right: 10.0,
-                        top: 4.0,
-                        bottom: 4.0,
+                        left: 14.0,
+                        right: 14.0,
+                        top: 8.0,
+                        bottom: 8.0,
                     }),
             )
             .show(ctx, |ui| {
@@ -4057,7 +4054,7 @@ impl eframe::App for LauncherApp {
                     };
 
                     // Left: App Icon + Server Launcher / Host title & status line
-                    render_app_logo(ui, 36.0, p.bg_header);
+                    render_app_logo(ui, 40.0, p.bg_header);
                     ui.add_space(8.0);
 
                     if let Some(ref host) = remote_host_opt {
@@ -4155,11 +4152,11 @@ impl eframe::App for LauncherApp {
                             ui.add_space(1.0);
                             ui.label(
                                 RichText::new(format!(
-                                    "this pc: {}    servers: {}",
+                                    "This PC · {} · {} servers",
                                     self.lan_ip,
                                     self.services.len()
                                 ))
-                                .size(10.5)
+                                .size(11.5)
                                 .color(p.text_muted),
                             );
 
@@ -4184,17 +4181,17 @@ impl eframe::App for LauncherApp {
 
                     // Right: Actions buttons in modern pill layout
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 5.0;
-                        ui.spacing_mut().button_padding = egui::vec2(6.0, 2.0);
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        ui.spacing_mut().button_padding = egui::vec2(8.0, 5.0);
 
-                        // Settings Button (Pill icon button)
+                        // Settings uses the same height as the adjacent actions.
                         let btn_settings = egui::Button::new(
-                            RichText::new(crate::lucide::SETTINGS).size(12.0).color(p.text_secondary),
+                            RichText::new(crate::lucide::SETTINGS).size(14.0).color(p.text_secondary),
                         )
                         .fill(p.bg_button)
                         .stroke(Stroke::NONE)
-                        .rounding(Rounding::same(999.0))
-                        .min_size(egui::vec2(26.0, 22.0));
+                        .rounding(Rounding::same(8.0))
+                        .min_size(egui::vec2(34.0, 34.0));
                         if ui.add(btn_settings).on_hover_text("Settings & Preferences (Ctrl+,)").clicked() {
                             self.settings_modal_open = true;
                         }
@@ -4292,89 +4289,61 @@ impl eframe::App for LauncherApp {
                                 self.remote_reboot_modal.open_for_host(host);
                             }
                         } else {
-                            // LOCAL PC CONTROLS (+ Add Server, Quick Launch, Stop All, Start All, Search)
-                            // + Add Server (Primary Accent Pill)
-                            let btn_add = egui::Button::new(
-                                RichText::new("+ Add Server")
-                                    .size(11.5)
-                                    .strong()
-                                    .color(p.accent_text),
-                            )
-                            .fill(p.accent)
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(92.0, 24.0));
-                            if ui.add(btn_add).clicked() {
+                            // Local actions share one height; shortcuts live in tooltips.
+                            let add = egui::Button::new(RichText::new(format!("{} Add Server", crate::lucide::PLUS))
+                                .size(12.0).strong().color(p.accent_text))
+                                .fill(p.accent).stroke(Stroke::NONE).rounding(Rounding::same(8.0))
+                                .min_size(egui::vec2(112.0, 34.0));
+                            if ui.add(add).on_hover_text("Configure a new server").clicked() {
                                 self.add_edit_modal.open_new();
                             }
-
-                            // Quick Launch (Ctrl+P / Ctrl+K)
-                            let btn_pal = egui::Button::new(
-                                RichText::new(format!("{} Quick Launch Ctrl+P", crate::lucide::ZAP))
-                                    .size(11.0)
-                                    .color(p.accent),
-                            )
-                            .fill(p.bg_button)
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(135.0, 24.0));
-                            if ui.add(btn_pal).clicked() {
+                            let compact_actions = ui.available_width() < 320.0;
+                            let quick_label = if compact_actions { crate::lucide::ZAP.to_string() } else { format!("{} Quick Launch", crate::lucide::ZAP) };
+                            let quick = egui::Button::new(RichText::new(quick_label)
+                                .size(12.0).color(p.text_secondary))
+                                .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(8.0))
+                                .min_size(egui::vec2(if compact_actions { 34.0 } else { 116.0 }, 34.0));
+                            if ui.add(quick).on_hover_text("Quick Launch · Ctrl+P or Ctrl+K").clicked() {
                                 self.palette_modal.open = true;
                                 self.palette_modal.query.clear();
                             }
 
-                            // Search Pill Bar (with Ctrl+K hint chip)
-                            Frame::none()
-                                .fill(p.bg_input)
-                                .stroke(Stroke::NONE)
-                                .rounding(Rounding::same(999.0))
-                                .inner_margin(egui::Margin::symmetric(8.0, 2.0))
+                            let search_width = ui.available_width().clamp(48.0, 480.0);
+                            Frame::none().fill(p.bg_input).stroke(Stroke::new(1.0_f32, p.border_subtle))
+                                .rounding(Rounding::same(8.0)).inner_margin(egui::Margin::symmetric(10.0, 7.0))
                                 .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
+                                    ui.set_width((search_width - 20.0).max(40.0));
+                                    // The parent toolbar flows right-to-left; text entry must not inherit it.
+                                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
-                                        ui.label(RichText::new(crate::lucide::SEARCH).size(11.0).color(p.text_muted));
-                                        let s_resp = ui.add(
+                                        ui.label(RichText::new(crate::lucide::SEARCH).size(14.0).color(p.text_muted));
+                                        let show_shortcut = search_width >= 300.0 && self.active_tab == "overview";
+                                        let shortcut_width = if show_shortcut { 46.0 } else { 0.0 };
+                                        let clear_width = if self.overview_search_query.is_empty() { 0.0 } else { 30.0 };
+                                        let input_width = (ui.available_width() - shortcut_width - clear_width).max(24.0);
+                                        let response = ui.add_sized([input_width, 20.0],
                                             egui::TextEdit::singleline(&mut self.overview_search_query)
-                                                .hint_text(
-                                                    RichText::new("Search instances, ports...")
-                                                        .size(11.0)
-                                                        .color(p.text_muted),
-                                                )
-                                                .desired_width(150.0)
-                                                .frame(false),
-                                        );
-                                        Frame::none()
-                                            .fill(p.bg_card)
-                                            .stroke(Stroke::NONE)
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(4.0, 1.0))
-                                            .show(ui, |ui| {
-                                                ui.label(
-                                                    RichText::new("Ctrl+K")
-                                                        .size(9.0)
-                                                        .color(p.text_muted)
-                                                        .monospace(),
-                                                );
-                                            });
-                                        if s_resp.changed() {
+                                                .font(egui::FontId::proportional(12.5))
+                                                .hint_text(if search_width < 180.0 { "Search…" } else { "Search servers or ports" })
+                                                .desired_width(input_width).frame(false))
+                                            .on_hover_text("Filter servers by name, port or command · Ctrl+F in Overview");
+                                        if self.focus_overview_search {
+                                            response.request_focus();
+                                            self.focus_overview_search = false;
+                                        }
+                                        if response.changed() { self.refresh_server_list(); }
+                                        if !self.overview_search_query.is_empty() && ui.add_sized([24.0, 20.0],
+                                            egui::Button::new(RichText::new(crate::lucide::X).size(12.0)).frame(false))
+                                            .on_hover_text("Clear search").clicked() {
+                                            self.overview_search_query.clear();
                                             self.refresh_server_list();
                                         }
-                                        if !self.overview_search_query.is_empty() {
-                                            if ui
-                                                .add(
-                                                    egui::Button::new(
-                                                        RichText::new(crate::lucide::X).size(10.0).color(p.text_muted),
-                                                    )
-                                                    .frame(false),
-                                                )
-                                                .clicked()
-                                            {
-                                                self.overview_search_query.clear();
-                                                self.refresh_server_list();
-                                            }
+                                        if show_shortcut {
+                                            ui.label(RichText::new("Ctrl+F").size(10.5).color(p.text_muted));
                                         }
                                     });
                                 });
+
                         }
 
 

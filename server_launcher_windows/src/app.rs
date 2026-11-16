@@ -929,7 +929,7 @@ impl LauncherApp {
 
             systemd_modal: NewServiceModalState::default(),
             local_services: Vec::new(),
-            local_services_user: true,
+            local_services_user: !cfg!(windows),
             local_services_loaded: false,
             local_services_cache: Arc::new(Mutex::new(HashMap::new())),
             local_services_in_flight: Arc::new(Mutex::new(HashSet::new())),
@@ -2500,6 +2500,9 @@ impl LauncherApp {
     }
 
     fn get_or_query_service_enabled(&mut self, unit: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) -> bool {
+        if cfg!(windows) && host_opt.is_none() {
+            return self.local_services.iter().any(|s| s.name == unit && s.load_state == "Auto");
+        }
         let host_id_str = host_opt.map(|h| h.id.as_str()).unwrap_or("local");
         let cache_key = format!("{}:{}:{}", host_id_str, unit, if user_mode { "user" } else { "system" });
         if let Some((is_enabled, time)) = self.service_enabled_cache.get(&cache_key) {
@@ -7611,14 +7614,14 @@ impl LauncherApp {
             ui.set_width(ui.available_width());
             ui.set_max_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.label(RichText::new("SYSTEMD SERVICES").size(12.0).strong().color(p.text_muted));
+                ui.label(RichText::new(if cfg!(windows) && host_id.is_none() { "WINDOWS SERVICES" } else { "SYSTEMD SERVICES" }).size(12.0).strong().color(p.text_muted));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_new = egui::Button::new(
                         RichText::new(format!("{} New Service", crate::lucide::PLUS)).size(11.0).strong().color(Color32::WHITE),
                     )
                     .fill(p.accent)
                     .rounding(Rounding::same(4.0));
-                    if ui.add(btn_new).clicked() {
+                    if ui.add_enabled(!cfg!(windows) || host_id.is_some(), btn_new).clicked() {
                         self.systemd_modal.open();
                     }
                 });
@@ -7635,7 +7638,7 @@ impl LauncherApp {
                 )
                 .fill(if user_mode { p.accent } else { p.bg_button })
                 .rounding(Rounding::same(4.0));
-                if ui.add(user_btn).clicked() {
+                if ui.add_enabled(!cfg!(windows) || host_id.is_some(), user_btn).clicked() {
                     if let Some(hid) = host_id {
                         self.remote_services_user.insert(hid.to_string(), true);
                         if let Some(host) = &host_opt {
@@ -7679,7 +7682,7 @@ impl LauncherApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_ref = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(p.text_secondary))
                         .fill(p.bg_button);
-                    if ui.add(btn_ref).on_hover_text("Refresh systemd services list").clicked() {
+                    if ui.add(btn_ref).on_hover_text("Refresh services list").clicked() {
                         if host_id.is_some() {
                             if let Some(host) = &host_opt {
                                 self.trigger_remote_services_list(host, user_mode);
@@ -7752,7 +7755,7 @@ impl LauncherApp {
                     if is_services_loading {
                         ui.spinner();
                         ui.add_space(6.0);
-                        ui.label(RichText::new("Loading systemd services...").size(12.0).color(p.text_muted));
+                        ui.label(RichText::new("Loading services...").size(12.0).color(p.text_muted));
                     } else if let Some(ref key) = s_key {
                         let err_opt = self.remote_services_errors.lock().ok()
                             .and_then(|e| e.get(key).cloned())
@@ -7764,12 +7767,12 @@ impl LauncherApp {
                             ui.add_space(8.0);
                             ui.label(RichText::new(format!("Click '{}' to retry.", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_muted));
                         } else {
-                            ui.label(RichText::new("No systemd services found").size(12.0).color(p.text_muted));
+                            ui.label(RichText::new("No services found").size(12.0).color(p.text_muted));
                             ui.add_space(4.0);
                             ui.label(RichText::new(format!("Click '{}' to refresh or switch scope (User / System).", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_muted));
                         }
                     } else {
-                        ui.label(RichText::new("No systemd services found").size(12.0).color(p.text_muted));
+                        ui.label(RichText::new("No services found").size(12.0).color(p.text_muted));
                         ui.add_space(4.0);
                         ui.label(RichText::new(format!("Click '{}' to scan or switch scope.", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_muted));
                     }
@@ -8081,7 +8084,7 @@ impl LauncherApp {
                                 if let Some(host) = &host_opt {
                                     self.trigger_remote_service_action(host, &s.name, act, user_mode);
                                 } else {
-                                    if !user_mode && self.local_sudo_password.is_empty() {
+                                    if !cfg!(windows) && !user_mode && self.local_sudo_password.is_empty() {
                                         self.sudo_popup.open = true;
                                         self.sudo_popup.pending = Some(PendingSudoAction::ServiceAction {
                                             unit: s.name.clone(),
@@ -8162,6 +8165,7 @@ impl LauncherApp {
                             (SystemdTab::Dependencies, format!("{} Dependencies", crate::lucide::LAYERS)),
                         ];
                         for (tab, label) in tabs {
+                            if cfg!(windows) && host_id.is_none() && tab != SystemdTab::Status { continue; }
                             let is_sel = self.systemd_tab == tab;
                             let btn = egui::Button::new(
                                 RichText::new(label)
@@ -8185,7 +8189,7 @@ impl LauncherApp {
                         SystemdTab::Status => {
                             // Journalctl Logs Viewer
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("Service Logs (journalctl -n 100)").size(12.0).strong().color(p.text_muted));
+                                ui.label(RichText::new(if cfg!(windows) && host_id.is_none() { "Windows Service Control Manager events" } else { "Service Logs (journalctl -n 100)" }).size(12.0).strong().color(p.text_muted));
                                 if is_journal_in_flight {
                                     ui.add_space(4.0);
                                     ui.spinner();
@@ -8578,7 +8582,7 @@ impl LauncherApp {
                                     Err(e) => self.systemd_file_status_msg = Some((e, true)),
                                 }
                             } else {
-                                if !user_mode && self.local_sudo_password.is_empty() {
+                                if !cfg!(windows) && !user_mode && self.local_sudo_password.is_empty() {
                                     self.sudo_popup.open = true;
                                     self.sudo_popup.pending = Some(PendingSudoAction::SaveUnitFile {
                                         path: target_path.clone(),
@@ -8679,7 +8683,7 @@ impl LauncherApp {
                                         Err(e) => self.systemd_file_status_msg = Some((e, true)),
                                     }
                                 } else {
-                                    if !user_mode && self.local_sudo_password.is_empty() {
+                                    if !cfg!(windows) && !user_mode && self.local_sudo_password.is_empty() {
                                         self.sudo_popup.open = true;
                                         self.sudo_popup.pending = Some(PendingSudoAction::DeleteDropIn {
                                             path: cur_path.clone(),
@@ -8736,7 +8740,7 @@ impl LauncherApp {
                                     Err(e) => self.systemd_file_status_msg = Some((e, true)),
                                 }
                             } else {
-                                if !user_mode && self.local_sudo_password.is_empty() {
+                                if !cfg!(windows) && !user_mode && self.local_sudo_password.is_empty() {
                                     self.sudo_popup.open = true;
                                     self.sudo_popup.pending = Some(PendingSudoAction::SaveUnitFile {
                                         path: cur_path.clone(),
@@ -11039,7 +11043,7 @@ impl LauncherApp {
             }
 
             // Universal Software Battery Longevity Guard Check
-            if self.power_conservation && host_id.is_none() {
+            if cfg!(target_os = "linux") && self.power_conservation && host_id.is_none() {
                 if let Some(true) = snap.power.ac_online {
                     if let Some(bat_pct) = snap.power.total_battery_pct {
                         if bat_pct >= self.power_ceiling {
@@ -11065,6 +11069,10 @@ impl LauncherApp {
         }
 
         ui.vertical(|ui| {
+            #[cfg(windows)]
+            if host_id.is_none() {
+                ui.label("Windows telemetry: hardware inventory refreshes every 30 seconds. Device disk throughput, SMART, socket counts and per-process network counters are unavailable; their zero fields do not indicate measured inactivity.");
+            }
 
             // Remote host error notification (if query failed)
             if let Some(hid) = host_id {
@@ -11405,6 +11413,31 @@ impl LauncherApp {
     // SENSORS PAGE: CPU Dashboard (Matching media_1792113265094_cd2e3f19.png)
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_cpu_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
+        #[cfg(windows)]
+        if host_id.is_none() {
+            let p = self.palette();
+            ScrollArea::vertical().id_salt("windows_cpu").show(ui, |ui| {
+                ui.heading("CPU");
+                ui.label(if snap.cpu_brand.is_empty() { "Waiting for processor telemetry" } else { &snap.cpu_brand });
+                ui.label(format!("{} physical cores · {} logical processors", snap.cpu_cores_physical, snap.cpu_cores_logical));
+                ui.add_space(12.0);
+                ui.label(format!("Usage: {:.1}%", snap.cpu_global_usage));
+                ui.label(format!("Reported frequency: {} MHz", snap.cpu_frequency_mhz));
+                ui.label(format!("Uptime: {}", format_uptime_hms(snap.uptime_secs)));
+                ui.label(snap.cpu_temp.map(|v| format!("Temperature: {v:.1} °C")).unwrap_or_else(|| "Temperature unavailable; LibreHardwareMonitor WMI provider required".into()));
+                ui.label("CPU package power, TDP limits, and junction limits are unavailable.");
+                draw_card_sparkline(ui, 100.0, &self.cpu_history.iter().copied().collect::<Vec<_>>(), 100.0, None, p.accent);
+                ui.add_space(12.0);
+                for (idx, usage) in snap.cpu_core_usages.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("Logical processor {}", idx));
+                        ui.add(egui::ProgressBar::new(*usage / 100.0).text(format!("{usage:.1}%")));
+                    });
+                }
+            });
+            return;
+        }
+
         let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         ScrollArea::vertical()
@@ -11870,7 +11903,7 @@ impl LauncherApp {
                                     let btn_drop = egui::Button::new(RichText::new(format!("{} Drop Caches", crate::lucide::TRASH)).size(10.5).strong().color(Color32::from_rgb(10, 15, 29)))
                                         .fill(Color32::from_rgb(112, 213, 228))
                                         .rounding(Rounding::same(999.0));
-                                    if ui.add(btn_drop).on_hover_text("Flush kernel page cache, dentries, and compact memory").clicked() {
+                                    if ui.add_enabled(!cfg!(windows) || host_id.is_some(), btn_drop).on_hover_text("Flush kernel page cache, dentries, and compact memory").clicked() {
                                         if let Some(hid) = host_id {
                                             if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
                                                 std::thread::spawn(move || {
@@ -11893,7 +11926,7 @@ impl LauncherApp {
                                     let btn_flush = egui::Button::new(RichText::new(format!("{} Flush Standby List", crate::lucide::REFRESH_CW)).size(10.5).color(p.text_secondary))
                                         .fill(Color32::from_rgb(26, 34, 48))
                                         .rounding(Rounding::same(999.0));
-                                    if ui.add(btn_flush).on_hover_text("Flush reclaimable standby memory lists and dentries").clicked() {
+                                    if ui.add_enabled(!cfg!(windows) || host_id.is_some(), btn_flush).on_hover_text("Flush reclaimable standby memory lists and dentries").clicked() {
                                         if let Some(hid) = host_id {
                                             if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
                                                 std::thread::spawn(move || {
@@ -13962,6 +13995,16 @@ impl LauncherApp {
     // SENSORS PAGE: Wi-Fi & Network Dashboard
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_wifi_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
+        #[cfg(windows)]
+        if host_id.is_none() {
+            if ui.button("Open Windows network settings").clicked() {
+                let _ = std::process::Command::new("cmd.exe").args(["/D", "/C", "start", "", "ms-settings:network-wifi"]).spawn();
+            }
+            ui.label("Windows interface counters are shown below. Signal strength, link details and per-process network traffic are unavailable.");
+            self.render_sensors_data_usage_page(ui, snap, host_id);
+            return;
+        }
+
         let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
@@ -16141,6 +16184,20 @@ impl LauncherApp {
     // SENSORS PAGE: Power Dashboard
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_power_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
+        #[cfg(windows)]
+        if host_id.is_none() {
+            ui.heading("Windows power and battery");
+            if snap.power.batteries.is_empty() { ui.label("No battery telemetry is available."); }
+            for battery in &snap.power.batteries {
+                ui.label(format!("{} · {:.0}% · {}", battery.name, battery.capacity_pct, battery.status));
+            }
+            ui.label("Package watts, battery health and charging limits require a supported hardware provider. Linux governor and firmware controls are unavailable here.");
+            if ui.button("Open Windows power settings").clicked() {
+                let _ = std::process::Command::new("cmd.exe").args(["/D", "/C", "start", "", "ms-settings:powersleep"]).spawn();
+            }
+            return;
+        }
+
         let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
@@ -17577,6 +17634,16 @@ impl LauncherApp {
     // SENSORS PAGE: Bluetooth Dashboard
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_bluetooth_page(&mut self, ui: &mut Ui, _snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
+        #[cfg(windows)]
+        if host_id.is_none() {
+            ui.heading("Bluetooth");
+            ui.label("Manage Windows radios, pairing and connected devices in Settings.");
+            if ui.button("Open Windows Bluetooth settings").clicked() {
+                let _ = std::process::Command::new("cmd.exe").args(["/D", "/C", "start", "", "ms-settings:bluetooth"]).spawn();
+            }
+            return;
+        }
+
         let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
@@ -20091,6 +20158,26 @@ impl LauncherApp {
         }
 
         if let Some(action) = proc_action {
+            #[cfg(windows)]
+            if host_id.is_none() {
+                match action {
+                    ProcAction::Terminate { pid } | ProcAction::ForceStop { pid } => {
+                        use std::os::windows::process::CommandExt;
+                        let force = matches!(action, ProcAction::ForceStop { .. });
+                        let mut command = std::process::Command::new("taskkill.exe");
+                        command.args(["/PID", &pid.to_string()]);
+                        if force { command.arg("/F"); }
+                        let result = command.creation_flags(0x08000000).output();
+                        self.sensors_top_apps_status_msg = Some(match result {
+                            Ok(out) if out.status.success() => (format!("Stopped process {pid}"), false, Instant::now()),
+                            Ok(out) => (String::from_utf8_lossy(&out.stderr).trim().to_owned(), true, Instant::now()),
+                            Err(err) => (err.to_string(), true, Instant::now()),
+                        });
+                    }
+                    _ => self.sensors_top_apps_status_msg = Some(("Linux process inspection, affinity, priority and pause actions are unavailable locally. Use Windows Task Manager.".into(), true, Instant::now())),
+                }
+                return;
+            }
             match action {
                 ProcAction::Properties { pid, name, cpu, mem } => {
                     self.proc_properties_modal_open = true;

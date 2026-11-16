@@ -1,82 +1,28 @@
-# Server Launcher (Windows Edition)
+# Server Launcher for Windows
 
-A high-performance Windows desktop control panel for local developer services, native **Windows Services (Service Control Manager)** management, real-time **hardware sensors & telemetry**, and an integrated **Windows PowerShell terminal** with one-click **UAC Administrator elevation**.
+Rust Windows port of `../server_launcher_rust`, preserving its egui interface and Android Cockpit. The Linux source is unchanged. This folder replaces the previous Python implementation; it does not require Python.
 
-Designed using the **Nocturnal Command (Material 3 Dark)** aesthetic with deep obsidian surfaces, electric violet accents, telemetry cyan badges, and pill-shaped action controls.
+## Requirements and verification
 
----
+Use Windows 10/11 x64, Rust's MSVC toolchain, Visual Studio C++ Build Tools and Windows SDK. Android Cockpit needs the Microsoft Edge WebView2 runtime. Run `./verify.ps1` from PowerShell to type-check the app and its tests. This checkout intentionally uses `cargo check`, never `cargo build`; no Windows executable is included.
 
-## ⚡ Highlights & Windows-Optimized Features
+Install `adb`, `fastboot`, `scrcpy`, `ssh` and development server runtimes separately as needed and put them on PATH. Existing saved commands are not translated automatically.
 
-### 1. 🛡️ Windows Administrator & UAC Elevation
-* **Automatic Privilege Detection**: Identifies whether running under standard user or elevated Administrator credentials.
-* **One-Click Relaunch as Admin**: Elevates seamlessly via Windows UAC prompt (`runas` verb).
-* **Elevated Action Runner**: Individual PowerShell diagnostic commands, scripts, or service commands can be executed with elevated privileges even without restarting the app.
+## Windows behavior
 
-### 2. ⚙️ Windows Services Manager (SCM)
-* **Real-time Service Monitoring**: Lists all installed Windows services (`Win32_Service` / `Get-Service`) with Display Name, Service Name, Status (Running / Stopped / Paused), Startup Type (Automatic / Manual / Disabled), Log On account, and PID.
-* **Instant Controls**: Start, Stop, Pause, Resume, and Restart services with feedback.
-* **Startup Type Configuration**: Change startup types between `Automatic`, `Manual`, and `Disabled` on the fly.
-* **Service Details Inspector**: Inspect service binary executable paths, descriptions, and dependent services.
-* **Register New Windows Services**: Register new Windows background services via `sc.exe create` directly from the UI.
+- Local terminal commands use Windows PowerShell without loading profiles, with UTF-8 captured output, CRLF input and Windows prompts. Built-in `cd` persists the working directory and accepts quoted paths. Each submission starts a fresh shell, so variables and shell settings do not persist. Use an external console for interactive programs; the embedded console uses pipes rather than ConPTY.
+- Stop terminates the owned Windows process tree. Background terminal commands and scripts hide console windows; external terminal sessions open their own console.
+- New local scripts use PowerShell; remote Linux scripts retain Bash. Saved Bash scripts still need Bash installed or manual conversion. Normal execution respects the machine's PowerShell execution policy.
+- Sensors use sysinfo's Windows CPU, memory, pagefile, volume, network and process counters. Hardware inventory uses cached CIM queries, at most every 30 seconds, with an eight-second timeout. Temperatures require an available LibreHardwareMonitor WMI provider. Unavailable temperature and power readings are not estimated. Device-wide disk throughput, SMART, GPU load, and per-process network counters are unavailable in this version; fields whose inherited schema is numeric may display zero. Per-process CPU can exceed 100% across multiple cores.
+- Local services use Windows Service Control Manager via PowerShell, with start/stop/restart and automatic/disabled startup. Changes may require launching the application elevated. User scope, systemd unit creation, drop-ins and unit file editing apply only to remote Linux hosts. Service logs show matching events from the newest 1,000 Service Control Manager System events.
+- SSH hosts retain Linux shell, sensor and systemd behavior.
 
-### 3. 📊 Hardware Sensors & Resource Telemetry
-* **Live Overview Header**: Real-time display of CPU Brand, Logical Threads, Core Clocks, Total RAM, and Storage Throughput Speed.
-* **Two Subtabs**:
-  * **`⏱ System Sensors`**:
-    * **CPU**: Processor model, physical cores, logical threads, core clock frequencies, global usage %.
-    * **Memory**: Physical RAM (Used / Total / %) and Pagefile Swap Commit load.
-    * **Disks**: Logical drives (C:, D:, etc.) with Total size, Free space, % used, and live disk I/O rates.
-    * **GPU**: Active display adapter name, dedicated VRAM, and driver version.
-    * **Battery & Power**: AC mains online state, charge percentage, and battery status.
-  * **`⚡ Top Apps`**:
-    * Dedicated monitor for top resource-consuming processes.
-    * **Permanent Column Widths**: Column widths never jump or resize when processes appear, sort, or update.
-    * **Deferred Collection**: Only scans and updates processes when navigated to the Top Apps tab.
+## Scope and remaining Linux tools
 
-### 4. ⚡ Interactive Windows PowerShell & Diagnostic Presets
-* **PowerShell REPL Console**: Interactive PowerShell terminal with real-time stdout/stderr streaming.
-* **Elevated Toggle**: Execute commands inside an elevated PowerShell session.
-* **Preset Diagnostic & Administrative Commands Catalog**:
-  * **Network**: Flush DNS (`Clear-DnsClientCache`), Show TCP Port Listeners (`Get-NetTCPConnection`), IP Config (`ipconfig /all`), Reset Winsock (`netsh winsock reset`).
-  * **System Repair**: System File Checker (`sfc /scannow`), DISM Component Store Health Check (`DISM /Online /Cleanup-Image /ScanHealth`), Clean Temp Files.
-  * **Services**: Restart Print Spooler, Restart Windows Update.
-  * **Developer**: Shutdown WSL instances, Tool version checker (Node, Python, Git, Rust, Docker).
+This is a focused port of terminal, scripts, sensors and services. Other inherited panels, including NetworkManager Wi-Fi, BlueZ Bluetooth, Linux process inspection, and vendor/Linux power controls, have not been ported to Windows. Core server and Android capabilities retain their existing platform branches. No compatibility is claimed for Linux-only saved commands or scripts.
 
-### 5. 🚀 Dev Server Launcher & Port Collision Resolver
-* **Process Management**: Start, stop, and restart local servers defined in `servers.json`.
-* **Live Monospace Logs**: Real-time log viewer with auto-scroll and ANSI color stripping.
-* **Port Conflict Resolver**: Identifies active TCP listeners via `Get-NetTCPConnection` / `netstat -ano` with one-click process termination (`taskkill`).
+Configuration keeps the original `servers.json` search behavior (current folder, then parent folder). Back up that file before editing shared server definitions.
 
----
+## Validation limits
 
-## 🚀 Getting Started on Windows
-
-### Prerequisites
-* Windows 10 / Windows 11 / Windows Server (64-bit or 32-bit).
-* Python 3.8+ (Standard library only — **no pip dependencies required**).
-
-### Quick Launch
-1. **Normal Launch**:
-   ```cmd
-   python server_launcher_windows.py
-   ```
-2. **Launch with Administrator Privileges**:
-   Double-click `run_as_admin.bat` or run:
-   ```cmd
-   run_as_admin.bat
-   ```
-
----
-
-## 📦 Packaging into a Standalone `.exe` (Optional)
-
-To bundle the application into a single executable that runs without Python installed:
-
-```cmd
-pip install pyinstaller
-pyinstaller --noconfirm --onedir --windowed --name "ServerLauncherWindows" --add-data "servers.json;." --add-data "powershell_presets.json;." server_launcher_windows.py
-```
-
-The compiled standalone executable will be located in `dist\ServerLauncherWindows\ServerLauncherWindows.exe`.
-
+See the implementation report for checks completed in this environment. A successful Linux check does not validate Windows-only branches. Native Windows compilation, interactive terminal behavior, service permissions and sensor availability must also be verified on a Windows machine.

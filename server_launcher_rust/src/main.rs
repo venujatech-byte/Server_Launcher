@@ -221,8 +221,7 @@ fn main() -> eframe::Result<()> {
             // Initialize Lucide icon pack font for crisp, reliable vector icon rendering
             lucide::setup_lucide_font(&cc.egui_ctx);
 
-            // Scale UI for comfortable modern HiDPI reading
-            cc.egui_ctx.set_pixels_per_point(1.15);
+            // Keep the monitor scale supplied by eframe, including per-monitor DPI changes.
 
             let mut style = (*cc.egui_ctx.style()).clone();
             style.text_styles = [
@@ -231,10 +230,11 @@ fn main() -> eframe::Result<()> {
                 (egui::TextStyle::Body, egui::FontId::new(14.0, egui::FontFamily::Proportional)),
                 (egui::TextStyle::Button, egui::FontId::new(13.5, egui::FontFamily::Proportional)),
                 (egui::TextStyle::Monospace, egui::FontId::new(13.0, egui::FontFamily::Monospace)),
-                (egui::TextStyle::Small, egui::FontId::new(11.5, egui::FontFamily::Proportional)),
+                (egui::TextStyle::Small, egui::FontId::new(13.0, egui::FontFamily::Proportional)),
             ].into();
             style.spacing.item_spacing = egui::vec2(8.0, 7.0);
             style.spacing.button_padding = egui::vec2(9.0, 5.0);
+            style.spacing.interact_size.y = 30.0;
             cc.egui_ctx.set_style(style);
 
             Ok(Box::new(LauncherApp::new(cc)))

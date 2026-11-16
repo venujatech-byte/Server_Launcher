@@ -1078,7 +1078,7 @@ pub fn render_modal_titlebar(
         egui::pos2(rect.min.x + 24.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         "SERVER LAUNCHER",
-        egui::FontId::monospace(10.0),
+        egui::FontId::monospace(13.0),
         Color32::from_rgb(113, 118, 134),
     );
 
@@ -1190,7 +1190,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
         // ── Subtitle + servers.json badge ──
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            ui.label(RichText::new("Saved to").size(11.0).color(palette.text_muted));
+            ui.label(RichText::new("Saved to").size(13.0).color(palette.text_muted));
             egui::Frame::none()
                 .fill(Color32::from_rgb(22, 25, 35))
                 .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
@@ -1199,12 +1199,12 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                 .show(ui, |ui| {
                     ui.label(
                         RichText::new("servers.json")
-                            .size(10.5)
+                            .size(13.0)
                             .monospace()
                             .color(Color32::from_rgb(180, 185, 200)),
                     );
                 });
-            ui.label(RichText::new("— no code changes needed.").size(11.0).color(palette.text_muted));
+            ui.label(RichText::new("— no code changes needed.").size(13.0).color(palette.text_muted));
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 egui::Frame::none()
@@ -1215,7 +1215,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     .show(ui, |ui| {
                         ui.label(
                             RichText::new("servers.json")
-                                .size(10.5)
+                                .size(13.0)
                                 .monospace()
                                 .color(Color32::from_rgb(110, 118, 138)),
                         );
@@ -1244,7 +1244,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                                     ui.label(RichText::new(crate::lucide::ZAP).size(13.0).color(Color32::from_rgb(196, 192, 255)));
                                     ui.label(
                                         RichText::new("Pick a Template (Fast Setup)")
-                                            .size(12.5)
+                                            .size(13.0)
                                             .strong()
                                             .color(Color32::from_rgb(196, 192, 255)),
                                     );
@@ -1254,7 +1254,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                                     RichText::new(
                                         "Auto-populates command, port, actions, and links for popular stacks.",
                                     )
-                                    .size(10.5)
+                                    .size(13.0)
                                     .color(palette.text_muted),
                                 );
                                 ui.add_space(8.0);
@@ -1282,7 +1282,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
 
                                     let apply_btn = egui::Button::new(
                                         RichText::new("Apply Template")
-                                            .size(11.5)
+                                            .size(13.0)
                                             .strong()
                                             .color(Color32::from_rgb(24, 25, 34)),
                                     )
@@ -1302,8 +1302,8 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     // Server Name *
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
-                        ui.label(RichText::new("Server name").size(12.0).strong().color(palette.text_primary));
-                        ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
+                        ui.label(RichText::new("Server name").size(13.0).strong().color(palette.text_primary));
+                        ui.label(RichText::new("*").size(13.0).strong().color(palette.danger));
                     });
                     ui.add(
                         egui::TextEdit::singleline(&mut state.name)
@@ -1317,7 +1317,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     ui.horizontal(|ui| {
                         ui.label(
                             RichText::new("Unique Key (optional override)")
-                                .size(11.0)
+                                .size(13.0)
                                 .color(palette.text_muted),
                         );
                         let derived = if !state.key.trim().is_empty() {
@@ -1329,7 +1329,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.label(
                                     RichText::new(format!("ID: {}", derived))
-                                        .size(10.5)
+                                        .size(13.0)
                                         .monospace()
                                         .color(Color32::from_rgb(110, 118, 138)),
                                 );
@@ -1348,13 +1348,13 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     // Server Group
                     ui.label(
                         RichText::new("Server group (Frontend / Backend / DB)")
-                            .size(12.0)
+                            .size(13.0)
                             .strong()
                             .color(palette.text_primary),
                     );
                     ui.label(
                         RichText::new("Tag servers for group start/stop. Pick preset or type custom:")
-                            .size(10.5)
+                            .size(13.0)
                             .color(palette.text_muted),
                     );
                     ui.add(
@@ -1368,7 +1368,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                             let is_active = state.group == *preset;
                             let btn = egui::Button::new(
                                 RichText::new(*preset)
-                                    .size(10.5)
+                                    .size(13.0)
                                     .color(if is_active { Color32::from_rgb(196, 192, 255) } else { palette.text_secondary }),
                             )
                             .fill(if is_active { Color32::from_rgb(34, 38, 56) } else { Color32::from_rgb(22, 24, 34) })
@@ -1384,8 +1384,8 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     // Working Directory *
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
-                        ui.label(RichText::new("Working directory (path)").size(12.0).strong().color(palette.text_primary));
-                        ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
+                        ui.label(RichText::new("Working directory (path)").size(13.0).strong().color(palette.text_primary));
+                        ui.label(RichText::new("*").size(13.0).strong().color(palette.danger));
                     });
                     ui.horizontal(|ui| {
                         let browse_w = 75.0;
@@ -1397,7 +1397,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                                 .clip_text(true),
                         );
                         let browse_btn = egui::Button::new(
-                            RichText::new("Browse").size(11.5).color(palette.text_secondary),
+                            RichText::new("Browse").size(13.0).color(palette.text_secondary),
                         )
                         .fill(Color32::from_rgb(26, 29, 40))
                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
@@ -1413,16 +1413,16 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     // Start Command *
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
-                        ui.label(RichText::new("Start command").size(12.0).strong().color(palette.text_primary));
-                        ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
+                        ui.label(RichText::new("Start command").size(13.0).strong().color(palette.text_primary));
+                        ui.label(RichText::new("*").size(13.0).strong().color(palette.danger));
                     });
                     ui.label(
                         RichText::new("e.g.  npm run dev   |   python app.py   |   node server.js")
-                            .size(10.5)
+                            .size(13.0)
                             .color(Color32::from_rgb(123, 131, 148)),
                     );
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("$").size(12.0).monospace().color(Color32::from_rgb(110, 118, 138)));
+                        ui.label(RichText::new("$").size(13.0).monospace().color(Color32::from_rgb(110, 118, 138)));
                         ui.add(
                             egui::TextEdit::singleline(&mut state.command)
                                 .hint_text("e.g. npm run dev")
@@ -1435,12 +1435,12 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     // Stop Command (optional)
                     ui.label(
                         RichText::new("Stop command (optional - runs before stopping)")
-                            .size(12.0)
+                            .size(13.0)
                             .strong(),
                     );
                     ui.label(
                         RichText::new("e.g.  pg_ctl stop   - leave empty for plain kill")
-                            .size(10.5)
+                            .size(13.0)
                             .color(Color32::from_rgb(123, 131, 148)),
                     );
                     ui.add(
@@ -1453,7 +1453,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     // Port
                     ui.label(
                         RichText::new("Port (0 = none, used to detect running state)")
-                            .size(12.0)
+                            .size(13.0)
                             .strong(),
                     );
                     ui.add(
@@ -1467,12 +1467,12 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     ui.checkbox(
                         &mut state.own_console,
                         RichText::new("Run in own console window (external terminal)")
-                            .size(12.0)
+                            .size(13.0)
                             .color(Color32::from_rgb(220, 225, 235)),
                     );
                     ui.label(
                         RichText::new("Opens in a native terminal emulator (gnome-terminal, konsole, cmd.exe, etc.)")
-                            .size(10.5)
+                            .size(13.0)
                             .color(Color32::from_rgb(123, 131, 148)),
                     );
                     ui.add_space(8.0);
@@ -1481,12 +1481,12 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     ui.checkbox(
                         &mut state.auto_restart,
                         RichText::new("Auto-restart on crash")
-                            .size(12.0)
+                            .size(13.0)
                             .color(palette.text_primary),
                     );
                     ui.label(
                         RichText::new("Automatically restarts this server if the process exits unexpectedly or crashes")
-                            .size(10.5)
+                            .size(13.0)
                             .color(palette.text_muted),
                     );
                     ui.add_space(8.0);
@@ -1495,12 +1495,12 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     ui.checkbox(
                         &mut state.autostart,
                         RichText::new(format!("{} Run server at startup", crate::lucide::PLAY))
-                            .size(12.0)
+                            .size(13.0)
                             .color(palette.text_primary),
                     );
                     ui.label(
                         RichText::new("Automatically launches this server whenever Server Launcher opens")
-                            .size(10.5)
+                            .size(13.0)
                             .color(palette.text_muted),
                     );
                     ui.add_space(8.0);
@@ -1508,7 +1508,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     // Environment Variables
                     ui.label(
                         RichText::new("Environment variables (KEY=VALUE, one per line)")
-                            .size(12.0)
+                            .size(13.0)
                             .strong(),
                     );
                     ui.add(
@@ -1522,12 +1522,12 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     // Extra Action Buttons
                     ui.label(
                         RichText::new("Extra action buttons (sub-commands)")
-                            .size(12.0)
+                            .size(13.0)
                             .strong(),
                     );
                     ui.label(
                         RichText::new("Run inside working directory. e.g. label: 'Build', command: 'npm run build'")
-                            .size(10.5)
+                            .size(13.0)
                             .color(Color32::from_rgb(123, 131, 148)),
                     );
                     ui.add_space(2.0);
@@ -1535,16 +1535,16 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     let mut remove_action_idx = None;
                     for (i, (lbl, cmd)) in state.actions.iter_mut().enumerate() {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("label:").size(10.5).color(Color32::from_rgb(123, 131, 148)));
+                            ui.label(RichText::new("label:").size(13.0).color(Color32::from_rgb(123, 131, 148)));
                             ui.add(egui::TextEdit::singleline(lbl).clip_text(true).desired_width(85.0));
-                            ui.label(RichText::new("cmd:").size(10.5).color(Color32::from_rgb(123, 131, 148)));
+                            ui.label(RichText::new("cmd:").size(13.0).color(Color32::from_rgb(123, 131, 148)));
                             let cmd_w = (ui.available_width() - 36.0).max(60.0);
                             ui.add_sized(
                                 [cmd_w, 20.0],
                                 egui::TextEdit::singleline(cmd).clip_text(true),
                             );
                             if ui
-                                .button(RichText::new(crate::lucide::X).size(11.0).color(Color32::from_rgb(230, 80, 80)))
+                                .button(RichText::new(crate::lucide::X).size(13.0).color(Color32::from_rgb(230, 80, 80)))
                                 .clicked()
                             {
                                 remove_action_idx = Some(i);
@@ -1559,7 +1559,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     if ui
                         .button(
                             RichText::new("+ Add action button")
-                                .size(11.0)
+                                .size(13.0)
                                 .color(Color32::from_rgb(108, 92, 231)),
                         )
                         .clicked()
@@ -1570,10 +1570,10 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     ui.add_space(10.0);
 
                     // Open Links
-                    ui.label(RichText::new("Open links (label : url)").size(12.0).strong());
+                    ui.label(RichText::new("Open links (label : url)").size(13.0).strong());
                     ui.label(
                         RichText::new("e.g. label: 'Localhost', url: 'http://localhost:3000'")
-                            .size(10.5)
+                            .size(13.0)
                             .color(Color32::from_rgb(123, 131, 148)),
                     );
                     ui.add_space(2.0);
@@ -1581,16 +1581,16 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     let mut remove_link_idx = None;
                     for (i, (lbl, url)) in state.links.iter_mut().enumerate() {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("label:").size(10.5).color(Color32::from_rgb(123, 131, 148)));
+                            ui.label(RichText::new("label:").size(13.0).color(Color32::from_rgb(123, 131, 148)));
                             ui.add(egui::TextEdit::singleline(lbl).clip_text(true).desired_width(85.0));
-                            ui.label(RichText::new("url:").size(10.5).color(Color32::from_rgb(123, 131, 148)));
+                            ui.label(RichText::new("url:").size(13.0).color(Color32::from_rgb(123, 131, 148)));
                             let url_w = (ui.available_width() - 36.0).max(60.0);
                             ui.add_sized(
                                 [url_w, 20.0],
                                 egui::TextEdit::singleline(url).clip_text(true),
                             );
                             if ui
-                                .button(RichText::new(crate::lucide::X).size(11.0).color(Color32::from_rgb(230, 80, 80)))
+                                .button(RichText::new(crate::lucide::X).size(13.0).color(Color32::from_rgb(230, 80, 80)))
                                 .clicked()
                             {
                                 remove_link_idx = Some(i);
@@ -1605,7 +1605,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     if ui
                         .button(
                             RichText::new("+ Add link")
-                                .size(11.0)
+                                .size(13.0)
                                 .color(palette.accent),
                         )
                         .clicked()
@@ -1623,13 +1623,13 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
             // Bottom Buttons: Status & Cancel / Save
             ui.horizontal(|ui| {
                 if let Some(err) = &state.error_msg {
-                    ui.label(RichText::new("●").size(9.0).color(palette.danger));
-                    ui.label(RichText::new(err).size(11.0).color(palette.danger));
+                    ui.label(RichText::new("●").size(13.0).color(palette.danger));
+                    ui.label(RichText::new(err).size(13.0).color(palette.danger));
                 } else {
-                    ui.label(RichText::new("●").size(9.0).color(Color32::from_rgb(0, 210, 160)));
+                    ui.label(RichText::new("●").size(13.0).color(Color32::from_rgb(0, 210, 160)));
                     ui.label(
                         RichText::new("Ready to register instance")
-                            .size(11.0)
+                            .size(13.0)
                             .monospace()
                             .color(Color32::from_rgb(120, 126, 142)),
                     );
@@ -1638,7 +1638,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_save = egui::Button::new(
                         RichText::new("Save")
-                            .size(12.0)
+                            .size(13.0)
                             .strong()
                             .color(Color32::from_rgb(24, 25, 34)),
                     )
@@ -1666,7 +1666,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
 
                     let btn_cancel = egui::Button::new(
                         RichText::new("Cancel")
-                            .size(12.0)
+                            .size(13.0)
                             .color(palette.text_secondary),
                     )
                     .fill(Color32::from_rgb(26, 29, 40))
@@ -1768,14 +1768,14 @@ pub fn render_command_palette(
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .button(RichText::new(crate::lucide::X).size(12.0).color(palette.text_secondary))
+                        .button(RichText::new(crate::lucide::X).size(13.0).color(palette.text_secondary))
                         .clicked()
                     {
                         state.open = false;
                     }
                     ui.label(
                         RichText::new("Esc to close")
-                            .size(10.5)
+                            .size(13.0)
                             .color(palette.text_muted),
                     );
                 });
@@ -1824,12 +1824,12 @@ pub fn render_command_palette(
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new("Type to filter • Up/Down navigate • Enter select")
-                        .size(10.0)
+                        .size(13.0)
                         .color(palette.text_muted),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .button(RichText::new("Close").size(11.0).color(palette.text_secondary))
+                        .button(RichText::new("Close").size(13.0).color(palette.text_secondary))
                         .clicked()
                     {
                         state.open = false;
@@ -1954,16 +1954,16 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
         // ── Subtitle row: Saved to remote_hosts.json ──
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            ui.label(RichText::new("Saved to").size(11.0).color(palette.text_muted));
+            ui.label(RichText::new("Saved to").size(13.0).color(palette.text_muted));
             egui::Frame::none()
                 .fill(Color32::from_rgb(22, 25, 35))
                 .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
                 .rounding(Rounding::same(3.0))
                 .inner_margin(egui::Margin::symmetric(5.0, 1.0))
                 .show(ui, |ui| {
-                    ui.label(RichText::new("remote_hosts.json").size(10.5).monospace().color(Color32::from_rgb(180, 185, 200)));
+                    ui.label(RichText::new("remote_hosts.json").size(13.0).monospace().color(Color32::from_rgb(180, 185, 200)));
                 });
-            ui.label(RichText::new("— encrypted vault credentials.").size(11.0).color(palette.text_muted));
+            ui.label(RichText::new("— encrypted vault credentials.").size(13.0).color(palette.text_muted));
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 egui::Frame::none()
@@ -1974,8 +1974,8 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 4.0;
-                            ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(196, 192, 255)));
-                            ui.label(RichText::new("SSH v2 (OpenSSH)").size(10.5).monospace().color(Color32::from_rgb(180, 185, 200)));
+                            ui.label(RichText::new("●").size(13.0).color(Color32::from_rgb(196, 192, 255)));
+                            ui.label(RichText::new("SSH v2 (OpenSSH)").size(13.0).monospace().color(Color32::from_rgb(180, 185, 200)));
                         });
                     });
             });
@@ -2000,11 +2000,11 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                             });
                         ui.add_space(6.0);
                         ui.vertical(|ui| {
-                            ui.label(RichText::new("Automatic SSH config import available").size(12.0).strong().color(palette.text_primary));
-                            ui.label(RichText::new("Auto-detect hosts and identities defined in ~/.ssh/config").size(10.5).color(palette.text_muted));
+                            ui.label(RichText::new("Automatic SSH config import available").size(13.0).strong().color(palette.text_primary));
+                            ui.label(RichText::new("Auto-detect hosts and identities defined in ~/.ssh/config").size(13.0).color(palette.text_muted));
                         });
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let scan_btn = egui::Button::new(RichText::new("Scan Hosts").size(11.0).color(palette.text_primary))
+                            let scan_btn = egui::Button::new(RichText::new("Scan Hosts").size(13.0).color(palette.text_primary))
                                 .fill(Color32::from_rgb(26, 29, 40))
                                 .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
                                 .rounding(Rounding::same(6.0));
@@ -2030,8 +2030,8 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             // Display Name *
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                ui.label(RichText::new("Display Name").size(12.0).strong().color(palette.text_primary));
-                ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
+                ui.label(RichText::new("Display Name").size(13.0).strong().color(palette.text_primary));
+                ui.label(RichText::new("*").size(13.0).strong().color(palette.danger));
             });
             ui.add(
                 egui::TextEdit::singleline(&mut state.name)
@@ -2046,8 +2046,8 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
-                        ui.label(RichText::new("Host / IP Address").size(12.0).strong().color(palette.text_primary));
-                        ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
+                        ui.label(RichText::new("Host / IP Address").size(13.0).strong().color(palette.text_primary));
+                        ui.label(RichText::new("*").size(13.0).strong().color(palette.danger));
                     });
                     let host_w = (ui.available_width() - 95.0).max(80.0);
                     ui.add_sized(
@@ -2060,8 +2060,8 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
-                        ui.label(RichText::new("Port").size(12.0).strong().color(palette.text_primary));
-                        ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
+                        ui.label(RichText::new("Port").size(13.0).strong().color(palette.text_primary));
+                        ui.label(RichText::new("*").size(13.0).strong().color(palette.danger));
                     });
                     ui.add(
                         egui::TextEdit::singleline(&mut state.port_str)
@@ -2076,8 +2076,8 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             // SSH Username *
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                ui.label(RichText::new("SSH Username").size(12.0).strong().color(palette.text_primary));
-                ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
+                ui.label(RichText::new("SSH Username").size(13.0).strong().color(palette.text_primary));
+                ui.label(RichText::new("*").size(13.0).strong().color(palette.danger));
             });
             ui.add(
                 egui::TextEdit::singleline(&mut state.user)
@@ -2088,7 +2088,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             ui.add_space(8.0);
 
             // SSH Private Key Path (optional)
-            ui.label(RichText::new("SSH Private Key Path (optional if using agent/default)").size(12.0).strong().color(palette.text_primary));
+            ui.label(RichText::new("SSH Private Key Path (optional if using agent/default)").size(13.0).strong().color(palette.text_primary));
             ui.horizontal(|ui| {
                 let browse_w = 85.0;
                 let input_w = (ui.available_width() - browse_w - ui.spacing().item_spacing.x).max(80.0);
@@ -2098,7 +2098,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                         .hint_text("e.g. ~/.ssh/id_ed25519 or /home/user/.ssh/id_rsa")
                         .clip_text(true),
                 );
-                let browse_btn = egui::Button::new(RichText::new(format!("{} Browse...", crate::lucide::FOLDER)).size(11.0).color(palette.text_secondary))
+                let browse_btn = egui::Button::new(RichText::new(format!("{} Browse...", crate::lucide::FOLDER)).size(13.0).color(palette.text_secondary))
                     .fill(Color32::from_rgb(26, 29, 40))
                     .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
                     .rounding(Rounding::same(6.0));
@@ -2112,7 +2112,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
 
             // SSH Password (optional)
             ui.horizontal(|ui| {
-                ui.label(RichText::new("SSH Password (optional if using key/agent)").size(12.0).strong().color(palette.text_primary));
+                ui.label(RichText::new("SSH Password (optional if using key/agent)").size(13.0).strong().color(palette.text_primary));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let eye_label = if state.show_password {
                         format!("{} Hide", crate::lucide::EYE_OFF)
@@ -2134,7 +2134,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             ui.add_space(8.0);
 
             // Default Remote Directory (optional)
-            ui.label(RichText::new("Default Remote Directory (optional)").size(12.0).strong().color(palette.text_primary));
+            ui.label(RichText::new("Default Remote Directory (optional)").size(13.0).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::singleline(&mut state.remote_cwd)
                     .hint_text("e.g. /var/www or /home/ubuntu/app")
@@ -2145,9 +2145,9 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
 
             // Checkboxes: Use local SSH agent authentication & Strict host key check
             ui.horizontal(|ui| {
-                ui.checkbox(&mut state.use_agent, RichText::new("Use local SSH agent authentication").size(11.5).color(palette.text_secondary));
+                ui.checkbox(&mut state.use_agent, RichText::new("Use local SSH agent authentication").size(13.0).color(palette.text_secondary));
                 ui.add_space(12.0);
-                ui.checkbox(&mut state.strict_host_key, RichText::new("Strict host key check").size(11.5).color(palette.text_secondary));
+                ui.checkbox(&mut state.strict_host_key, RichText::new("Strict host key check").size(13.0).color(palette.text_secondary));
             });
             ui.add_space(10.0);
 
@@ -2157,7 +2157,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             // Footer
             ui.horizontal(|ui| {
                 // Test Connection button
-                let test_btn = egui::Button::new(RichText::new(format!("{} Test Connection", crate::lucide::ZAP)).size(11.5).color(Color32::from_rgb(196, 192, 255)))
+                let test_btn = egui::Button::new(RichText::new(format!("{} Test Connection", crate::lucide::ZAP)).size(13.0).color(Color32::from_rgb(196, 192, 255)))
                     .fill(Color32::from_rgb(26, 29, 42))
                     .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 50, 72)))
                     .rounding(Rounding::same(999.0));
@@ -2180,22 +2180,22 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                 if let Some(res) = &state.test_result {
                     match res {
                         Ok(msg) => {
-                            ui.label(RichText::new("●").size(9.0).color(palette.success));
-                            ui.label(RichText::new(msg).size(11.0).color(palette.success));
+                            ui.label(RichText::new("●").size(13.0).color(palette.success));
+                            ui.label(RichText::new(msg).size(13.0).color(palette.success));
                         }
                         Err(err) => {
-                            ui.label(RichText::new("●").size(9.0).color(palette.danger));
-                            ui.label(RichText::new(err).size(11.0).color(palette.danger));
+                            ui.label(RichText::new("●").size(13.0).color(palette.danger));
+                            ui.label(RichText::new(err).size(13.0).color(palette.danger));
                         }
                     }
                 } else {
-                    ui.label(RichText::new("●").size(9.0).color(Color32::from_rgb(0, 210, 160)));
-                    ui.label(RichText::new("Ready to register").size(11.0).monospace().color(Color32::from_rgb(120, 126, 142)));
+                    ui.label(RichText::new("●").size(13.0).color(Color32::from_rgb(0, 210, 160)));
+                    ui.label(RichText::new("Ready to register").size(13.0).monospace().color(Color32::from_rgb(120, 126, 142)));
                 }
 
                 if state.is_edit {
                     if let Some(id_to_del) = state.editing_id.clone() {
-                        let del_btn = egui::Button::new(RichText::new("Delete Host").size(11.5).color(palette.danger))
+                        let del_btn = egui::Button::new(RichText::new("Delete Host").size(13.0).color(palette.danger))
                             .fill(palette.danger_subtle);
                         if ui.add(del_btn).clicked() {
                             action = ModalAction::DeleteSshHost(id_to_del);
@@ -2205,7 +2205,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let save_btn = egui::Button::new(RichText::new("Save Host").size(12.0).strong().color(Color32::from_rgb(24, 25, 34)))
+                    let save_btn = egui::Button::new(RichText::new("Save Host").size(13.0).strong().color(Color32::from_rgb(24, 25, 34)))
                         .fill(Color32::from_rgb(196, 192, 255))
                         .rounding(Rounding::same(8.0))
                         .min_size(egui::vec2(95.0, 28.0));
@@ -2237,7 +2237,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                         is_open = false;
                     }
 
-                    let cancel_btn = egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
+                    let cancel_btn = egui::Button::new(RichText::new("Cancel").size(13.0).color(palette.text_secondary))
                         .fill(Color32::from_rgb(26, 29, 40))
                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
                         .rounding(Rounding::same(6.0))
@@ -2333,7 +2333,7 @@ pub fn render_close_confirmation_modal(
                                 running_servers.len(),
                                 if running_servers.len() == 1 { "" } else { "s" }
                             ))
-                            .size(12.0)
+                            .size(13.0)
                             .color(palette.text_muted),
                         );
                     });
@@ -2345,7 +2345,7 @@ pub fn render_close_confirmation_modal(
 
                 ui.label(
                     RichText::new("Would you like to stop all running servers before exiting, or leave them running in the background?")
-                        .size(12.5)
+                        .size(13.0)
                         .color(palette.text_secondary),
                 );
 
@@ -2363,15 +2363,15 @@ pub fn render_close_confirmation_modal(
                             .show(ui, |ui| {
                                 for (name, port, pid) in running_servers {
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new("●").size(10.0).color(palette.success));
-                                        ui.label(RichText::new(name).size(12.0).strong().color(palette.text_primary));
+                                        ui.label(RichText::new("●").size(13.0).color(palette.success));
+                                        ui.label(RichText::new(name).size(13.0).strong().color(palette.text_primary));
                                         if let Some(p) = port {
                                             if *p > 0 {
-                                                ui.label(RichText::new(format!(":{}", p)).size(11.0).color(palette.accent));
+                                                ui.label(RichText::new(format!(":{}", p)).size(13.0).color(palette.accent));
                                             }
                                         }
                                         if let Some(id) = pid {
-                                            ui.label(RichText::new(format!("(PID {})", id)).size(10.5).color(palette.text_muted));
+                                            ui.label(RichText::new(format!("(PID {})", id)).size(13.0).color(palette.text_muted));
                                         }
                                     });
                                 }
@@ -2385,7 +2385,7 @@ pub fn render_close_confirmation_modal(
                 // Action buttons: Cancel, Keep Running & Exit, Stop & Exit
                 ui.horizontal(|ui| {
                     if ui.add(
-                        egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
+                        egui::Button::new(RichText::new("Cancel").size(13.0).color(palette.text_secondary))
                             .fill(palette.bg_button)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
@@ -2395,7 +2395,7 @@ pub fn render_close_confirmation_modal(
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let btn_stop = egui::Button::new(
-                            RichText::new(format!("{} Stop & Exit", crate::lucide::STOP)).size(12.0).strong().color(Color32::WHITE),
+                            RichText::new(format!("{} Stop & Exit", crate::lucide::STOP)).size(13.0).strong().color(Color32::WHITE),
                         )
                         .fill(palette.danger)
                         .stroke(Stroke::NONE)
@@ -2407,7 +2407,7 @@ pub fn render_close_confirmation_modal(
                         }
 
                         let btn_keep = egui::Button::new(
-                            RichText::new("Keep Running & Exit").size(12.0).color(palette.text_primary),
+                            RichText::new("Keep Running & Exit").size(13.0).color(palette.text_primary),
                         )
                         .fill(palette.bg_button)
                         .stroke(Stroke::NONE)
@@ -2496,12 +2496,12 @@ pub fn render_script_modal(
 
             // Error display if any
             if let Some(err) = &state.error {
-                ui.label(RichText::new(err).size(11.5).color(palette.danger));
+                ui.label(RichText::new(err).size(13.0).color(palette.danger));
                 ui.add_space(4.0);
             }
 
             // Script Name
-            ui.label(RichText::new("Script Name:").size(12.0).strong().color(palette.text_primary));
+            ui.label(RichText::new("Script Name:").size(13.0).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::singleline(&mut state.name)
                     .hint_text("e.g. Health Check, DB Backup, Build & Clean")
@@ -2512,7 +2512,7 @@ pub fn render_script_modal(
             // Shell & CWD row
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("Shell / Interpreter:").size(12.0).strong().color(palette.text_primary));
+                    ui.label(RichText::new("Shell / Interpreter:").size(13.0).strong().color(palette.text_primary));
                     egui::ComboBox::from_id_salt("script_shell_combo")
                         .selected_text(&state.shell)
                         .show_ui(ui, |ui| {
@@ -2526,7 +2526,7 @@ pub fn render_script_modal(
                 ui.add_space(12.0);
 
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("Working Directory (optional):").size(12.0).strong().color(palette.text_primary));
+                    ui.label(RichText::new("Working Directory (optional):").size(13.0).strong().color(palette.text_primary));
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::TextEdit::singleline(&mut state.cwd)
@@ -2547,19 +2547,19 @@ pub fn render_script_modal(
             ui.checkbox(
                 &mut state.autostart,
                 RichText::new(format!("{} Run automatically at startup / connection", crate::lucide::ZAP))
-                    .size(12.0)
+                    .size(13.0)
                     .color(palette.accent)
                     .strong(),
             );
             ui.label(
                 RichText::new("If enabled, this script will be triggered immediately when the launcher launches or connects to this host.")
-                    .size(11.0)
+                    .size(13.0)
                     .color(palette.text_muted),
             );
             ui.add_space(10.0);
 
             // Script Body
-            ui.label(RichText::new("Script Content:").size(12.0).strong().color(palette.text_primary));
+            ui.label(RichText::new("Script Content:").size(13.0).strong().color(palette.text_primary));
             let text_height = (ui.available_height() - 50.0).max(160.0);
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.add(
@@ -2577,7 +2577,7 @@ pub fn render_script_modal(
 
             // Action Buttons
             ui.horizontal(|ui| {
-                let btn_cancel = egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
+                let btn_cancel = egui::Button::new(RichText::new("Cancel").size(13.0).color(palette.text_secondary))
                     .fill(Color32::from_rgb(26, 29, 40))
                     .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
                     .rounding(Rounding::same(6.0))
@@ -2589,7 +2589,7 @@ pub fn render_script_modal(
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_save = egui::Button::new(
-                        RichText::new(format!("{} Save Script", crate::lucide::SAVE)).size(12.0).strong().color(Color32::WHITE),
+                        RichText::new(format!("{} Save Script", crate::lucide::SAVE)).size(13.0).strong().color(Color32::WHITE),
                     )
                     .fill(palette.accent)
                     .rounding(Rounding::same(5.0))
@@ -2687,12 +2687,12 @@ pub fn render_command_modal(
             ui.add_space(4.0);
 
             if let Some(err) = &state.error {
-                ui.label(RichText::new(err).size(11.5).color(palette.danger));
+                ui.label(RichText::new(err).size(13.0).color(palette.danger));
                 ui.add_space(4.0);
             }
 
             // Command Name
-            ui.label(RichText::new("Name / Label:").size(12.0).strong().color(palette.text_primary));
+            ui.label(RichText::new("Name / Label:").size(13.0).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::singleline(&mut state.name)
                     .hint_text("e.g. Git Status & Log, Prune Docker, Disk Free")
@@ -2703,7 +2703,7 @@ pub fn render_command_modal(
             // Category & Host
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("Category:").size(12.0).strong().color(palette.text_primary));
+                    ui.label(RichText::new("Category:").size(13.0).strong().color(palette.text_primary));
                     ui.add(
                         egui::TextEdit::singleline(&mut state.category)
                             .hint_text("e.g. Git, Docker, System, Deploy")
@@ -2714,19 +2714,19 @@ pub fn render_command_modal(
                 ui.add_space(10.0);
 
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("Scope:").size(12.0).strong().color(palette.text_primary));
+                    ui.label(RichText::new("Scope:").size(13.0).strong().color(palette.text_primary));
                     let scope_str = if let Some(h) = &state.host_id {
                         format!("Host: {}", h)
                     } else {
                         "Local PC".to_string()
                     };
-                    ui.label(RichText::new(scope_str).size(12.0).color(palette.text_muted));
+                    ui.label(RichText::new(scope_str).size(13.0).color(palette.text_muted));
                 });
             });
             ui.add_space(8.0);
 
             // Command String
-            ui.label(RichText::new("Command to Execute:").size(12.0).strong().color(palette.text_primary));
+            ui.label(RichText::new("Command to Execute:").size(13.0).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::multiline(&mut state.command)
                     .font(egui::TextStyle::Monospace)
@@ -2736,7 +2736,7 @@ pub fn render_command_modal(
             ui.add_space(8.0);
 
             // Description
-            ui.label(RichText::new("Description (optional):").size(12.0).color(palette.text_muted));
+            ui.label(RichText::new("Description (optional):").size(13.0).color(palette.text_muted));
             ui.add(
                 egui::TextEdit::singleline(&mut state.description)
                     .hint_text("Short note on what this command does")
@@ -2749,7 +2749,7 @@ pub fn render_command_modal(
             ui.checkbox(
                 &mut state.run_in_terminal,
                 RichText::new("Run with external terminal (for interactive tools like top, htop, nano)")
-                    .size(11.5)
+                    .size(13.0)
                     .color(if is_ext_term { palette.accent } else { palette.text_secondary }),
             ).on_hover_text("Launch an interactive external desktop terminal window when executing this command (required for full-screen TUI tools like top, htop, vim)");
 
@@ -2759,7 +2759,7 @@ pub fn render_command_modal(
 
             // Action Buttons
             ui.horizontal(|ui| {
-                let btn_cancel = egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
+                let btn_cancel = egui::Button::new(RichText::new("Cancel").size(13.0).color(palette.text_secondary))
                     .fill(Color32::from_rgb(26, 29, 40))
                     .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
                     .rounding(Rounding::same(6.0))
@@ -2771,7 +2771,7 @@ pub fn render_command_modal(
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_save = egui::Button::new(
-                        RichText::new(format!("{} Save Command", crate::lucide::SAVE)).size(12.0).strong().color(Color32::WHITE),
+                        RichText::new(format!("{} Save Command", crate::lucide::SAVE)).size(13.0).strong().color(Color32::WHITE),
                     )
                     .fill(palette.accent)
                     .rounding(Rounding::same(5.0))
@@ -2882,14 +2882,14 @@ pub fn render_new_service_modal(
             ui.add_space(4.0);
 
             if let Some(err) = &state.error {
-                ui.label(RichText::new(err).size(11.5).color(palette.danger));
+                ui.label(RichText::new(err).size(13.0).color(palette.danger));
                 ui.add_space(4.0);
             }
 
             // Unit Name & Scope
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("Service Unit Name:").size(12.0).strong().color(palette.text_primary));
+                    ui.label(RichText::new("Service Unit Name:").size(13.0).strong().color(palette.text_primary));
                     ui.add(
                         egui::TextEdit::singleline(&mut state.def.name)
                             .hint_text("e.g. my-app.service")
@@ -2900,14 +2900,14 @@ pub fn render_new_service_modal(
                 ui.add_space(10.0);
 
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("Scope:").size(12.0).strong().color(palette.text_primary));
+                    ui.label(RichText::new("Scope:").size(13.0).strong().color(palette.text_primary));
                     ui.checkbox(&mut state.def.is_user, "User Service (--user)");
                 });
             });
             ui.add_space(8.0);
 
             // Description
-            ui.label(RichText::new("Description:").size(12.0).strong().color(palette.text_primary));
+            ui.label(RichText::new("Description:").size(13.0).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::singleline(&mut state.def.description)
                     .hint_text("e.g. My Background Web Service")
@@ -2916,7 +2916,7 @@ pub fn render_new_service_modal(
             ui.add_space(8.0);
 
             // ExecStart
-            ui.label(RichText::new("ExecStart (Executable & Arguments):").size(12.0).strong().color(palette.text_primary));
+            ui.label(RichText::new("ExecStart (Executable & Arguments):").size(13.0).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::singleline(&mut state.def.exec_start)
                     .hint_text("e.g. /usr/bin/python3 /home/user/app/server.py")
@@ -2927,7 +2927,7 @@ pub fn render_new_service_modal(
             // Working Directory & Restart
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("Working Directory:").size(12.0).strong().color(palette.text_primary));
+                    ui.label(RichText::new("Working Directory:").size(13.0).strong().color(palette.text_primary));
                     ui.add(
                         egui::TextEdit::singleline(&mut state.def.working_dir)
                             .hint_text("e.g. /home/user/app")
@@ -2938,7 +2938,7 @@ pub fn render_new_service_modal(
                 ui.add_space(10.0);
 
                 ui.vertical(|ui| {
-                    ui.label(RichText::new("Restart Policy:").size(12.0).strong().color(palette.text_primary));
+                    ui.label(RichText::new("Restart Policy:").size(13.0).strong().color(palette.text_primary));
                     egui::ComboBox::from_id_salt("service_restart_combo")
                         .selected_text(&state.def.restart)
                         .show_ui(ui, |ui| {
@@ -2951,7 +2951,7 @@ pub fn render_new_service_modal(
             ui.add_space(8.0);
 
             // Environment
-            ui.label(RichText::new("Environment Variables (e.g. PORT=8080 NODE_ENV=production):").size(12.0).color(palette.text_muted));
+            ui.label(RichText::new("Environment Variables (e.g. PORT=8080 NODE_ENV=production):").size(13.0).color(palette.text_muted));
             ui.add(
                 egui::TextEdit::singleline(&mut state.def.environment)
                     .hint_text("PORT=8080")
@@ -2977,7 +2977,7 @@ pub fn render_new_service_modal(
 
             // Action Buttons
             ui.horizontal(|ui| {
-                let btn_cancel = egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
+                let btn_cancel = egui::Button::new(RichText::new("Cancel").size(13.0).color(palette.text_secondary))
                     .fill(Color32::from_rgb(26, 29, 40))
                     .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
                     .rounding(Rounding::same(6.0))
@@ -2989,7 +2989,7 @@ pub fn render_new_service_modal(
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_create = egui::Button::new(
-                        RichText::new(format!("{} Create & Enable Service", crate::lucide::PLAY)).size(12.0).strong().color(Color32::WHITE),
+                        RichText::new(format!("{} Create & Enable Service", crate::lucide::PLAY)).size(13.0).strong().color(Color32::WHITE),
                     )
                     .fill(palette.accent)
                     .rounding(Rounding::same(5.0))
@@ -3106,13 +3106,13 @@ pub fn render_remote_start_server_modal(
 
             // Subtitle: Target host info
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Target Host:").size(11.0).color(palette.text_muted));
+                ui.label(RichText::new("Target Host:").size(13.0).color(palette.text_muted));
                 egui::Frame::none()
                     .fill(palette.accent_subtle)
                     .rounding(Rounding::same(999.0))
                     .inner_margin(egui::Margin::symmetric(8.0, 2.0))
                     .show(ui, |ui| {
-                        ui.label(RichText::new(&state.host_name).size(11.0).strong().color(palette.accent));
+                        ui.label(RichText::new(&state.host_name).size(13.0).strong().color(palette.accent));
                     });
             });
             ui.add_space(8.0);
@@ -3123,13 +3123,13 @@ pub fn render_remote_start_server_modal(
                     .rounding(Rounding::same(8.0))
                     .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                     .show(ui, |ui| {
-                        ui.label(RichText::new(format!("{} {}", crate::lucide::ALERT_TRIANGLE, err)).size(11.0).color(Color32::from_rgb(252, 165, 165)));
+                        ui.label(RichText::new(format!("{} {}", crate::lucide::ALERT_TRIANGLE, err)).size(13.0).color(Color32::from_rgb(252, 165, 165)));
                     });
                 ui.add_space(8.0);
             }
 
             // Server Name
-            ui.label(RichText::new("Server / Service Name:").size(11.5).strong().color(palette.text_primary));
+            ui.label(RichText::new("Server / Service Name:").size(13.0).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::singleline(&mut state.name)
                     .hint_text("e.g. web-app, node-backend, nginx")
@@ -3138,7 +3138,7 @@ pub fn render_remote_start_server_modal(
             ui.add_space(8.0);
 
             // Port (optional)
-            ui.label(RichText::new("Port (optional):").size(11.5).strong().color(palette.text_primary));
+            ui.label(RichText::new("Port (optional):").size(13.0).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::singleline(&mut state.port)
                     .hint_text("e.g. 8080 or 3000")
@@ -3147,7 +3147,7 @@ pub fn render_remote_start_server_modal(
             ui.add_space(8.0);
 
             // Command
-            ui.label(RichText::new("Launch Command:").size(11.5).strong().color(palette.text_primary));
+            ui.label(RichText::new("Launch Command:").size(13.0).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::singleline(&mut state.command)
                     .hint_text("e.g. python3 -m http.server 8080 or npm run dev")
@@ -3156,7 +3156,7 @@ pub fn render_remote_start_server_modal(
             ui.add_space(8.0);
 
             // Working directory
-            ui.label(RichText::new("Working Directory:").size(11.5).strong().color(palette.text_primary));
+            ui.label(RichText::new("Working Directory:").size(13.0).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::singleline(&mut state.cwd)
                     .hint_text("e.g. /var/www or ~/projects/app")
@@ -3166,7 +3166,7 @@ pub fn render_remote_start_server_modal(
 
             // Buttons
             ui.horizontal(|ui| {
-                let btn_cancel = egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
+                let btn_cancel = egui::Button::new(RichText::new("Cancel").size(13.0).color(palette.text_secondary))
                     .fill(Color32::from_rgb(26, 29, 40))
                     .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
                     .rounding(Rounding::same(6.0))
@@ -3178,7 +3178,7 @@ pub fn render_remote_start_server_modal(
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_start = egui::Button::new(
-                        RichText::new(format!("{} Start Server", crate::lucide::PLAY)).size(12.0).strong().color(Color32::WHITE),
+                        RichText::new(format!("{} Start Server", crate::lucide::PLAY)).size(13.0).strong().color(Color32::WHITE),
                     )
                     .fill(Color32::from_rgb(0x05, 0x96, 0x69))
                     .rounding(Rounding::same(999.0))
@@ -3335,13 +3335,13 @@ pub fn render_sudo_modal(
                         ui.vertical(|ui| {
                             ui.label(
                                 RichText::new(format!("'{}' requires sudo / root privileges", script_name))
-                                    .size(12.5)
+                                    .size(13.0)
                                     .strong()
                                     .color(palette.text_primary),
                             );
                             ui.label(
                                 RichText::new(target_desc)
-                                    .size(11.0)
+                                    .size(13.0)
                                     .color(Color32::from_rgb(99, 102, 241)),
                             );
                         });
@@ -3358,8 +3358,8 @@ pub fn render_sudo_modal(
                     .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(crate::lucide::X).size(12.0).color(palette.danger));
-                            ui.label(RichText::new(err).size(11.5).color(palette.danger));
+                            ui.label(RichText::new(crate::lucide::X).size(13.0).color(palette.danger));
+                            ui.label(RichText::new(err).size(13.0).color(palette.danger));
                         });
                     });
                 ui.add_space(8.0);
@@ -3367,7 +3367,7 @@ pub fn render_sudo_modal(
 
             ui.label(
                 RichText::new("Enter Sudo Password:")
-                    .size(12.0)
+                    .size(13.0)
                     .strong()
                     .color(palette.text_primary),
             );
@@ -3386,7 +3386,7 @@ pub fn render_sudo_modal(
                 }
 
                 let eye_btn = egui::Button::new(
-                    RichText::new(if state.show_password { crate::lucide::EYE_OFF } else { crate::lucide::EYE }).size(12.0),
+                    RichText::new(if state.show_password { crate::lucide::EYE_OFF } else { crate::lucide::EYE }).size(13.0),
                 )
                 .fill(Color32::from_rgb(30, 34, 48))
                 .rounding(Rounding::same(6.0));
@@ -3404,7 +3404,7 @@ pub fn render_sudo_modal(
             ui.add_space(6.0);
             ui.label(
                 RichText::new(format!("{} Password is securely provided via askpass helper and not saved.", crate::lucide::LOCK))
-                    .size(10.5)
+                    .size(13.0)
                     .color(palette.text_muted),
             );
 
@@ -3414,7 +3414,7 @@ pub fn render_sudo_modal(
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_submit = egui::Button::new(
                         RichText::new(format!("{} Authenticate & Run", crate::lucide::PLAY))
-                            .size(12.0)
+                            .size(13.0)
                             .strong()
                             .color(Color32::WHITE),
                     )
@@ -3428,7 +3428,7 @@ pub fn render_sudo_modal(
 
                     let btn_cancel = egui::Button::new(
                         RichText::new("Cancel")
-                            .size(12.0)
+                            .size(13.0)
                             .color(palette.text_muted),
                     )
                     .fill(Color32::from_rgb(30, 34, 48))
@@ -3581,7 +3581,7 @@ pub fn render_remote_reboot_modal(
                             );
                             ui.label(
                                 RichText::new(format!("ssh://{}@{}:{}", host.user, host.host, host.port))
-                                    .size(11.0)
+                                    .size(13.0)
                                     .monospace()
                                     .color(Color32::from_rgb(248, 113, 113)),
                             );
@@ -3590,7 +3590,7 @@ pub fn render_remote_reboot_modal(
                     ui.add_space(6.0);
                     ui.label(
                         RichText::new("Warning: Restarting will terminate all running services and active SSH connections. The device will be unavailable until reboot completes.")
-                            .size(11.0)
+                            .size(13.0)
                             .color(Color32::from_rgb(203, 213, 225)),
                     );
                 });
@@ -3605,8 +3605,8 @@ pub fn render_remote_reboot_modal(
                     .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(crate::lucide::X).size(12.0).color(palette.danger));
-                            ui.label(RichText::new(err).size(11.5).color(palette.danger));
+                            ui.label(RichText::new(crate::lucide::X).size(13.0).color(palette.danger));
+                            ui.label(RichText::new(err).size(13.0).color(palette.danger));
                         });
                     });
                 ui.add_space(8.0);
@@ -3614,7 +3614,7 @@ pub fn render_remote_reboot_modal(
 
             ui.label(
                 RichText::new(format!("SSH / Sudo Password for {}:", host.user))
-                    .size(12.0)
+                    .size(13.0)
                     .strong()
                     .color(palette.text_primary),
             );
@@ -3633,7 +3633,7 @@ pub fn render_remote_reboot_modal(
                 }
 
                 let eye_btn = egui::Button::new(
-                    RichText::new(if state.show_password { crate::lucide::EYE_OFF } else { crate::lucide::EYE }).size(12.0),
+                    RichText::new(if state.show_password { crate::lucide::EYE_OFF } else { crate::lucide::EYE }).size(13.0),
                 )
                 .fill(Color32::from_rgb(30, 34, 48))
                 .rounding(Rounding::same(6.0));
@@ -3651,7 +3651,7 @@ pub fn render_remote_reboot_modal(
             ui.add_space(6.0);
             ui.label(
                 RichText::new(format!("{} Password will be piped to sudo reboot on the remote host.", crate::lucide::LOCK))
-                    .size(10.5)
+                    .size(13.0)
                     .color(palette.text_muted),
             );
 
@@ -3661,7 +3661,7 @@ pub fn render_remote_reboot_modal(
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_submit = egui::Button::new(
                         RichText::new(format!("{} Restart Device", crate::lucide::REFRESH_CW))
-                            .size(12.0)
+                            .size(13.0)
                             .strong()
                             .color(Color32::WHITE),
                     )
@@ -3675,7 +3675,7 @@ pub fn render_remote_reboot_modal(
 
                     let btn_cancel = egui::Button::new(
                         RichText::new("Cancel")
-                            .size(12.0)
+                            .size(13.0)
                             .color(palette.text_muted),
                     )
                     .fill(Color32::from_rgb(30, 34, 48))
@@ -3812,7 +3812,7 @@ pub fn render_remote_shutdown_modal(
                             );
                             ui.label(
                                 RichText::new(format!("ssh://{}@{}:{}", host.user, host.host, host.port))
-                                    .size(11.0)
+                                    .size(13.0)
                                     .monospace()
                                     .color(Color32::from_rgb(248, 113, 113)),
                             );
@@ -3821,7 +3821,7 @@ pub fn render_remote_shutdown_modal(
                     ui.add_space(6.0);
                     ui.label(
                         RichText::new("Warning: Shutting down will completely power off the remote system. You will not be able to reconnect remotely until it is manually turned back on or started via Wake-on-LAN.")
-                            .size(11.0)
+                            .size(13.0)
                             .color(Color32::from_rgb(203, 213, 225)),
                     );
                 });
@@ -3836,8 +3836,8 @@ pub fn render_remote_shutdown_modal(
                     .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(crate::lucide::X).size(12.0).color(palette.danger));
-                            ui.label(RichText::new(err).size(11.5).color(palette.danger));
+                            ui.label(RichText::new(crate::lucide::X).size(13.0).color(palette.danger));
+                            ui.label(RichText::new(err).size(13.0).color(palette.danger));
                         });
                     });
                 ui.add_space(8.0);
@@ -3845,7 +3845,7 @@ pub fn render_remote_shutdown_modal(
 
             ui.label(
                 RichText::new(format!("SSH / Sudo Password for {}:", host.user))
-                    .size(12.0)
+                    .size(13.0)
                     .strong()
                     .color(palette.text_primary),
             );
@@ -3864,7 +3864,7 @@ pub fn render_remote_shutdown_modal(
                 }
 
                 let eye_btn = egui::Button::new(
-                    RichText::new(if state.show_password { crate::lucide::EYE_OFF } else { crate::lucide::EYE }).size(12.0),
+                    RichText::new(if state.show_password { crate::lucide::EYE_OFF } else { crate::lucide::EYE }).size(13.0),
                 )
                 .fill(Color32::from_rgb(30, 34, 48))
                 .rounding(Rounding::same(6.0));
@@ -3882,7 +3882,7 @@ pub fn render_remote_shutdown_modal(
             ui.add_space(6.0);
             ui.label(
                 RichText::new(format!("{} Password will be piped to sudo poweroff on the remote host.", crate::lucide::LOCK))
-                    .size(10.5)
+                    .size(13.0)
                     .color(palette.text_muted),
             );
 
@@ -3892,7 +3892,7 @@ pub fn render_remote_shutdown_modal(
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_submit = egui::Button::new(
                         RichText::new(format!("{} Shut Down", crate::lucide::POWER))
-                            .size(12.0)
+                            .size(13.0)
                             .strong()
                             .color(Color32::WHITE),
                     )
@@ -3906,7 +3906,7 @@ pub fn render_remote_shutdown_modal(
 
                     let btn_cancel = egui::Button::new(
                         RichText::new("Cancel")
-                            .size(12.0)
+                            .size(13.0)
                             .color(palette.text_muted),
                     )
                     .fill(Color32::from_rgb(30, 34, 48))

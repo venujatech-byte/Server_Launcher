@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+#[cfg(not(windows))]
 use std::fs;
+#[cfg(not(windows))]
 use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -278,6 +280,8 @@ pub struct SystemSensorsCollector {
     prev_proc_disk: HashMap<u32, (u64, u64)>,
     prev_proc_net: HashMap<u32, (u64, u64)>,
     prev_proc_net_time: Instant,
+    #[cfg(windows)]
+    windows_hardware: SystemSensorsSnapshot,
 }
 
 impl Default for SystemSensorsCollector {
@@ -313,6 +317,8 @@ impl SystemSensorsCollector {
             prev_proc_disk: HashMap::new(),
             prev_proc_net: HashMap::new(),
             prev_proc_net_time: now,
+            #[cfg(windows)]
+            windows_hardware: SystemSensorsSnapshot::default(),
         }
     }
 
@@ -320,6 +326,7 @@ impl SystemSensorsCollector {
         self.collect_with_top_apps(true)
     }
 
+    #[cfg(not(windows))]
     pub fn collect_with_top_apps(&mut self, include_top_apps: bool) -> SystemSensorsSnapshot {
         // 1. Refresh System
         self.sys.refresh_cpu_all();
@@ -878,6 +885,7 @@ impl SystemSensorsCollector {
     }
 }
 
+#[cfg_attr(windows, allow(unused_mut))]
 fn collect_proc_diskstats() -> HashMap<String, (u64, u64)> {
     let mut stats = HashMap::new();
     #[cfg(target_os = "linux")]
@@ -924,6 +932,7 @@ fn is_base_physical_disk(dev: &str) -> bool {
     true
 }
 
+#[cfg_attr(windows, allow(unused_mut))]
 pub fn collect_physical_disks() -> Vec<PhysicalDiskInfo> {
     let mut physical_disks = Vec::new();
     #[cfg(target_os = "linux")]
@@ -1080,6 +1089,7 @@ fn categorize_sensor(label: &str, chip: &str) -> SensorCategory {
     }
 }
 
+#[cfg_attr(windows, allow(unused_mut))]
 pub fn collect_hwmon_sensors() -> Vec<TempSensor> {
     let mut result = Vec::new();
 
@@ -1394,6 +1404,12 @@ pub fn detect_memory_hardware(cpu_brand: &str, mem_total_bytes: u64) -> MemoryHa
 }
 
 /// Flushes system page cache, dentries, and triggers memory compaction.
+#[cfg(windows)]
+pub fn flush_system_memory() -> Result<String, String> {
+    Err("Windows manages standby memory automatically; cache flushing is unavailable.".into())
+}
+
+#[cfg(not(windows))]
 pub fn flush_system_memory() -> Result<String, String> {
     // 1. Flush dirty pages from cache to disk first
     let _ = Command::new("sync").output();
@@ -1451,6 +1467,7 @@ pub fn detect_active_fans() -> bool {
     false
 }
 
+#[cfg_attr(windows, allow(unused_mut))]
 pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32>) {
     let mut freqs = Vec::new();
     let mut cpu_power_watts = None;
@@ -1554,6 +1571,10 @@ pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32
     (freqs, cpu_power_watts, cpu_tdp_watts)
 }
 
+#[cfg(windows)]
+pub fn collect_power_supply() -> PowerSupplyInfo { collect_windows_hardware().power }
+
+#[cfg(not(windows))]
 pub fn collect_power_supply() -> PowerSupplyInfo {
     let mut ac_online = None;
     let mut batteries = Vec::new();
@@ -1843,6 +1864,8 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
 static HAS_NVIDIA_SMI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
+    #[cfg(windows)]
+    let _ = known_temp;
     let mut gpus = Vec::new();
 
     // 1. Check NVIDIA via nvidia-smi if available
@@ -2149,6 +2172,7 @@ fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
     gpus
 }
 
+#[cfg_attr(windows, allow(unused_mut))]
 pub fn detect_displays() -> Vec<DisplayInfo> {
     let mut displays = Vec::new();
 
@@ -3761,14 +3785,18 @@ mod tests {
         let mut collector = SystemSensorsCollector::new();
         let snap = collector.collect();
 
-        // CPU Power watts is guaranteed to be populated
-        assert!(snap.cpu_power_watts.is_some());
-        let p_watts = snap.cpu_power_watts.unwrap();
-        assert!(p_watts > 0.0, "CPU power usage should be positive, got {}", p_watts);
+        #[cfg(not(windows))]
+        {
+            let p_watts = snap.cpu_power_watts.expect("Linux power model should provide watts");
+            assert!(p_watts > 0.0, "CPU power usage should be positive, got {}", p_watts);
+        }
+        #[cfg(windows)]
+        assert!(snap.cpu_power_watts.is_none());
 
         // Top apps should have running processes
         assert!(!snap.top_apps.is_empty(), "top_apps should not be empty on a running system");
         for app in &snap.top_apps {
+            #[cfg(not(windows))]
             assert!(app.pid > 0);
             assert!(app.cpu_usage >= 0.0);
             assert!(app.disk_read_rate_bps >= 0.0);
@@ -3777,5 +3805,218 @@ mod tests {
             assert!(app.net_rate_bps >= 0.0);
             assert!(!app.status.is_empty());
         }
+    }
+}
+
+#[cfg(windows)]
+impl SystemSensorsCollector {
+    /// Native counters are sampled frequently; CIM hardware discovery is cached separately.
+    pub fn collect_with_top_apps(&mut self, include_top_apps: bool) -> SystemSensorsSnapshot {
+        self.sys.refresh_cpu_all();
+        self.sys.refresh_memory();
+        self.disks.refresh();
+        self.networks.refresh();
+        let now = Instant::now();
+        if self.last_hardware_scan.elapsed() >= Duration::from_secs(30) {
+            self.disks.refresh_list();
+            self.networks.refresh_list();
+            self.windows_hardware = collect_windows_hardware();
+            self.last_hardware_scan = now;
+        }
+        let mut snap = self.windows_hardware.clone();
+        snap.cpu_brand = self.sys.cpus().first().map(|c| c.brand().to_owned()).unwrap_or_default();
+        snap.cpu_cores_physical = self.sys.physical_core_count().unwrap_or(1);
+        snap.cpu_cores_logical = self.sys.cpus().len();
+        snap.cpu_global_usage = self.sys.global_cpu_usage();
+        snap.cpu_core_usages = self.sys.cpus().iter().map(|c| c.cpu_usage()).collect();
+        snap.cpu_frequencies_mhz = self.sys.cpus().iter().map(|c| c.frequency()).collect();
+        snap.cpu_frequency_mhz = snap.cpu_frequencies_mhz.iter().sum::<u64>() / snap.cpu_cores_logical.max(1) as u64;
+        snap.mem_total_bytes = self.sys.total_memory();
+        snap.mem_used_bytes = self.sys.used_memory();
+        snap.mem_free_bytes = self.sys.available_memory();
+        snap.mem_usage_pct = percentage(snap.mem_used_bytes, snap.mem_total_bytes);
+        snap.swap_total_bytes = self.sys.total_swap();
+        snap.swap_used_bytes = self.sys.used_swap();
+        snap.swap_usage_pct = percentage(snap.swap_used_bytes, snap.swap_total_bytes);
+        snap.disks = self.disks.iter().map(|d| {
+            let total = d.total_space();
+            let available = d.available_space();
+            DiskInfo {
+                name: d.name().to_string_lossy().into_owned(),
+                mount_point: d.mount_point().display().to_string(),
+                fs_type: d.file_system().to_string_lossy().into_owned(),
+                total_bytes: total, available_bytes: available,
+                used_bytes: total.saturating_sub(available),
+                usage_pct: percentage(total.saturating_sub(available), total),
+                ..Default::default()
+            }
+        }).collect();
+        let elapsed = now.duration_since(self.prev_net_time).as_secs_f64().max(0.001);
+        for (name, data) in &self.networks {
+            let rx = data.total_received();
+            let tx = data.total_transmitted();
+            let prev_rx = self.prev_net_rx.insert(name.clone(), rx).unwrap_or(rx);
+            let prev_tx = self.prev_net_tx.insert(name.clone(), tx).unwrap_or(tx);
+            let rx_rate = rx.saturating_sub(prev_rx) as f64 / elapsed;
+            let tx_rate = tx.saturating_sub(prev_tx) as f64 / elapsed;
+            snap.total_rx_bytes += rx;
+            snap.total_tx_bytes += tx;
+            snap.total_rx_rate_bps += rx_rate;
+            snap.total_tx_rate_bps += tx_rate;
+            snap.networks.push(NetInterfaceInfo {
+                name: name.clone(), rx_bytes: rx, tx_bytes: tx,
+                rx_rate_bps: rx_rate, tx_rate_bps: tx_rate,
+                is_wireless: name.to_ascii_lowercase().contains("wi-fi"),
+            });
+        }
+        self.prev_net_time = now;
+        if include_top_apps {
+            self.sys.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All,
+                sysinfo::ProcessRefreshKind::new().with_cpu().with_memory().with_disk_usage());
+            let elapsed = now.duration_since(self.prev_disk_time).as_secs_f64().max(0.001);
+            for (pid, process) in self.sys.processes() {
+                let disk = process.disk_usage();
+                let (prev_r, prev_w) = self.prev_proc_disk.insert(pid.as_u32(),
+                    (disk.total_read_bytes, disk.total_written_bytes))
+                    .unwrap_or((disk.total_read_bytes, disk.total_written_bytes));
+                let read = disk.total_read_bytes.saturating_sub(prev_r) as f64 / elapsed;
+                let write = disk.total_written_bytes.saturating_sub(prev_w) as f64 / elapsed;
+                snap.top_apps.push(ProcessSensorInfo {
+                    pid: pid.as_u32(), name: process.name().to_string_lossy().into_owned(),
+                    cpu_usage: process.cpu_usage(), memory_bytes: process.memory(),
+                    disk_read_bytes: disk.total_read_bytes, disk_written_bytes: disk.total_written_bytes,
+                    disk_read_rate_bps: read, disk_write_rate_bps: write, disk_rate_bps: read + write,
+                    status: format!("{:?}", process.status()), ..Default::default()
+                });
+            }
+            self.prev_proc_disk.retain(|pid, _| self.sys.process(sysinfo::Pid::from_u32(*pid)).is_some());
+            snap.top_apps.sort_unstable_by(|a,b| b.cpu_usage.total_cmp(&a.cpu_usage).then(b.memory_bytes.cmp(&a.memory_bytes)));
+            snap.top_apps.truncate(250);
+            self.prev_disk_time = now;
+        }
+        snap.os_name = System::name().unwrap_or_else(|| "Windows".into());
+        snap.os_version = System::os_version().unwrap_or_default();
+        snap.uptime_secs = System::uptime();
+        snap.timestamp = Some(now);
+        snap
+    }
+}
+
+#[cfg(any(windows, test))]
+fn percentage(used: u64, total: u64) -> f32 {
+    if total == 0 { 0.0 } else { (used as f64 / total as f64 * 100.0) as f32 }
+}
+
+#[cfg(windows)]
+fn collect_windows_hardware() -> SystemSensorsSnapshot {
+    use std::os::windows::process::CommandExt;
+    use std::io::Read;
+    // shortcut: temperature telemetry needs LibreHardwareMonitor's WMI provider; add a native driver only if required.
+    let script = r#"$ErrorActionPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new();
+$gpu=@(Get-CimInstance Win32_VideoController | Select-Object Name,DriverVersion);
+$ram=@(Get-CimInstance Win32_PhysicalMemory | Select-Object Manufacturer,Capacity,Speed,SMBIOSMemoryType,FormFactor);
+$battery=@(Get-CimInstance Win32_Battery | Select-Object Name,EstimatedChargeRemaining,BatteryStatus);
+$temp=@(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor | Where-Object SensorType -eq Temperature | Select-Object Name,Value,Identifier);
+@{gpu=$gpu;ram=$ram;battery=$battery;temp=$temp}|ConvertTo-Json -Depth 4 -Compress"#;
+    let Ok(mut child) = Command::new("powershell.exe")
+        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script])
+        .creation_flags(0x08000000).stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn() else {
+            return SystemSensorsSnapshot::default();
+        };
+    // Drain output concurrently so a large inventory cannot block on a full pipe.
+    let stdout = child.stdout.take();
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(stdout) = stdout { let _ = stdout.take(1024 * 1024).read_to_end(&mut bytes); }
+        bytes
+    });
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(_)) | Err(_) => return SystemSensorsSnapshot::default(),
+            _ if started.elapsed() > Duration::from_secs(8) => {
+                let _ = child.kill(); let _ = child.wait();
+                return SystemSensorsSnapshot::default();
+            }
+            _ => std::thread::sleep(Duration::from_millis(50)),
+        }
+    }
+    reader.join().ok().and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .map(|data| parse_windows_hardware(&data)).unwrap_or_default()
+}
+
+#[cfg(any(windows, test))]
+fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
+    let mut snap = SystemSensorsSnapshot::default();
+    if let Some(gpus) = data["gpu"].as_array() {
+        snap.gpus = gpus.iter().map(|g| GpuSensorInfo {
+            name: g["Name"].as_str().unwrap_or_default().into(),
+            driver: g["DriverVersion"].as_str().unwrap_or_default().into(),
+            ..Default::default()
+        }).collect();
+    }
+    if let Some(temps) = data["temp"].as_array() {
+        for t in temps {
+            let Some(temp) = t["Value"].as_f64().filter(|v| v.is_finite() && *v > -50.0 && *v < 200.0) else { continue; };
+            let name = t["Name"].as_str().unwrap_or("Temperature");
+            let id = t["Identifier"].as_str().unwrap_or_default();
+            let category = if id.contains("cpu") { SensorCategory::Cpu }
+                else if id.contains("gpu") { SensorCategory::Gpu }
+                else if id.contains("hdd") || id.contains("nvme") { SensorCategory::Storage }
+                else { SensorCategory::System };
+            match category {
+                SensorCategory::Cpu => snap.cpu_temp = Some(temp as f32),
+                SensorCategory::Gpu => {},
+                SensorCategory::Storage => snap.storage_temp = Some(temp as f32),
+                _ => {},
+            }
+            snap.temp_sensors.push(TempSensor { name: name.into(), chip: "LibreHardwareMonitor".into(),
+                temp: temp as f32, category, ..Default::default() });
+        }
+    }
+    if let Some(batteries) = data["battery"].as_array() {
+        for b in batteries {
+            let Some(percent) = b["EstimatedChargeRemaining"].as_f64().filter(|v| (0.0..=100.0).contains(v)) else { continue; };
+            snap.power.batteries.push(BatteryInfo {
+                name: b["Name"].as_str().unwrap_or("Battery").into(), present: true,
+                capacity_pct: percent as f32,
+                status: match b["BatteryStatus"].as_u64() { Some(1) => "Discharging", Some(2) => "AC connected", Some(3) => "Fully charged", _ => "Unknown" }.into(),
+                ..Default::default()
+            });
+        }
+        if !snap.power.batteries.is_empty() {
+            snap.power.total_battery_pct = Some(snap.power.batteries.iter().map(|b| b.capacity_pct).sum::<f32>() / snap.power.batteries.len() as f32);
+        }
+    }
+    if let Some(ram) = data["ram"].as_array().filter(|r| !r.is_empty()) {
+        snap.memory_hw = Some(MemoryHardwareInfo {
+            slot_summary: format!("{} populated modules", ram.len()),
+            module_spec: ram.iter().map(|r| format!("{} · {} MHz · {}", r["Manufacturer"].as_str().unwrap_or("Unknown"), r["Speed"], format_bytes(r["Capacity"].as_u64().unwrap_or(0)))).collect::<Vec<_>>().join("; "),
+            ..Default::default()
+        });
+    }
+    snap
+}
+
+#[cfg(test)]
+mod windows_sensor_tests {
+    use super::*;
+    #[test]
+    fn missing_hardware_stays_unavailable_and_invalid_temperatures_are_rejected() {
+        let empty = parse_windows_hardware(&serde_json::json!({}));
+        assert!(empty.cpu_power_watts.is_none() && empty.cpu_temp.is_none());
+        assert!(empty.power.total_battery_pct.is_none());
+        let snap = parse_windows_hardware(&serde_json::json!({
+            "temp": [{"Name":"Package", "Identifier":"/intelcpu/0", "Value":65.5},
+                     {"Name":"Bad", "Value":999}],
+            "battery": [{"Name":"Battery", "EstimatedChargeRemaining":72, "BatteryStatus":1}]
+        }));
+        assert_eq!(snap.cpu_temp, Some(65.5));
+        assert_eq!(snap.temp_sensors.len(), 1);
+        assert_eq!(snap.power.total_battery_pct, Some(72.0));
+        assert_eq!(percentage(1, 0), 0.0);
+        assert_eq!(percentage(25, 100), 25.0);
     }
 }

@@ -45,6 +45,10 @@ impl ScriptExecution {
     pub fn stop(&mut self) {
         self.cancel_flag.store(true, Ordering::SeqCst);
         if let Some(pid) = self.pid {
+            #[cfg(windows)]
+            if self.status.lock().map(|status| *status == ScriptRunStatus::Running).unwrap_or(false) {
+                crate::commands::stop_process_tree(pid);
+            }
             #[cfg(unix)]
             unsafe {
                 libc::kill(pid as i32, libc::SIGTERM);
@@ -206,12 +210,12 @@ pub fn execute_local_script(
     execution.started_at = Some(Instant::now());
 
     let shell = if script.shell.trim().is_empty() {
-        "bash"
+        if cfg!(windows) { "powershell.exe" } else { "bash" }
     } else {
         script.shell.trim()
     };
 
-    let askpass_setup = if let Some(pwd) = sudo_password {
+    let askpass_setup: Option<(std::path::PathBuf, std::path::PathBuf)> = if let Some(pwd) = sudo_password {
         if !pwd.is_empty() {
             #[cfg(unix)]
             {
@@ -265,7 +269,15 @@ pub fn execute_local_script(
         script.script.clone()
     };
 
-    cmd.arg("-c").arg(&script_cmd);
+    if shell.eq_ignore_ascii_case("cmd") || shell.eq_ignore_ascii_case("cmd.exe") {
+        cmd.args(["/D", "/S", "/C"]).arg(&script_cmd);
+    } else if ["powershell", "powershell.exe", "pwsh", "pwsh.exe"].iter().any(|name| shell.eq_ignore_ascii_case(name)) {
+        cmd.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"])
+            .arg(format!("[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); & {{ {} }}; if (-not $?) {{ exit 1 }}; if ($null -ne $LASTEXITCODE) {{ exit $LASTEXITCODE }}", script_cmd));
+    } else {
+        cmd.arg("-c").arg(&script_cmd);
+    }
+    crate::commands::hide_console(&mut cmd);
 
     let cwd = script.cwd.trim();
     if !cwd.is_empty() {
@@ -444,6 +456,7 @@ pub fn execute_remote_script(
     };
 
     let mut cmd = build_ssh_command(host, &remote_wrapper);
+    crate::commands::hide_console(&mut cmd);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
@@ -592,9 +605,12 @@ impl ScriptModalState {
         self.is_edit = false;
         self.id = format!("script_{}", chrono::Utc::now().timestamp_millis());
         self.name = String::new();
-        self.shell = "bash".to_string();
+        self.shell = if cfg!(windows) && current_host.is_none() { "powershell.exe" } else { "bash" }.to_string();
         self.cwd = String::new();
         self.script_body = "#!/bin/bash\necho \"Running custom script...\"\n".to_string();
+        if cfg!(windows) && current_host.is_none() {
+            self.script_body = "Write-Output 'Running custom script...'\n".to_string();
+        }
         self.autostart = false;
         self.host_id = current_host;
         self.error = None;
@@ -617,6 +633,19 @@ impl ScriptModalState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_script_default_matches_platform_and_remote_stays_bash() {
+        let mut state = ScriptModalState::default();
+        state.open_create(None);
+        assert_eq!(state.shell, if cfg!(windows) { "powershell.exe" } else { "bash" });
+        if cfg!(windows) {
+            assert!(state.script_body.starts_with("Write-Output"));
+        }
+        state.open_create(Some("linux-host".into()));
+        assert_eq!(state.shell, "bash");
+        assert!(state.script_body.starts_with("#!/bin/bash"));
+    }
 
     #[test]
     fn test_shlex_quote() {

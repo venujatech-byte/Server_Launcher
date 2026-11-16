@@ -89,9 +89,72 @@ jobs:
             server_launcher_rust/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
 
+  build-windows:
+    name: Build Windows packages (x86_64)
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server_launcher_windows
+
+      - name: Check Windows app and tests
+        working-directory: server_launcher_windows
+        run: cargo check --locked --tests --target x86_64-pc-windows-msvc
+
+      - name: Set package version
+        id: package_version
+        shell: bash
+        working-directory: server_launcher_windows
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            PACKAGE_VERSION="${GITHUB_REF_NAME#v}"
+          else
+            BASE_VERSION=$(grep -m1 '^version = ' Cargo.toml | cut -d '"' -f 2)
+            PACKAGE_VERSION="${BASE_VERSION%.*}.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "version=${PACKAGE_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version '^2' --locked
+
+      - name: Build Windows packages
+        shell: bash
+        env:
+          PACKAGE_VERSION: ${{ steps.package_version.outputs.version }}
+        working-directory: server_launcher_windows
+        run: cargo tauri build --bundles nsis,msi --config "{\"version\":\"${PACKAGE_VERSION}\"}"
+
+      - name: Package Windows binary
+        shell: pwsh
+        run: |
+          Compress-Archive -Path server_launcher_windows/target/release/server_launcher_windows.exe -DestinationPath server_launcher-windows-x86_64.zip
+          foreach ($pattern in @('server_launcher_windows/target/release/bundle/nsis/*-setup.exe', 'server_launcher_windows/target/release/bundle/msi/*.msi')) {
+            if (-not (Test-Path $pattern)) { throw "Missing Windows package: $pattern" }
+          }
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: server_launcher-windows-x86_64-packages
+          path: |
+            server_launcher-windows-x86_64.zip
+            server_launcher_windows/target/release/bundle/nsis/*-setup.exe
+            server_launcher_windows/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
   publish:
     name: Publish Release
-    needs: build
+    needs: [build, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -107,11 +170,11 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Verify Linux package assets
+      - name: Verify Linux and Windows package assets
         run: |
-          for extension in deb rpm AppImage; do
+          for extension in deb rpm AppImage msi exe zip; do
             if ! find release-assets -type f -name "*.${extension}" -print -quit | grep -q .; then
-              echo "::error::Missing Linux package: .${extension}"
+              echo "::error::Missing release package: .${extension}"
               exit 1
             fi
           done
@@ -145,6 +208,7 @@ jobs:
             printf -- '- **Commit**: [%s](%s/%s/commit/%s)\n' "$BUILD_SHA" "$SERVER_URL" "$REPOSITORY" "$BUILD_SHA"
             printf -- '- **Branch**: `%s`\n' "$BRANCH_NAME"
             printf '%s\n' '- **Linux packages**: `.deb`, `.rpm`, `.AppImage`, and `server_launcher-linux-x86_64.tar.gz`'
+            printf '%s\n' '- **Windows packages**: `.msi`, NSIS `-setup.exe`, and `server_launcher-windows-x86_64.zip`'
             printf '\n%s\n' '### Commit messages since the previous build'
             if [[ -n "$PREVIOUS_BUILD" ]]; then
               git log --reverse --format='- %s (`%h`)' "$PREVIOUS_BUILD..$BUILD_SHA"

@@ -8,6 +8,35 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+
+/// Background console programs must not flash a console over the GUI.
+pub fn hide_console(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    #[cfg(not(windows))]
+    let _ = command;
+}
+
+#[cfg(windows)]
+pub fn stop_process_tree(pid: u32) {
+    let mut command = Command::new("taskkill.exe");
+    command.args(["/F", "/T", "/PID", &pid.to_string()]);
+    hide_console(&mut command);
+    let _ = command.output();
+}
+
+#[cfg(windows)]
+fn powershell_command(text: &str) -> Command {
+    let mut command = Command::new("powershell.exe");
+    command.args(["-NoLogo", "-NoProfile", "-Command"]);
+    // PowerShell's native output encoding otherwise depends on the user's profile.
+    command.arg(format!("[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); $OutputEncoding = [Console]::OutputEncoding; & {{ {} }}; if (-not $?) {{ exit 1 }}; if ($null -ne $LASTEXITCODE) {{ exit $LASTEXITCODE }}", text));
+    command
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalCommandStatus {
     Idle,
@@ -69,8 +98,10 @@ impl TerminalSession {
     pub fn send_stdin(&mut self, text: &str) -> bool {
         if let Some(stdin_arc) = &self.stdin_writer {
             if let Ok(mut writer) = stdin_arc.lock() {
-                let _ = writeln!(writer, "{}", text);
-                let _ = writer.flush();
+                let line_ending = if cfg!(windows) { "\r\n" } else { "\n" };
+                if write!(writer, "{}{}", text, line_ending).and_then(|_| writer.flush()).is_err() {
+                    return false;
+                }
                 if let Ok(mut l) = self.logs.lock() {
                     l.push_back(LogEntry::new(text.to_string(), LogKind::Stdin));
                 }
@@ -91,6 +122,10 @@ impl TerminalSession {
 
     pub fn interrupt(&mut self) {
         if let Some(pid) = self.running_pid {
+            #[cfg(windows)]
+            if self.is_running() {
+                stop_process_tree(pid);
+            }
             #[cfg(unix)]
             unsafe {
                 libc::kill(pid as i32, libc::SIGINT);
@@ -112,7 +147,7 @@ impl TerminalSession {
         }
         if let Ok(mut st) = self.status.lock() {
             if matches!(*st, TerminalCommandStatus::Running(_)) {
-                *st = TerminalCommandStatus::Failed("Interrupted (SIGINT)".to_string());
+                *st = TerminalCommandStatus::Failed("Interrupted".to_string());
             }
         }
         if let Ok(mut l) = self.logs.lock() {
@@ -127,6 +162,9 @@ impl TerminalSession {
         if let Some(h) = host {
             format!("{}@{}:~$ ", h.user, h.host)
         } else {
+            if cfg!(windows) {
+                return format!("PS {}> ", self.cwd.display());
+            }
             let username = std::env::var("USER")
                 .or_else(|_| std::env::var("USERNAME"))
                 .unwrap_or_else(|_| "user".to_string());
@@ -314,7 +352,7 @@ impl TerminalSession {
                 l.push_back(LogEntry::new("  pwd          Print current working directory".to_string(), LogKind::Stdout));
                 l.push_back(LogEntry::new("  clear / cls  Clear terminal output".to_string(), LogKind::Stdout));
                 l.push_back(LogEntry::new("  history      Show command history".to_string(), LogKind::Stdout));
-                l.push_back(LogEntry::new("  Ctrl + C     Interrupt running command (SIGINT) or clear line".to_string(), LogKind::Stdout));
+                l.push_back(LogEntry::new("  Ctrl + C     Stop running command tree or clear line".to_string(), LogKind::Stdout));
                 l.push_back(LogEntry::new("  Ctrl + L     Clear terminal screen".to_string(), LogKind::Stdout));
                 l.push_back(LogEntry::new("  Up / Down    Navigate command history".to_string(), LogKind::Stdout));
                 l.push_back(LogEntry::new("  Tab          Auto-complete paths and files".to_string(), LogKind::Stdout));
@@ -333,12 +371,13 @@ impl TerminalSession {
                 trimmed["cd ".len()..].trim()
             };
 
+            let target_str = target_str.trim_matches(|c| c == '\'' || c == '"');
             let target_path = if target_str == "-" {
                 if let Some(prev) = &self.prev_cwd {
                     prev.clone()
                 } else {
                     if let Ok(mut l) = self.logs.lock() {
-                        l.push_back(LogEntry::new("bash: cd: OLDPWD not set".to_string(), LogKind::Stderr));
+                        l.push_back(LogEntry::new("cd: OLDPWD not set".to_string(), LogKind::Stderr));
                     }
                     return;
                 }
@@ -368,7 +407,7 @@ impl TerminalSession {
                         }
                     } else {
                         if let Ok(mut l) = self.logs.lock() {
-                            l.push_back(LogEntry::new(format!("bash: cd: {}: Not a directory", target_str), LogKind::Stderr));
+                            l.push_back(LogEntry::new(format!("cd: {}: Not a directory", target_str), LogKind::Stderr));
                         }
                         if let Ok(mut st) = self.status.lock() {
                             *st = TerminalCommandStatus::Failed("Not a directory".to_string());
@@ -377,7 +416,7 @@ impl TerminalSession {
                 }
                 Err(_) => {
                     if let Ok(mut l) = self.logs.lock() {
-                        l.push_back(LogEntry::new(format!("bash: cd: {}: No such file or directory", target_str), LogKind::Stderr));
+                        l.push_back(LogEntry::new(format!("cd: {}: No such file or directory", target_str), LogKind::Stderr));
                     }
                     if let Ok(mut st) = self.status.lock() {
                         *st = TerminalCommandStatus::Failed("No such file or directory".to_string());
@@ -392,11 +431,7 @@ impl TerminalSession {
         }
 
         #[cfg(target_os = "windows")]
-        let mut command = {
-            let mut c = Command::new("cmd");
-            c.arg("/C").arg(trimmed);
-            c
-        };
+        let mut command = powershell_command(trimmed);
 
         #[cfg(not(target_os = "windows"))]
         let mut command = {
@@ -410,6 +445,7 @@ impl TerminalSession {
         } else {
             self.cwd.clone()
         };
+        hide_console(&mut command);
         command.current_dir(run_dir);
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
@@ -477,12 +513,16 @@ impl TerminalSession {
                 let status_clone = Arc::clone(&status_arc);
                 let child_wait = Arc::clone(&child_arc);
                 thread::spawn(move || {
-                    let exit = {
-                        let mut lock = child_wait.lock().unwrap();
-                        if let Some(c) = lock.as_mut() {
-                            c.wait().ok()
-                        } else {
-                            None
+                    // Release the child lock between polls so Stop can acquire it.
+                    let exit = loop {
+                        let result = {
+                            let mut lock = child_wait.lock().unwrap();
+                            lock.as_mut().map(|child| child.try_wait())
+                        };
+                        match result {
+                            Some(Ok(Some(exit))) => break Some(exit),
+                            Some(Ok(None)) => thread::sleep(std::time::Duration::from_millis(50)),
+                            _ => break None,
                         }
                     };
 
@@ -546,6 +586,7 @@ impl TerminalSession {
         }
 
         let mut command = build_ssh_command(host, trimmed);
+        hide_console(&mut command);
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
@@ -612,12 +653,16 @@ impl TerminalSession {
                 let status_clone = Arc::clone(&status_arc);
                 let child_wait = Arc::clone(&child_arc);
                 thread::spawn(move || {
-                    let exit = {
-                        let mut lock = child_wait.lock().unwrap();
-                        if let Some(c) = lock.as_mut() {
-                            c.wait().ok()
-                        } else {
-                            None
+                    // Release the child lock between polls so Stop can acquire it.
+                    let exit = loop {
+                        let result = {
+                            let mut lock = child_wait.lock().unwrap();
+                            lock.as_mut().map(|child| child.try_wait())
+                        };
+                        match result {
+                            Some(Ok(Some(exit))) => break Some(exit),
+                            Some(Ok(None)) => thread::sleep(std::time::Duration::from_millis(50)),
+                            _ => break None,
                         }
                     };
 
@@ -647,13 +692,13 @@ impl TerminalSession {
 pub fn open_system_terminal(cwd: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        Command::new("cmd")
-            .arg("/C")
-            .arg("start")
-            .arg("cmd.exe")
+        use std::os::windows::process::CommandExt;
+        Command::new("powershell.exe")
+            .args(["-NoLogo", "-NoProfile", "-NoExit"])
+            .creation_flags(0x00000010) // CREATE_NEW_CONSOLE
             .current_dir(cwd)
             .spawn()
-            .map_err(|e| format!("Failed to launch cmd.exe: {}", e))?;
+            .map_err(|e| format!("Failed to launch PowerShell: {}", e))?;
         Ok(())
     }
 
@@ -683,10 +728,12 @@ pub fn open_system_terminal(cwd: &Path) -> Result<(), String> {
 }
 
 pub fn launch_external_command(cmd_str: &str, cwd: &Path) -> Result<(), String> {
+    #[cfg(not(windows))]
     let script_path = std::env::temp_dir().join(format!(
         "launcher_cmd_{}.sh",
         chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
     ));
+    #[cfg(not(windows))]
     let script_content = format!(
 r#"#!/usr/bin/env bash
 echo "=========================================================="
@@ -704,7 +751,8 @@ read -n 1 -s -r -p "Press any key to close this terminal..."
         cwd = cwd.display()
     );
 
-    let _ = std::fs::write(&script_path, script_content);
+    #[cfg(not(windows))]
+    std::fs::write(&script_path, script_content).map_err(|e| format!("Cannot write terminal script: {}", e))?;
 
     #[cfg(unix)]
     {
@@ -742,10 +790,12 @@ read -n 1 -s -r -p "Press any key to close this terminal..."
 
     #[cfg(target_os = "windows")]
     {
-        let mut cmd = std::process::Command::new("cmd.exe");
-        cmd.args(&["/K", cmd_str]);
+        use std::os::windows::process::CommandExt;
+        let mut cmd = Command::new("powershell.exe");
+        cmd.args(["-NoLogo", "-NoProfile", "-NoExit", "-Command", cmd_str]);
+        cmd.creation_flags(0x00000010);
         cmd.current_dir(cwd);
-        cmd.spawn().map_err(|e| format!("Failed to spawn cmd: {}", e))?;
+        cmd.spawn().map_err(|e| format!("Failed to spawn PowerShell: {}", e))?;
         Ok(())
     }
 }
@@ -797,6 +847,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn quoted_cd_path_is_one_directory() {
+        let mut terminal = TerminalSession::default();
+        let directory = std::env::temp_dir().join(format!("launcher quoted path {}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        terminal.execute_local(&format!("cd \"{}\"", directory.display()), "");
+        assert_eq!(terminal.cwd, directory.canonicalize().unwrap());
+        std::fs::remove_dir(&directory).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_keeps_command_in_one_argument() {
+        let command = powershell_command("Write-Output 'a & b'; exit 7");
+        let args: Vec<_> = command.get_args().map(|arg| arg.to_string_lossy()).collect();
+        assert_eq!(&args[..3], &["-NoLogo", "-NoProfile", "-Command"]);
+        assert_eq!(args.len(), 4);
+        assert!(args[3].contains("Write-Output 'a & b'; exit 7"));
+    }
+
+    #[test]
     fn test_terminal_session_default() {
         let mut term = TerminalSession::default();
         assert!(term.history.is_empty());
@@ -840,8 +910,13 @@ mod tests {
     fn test_terminal_prompt_str() {
         let term = TerminalSession::default();
         let prompt = term.get_prompt_str(None);
-        assert!(prompt.ends_with("$ "));
-        assert!(prompt.contains('@'));
+        if cfg!(windows) {
+            assert!(prompt.starts_with("PS "));
+            assert!(prompt.ends_with("> "));
+        } else {
+            assert!(prompt.ends_with("$ "));
+            assert!(prompt.contains('@'));
+        }
     }
 
     #[test]

@@ -7253,7 +7253,7 @@ impl LauncherApp {
         let title = if let Some(h) = &host_opt {
             format!("{} Remote SSH Terminal ({}@{}:{})", crate::lucide::GLOBE, h.user, h.host, h.port)
         } else {
-            format!("{} Local Interactive Terminal", crate::lucide::MONITOR)
+            format!("{} Local terminal", crate::lucide::MONITOR)
         };
 
         let cwd_display = if host_opt.is_none() {
@@ -7277,6 +7277,8 @@ impl LauncherApp {
         };
 
         let prompt_str = term.get_prompt_str(host_opt.as_ref());
+        let shell_label = if host_opt.is_some() { "SSH · remote shell" } else if cfg!(windows) { "PowerShell" } else { "Bash" };
+        let terminal_query = self.search_queries.entry(format!("terminal:{}", host_id.unwrap_or("local"))).or_default();
 
         ui.vertical(|ui| {
             // ═════════════════════════════════════════════════════════════════
@@ -7300,6 +7302,11 @@ impl LauncherApp {
                             );
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.button("Copy").on_hover_text("Copy captured terminal output").clicked() {
+                                    if let Ok(logs) = term.logs.lock() {
+                                        ui.ctx().copy_text(logs.iter().map(|entry| entry.text.clone()).collect::<Vec<_>>().join("\n"));
+                                    }
+                                }
                                 let btn_clear = egui::Button::new(
                                     RichText::new(format!("{} Clear (Ctrl+L)", crate::lucide::TRASH))
                                         .size(13.0)
@@ -7346,7 +7353,7 @@ impl LauncherApp {
 
                         // Row 2: Status & Current Directory Sub-bar (Full width available)
                         ui.horizontal(|ui| {
-                            ui.add_space(26.0); // Align with title text past terminal icon
+                            ui.label(RichText::new(shell_label).color(p.text_secondary));
                             ui.label(
                                 RichText::new(&stat_msg)
                                     .size(13.0)
@@ -7376,7 +7383,9 @@ impl LauncherApp {
             // ═════════════════════════════════════════════════════════════════
             // Integrated Dark Terminal Window (Output + Prompt at bottom)
             // ═════════════════════════════════════════════════════════════════
-            let total_h = ui.available_height().max(200.0);
+            ui.add(egui::TextEdit::singleline(terminal_query).hint_text("Search terminal output…").desired_width(ui.available_width()));
+            let query = terminal_query.to_lowercase();
+            let total_h = ui.available_height().max(120.0);
             let logs_clone = term.logs.clone();
             let mut should_focus = false;
 
@@ -7406,7 +7415,7 @@ impl LauncherApp {
                                             .color(p.text_muted),
                                     );
                                 } else {
-                                    for entry in l.iter() {
+                                    for entry in l.iter().filter(|entry| query.is_empty() || entry.text.to_lowercase().contains(&query)) {
                                         let color = match entry.kind {
                                             LogKind::Stdin => p.success,
                                             LogKind::Launcher => p.info,
@@ -22080,6 +22089,15 @@ impl LauncherApp {
         // Section A: Upper Controls Cockpit (Card)
         // ─────────────────────────────────────────────────────────────────────
         let p = self.palette();
+        let details_max_height = (ui.available_height() - 180.0).max(100.0);
+        egui::TopBottomPanel::top(egui::Id::new(("server_details_split", key)))
+            .resizable(true)
+            .default_height(154.0)
+            .min_height(100.0)
+            .max_height(details_max_height)
+            .frame(Frame::none())
+            .show_inside(ui, |ui| {
+                ScrollArea::vertical().id_salt(("server_details_scroll", key)).show(ui, |ui| {
         Frame::none()
             .fill(p.bg_card)
             .stroke(Stroke::new(1.0_f32, p.border))
@@ -22133,6 +22151,18 @@ impl LauncherApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Copy").on_hover_text("Copy all captured output").clicked() {
+                            if let Some(service) = self.find_service(key) {
+                                if let Ok(logs) = service.logs.lock() {
+                                    ui.ctx().copy_text(logs.iter().map(|entry| format!("[{}] {}", entry.timestamp, entry.text)).collect::<Vec<_>>().join("\n"));
+                                }
+                            }
+                        }
+                        if ui.button("Clear").on_hover_text("Clear captured output").clicked() {
+                            if let Some(service) = self.find_service(key) {
+                                if let Ok(mut logs) = service.logs.lock() { logs.clear(); }
+                            }
+                        }
                         if is_running {
                             let btn_stop = egui::Button::new(
                                 RichText::new("Stop").size(13.0).strong().color(Color32::WHITE),
@@ -22328,6 +22358,8 @@ impl LauncherApp {
                 }
             });
 
+                });
+            });
         ui.add_space(3.0);
 
         // ─────────────────────────────────────────────────────────────────────

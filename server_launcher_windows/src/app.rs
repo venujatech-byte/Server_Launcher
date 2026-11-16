@@ -72,11 +72,11 @@ pub enum SidebarTab {
 impl SidebarTab {
     pub fn label(&self) -> &'static str {
         match self {
-            SidebarTab::Servers => "\u{e153} Servers",
-            SidebarTab::Scripts => "\u{e2ed} Scripts",
-            SidebarTab::Commands => "\u{e181} Cmds",
-            SidebarTab::SystemMD => "\u{e245} SystemD",
-            SidebarTab::Sensors => "\u{e186} Sensors",
+            SidebarTab::Servers => "Servers",
+            SidebarTab::Scripts => "Scripts",
+            SidebarTab::Commands => "Terminal",
+            SidebarTab::SystemMD => "Services",
+            SidebarTab::Sensors => "Sensors",
         }
     }
 }
@@ -2970,7 +2970,7 @@ impl LauncherApp {
             if self.active_sidebar_tab == SidebarTab::Sensors {
                 // Top row: Navigation tabs (380px fixed width) + System Brief Info Panel (remaining width)
                 ui.horizontal(|ui| {
-                    ui.allocate_ui_with_layout(egui::vec2(380.0, 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.allocate_ui_with_layout(egui::vec2(380.0, 44.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         ui.set_width(380.0);
                         ui.set_max_width(380.0);
                         self.render_sidebar_tabs_bar(ui);
@@ -2979,7 +2979,7 @@ impl LauncherApp {
                     ui.add_space(8.0);
 
                     let brief_w = ui.available_width().max(100.0);
-                    ui.allocate_ui_with_layout(egui::vec2(brief_w, 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.allocate_ui_with_layout(egui::vec2(brief_w, 44.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         ui.set_width(brief_w);
                         ui.set_max_width(brief_w);
                         self.render_system_brief_info_panel(ui, Some(&host.id));
@@ -4155,7 +4155,8 @@ impl eframe::App for LauncherApp {
                             ui.add_space(1.0);
                             ui.label(
                                 RichText::new(format!(
-                                    "this pc: {}    servers: {}",
+                                    "This PC ({}) · {} · {} servers",
+                                    if cfg!(windows) { "Windows" } else { "Linux" },
                                     self.lan_ip,
                                     self.services.len()
                                 ))
@@ -4425,7 +4426,7 @@ impl eframe::App for LauncherApp {
                     if self.active_sidebar_tab == SidebarTab::Sensors {
                         // 1. Top row: Navigation tabs (380px fixed width) + System Brief Info Panel (remaining width)
                         ui.horizontal(|ui| {
-                            ui.allocate_ui_with_layout(egui::vec2(380.0, 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.allocate_ui_with_layout(egui::vec2(380.0, 44.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                 ui.set_width(380.0);
                                 ui.set_max_width(380.0);
                                 self.render_sidebar_tabs_bar(ui);
@@ -4434,7 +4435,7 @@ impl eframe::App for LauncherApp {
                             ui.add_space(8.0);
 
                             let brief_w = ui.available_width().max(100.0);
-                            ui.allocate_ui_with_layout(egui::vec2(brief_w, 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.allocate_ui_with_layout(egui::vec2(brief_w, 44.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                 ui.set_width(brief_w);
                                 ui.set_max_width(brief_w);
                                 self.render_system_brief_info_panel(ui, None);
@@ -6360,7 +6361,7 @@ impl LauncherApp {
             .rounding(Rounding::same(999.0))
             .inner_margin(egui::Margin::symmetric(4.0, 3.5))
             .show(ui, |ui| {
-                const TAB_W: f32 = 66.0;
+                const TAB_W: f32 = 70.0;
                 const TAB_GAP: f32 = 3.0;
                 let tabs_width = 5.0 * TAB_W + 4.0 * TAB_GAP;
                 ui.set_min_width(tabs_width);
@@ -6370,8 +6371,8 @@ impl LauncherApp {
                     ui.spacing_mut().button_padding = egui::vec2(3.0, 4.0);
                     let tabs = [
                         (SidebarTab::Servers, SidebarTab::Servers.label()),
-                        (SidebarTab::Scripts, SidebarTab::Scripts.label()),
                         (SidebarTab::Commands, SidebarTab::Commands.label()),
+                        (SidebarTab::Scripts, SidebarTab::Scripts.label()),
                         (SidebarTab::SystemMD, SidebarTab::SystemMD.label()),
                         (SidebarTab::Sensors, SidebarTab::Sensors.label()),
                     ];
@@ -6379,12 +6380,12 @@ impl LauncherApp {
                     for (tab, label) in tabs {
                         let is_active = self.active_sidebar_tab == tab;
                         let bg = if is_active {
-                            p.accent
+                            p.bg_card_active
                         } else {
                             p.bg_button
                         };
                         let fg = if is_active {
-                            p.accent_text
+                            p.text_primary
                         } else {
                             p.text_secondary
                         };
@@ -6398,7 +6399,7 @@ impl LauncherApp {
                         .stroke(Stroke::NONE)
                         .rounding(Rounding::same(999.0));
 
-                        let (rect, _) = ui.allocate_exact_size(egui::vec2(TAB_W, 24.0), egui::Sense::hover());
+                        let (rect, _) = ui.allocate_exact_size(egui::vec2(TAB_W, 30.0), egui::Sense::hover());
                         if ui.put(rect, btn).clicked() {
                             self.active_sidebar_tab = tab;
                             if tab == SidebarTab::Commands {

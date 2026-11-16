@@ -11079,10 +11079,6 @@ impl LauncherApp {
         }
 
         ui.vertical(|ui| {
-            #[cfg(windows)]
-            if host_id.is_none() {
-                ui.label("Windows telemetry: hardware inventory refreshes every 30 seconds. Device disk throughput, SMART, socket counts and per-process network counters are unavailable; their zero fields do not indicate measured inactivity.");
-            }
 
             // Remote host error notification (if query failed)
             if let Some(hid) = host_id {
@@ -11138,172 +11134,45 @@ impl LauncherApp {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
 
-                // 1. Top Row: 4 Metric Cards (CPU, RAM, SWAP, STORAGE)
-                ui.columns(4, |cols| {
-                    // Card 1: CPU
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                        .show(&mut cols[0], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::ACTIVITY).size(13.0).color(accent));
-                                ui.label(RichText::new("CPU").size(13.0).monospace().strong().color(p.text_muted));
-                            });
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new(format!("{:.1}", snap.cpu_global_usage)).size(29.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("%").size(13.0).color(p.text_muted));
-                            });
-                            ui.add_space(2.0);
-                            let freq = (snap.cpu_frequency_mhz > 0).then(|| format!("{:.2} GHz", snap.cpu_frequency_mhz as f64 / 1000.0));
-                            let cores_str = [
-                                (snap.cpu_cores_physical > 0).then(|| format!("{} cores", snap.cpu_cores_physical)),
-                                freq,
-                            ].into_iter().flatten().collect::<Vec<_>>().join(" · ");
-                            let cores_str = if cores_str.is_empty() { "—" } else { &cores_str };
-                            ui.label(RichText::new(cores_str).size(13.0).monospace().color(p.text_muted));
-                            ui.add_space(8.0);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(if self.cpu_history.is_empty() { "AVG —".to_string() } else { format!("AVG {:.0}%", self.cpu_history.iter().sum::<f32>() / self.cpu_history.len() as f32) }).size(13.0).monospace().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(if self.cpu_history.is_empty() { "PEAK —".to_string() } else { format!("PEAK {:.0}%", self.cpu_peak_usage) }).size(13.0).monospace().color(p.text_muted));
+                // Current readings lead; detailed network charts follow below.
+                let ready = snap.timestamp.is_some();
+                let total_storage: u64 = snap.disks.iter().map(|disk| disk.total_bytes).sum();
+                let used_storage: u64 = snap.disks.iter().map(|disk| disk.used_bytes).sum();
+                let unavailable = "Unavailable".to_string();
+                let metrics = [
+                    ("CPU", if ready { format!("{:.1}%", snap.cpu_global_usage) } else { unavailable.clone() },
+                        format!("{} physical · {} logical cores", snap.cpu_cores_physical, snap.cpu_cores_logical)),
+                    ("Memory", if ready && snap.mem_total_bytes > 0 { format!("{:.1}%", snap.mem_usage_pct) } else { unavailable.clone() },
+                        format!("{} / {}", crate::sensors::format_bytes(snap.mem_used_bytes), crate::sensors::format_bytes(snap.mem_total_bytes))),
+                    ("Storage", if ready && total_storage > 0 { format!("{:.1}%", used_storage as f64 / total_storage as f64 * 100.0) } else { unavailable.clone() },
+                        format!("{} / {}", crate::sensors::format_bytes(used_storage), crate::sensors::format_bytes(total_storage))),
+                    ("Network", if ready && !snap.networks.is_empty() { crate::sensors::format_rate(snap.total_rx_rate_bps + snap.total_tx_rate_bps) } else { unavailable.clone() },
+                        "Combined receive + transmit".to_string()),
+                ];
+                let columns = if ui.available_width() >= 720.0 { 4 } else { 2 };
+                for row in metrics.chunks(columns) {
+                    ui.columns(columns, |cols| {
+                        for (col, (label, value, detail)) in cols.iter_mut().zip(row) {
+                            Frame::none().fill(p.bg_card).rounding(Rounding::same(8.0))
+                                .inner_margin(egui::Margin::same(12.0)).show(col, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.label(RichText::new(*label).color(p.text_secondary));
+                                    ui.label(RichText::new(value).size(22.0).strong().color(if value == "Unavailable" { p.text_muted } else { accent }));
+                                    if value != "Unavailable" { ui.label(RichText::new(detail).color(p.text_secondary)); }
                                 });
-                            });
-                            ui.add_space(4.0);
-                            let cpu_slice: Vec<f32> = self.cpu_history.iter().copied().collect();
-                            draw_card_sparkline(ui, 40.0, &cpu_slice, 100.0, Some(0.12), accent);
-                        });
-
-                    // Card 2: RAM
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                        .show(&mut cols[1], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::RAM).size(13.0).color(accent));
-                                ui.label(RichText::new("RAM").size(13.0).monospace().strong().color(p.text_muted));
-                            });
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new(format!("{:.1}", snap.mem_usage_pct)).size(29.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("%").size(13.0).color(p.text_muted));
-                            });
-                            ui.add_space(2.0);
-                            let used_mb = snap.mem_used_bytes as f64 / (1024.0 * 1024.0);
-                            let tot_mb = snap.mem_total_bytes as f64 / (1024.0 * 1024.0);
-                            let ram_str = if tot_mb > 10240.0 {
-                                format!("{:.2} GB / {:.2} GB", used_mb / 1024.0, tot_mb / 1024.0)
-                            } else {
-                                format!("{:.2} MB / {:.2} MB", used_mb, tot_mb)
-                            };
-                            ui.label(RichText::new(ram_str).size(13.0).monospace().color(p.text_muted));
-                            ui.add_space(8.0);
-                            let ram_avg = self.ram_history.iter().map(|(r, _)| *r).sum::<f32>() / self.ram_history.len().max(1) as f32;
-                            let ram_peak = self.ram_history.iter().map(|(r, _)| *r).fold(0.0_f32, f32::max);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(if self.ram_history.is_empty() { "AVG —".to_string() } else { format!("AVG {:.0}%", ram_avg) }).size(13.0).monospace().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(if self.ram_history.is_empty() { "PEAK —".to_string() } else { format!("PEAK {:.0}%", ram_peak) }).size(13.0).monospace().color(p.text_muted));
-                                });
-                            });
-                            ui.add_space(4.0);
-                            let ram_slice: Vec<f32> = self.ram_history.iter().map(|(r, _)| *r).collect();
-                            draw_card_sparkline(ui, 40.0, &ram_slice, 100.0, Some(0.85), accent);
-                        });
-
-                    // Card 3: SWAP
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                        .show(&mut cols[2], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::REFRESH_CW).size(13.0).color(accent));
-                                ui.label(RichText::new("SWAP").size(13.0).monospace().strong().color(p.text_muted));
-                            });
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new(format!("{:.1}", snap.swap_usage_pct)).size(29.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("%").size(13.0).color(p.text_muted));
-                            });
-                            ui.add_space(2.0);
-                            let swap_str = format!("{} / {}", crate::sensors::format_bytes(snap.swap_used_bytes), crate::sensors::format_bytes(snap.swap_total_bytes));
-                            ui.label(RichText::new(swap_str).size(13.0).monospace().color(p.text_muted));
-                            ui.add_space(8.0);
-                            let swap_avg = self.ram_history.iter().map(|(_, s)| *s).sum::<f32>() / self.ram_history.len().max(1) as f32;
-                            let swap_peak = self.ram_history.iter().map(|(_, s)| *s).fold(0.0_f32, f32::max);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(if self.ram_history.is_empty() { "AVG —".to_string() } else { format!("AVG {:.1}%", swap_avg) }).size(13.0).monospace().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(if self.ram_history.is_empty() { "PEAK —".to_string() } else { format!("PEAK {:.1}%", swap_peak) }).size(13.0).monospace().color(p.text_muted));
-                                });
-                            });
-                            ui.add_space(4.0);
-                            let swap_slice: Vec<f32> = self.ram_history.iter().map(|(_, s)| *s).collect();
-                            draw_card_sparkline(ui, 40.0, &swap_slice, 100.0, Some(0.08), accent);
-                        });
-
-                    // Card 4: STORAGE
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                        .show(&mut cols[3], |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::STORAGE).size(13.0).color(accent));
-                                ui.label(RichText::new("STORAGE").size(13.0).monospace().strong().color(p.text_muted));
-                            });
-                            ui.add_space(6.0);
-                            let phys_total: u64 = snap.physical_disks.iter().map(|d| d.total_bytes).sum();
-                            let mounted_total: u64 = snap.disks.iter().map(|d| d.total_bytes).sum();
-                            let total_bytes: u64 = if phys_total > 0 { phys_total } else { mounted_total };
-                            let used_bytes: u64 = snap.disks.iter().map(|d| d.used_bytes).sum();
-                            let storage_pct = if total_bytes > 0 { Some((used_bytes as f64 / total_bytes as f64 * 100.0) as f32) } else { None };
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new(storage_pct.map_or_else(|| "—".to_string(), |value| format!("{value:.1}"))).size(24.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("%").size(13.0).color(p.text_muted));
-                            });
-                            ui.add_space(2.0);
-                            let used_gb = used_bytes as f64 / 1e9;
-                            let tot_gb = total_bytes as f64 / 1e9;
-                            ui.label(RichText::new(if total_bytes > 0 { format!("{used_gb:.2} / {tot_gb:.2} GB") } else { "—".to_string() }).size(13.0).monospace().color(p.text_muted));
-                            ui.add_space(8.0);
-                            let free_gb = (total_bytes.saturating_sub(used_bytes)) as f64 / 1e9;
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(if total_bytes > 0 { format!("FREE {:.2} GB", free_gb) } else { "FREE —".to_string() }).size(13.0).monospace().color(p.text_muted));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let avg = (!self.storage_history.is_empty()).then(|| self.storage_history.iter().sum::<f32>() / self.storage_history.len() as f32);
-                                    ui.label(RichText::new(avg.map_or_else(|| "AVG —".to_string(), |value| format!("AVG {value:.1}%"))).size(13.0).monospace().color(p.text_muted));
-                                });
-                            });
-                            ui.add_space(4.0);
-                            draw_card_sparkline(ui, 40.0, &self.storage_history.iter().copied().collect::<Vec<_>>(), 100.0, None, accent);
-                        });
-                });
-
-                ui.add_space(10.0);
+                        }
+                    });
+                    ui.add_space(8.0);
+                }
 
                 // 2. Bottom Row: 2 Cards (OVERALL SPEED & CONNECTION STATS)
                 let total_w = ui.available_width();
                 let gap = 10.0_f32;
-                let left_w = ((total_w - gap) * 0.64).max(300.0);
-                let right_w = (total_w - left_w - gap).max(200.0);
+                let narrow = total_w < 620.0;
+                let left_w = if narrow { total_w } else { (total_w - gap) * 0.64 };
+                let right_w = if narrow { total_w } else { total_w - left_w - gap };
 
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     // Left Card: OVERALL SPEED (~64%)
                     ui.allocate_ui_with_layout(egui::vec2(left_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
                         Frame::none()
@@ -11315,7 +11184,7 @@ impl LauncherApp {
 
                                 ui.horizontal(|ui| {
                                     ui.vertical(|ui| {
-                                        ui.label(RichText::new("OVERALL SPEED").size(13.0).monospace().strong().color(p.text_muted));
+                                        ui.label(RichText::new("Network activity").size(13.0).monospace().strong().color(p.text_muted));
                                         ui.add_space(2.0);
                                         let peak_str = if self.net_tx_history.is_empty() { "Interface total · collecting".to_string() } else { format!("Interface total · peak {:.2} MB/s", self.net_peak_mb) };
                                         ui.label(RichText::new(peak_str).size(13.0).color(p.text_muted));
@@ -11385,8 +11254,14 @@ impl LauncherApp {
                             .inner_margin(egui::Margin::symmetric(16.0, 14.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
-                                ui.label(RichText::new("CONNECTION STATS").size(13.0).monospace().strong().color(p.text_muted));
+                                ui.label(RichText::new("Connections").size(13.0).monospace().strong().color(p.text_muted));
                                 ui.add_space(4.0);
+
+                                if cfg!(windows) && _host_id.is_none() {
+                                    ui.label(RichText::new("Unavailable").size(22.0).color(p.text_muted));
+                                    ui.label("Socket counts are not supplied by the Windows sensor provider.");
+                                    return;
+                                }
 
                                 let (tot_sock, tcp_c, udp_c) = (snap.socket_total, snap.socket_tcp, snap.socket_udp);
                                 ui.horizontal(|ui| {
@@ -11423,421 +11298,67 @@ impl LauncherApp {
     // SENSORS PAGE: CPU Dashboard (Matching media_1792113265094_cd2e3f19.png)
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_cpu_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
-        #[cfg(windows)]
-        if host_id.is_none() {
-            let p = self.palette();
-            ScrollArea::vertical().id_salt("windows_cpu").show(ui, |ui| {
-                ui.heading("CPU");
-                ui.label(if snap.cpu_brand.is_empty() { "Waiting for processor telemetry" } else { &snap.cpu_brand });
-                ui.label(format!("{} physical cores · {} logical processors", snap.cpu_cores_physical, snap.cpu_cores_logical));
-                ui.add_space(12.0);
-                ui.label(format!("Usage: {:.1}%", snap.cpu_global_usage));
-                ui.label(format!("Reported frequency: {} MHz", snap.cpu_frequency_mhz));
-                ui.label(format!("Uptime: {}", format_uptime_hms(snap.uptime_secs)));
-                ui.label(snap.cpu_temp.map(|v| format!("Temperature: {v:.1} °C")).unwrap_or_else(|| "Temperature unavailable; LibreHardwareMonitor WMI provider required".into()));
-                ui.label("CPU package power, TDP limits, and junction limits are unavailable.");
-                draw_card_sparkline(ui, 100.0, &self.cpu_history.iter().copied().collect::<Vec<_>>(), 100.0, None, p.accent);
-                ui.add_space(12.0);
-                for (idx, usage) in snap.cpu_core_usages.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        ui.label(format!("Logical processor {}", idx));
-                        ui.add(egui::ProgressBar::new(*usage / 100.0).text(format!("{usage:.1}%")));
-                    });
-                }
-            });
-            return;
-        }
-
         let p = self.palette();
         let accent = self.sensors_accent_color(&p);
-        ScrollArea::vertical()
-            .id_salt("sensors_cpu_scroll")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-
-                let brand = if !snap.cpu_brand.is_empty() {
-                    &snap.cpu_brand
-                } else if host_id.is_some() {
-                    "Remote Host Processor"
-                } else {
-                    "Intel(R) Pentium(R) Silver N5030 @ 1.10GHz (Turbo 3.10GHz)"
-                };
-                let phys = snap.cpu_cores_physical.max(1);
-                let log = snap.cpu_cores_logical.max(phys);
-
-                // 1. Top Header Card
-                Frame::none()
-                    .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.vertical(|ui| {
-                            // Row 1: Title & Governor on left, PL1 Limit & Tjunction Max on right
-                            ui.horizontal(|ui| {
-                                let row_w = ui.available_width();
-                                let right_w = 265.0_f32;
-                                let left_w = (row_w - right_w - 8.0).max(80.0);
-
-                                ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                    ui.spacing_mut().item_spacing.x = 8.0;
-                                    ui.label(RichText::new("CPU").size(15.0).strong().color(p.text_primary));
-                                });
-
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    // Tjunction Max badge
-                                    let tj_max = snap.cpu_tjunction_max.unwrap_or(100.0);
-                                    Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 8))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 3.5))
-                                        .show(ui, |ui| {
-                                            ui.label(RichText::new(format!("Tjunction Max: {:.0}°C", tj_max)).size(13.0).monospace().color(p.text_muted));
-                                        });
-
-                                    ui.add_space(6.0);
-
-                                    // PL1 Limit badge
-                                    Frame::none()
-                                        .fill(accent_with_alpha(accent, 25))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 3.5))
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.spacing_mut().item_spacing.x = 5.0;
-                                                let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                                ui.painter().circle_filled(d_rect.center(), 2.8, accent);
-                                                let pl1 = snap.cpu_tdp_watts.unwrap_or(12.0);
-                                                ui.label(RichText::new(format!("PL1 Limit: {:.1}W", pl1)).size(13.0).monospace().strong().color(p.text_primary));
-                                            });
-                                        });
-                                });
+        ScrollArea::vertical().id_salt("sensors_cpu_scroll").show(ui, |ui| {
+            ui.heading("CPU");
+            ui.label(RichText::new(if snap.cpu_brand.is_empty() { "CPU information unavailable" } else { &snap.cpu_brand }).strong());
+            ui.label(format!("{} · {} physical cores · {} logical processors · Uptime {}",
+                if host_id.is_some() { "Remote host" } else { "This PC" }, snap.cpu_cores_physical, snap.cpu_cores_logical, format_uptime_hms(snap.uptime_secs)));
+            if let Some(governor) = &snap.cpu_governor { ui.label(format!("Governor: {governor}")); }
+            let reading = |value: Option<f32>, unit: &str| value.map_or_else(|| "Unavailable".to_string(), |value| format!("{value:.1} {unit}"));
+            let metrics = [
+                ("Clock frequency", reading((snap.cpu_frequency_mhz > 0).then_some(snap.cpu_frequency_mhz as f32 / 1000.0), "GHz")),
+                ("CPU temperature", reading(snap.cpu_temp, "°C")),
+                ("Package power", reading(snap.cpu_power_watts, "W")),
+                ("Temperature limit", reading(snap.cpu_tjunction_max, "°C")),
+            ];
+            let columns = if ui.available_width() >= 720.0 { 4 } else { 2 };
+            for row in metrics.chunks(columns) {
+                ui.columns(columns, |cols| {
+                    for (col, (label, value)) in cols.iter_mut().zip(row) {
+                        Frame::none().fill(p.bg_card).rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::same(12.0)).show(col, |ui| {
+                                ui.label(RichText::new(*label).color(p.text_secondary));
+                                ui.label(RichText::new(value).size(20.0).color(p.text_primary));
                             });
-
-                            ui.add_space(3.0);
-
-                            // Row 2: Subtitle spanning the full card width underneath Row 1 without overlap
-                            let uptime_secs = if snap.uptime_secs > 0 { snap.uptime_secs } else if host_id.is_none() { get_system_uptime() } else { 0 };
-                            let uptime_str = format_uptime_hms(uptime_secs);
-                            ui.horizontal_wrapped(|ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(brand).size(13.0).monospace().color(p.text_muted));
-                                ui.label(RichText::new("•").size(13.0).color(p.text_muted));
-                                ui.label(RichText::new(format!("{} Cores / {} Threads", phys, log)).size(13.0).monospace().color(p.text_muted));
-                                ui.label(RichText::new("•").size(13.0).color(p.text_muted));
-                                ui.label(RichText::new("Socket 1").size(13.0).monospace().color(p.text_muted));
-                                ui.label(RichText::new("•").size(13.0).color(p.text_muted));
-                                ui.label(RichText::new(format!("Uptime {}", uptime_str)).size(13.0).monospace().color(p.text_muted));
-                            });
-                        });
-                    });
-
-                ui.add_space(8.0);
-
-                // 2. Row of 4 Big Metric Cards (matching Overview page architecture)
-                let cpu_slice: Vec<f32> = self.cpu_history.iter().copied().collect();
-                let cpu_avg = if !self.cpu_history.is_empty() { self.cpu_history.iter().sum::<f32>() / self.cpu_history.len() as f32 } else { snap.cpu_global_usage };
-                let freq_ghz = if snap.cpu_frequency_mhz > 0 { snap.cpu_frequency_mhz as f32 / 1000.0 } else { 2.25 };
-                let watts = snap.cpu_power_watts.unwrap_or(8.5);
-                let tdp = snap.cpu_tdp_watts.unwrap_or(12.0);
-                let temp_val = snap.cpu_temp.unwrap_or(42.0);
-                let tj_max = snap.cpu_tjunction_max.unwrap_or(100.0);
-
-                ui.columns(4, |cols| {
-                    // Card 1: CPU LOAD
-                    render_big_stat_card(
-                        &mut cols[0],
-                        crate::lucide::ACTIVITY,
-                        "CPU LOAD",
-                        &format!("{:.1}", snap.cpu_global_usage),
-                        "%",
-                        &format!("{} Cores / {} Threads", phys, log),
-                        &format!("AVG {:.0}%", cpu_avg),
-                        &format!("PEAK {:.0}%", self.cpu_peak_usage),
-                        &cpu_slice,
-                        100.0,
-                        Some(0.12),
-                        accent,
-                        p.bg_card,
-                        p.text_muted,
-                    );
-
-                    // Card 2: CLOCK FREQUENCY
-                    let clock_hist: Vec<f32> = if !cpu_slice.is_empty() {
-                        cpu_slice.iter().map(|&u| 1.1 + (u / 100.0) * (3.1 - 1.1)).collect()
-                    } else {
-                        vec![freq_ghz; 5]
-                    };
-                    let freq_sub = if snap.cpu_frequency_mhz > 0 {
-                        format!("Target: {:.2} GHz", freq_ghz)
-                    } else if host_id.is_some() {
-                        "Host Clock Governor".to_string()
-                    } else {
-                        "Base 1.10 · Turbo 3.10 GHz".to_string()
-                    };
-                    render_big_stat_card(
-                        &mut cols[1],
-                        crate::lucide::GAUGE,
-                        "CLOCK FREQUENCY",
-                        &format!("{:.2}", freq_ghz),
-                        "GHz",
-                        &freq_sub,
-                        "MIN 0.80 GHz",
-                        &format!("MAX {:.2} GHz", freq_ghz.max(3.10)),
-                        &clock_hist,
-                        3.5,
-                        Some(0.4),
-                        accent,
-                        p.bg_card,
-                        p.text_muted,
-                    );
-
-                    // Card 3: PACKAGE POWER
-                    let power_hist: Vec<f32> = if !cpu_slice.is_empty() {
-                        cpu_slice.iter().map(|&u| 4.5 + (u / 100.0) * (tdp - 4.5)).collect()
-                    } else {
-                        vec![watts; 5]
-                    };
-                    render_big_stat_card(
-                        &mut cols[2],
-                        crate::lucide::ZAP,
-                        "PACKAGE POWER",
-                        &format!("{:.1}", watts),
-                        "W",
-                        &format!("PL1 Limit: {:.1}W", tdp),
-                        &format!("AVG {:.1}W", watts * 0.75),
-                        &format!("PEAK {:.1}W", tdp),
-                        &power_hist,
-                        tdp.max(15.0),
-                        Some(0.75),
-                        accent,
-                        p.bg_card,
-                        p.text_muted,
-                    );
-
-                    // Card 4: CORE TEMPERATURE
-                    let temp_hist: Vec<f32> = if !cpu_slice.is_empty() {
-                        cpu_slice.iter().map(|&u| 38.0 + (u / 100.0) * 28.0).collect()
-                    } else {
-                        vec![temp_val; 5]
-                    };
-                    render_big_stat_card(
-                        &mut cols[3],
-                        crate::lucide::THERMOMETER,
-                        "CORE TEMPERATURE",
-                        &format!("{:.1}", temp_val),
-                        "°C",
-                        &format!("Tjunction Max: {:.0}°C", tj_max),
-                        "MIN 38.0°C",
-                        "MAX 72.0°C",
-                        &temp_hist,
-                        tj_max,
-                        Some(0.7),
-                        accent,
-                        p.bg_card,
-                        p.text_muted,
-                    );
+                    }
                 });
-
                 ui.add_space(8.0);
-
-                // 3. Utilization History (60 Seconds) Card
-                Frame::none()
-                    .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.label(RichText::new(crate::lucide::ACTIVITY).size(13.0).color(accent));
-                            ui.label(RichText::new("Utilization").size(13.0).strong().color(p.text_primary));
-
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 4.0;
-                                    let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                    ui.painter().circle_filled(d_rect.center(), 2.8, accent);
-                                    ui.label(RichText::new("LIVE TELEMETRY").size(13.0).monospace().strong().color(p.text_primary));
-                                });
+            }
+            ui.label(RichText::new("Temperature and limits require hardware support. Package power may be estimated by the provider.").color(p.text_muted));
+            ui.add_space(8.0);
+            ui.label(RichText::new(format!("Total CPU usage · {:.1}%", snap.cpu_global_usage)).strong());
+            if self.cpu_history.is_empty() {
+                ui.label("Collecting CPU usage samples…");
+            } else {
+                draw_waveform(ui, 150.0, &self.cpu_history, 100.0, accent, accent_with_alpha(accent, 24));
+            }
+            ui.add_space(12.0);
+            ui.heading("Logical processors");
+            for (row_index, row) in snap.cpu_core_usages.chunks(columns).enumerate() {
+                ui.columns(columns, |cols| {
+                    for (column_index, (col, usage)) in cols.iter_mut().zip(row).enumerate() {
+                        let index = row_index * columns + column_index;
+                        Frame::none().fill(p.bg_card).rounding(Rounding::same(6.0))
+                            .inner_margin(egui::Margin::same(10.0)).show(col, |ui| {
+                                ui.label(RichText::new(format!("Processor {index}")).strong());
+                                ui.add(egui::ProgressBar::new((*usage / 100.0).clamp(0.0, 1.0)).show_percentage());
+                                let frequency = snap.cpu_frequencies_mhz.get(index).filter(|value| **value > 0);
+                                ui.label(frequency.map_or_else(|| "Frequency unavailable".into(), |value| format!("{:.2} GHz", *value as f64 / 1000.0)));
+                                if let Some(history) = self.cpu_core_histories.get(index) {
+                                    let values: Vec<_> = history.iter().copied().collect();
+                                    let width = ui.available_width();
+                                    draw_core_waveform(ui, width, 30.0, &values, accent);
+                                }
                             });
-                        });
-                        ui.add_space(8.0);
-                        draw_waveform(ui, 140.0, &self.cpu_history, 100.0, accent, accent_with_alpha(accent, 45));
-
-                        ui.add_space(4.0);
-                        ui.columns(5, |cols| {
-                            cols[0].label(RichText::new("60s ago").size(13.0).monospace().color(p.text_muted));
-                            cols[1].centered_and_justified(|ui| { ui.label(RichText::new("45s").size(13.0).monospace().color(p.text_muted)); });
-                            cols[2].centered_and_justified(|ui| { ui.label(RichText::new("30s").size(13.0).monospace().color(p.text_muted)); });
-                            cols[3].centered_and_justified(|ui| { ui.label(RichText::new("15s").size(13.0).monospace().color(p.text_muted)); });
-                            cols[4].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new("Real-time (0s)").size(13.0).monospace().strong().color(p.text_primary));
-                            });
-                        });
-                    });
-
+                    }
+                });
                 ui.add_space(8.0);
-
-                // 4. Per-Core Breakdown Grid (4 Columns row matching Image)
-                let num_cores = snap.cpu_core_usages.len().max(4);
-                for chunk in (0..num_cores).collect::<Vec<_>>().chunks(4) {
-                    ui.columns(chunk.len(), |cols| {
-                        for (col_idx, &core_idx) in chunk.iter().enumerate() {
-                            let col_ui = &mut cols[col_idx];
-                            let usage = snap.cpu_core_usages.get(core_idx).copied().unwrap_or(8.0);
-                            let freq_mhz = snap.cpu_frequencies_mhz.get(core_idx).copied().unwrap_or(snap.cpu_frequency_mhz);
-                            let freq_ghz = freq_mhz as f64 / 1000.0;
-                            let freq_str = format!("{:.2}", if freq_ghz > 0.0 { freq_ghz } else { 2.25 });
-
-                            let dot_color = if core_idx % 2 == 0 {
-                                p.info // Soft Blue
-                            } else {
-                                accent // Cybernetic Cyan
-                            };
-
-                            Frame::none()
-                                .fill(p.bg_card)
-                                .rounding(Rounding::same(8.0))
-                                .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                                .show(col_ui, |ui| {
-                                    ui.set_width(ui.available_width());
-
-                                    // Header: Core X on left, Thread X on right
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 5.0;
-                                        ui.label(RichText::new("●").size(13.0).color(dot_color));
-                                        ui.label(RichText::new(format!("Core {}", core_idx)).size(13.0).strong().color(p.text_primary));
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new(format!("Thread {}", core_idx)).size(13.0).monospace().color(p.text_muted));
-                                        });
-                                    });
-
-                                    ui.add_space(6.0);
-
-                                    // Clock GHz on left, Load % on right
-                                    ui.horizontal(|ui| {
-                                        ui.vertical(|ui| {
-                                            ui.label(RichText::new(&freq_str).size(26.0).strong().color(p.text_primary));
-                                            ui.label(RichText::new("CLOCK (GHz)").size(13.0).monospace().color(p.text_muted));
-                                        });
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                                            ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-                                                ui.label(RichText::new(format!("{:.0}%", usage)).size(20.0).strong().color(p.text_primary));
-                                                ui.label(RichText::new("LOAD").size(13.0).monospace().color(p.text_muted));
-                                            });
-                                        });
-                                    });
-
-                                    ui.add_space(6.0);
-
-                                    // Smooth wave sparkline across bottom of card
-                                    let hist = self.cpu_core_histories.get(core_idx).map(|q| q.iter().copied().collect::<Vec<_>>()).unwrap_or_else(|| {
-                                        let mut v = Vec::with_capacity(20);
-                                        for j in 0..20 {
-                                            let phase = j as f32 / 19.0;
-                                            let w = (phase * std::f32::consts::PI * 1.5 + core_idx as f32).sin() * 0.3 + 0.5;
-                                            v.push((usage * w).clamp(2.0, 95.0));
-                                        }
-                                        v
-                                    });
-
-                                    let spark_w = ui.available_width();
-                                    draw_core_waveform(ui, spark_w, 28.0, &hist, accent);
-                                });
-                        }
-                    });
-                    ui.add_space(6.0);
-                }
-
-                ui.add_space(4.0);
-
-                // 5. Low-Level Architecture Registers & OS Context Card
-                Frame::none()
-                    .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.label(RichText::new(crate::lucide::SYSTEMD).size(13.0).color(accent));
-                            ui.label(RichText::new("ARCHITECTURE & OS CONTEXT").size(13.0).monospace().strong().color(p.text_muted));
-
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 5.0;
-                                    ui.label(RichText::new(crate::lucide::SYSTEMD).size(13.0).color(accent));
-                                    let gov_label = snap.cpu_governor.as_deref().unwrap_or(if host_id.is_some() { "Linux Scheduler Active" } else { "G-Helper Micro-Governor Active" });
-                                    ui.label(RichText::new(gov_label).size(13.0).monospace().strong().color(p.text_primary));
-                                });
-                            });
-                        });
-
-                        ui.add_space(8.0);
-
-                        ui.columns(6, |cols| {
-                            cols[0].vertical(|ui| {
-                                ui.label(RichText::new("L1 CACHE").size(13.0).monospace().strong().color(p.text_muted));
-                                ui.add_space(2.0);
-                                let l1_str = if host_id.is_some() { "Unified" } else { "224 KB" };
-                                ui.label(RichText::new(l1_str).size(15.0).strong().color(p.text_primary));
-                                ui.add_space(1.0);
-                                let l1_sub = if host_id.is_some() { "Core L1D / L1I" } else { "32KB D + 24KB I" };
-                                ui.label(RichText::new(l1_sub).size(13.0).monospace().color(p.text_muted));
-                            });
-                            cols[1].vertical(|ui| {
-                                ui.label(RichText::new("L2 CACHE").size(13.0).monospace().strong().color(p.text_muted));
-                                ui.add_space(2.0);
-                                let l2_str = if host_id.is_some() { "Multi-MB" } else { "4.0 MB" };
-                                ui.label(RichText::new(l2_str).size(15.0).strong().color(p.text_primary));
-                                ui.add_space(1.0);
-                                ui.label(RichText::new("Shared Unified").size(13.0).monospace().color(p.text_muted));
-                            });
-                            cols[2].vertical(|ui| {
-                                ui.label(RichText::new("VIRTUALIZATION").size(13.0).monospace().strong().color(p.text_muted));
-                                ui.add_space(2.0);
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 4.0;
-                                    ui.label(RichText::new("●").size(13.0).color(accent));
-                                    ui.label(RichText::new("Enabled").size(14.5).strong().color(p.text_primary));
-                                });
-                                ui.add_space(1.0);
-                                let virt_sub = if host_id.is_some() { "KVM / Hardware" } else { "Intel VT-x (SLAT)" };
-                                ui.label(RichText::new(virt_sub).size(13.0).monospace().color(p.text_muted));
-                            });
-                            cols[3].vertical(|ui| {
-                                ui.label(RichText::new("PROCESSES").size(13.0).monospace().strong().color(p.text_muted));
-                                ui.add_space(2.0);
-                                let proc_count = if !snap.top_apps.is_empty() { snap.top_apps.len() } else if host_id.is_some() { 0 } else { 220 };
-                                ui.label(RichText::new(format!("{}", proc_count)).size(15.0).strong().color(p.text_primary));
-                                ui.add_space(1.0);
-                                ui.label(RichText::new("Isolated Groups").size(13.0).monospace().color(p.text_muted));
-                            });
-                            cols[4].vertical(|ui| {
-                                ui.label(RichText::new("THREADS").size(13.0).monospace().strong().color(p.text_muted));
-                                ui.add_space(2.0);
-                                let thread_count = if !snap.top_apps.is_empty() { snap.top_apps.len() * 12 + 267 } else { 2907 };
-                                ui.label(RichText::new(format!("{:#}", thread_count)).size(15.0).strong().color(p.text_primary));
-                                ui.add_space(1.0);
-                                ui.label(RichText::new("POSIX Scheduler").size(13.0).monospace().color(p.text_muted));
-                            });
-                            cols[5].vertical(|ui| {
-                                ui.label(RichText::new("HANDLES").size(13.0).monospace().strong().color(p.text_muted));
-                                ui.add_space(2.0);
-                                ui.label(RichText::new("90,800").size(15.0).strong().color(p.text_primary));
-                                ui.add_space(1.0);
-                                ui.label(RichText::new("I/O Descriptors").size(13.0).monospace().color(p.text_muted));
-                            });
-                        });
-                    });
-
-                ui.add_space(10.0);
-            });
+            }
+        });
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // SENSORS PAGE: RAM Dashboard (Matching media_1792116273219_0ccb7bbe.png)
-    // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_ram_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.palette();
         let accent = self.sensors_accent_color(&p);
@@ -13192,6 +12713,25 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_storage_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.palette();
+        if cfg!(windows) && host_id.is_none() {
+            ScrollArea::vertical().id_salt("windows_storage_volumes").show(ui, |ui| {
+                ui.heading("Storage volumes");
+                ui.label(RichText::new("Disk throughput and SMART health are unavailable from this provider.").color(p.text_muted));
+                if snap.disks.is_empty() { ui.label("No volume information is available yet."); }
+                for disk in &snap.disks {
+                    Frame::none().fill(p.bg_card).rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::same(12.0)).show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.label(RichText::new(format!("{} · {}", disk.mount_point, disk.name)).strong());
+                            ui.label(format!("{} used of {} · {} available", crate::sensors::format_bytes(disk.used_bytes), crate::sensors::format_bytes(disk.total_bytes), crate::sensors::format_bytes(disk.available_bytes)));
+                            ui.add(egui::ProgressBar::new((disk.usage_pct / 100.0).clamp(0.0, 1.0)).show_percentage());
+                        });
+                    ui.add_space(8.0);
+                }
+            });
+            return;
+        }
+
         let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
         ScrollArea::vertical()

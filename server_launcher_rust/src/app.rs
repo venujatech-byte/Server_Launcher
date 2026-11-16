@@ -422,6 +422,7 @@ pub struct LauncherApp {
     pub local_services_user: bool,
     pub local_services_loaded: bool,
     pub local_services_cache: Arc<Mutex<HashMap<bool, Vec<SystemdService>>>>,
+    pub local_services_errors: Arc<Mutex<HashMap<bool, String>>>,
     pub local_services_in_flight: Arc<Mutex<HashSet<bool>>>,
     pub remote_services: Arc<Mutex<HashMap<String, Vec<SystemdService>>>>,
     pub remote_services_in_flight: Arc<Mutex<HashSet<String>>>,
@@ -932,6 +933,7 @@ impl LauncherApp {
             local_services_user: true,
             local_services_loaded: false,
             local_services_cache: Arc::new(Mutex::new(HashMap::new())),
+            local_services_errors: Arc::new(Mutex::new(HashMap::new())),
             local_services_in_flight: Arc::new(Mutex::new(HashSet::new())),
             remote_services: Arc::new(Mutex::new(HashMap::new())),
             remote_services_in_flight: Arc::new(Mutex::new(HashSet::new())),
@@ -2289,13 +2291,13 @@ impl LauncherApp {
         }
 
         let cache_arc = self.local_services_cache.clone();
+        let errors_arc = self.local_services_errors.clone();
         let in_flight_arc = self.local_services_in_flight.clone();
 
         std::thread::spawn(move || {
-            if let Ok(s) = list_local_services(user_mode) {
-                if let Ok(mut map) = cache_arc.lock() {
-                    map.insert(user_mode, s);
-                }
+            let result = list_local_services(user_mode);
+            if let (Ok(mut cache), Ok(mut errors)) = (cache_arc.lock(), errors_arc.lock()) {
+                store_service_refresh(user_mode, result, &mut cache, &mut errors);
             }
             if let Ok(mut in_flight) = in_flight_arc.lock() {
                 in_flight.remove(&user_mode);
@@ -4853,17 +4855,20 @@ impl eframe::App for LauncherApp {
         self.render_adb_add_modal(ctx);
 
         let is_scanning = self.scanner.is_scanning.lock().map(|s| *s).unwrap_or(false);
-        let has_remote_bg_work = {
+        let has_background_work = {
             self.remote_connecting.lock().map(|s| !s.is_empty()).unwrap_or(false)
                 || self.remote_scanning.lock().map(|s| !s.is_empty()).unwrap_or(false)
                 || self.remote_services_in_flight.lock().map(|s| !s.is_empty()).unwrap_or(false)
                 || self.remote_service_action_in_flight.lock().map(|s| !s.is_empty()).unwrap_or(false)
                 || self.remote_journal_in_flight.lock().map(|s| !s.is_empty()).unwrap_or(false)
                 || self.remote_sensors_in_flight.lock().map(|s| !s.is_empty()).unwrap_or(false)
+                || self.local_services_in_flight.lock().map(|s| !s.is_empty()).unwrap_or(false)
+                || self.local_journal_in_flight.lock().map(|s| !s.is_empty()).unwrap_or(false)
+                || self.sensors_in_flight.load(std::sync::atomic::Ordering::SeqCst)
         };
         if self.close_confirm_open {
             ctx.request_repaint_after(std::time::Duration::from_millis(1000));
-        } else if is_scanning || has_remote_bg_work {
+        } else if is_scanning || has_background_work {
             ctx.request_repaint_after(std::time::Duration::from_millis(250));
         } else if self.active_sidebar_tab == SidebarTab::Sensors && self.sensors_refresh_interval > 0 {
             // Repaint at 1-second intervals on Sensors tab so real-time waveforms and second-by-second telemetry scroll smoothly
@@ -5026,6 +5031,19 @@ fn render_process_context_menu(
             ui.close_menu();
         }
     });
+}
+
+// A failed refresh must not erase the last good list or another scope's error.
+fn store_service_refresh(
+    user_mode: bool,
+    result: Result<Vec<SystemdService>, String>,
+    cache: &mut HashMap<bool, Vec<SystemdService>>,
+    errors: &mut HashMap<bool, String>,
+) {
+    match result {
+        Ok(services) => { cache.insert(user_mode, services); errors.remove(&user_mode); }
+        Err(error) => { errors.insert(user_mode, error); }
+    }
 }
 
 fn get_system_uptime() -> u64 {
@@ -7343,7 +7361,10 @@ impl LauncherApp {
                                         .on_hover_text("Open native system terminal window in current directory")
                                         .clicked()
                                     {
-                                        let _ = crate::commands::open_system_terminal(&term.cwd);
+                                        if let Err(error) = crate::commands::open_system_terminal(&term.cwd) {
+                                            if let Ok(mut logs) = term.logs.lock() { logs.push_back(crate::service::LogEntry::new(error.clone(), LogKind::Error)); }
+                                            if let Ok(mut status) = term.status.lock() { *status = TerminalCommandStatus::Failed(error); }
+                                        }
                                     }
                                 }
                             });
@@ -7415,6 +7436,9 @@ impl LauncherApp {
                                             .color(p.text_muted),
                                     );
                                 } else {
+                                    if !query.is_empty() && !l.iter().any(|entry| entry.text.to_lowercase().contains(&query)) {
+                                        ui.label(RichText::new("No output matches this search. Clear the search to see all output.").color(p.text_muted));
+                                    }
                                     for entry in l.iter().filter(|entry| query.is_empty() || entry.text.to_lowercase().contains(&query)) {
                                         let color = match entry.kind {
                                             LogKind::Stdin => p.success,
@@ -7752,6 +7776,23 @@ impl LauncherApp {
                 self.local_services_in_flight.lock().map(|s| s.contains(&user_mode)).unwrap_or(false)
             };
 
+            let service_error = if let Some(key) = &s_key {
+                self.remote_services_errors.lock().ok().and_then(|errors| errors.get(key).cloned()).filter(|error| !error.is_empty())
+            } else {
+                self.local_services_errors.lock().ok().and_then(|errors| errors.get(&user_mode).cloned())
+            };
+            if is_services_loading {
+                ui.horizontal(|ui| { ui.spinner(); ui.label("Refreshing services…"); });
+            }
+            if let Some(error) = &service_error {
+                ui.colored_label(p.danger, format!("Could not refresh services: {error}"));
+                if !services_list.is_empty() { ui.label("Showing the last loaded services."); }
+                if ui.add_enabled(!is_services_loading, egui::Button::new("Retry")).clicked() {
+                    if let Some(host) = &host_opt { self.trigger_remote_services_list(host, user_mode); }
+                    else { self.trigger_local_services_list(user_mode); }
+                }
+            }
+
             let filtered_services: Vec<SystemdService> = services_list
                 .into_iter()
                 .filter(|s| {
@@ -7761,6 +7802,15 @@ impl LauncherApp {
                         || s.sub_state.to_lowercase().contains(&q)
                 })
                 .collect();
+
+            if filtered_services.is_empty() && !is_services_loading {
+                if service_error.is_some() { return; }
+                if !q.is_empty() {
+                    ui.label("No services match this search.");
+                    if ui.button("Clear search").clicked() { self.service_search_query.clear(); }
+                    return;
+                }
+            }
 
             if filtered_services.is_empty() {
                 ui.add_space(20.0);
@@ -8161,7 +8211,7 @@ impl LauncherApp {
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                             .show(ui, |ui| {
-                                ui.label(RichText::new(msg).size(13.0).color(p.accent));
+                                ui.label(RichText::new(msg).size(13.0).color(if msg.starts_with("Error:") { p.danger } else { p.success }));
                             });
                     }
 
@@ -10928,12 +10978,11 @@ impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     fn render_sensors_right_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
         let p = self.palette();
-        let accent = self.sensors_accent_color(&p);
 
         let is_fetching = if let Some(hid) = host_id {
             self.remote_sensors_in_flight.lock().unwrap().contains(hid)
         } else {
-            false
+            self.sensors_in_flight.load(std::sync::atomic::Ordering::SeqCst)
         };
 
         // Auto-refresh timer logic (asynchronous for SSH hosts, never blocking UI thread)
@@ -10992,7 +11041,7 @@ impl LauncherApp {
         }
 
         // Telemetry sampling (once per second)
-        if self.last_telemetry_sample.elapsed() >= Duration::from_millis(1000) {
+        if snap.timestamp.is_some() && self.last_telemetry_sample.elapsed() >= Duration::from_millis(1000) {
             self.last_telemetry_sample = Instant::now();
             push_telemetry(&mut self.cpu_history, snap.cpu_global_usage, 60);
             if snap.cpu_global_usage > self.cpu_peak_usage {
@@ -11082,25 +11131,22 @@ impl LauncherApp {
 
         ui.vertical(|ui| {
 
-            // Remote host error notification (if query failed)
-            if let Some(hid) = host_id {
-                if let Some(err_msg) = self.remote_sensors_errors.lock().unwrap().get(hid) {
-                    ui.add_space(4.0);
-                    Frame::none()
-                        .fill(accent_with_alpha(accent, 25))
-                        .stroke(Stroke::NONE)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(10.0, 6.0))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::ALERT_TRIANGLE).size(13.0).color(accent));
-                                ui.label(RichText::new("Remote sensor query notice:").size(13.0).strong().color(p.text_primary));
-                                ui.label(RichText::new(err_msg).size(13.0).color(p.text_secondary));
-                            });
-                        });
-                }
+            let sensor_error = host_id.and_then(|id| self.remote_sensors_errors.lock().ok().and_then(|errors| errors.get(id).cloned()));
+            if let Some(error) = &sensor_error {
+                ui.colored_label(p.danger, format!("Could not refresh sensor readings: {error}"));
+                if snap.timestamp.is_some() { ui.label("Showing the last available readings."); }
             }
+            ui.horizontal_wrapped(|ui| {
+                if is_fetching { ui.spinner(); }
+                let freshness = snap.timestamp.map_or_else(|| "Collecting sensor readings…".to_string(), |time| format!("Updated {}s ago", time.elapsed().as_secs()));
+                ui.label(RichText::new(freshness).color(p.text_muted));
+                let refresh_label = if sensor_error.is_some() { "Retry" } else { "Refresh" };
+                if ui.add_enabled(!is_fetching, egui::Button::new(refresh_label)).clicked() {
+                    if let Some(id) = host_id {
+                        if let Some(host) = self.ssh_hosts.iter().find(|host| host.id == id).cloned() { self.trigger_remote_sensors_query(host); }
+                    } else { self.trigger_local_sensors_query(true, Some(ui.ctx().clone())); }
+                }
+            });
 
             ui.add_space(6.0);
 
@@ -21680,7 +21726,7 @@ impl LauncherApp {
             .inner_margin(egui::Margin::symmetric(10.0, 5.0))
             .show(ui, |ui| {
                 // Row 1: Service name + Live Metrics ... Find toggle + Start/Stop/Restart
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label(
                         RichText::new(&name)
                             .size(15.0)
@@ -21725,7 +21771,7 @@ impl LauncherApp {
                         }
                     }
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true), |ui| {
                         if ui.button("Copy").on_hover_text("Copy all captured output").clicked() {
                             if let Some(service) = self.find_service(key) {
                                 if let Ok(logs) = service.logs.lock() {
@@ -22550,3 +22596,22 @@ impl LauncherApp {
 }
 
 include!("adb_view.rs");
+
+#[cfg(test)]
+mod refresh_feedback_tests {
+    use super::*;
+    #[test]
+    fn failed_service_refresh_preserves_data_and_other_scope() {
+        let service = SystemdService { name: "demo".into(), load_state: "loaded".into(), active_state: "active".into(), sub_state: "running".into(), description: "Demo service".into(), is_user: false };
+        let mut cache = HashMap::from([(false, vec![service.clone()])]);
+        let mut errors = HashMap::from([(true, "Other scope".to_string())]);
+        store_service_refresh(false, Err("Disconnected".into()), &mut cache, &mut errors);
+        assert_eq!(cache[&false], vec![service]);
+        assert_eq!(errors[&false], "Disconnected");
+        assert_eq!(errors[&true], "Other scope");
+        store_service_refresh(false, Ok(Vec::new()), &mut cache, &mut errors);
+        assert!(cache[&false].is_empty());
+        assert!(!errors.contains_key(&false));
+        assert_eq!(errors[&true], "Other scope");
+    }
+}

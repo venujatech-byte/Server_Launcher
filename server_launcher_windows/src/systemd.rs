@@ -1,7 +1,10 @@
 use crate::config::SshRemoteHost;
 use crate::remote::{build_ssh_command, shell_quote};
+#[cfg(not(windows))]
 use std::fs;
+#[cfg(not(windows))]
 use std::path::PathBuf;
+#[cfg(not(windows))]
 use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +63,7 @@ pub fn parse_systemctl_output(output: &str, is_user: bool) -> Vec<SystemdService
     services
 }
 
+#[cfg(not(windows))]
 pub fn list_local_services(user_mode: bool) -> Result<Vec<SystemdService>, String> {
     let mut cmd = Command::new("systemctl");
     if user_mode {
@@ -134,6 +138,7 @@ pub fn list_remote_services(host: &SshRemoteHost, user_mode: bool) -> Result<Vec
     }
 }
 
+#[cfg(not(windows))]
 pub fn control_local_service(unit: &str, action: &str, user_mode: bool, sudo_password: Option<&str>) -> Result<String, String> {
     if user_mode {
         let mut cmd = Command::new("systemctl");
@@ -298,6 +303,7 @@ pub fn control_remote_service(host: &SshRemoteHost, unit: &str, action: &str, us
     }
 }
 
+#[cfg(not(windows))]
 pub fn fetch_local_journal(unit: &str, user_mode: bool, lines: usize, sudo_password: Option<&str>) -> Result<String, String> {
     let mut cmd = Command::new("journalctl");
     if user_mode {
@@ -455,6 +461,7 @@ impl NewServiceDefinition {
     }
 }
 
+#[cfg(not(windows))]
 pub fn create_local_service(def: &NewServiceDefinition, sudo_password: Option<&str>) -> Result<String, String> {
     let service_content = def.generate_service_content();
     let unit_name = if def.name.ends_with(".service") {
@@ -647,6 +654,7 @@ pub fn parse_show_dependencies_output(stdout: &str) -> UnitDependenciesInfo {
     info
 }
 
+#[cfg(not(windows))]
 pub fn get_local_unit_files(unit: &str, user_mode: bool) -> UnitFilesInfo {
     let mut cmd = Command::new("systemctl");
     if user_mode {
@@ -727,6 +735,7 @@ pub fn get_remote_unit_files(host: &SshRemoteHost, unit: &str, user_mode: bool) 
     }
 }
 
+#[cfg(not(windows))]
 pub fn read_local_unit_file(path: &str, sudo_password: Option<&str>) -> Result<String, String> {
     match fs::read_to_string(path) {
         Ok(content) => Ok(content),
@@ -777,6 +786,7 @@ pub fn read_remote_unit_file(host: &SshRemoteHost, path: &str) -> Result<String,
     }
 }
 
+#[cfg(not(windows))]
 pub fn write_local_unit_file(path: &str, content: &str, user_mode: bool, sudo_password: Option<&str>) -> Result<String, String> {
     let target = PathBuf::from(path);
     if user_mode || path.starts_with("/home/") || path.contains("/.config/") {
@@ -887,6 +897,7 @@ pub fn write_remote_unit_file(host: &SshRemoteHost, path: &str, content: &str, u
     }
 }
 
+#[cfg(not(windows))]
 pub fn delete_local_drop_in(path: &str, user_mode: bool, sudo_password: Option<&str>) -> Result<String, String> {
     if user_mode || path.starts_with("/home/") || path.contains("/.config/") {
         let _ = fs::remove_file(path);
@@ -958,6 +969,7 @@ pub fn delete_remote_drop_in(host: &SshRemoteHost, path: &str, user_mode: bool) 
     }
 }
 
+#[cfg(not(windows))]
 pub fn get_local_unit_dependencies(unit: &str, user_mode: bool) -> UnitDependenciesInfo {
     let mut cmd = Command::new("systemctl");
     if user_mode {
@@ -1096,3 +1108,9 @@ BindsTo=
         assert_eq!(deps.conflicts, vec!["shutdown.target"]);
     }
 }
+
+#[cfg(windows)]
+#[path = "windows_services.rs"]
+mod windows_services;
+#[cfg(windows)]
+pub use windows_services::*;

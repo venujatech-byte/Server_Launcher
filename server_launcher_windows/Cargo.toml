@@ -1,5 +1,5 @@
 [package]
-name = "server_launcher"
+name = "server_launcher_windows"
 version = "0.1.0"
 edition = "2021"
 authors = ["Venuka Silva"]

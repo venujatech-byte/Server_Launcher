@@ -1134,557 +1134,198 @@ pub fn render_modal_titlebar(
 }
 
 pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palette: &ThemePalette) -> ModalAction {
-    if !state.open {
-        return ModalAction::None;
-    }
-
-    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+    if !state.open { return ModalAction::None; }
+    if ctx.input(|input| input.key_pressed(Key::Escape)) {
         state.open = false;
         return ModalAction::None;
     }
-
     let mut action = ModalAction::None;
-    let window_title = if state.is_edit {
-        "Edit Server"
-    } else {
-        "Add Server"
-    };
-
+    let title = if state.is_edit { "Edit Server" } else { "Add Server" };
     let screen = ctx.screen_rect();
-    let modal_w = 560.0_f32.min((screen.width() - 68.0).max(200.0));
+    let modal_w = 560.0_f32.min((screen.width() - 48.0).max(200.0));
     let max_h = 640.0_f32.min((screen.height() - 60.0).max(200.0));
-
+    let mut window_open = state.open;
     let mut is_open = state.open;
-    let window_id = egui::Id::new("add_edit_server_modal_window");
-    let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
-    Window::new(window_title)
-        .id(window_id)
-        .title_bar(false)
-        .collapsible(false)
-        .resizable(false)
-        .movable(false)
-        .current_pos(screen.center() + drag_offset)
-        .pivot(egui::Align2::CENTER_CENTER)
-        .min_width(modal_w)
-        .max_width(modal_w)
-        .default_height(max_h)
-        .max_height(max_h)
-        .frame(
-            egui::Frame::none()
-                .fill(Color32::from_rgb(17, 19, 27))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
-                .rounding(Rounding::same(16.0))
-                .shadow(egui::epaint::Shadow {
-                    offset: egui::vec2(0.0, 8.0),
-                    blur: 24.0,
-                    spread: 0.0,
-                    color: Color32::from_black_alpha(160),
-                })
-                .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
-        )
+    Window::new(title)
+        .id(egui::Id::new("add_edit_server_modal_window"))
+        .open(&mut window_open)
+        .collapsible(false).resizable(false).movable(true)
+        .default_pos(screen.center()).pivot(egui::Align2::CENTER_CENTER)
+        .min_width(modal_w).max_width(modal_w)
+        .default_height(max_h).max_height(max_h)
+        .frame(egui::Frame::none().fill(palette.bg_card)
+            .stroke(Stroke::new(1.0_f32, palette.border)).rounding(Rounding::same(10.0))
+            .shadow(egui::epaint::Shadow { offset: egui::vec2(0.0, 4.0), blur: 16.0, spread: 0.0, color: Color32::from_black_alpha(120) })
+            .inner_margin(egui::Margin::same(14.0)))
         .show(ctx, |ui| {
-            render_modal_titlebar(ui, window_title, &mut is_open);
+            *ui.visuals_mut() = palette.egui_visuals();
+            ui.spacing_mut().interact_size.y = 26.0;
+            ui.spacing_mut().button_padding = egui::vec2(7.0, 3.0);
+            ui.label(RichText::new(if state.is_edit { "Update this server's command and launch settings." } else { "Set up a server. Required fields are marked *." }).size(11.5).color(palette.text_muted));
             ui.add_space(8.0);
-            ui.set_max_width(ui.available_width());
-
-        // ── Subtitle + servers.json badge ──
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            ui.label(RichText::new("Saved to").size(11.0).color(palette.text_muted));
-            egui::Frame::none()
-                .fill(Color32::from_rgb(22, 25, 35))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
-                .rounding(Rounding::same(3.0))
-                .inner_margin(egui::Margin::symmetric(5.0, 1.0))
-                .show(ui, |ui| {
-                    ui.label(
-                        RichText::new("servers.json")
-                            .size(10.5)
-                            .monospace()
-                            .color(Color32::from_rgb(180, 185, 200)),
-                    );
-                });
-            ui.label(RichText::new("— no code changes needed.").size(11.0).color(palette.text_muted));
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                egui::Frame::none()
-                    .fill(Color32::from_rgb(14, 15, 22))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 50)))
-                    .rounding(Rounding::same(4.0))
-                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                    .show(ui, |ui| {
-                        ui.label(
-                            RichText::new("servers.json")
-                                .size(10.5)
-                                .monospace()
-                                .color(Color32::from_rgb(110, 118, 138)),
-                        );
-                    });
-            });
-        });
-
-        ui.add_space(10.0);
-
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .max_width(ui.available_width())
-                .max_height((max_h - 145.0).max(80.0))
-                .show(ui, |ui| {
+            egui::ScrollArea::vertical().id_salt(("server_form", state.is_edit))
+                .auto_shrink([false, false]).max_width(ui.available_width())
+                .max_height((max_h - 140.0).max(80.0)).show(ui, |ui| {
                     ui.set_max_width(ui.available_width());
-
-                    // Template Picker (only for new servers)
+                    // Templates prefill the existing fields; nothing runs until the server is started.
                     if !state.is_edit {
-                        egui::Frame::none()
-                            .fill(Color32::from_rgb(19, 21, 30))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 52)))
-                            .rounding(Rounding::same(10.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(crate::lucide::ZAP).size(13.0).color(Color32::from_rgb(196, 192, 255)));
-                                    ui.label(
-                                        RichText::new("Pick a Template (Fast Setup)")
-                                            .size(12.5)
-                                            .strong()
-                                            .color(Color32::from_rgb(196, 192, 255)),
-                                    );
-                                });
-                                ui.add_space(2.0);
-                                ui.label(
-                                    RichText::new(
-                                        "Auto-populates command, port, actions, and links for popular stacks.",
-                                    )
-                                    .size(10.5)
-                                    .color(palette.text_muted),
-                                );
-                                ui.add_space(8.0);
-
-                                ui.horizontal(|ui| {
-                                    let mut template_names = vec!["-- Select a template --"];
-                                    for t in SERVER_TEMPLATES {
-                                        template_names.push(t.name);
-                                    }
-
-                                    let cur_name = template_names[state.selected_template_idx];
-                                    let combo_w = (ui.available_width() - 130.0).max(180.0);
-                                    egui::ComboBox::from_id_salt("template_select")
-                                        .selected_text(cur_name)
-                                        .width(combo_w)
-                                        .show_ui(ui, |ui| {
-                                            for (i, name) in template_names.iter().enumerate() {
-                                                ui.selectable_value(
-                                                    &mut state.selected_template_idx,
-                                                    i,
-                                                    *name,
-                                                );
+                        egui::Frame::none().fill(palette.bg_subtle).rounding(Rounding::same(6.0))
+                            .inner_margin(egui::Margin::same(10.0)).show(ui, |ui| {
+                                ui.label(RichText::new("Template (optional)").size(12.0).strong().color(palette.text_primary));
+                                ui.label(RichText::new("Prefill settings for a framework, or enter your own.").size(11.0).color(palette.text_muted));
+                                ui.add_space(4.0);
+                                ui.horizontal_wrapped(|ui| {
+                                    let selected = state.selected_template_idx.checked_sub(1)
+                                        .and_then(|index| SERVER_TEMPLATES.get(index))
+                                        .map_or("Custom server", |template| template.name);
+                                    egui::ComboBox::from_id_salt("template_select").selected_text(selected)
+                                        .width((ui.available_width() - 104.0).max(80.0)).show_ui(ui, |ui| {
+                                            ui.selectable_value(&mut state.selected_template_idx, 0, "Custom server");
+                                            for (index, template) in SERVER_TEMPLATES.iter().enumerate() {
+                                                ui.selectable_value(&mut state.selected_template_idx, index + 1, template.name);
                                             }
                                         });
-
-                                    let apply_btn = egui::Button::new(
-                                        RichText::new("Apply Template")
-                                            .size(11.5)
-                                            .strong()
-                                            .color(Color32::from_rgb(24, 25, 34)),
-                                    )
-                                    .fill(Color32::from_rgb(196, 192, 255))
-                                    .rounding(Rounding::same(6.0))
-                                    .min_size(egui::vec2(110.0, 26.0));
-
-                                    if ui.add(apply_btn).clicked() {
+                                    if ui.add_enabled(state.selected_template_idx > 0 && state.selected_template_idx <= SERVER_TEMPLATES.len(),
+                                        egui::Button::new(RichText::new("Use template").size(11.0)).min_size(egui::vec2(96.0, 26.0))).clicked() {
                                         state.apply_template(state.selected_template_idx);
                                     }
                                 });
                             });
-
-                        ui.add_space(14.0);
+                        ui.add_space(10.0);
                     }
-
-                    // Server Name *
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 2.0;
-                        ui.label(RichText::new("Server name").size(12.0).strong().color(palette.text_primary));
-                        ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
-                    });
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.name)
-                            .hint_text("e.g. Frontend App")
-                            .clip_text(true)
-                            .desired_width(ui.available_width()),
-                    );
-                    ui.add_space(8.0);
-
-                    // Unique Key (optional override)
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Unique Key (optional override)")
-                                .size(11.0)
-                                .color(palette.text_muted),
-                        );
-                        let derived = if !state.key.trim().is_empty() {
-                            state.key.trim().to_string()
-                        } else {
-                            state.name.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect::<String>().trim_matches('_').to_string()
-                        };
-                        if !derived.is_empty() {
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(
-                                    RichText::new(format!("ID: {}", derived))
-                                        .size(10.5)
-                                        .monospace()
-                                        .color(Color32::from_rgb(110, 118, 138)),
-                                );
+                    let columns = if ui.available_width() >= 420.0 { 2 } else { 1 };
+                    ui.columns(columns, |cols| {
+                        cols[0].vertical(|ui| {
+                            ui.label(RichText::new("Server name *").size(12.0).strong());
+                            ui.add(egui::TextEdit::singleline(&mut state.name).hint_text("e.g. Frontend app")
+                                .clip_text(true).desired_width(ui.available_width()));
+                        });
+                        cols[columns - 1].vertical(|ui| {
+                            ui.label(RichText::new("Group").size(12.0).strong());
+                            ui.add(egui::TextEdit::singleline(&mut state.group).hint_text("General")
+                                .clip_text(true).desired_width(ui.available_width()));
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                for preset in ["Frontend", "Backend", "DB", "General"] {
+                                    if ui.selectable_label(state.group == preset, RichText::new(preset).size(10.5)).clicked() {
+                                        state.group = preset.to_string();
+                                    }
+                                }
                             });
-                        }
-                    });
-                    ui.add_enabled(
-                        !state.is_edit,
-                        egui::TextEdit::singleline(&mut state.key)
-                            .hint_text("auto-generated if empty")
-                            .clip_text(true)
-                            .desired_width(ui.available_width()),
-                    );
-                    ui.add_space(8.0);
-
-                    // Server Group
-                    ui.label(
-                        RichText::new("Server group (Frontend / Backend / DB)")
-                            .size(12.0)
-                            .strong()
-                            .color(palette.text_primary),
-                    );
-                    ui.label(
-                        RichText::new("Tag servers for group start/stop. Pick preset or type custom:")
-                            .size(10.5)
-                            .color(palette.text_muted),
-                    );
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.group)
-                            .clip_text(true)
-                            .desired_width(ui.available_width()),
-                    );
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        for preset in &["Frontend", "Backend", "DB", "General"] {
-                            let is_active = state.group == *preset;
-                            let btn = egui::Button::new(
-                                RichText::new(*preset)
-                                    .size(10.5)
-                                    .color(if is_active { Color32::from_rgb(196, 192, 255) } else { palette.text_secondary }),
-                            )
-                            .fill(if is_active { Color32::from_rgb(34, 38, 56) } else { Color32::from_rgb(22, 24, 34) })
-                            .stroke(if is_active { Stroke::new(1.0_f32, Color32::from_rgb(196, 192, 255)) } else { Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 52)) })
-                            .rounding(Rounding::same(6.0));
-                            if ui.add(btn).clicked() {
-                                state.group = preset.to_string();
-                            }
-                        }
-                    });
-                    ui.add_space(8.0);
-
-                    // Working Directory *
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 2.0;
-                        ui.label(RichText::new("Working directory (path)").size(12.0).strong().color(palette.text_primary));
-                        ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
-                    });
-                    ui.horizontal(|ui| {
-                        let browse_w = 75.0;
-                        let input_w = (ui.available_width() - browse_w - ui.spacing().item_spacing.x).max(80.0);
-                        ui.add_sized(
-                            [input_w, 20.0],
-                            egui::TextEdit::singleline(&mut state.cwd)
-                                .hint_text("e.g. /path/to/project or .")
-                                .clip_text(true),
-                        );
-                        let browse_btn = egui::Button::new(
-                            RichText::new("Browse").size(11.5).color(palette.text_secondary),
-                        )
-                        .fill(Color32::from_rgb(26, 29, 40))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
-                        .rounding(Rounding::same(6.0));
-                        if ui.add(browse_btn).clicked() {
-                            if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                                state.cwd = folder.to_string_lossy().to_string();
-                            }
-                        }
-                    });
-                    ui.add_space(8.0);
-
-                    // Start Command *
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 2.0;
-                        ui.label(RichText::new("Start command").size(12.0).strong().color(palette.text_primary));
-                        ui.label(RichText::new("*").size(12.0).strong().color(palette.danger));
-                    });
-                    ui.label(
-                        RichText::new("e.g.  npm run dev   |   python app.py   |   node server.js")
-                            .size(10.5)
-                            .color(Color32::from_rgb(123, 131, 148)),
-                    );
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("$").size(12.0).monospace().color(Color32::from_rgb(110, 118, 138)));
-                        ui.add(
-                            egui::TextEdit::singleline(&mut state.command)
-                                .hint_text("e.g. npm run dev")
-                                .clip_text(true)
-                                .desired_width(ui.available_width()),
-                        );
-                    });
-                    ui.add_space(8.0);
-
-                    // Stop Command (optional)
-                    ui.label(
-                        RichText::new("Stop command (optional - runs before stopping)")
-                            .size(12.0)
-                            .strong(),
-                    );
-                    ui.label(
-                        RichText::new("e.g.  pg_ctl stop   - leave empty for plain kill")
-                            .size(10.5)
-                            .color(Color32::from_rgb(123, 131, 148)),
-                    );
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.stop_command)
-                            .clip_text(true)
-                            .desired_width(ui.available_width()),
-                    );
-                    ui.add_space(8.0);
-
-                    // Port
-                    ui.label(
-                        RichText::new("Port (0 = none, used to detect running state)")
-                            .size(12.0)
-                            .strong(),
-                    );
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.port_str)
-                            .clip_text(true)
-                            .desired_width(ui.available_width()),
-                    );
-                    ui.add_space(8.0);
-
-                    // Own console checkbox
-                    ui.checkbox(
-                        &mut state.own_console,
-                        RichText::new("Run in own console window (external terminal)")
-                            .size(12.0)
-                            .color(Color32::from_rgb(220, 225, 235)),
-                    );
-                    ui.label(
-                        RichText::new("Opens in a native terminal emulator (gnome-terminal, konsole, cmd.exe, etc.)")
-                            .size(10.5)
-                            .color(Color32::from_rgb(123, 131, 148)),
-                    );
-                    ui.add_space(8.0);
-
-                    // Auto-restart on crash checkbox
-                    ui.checkbox(
-                        &mut state.auto_restart,
-                        RichText::new("Auto-restart on crash")
-                            .size(12.0)
-                            .color(palette.text_primary),
-                    );
-                    ui.label(
-                        RichText::new("Automatically restarts this server if the process exits unexpectedly or crashes")
-                            .size(10.5)
-                            .color(palette.text_muted),
-                    );
-                    ui.add_space(8.0);
-
-                    // Run at startup checkbox
-                    ui.checkbox(
-                        &mut state.autostart,
-                        RichText::new(format!("{} Run server at startup", crate::lucide::PLAY))
-                            .size(12.0)
-                            .color(palette.text_primary),
-                    );
-                    ui.label(
-                        RichText::new("Automatically launches this server whenever Server Launcher opens")
-                            .size(10.5)
-                            .color(palette.text_muted),
-                    );
-                    ui.add_space(8.0);
-
-                    // Environment Variables
-                    ui.label(
-                        RichText::new("Environment variables (KEY=VALUE, one per line)")
-                            .size(12.0)
-                            .strong(),
-                    );
-                    ui.add(
-                        egui::TextEdit::multiline(&mut state.env_text)
-                            .clip_text(true)
-                            .desired_rows(3)
-                            .desired_width(ui.available_width()),
-                    );
-                    ui.add_space(10.0);
-
-                    // Extra Action Buttons
-                    ui.label(
-                        RichText::new("Extra action buttons (sub-commands)")
-                            .size(12.0)
-                            .strong(),
-                    );
-                    ui.label(
-                        RichText::new("Run inside working directory. e.g. label: 'Build', command: 'npm run build'")
-                            .size(10.5)
-                            .color(Color32::from_rgb(123, 131, 148)),
-                    );
-                    ui.add_space(2.0);
-
-                    let mut remove_action_idx = None;
-                    for (i, (lbl, cmd)) in state.actions.iter_mut().enumerate() {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("label:").size(10.5).color(Color32::from_rgb(123, 131, 148)));
-                            ui.add(egui::TextEdit::singleline(lbl).clip_text(true).desired_width(85.0));
-                            ui.label(RichText::new("cmd:").size(10.5).color(Color32::from_rgb(123, 131, 148)));
-                            let cmd_w = (ui.available_width() - 36.0).max(60.0);
-                            ui.add_sized(
-                                [cmd_w, 20.0],
-                                egui::TextEdit::singleline(cmd).clip_text(true),
-                            );
-                            if ui
-                                .button(RichText::new(crate::lucide::X).size(11.0).color(Color32::from_rgb(230, 80, 80)))
-                                .clicked()
-                            {
-                                remove_action_idx = Some(i);
-                            }
                         });
-                        ui.add_space(2.0);
-                    }
-                    if let Some(i) = remove_action_idx {
-                        state.actions.remove(i);
-                    }
-
-                    if ui
-                        .button(
-                            RichText::new("+ Add action button")
-                                .size(11.0)
-                                .color(Color32::from_rgb(108, 92, 231)),
-                        )
-                        .clicked()
-                    {
-                        state.actions.push((String::new(), String::new()));
-                    }
-
+                    });
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Working directory *").size(12.0).strong());
+                    ui.horizontal(|ui| {
+                        let width = (ui.available_width() - 76.0 - ui.spacing().item_spacing.x).max(48.0);
+                        ui.add_sized([width, 26.0], egui::TextEdit::singleline(&mut state.cwd)
+                            .hint_text(if cfg!(windows) { r"C:\Projects\my-app" } else { "/home/you/my-app" })
+                            .font(egui::TextStyle::Monospace).clip_text(true))
+                            .on_hover_text("Folder where the command runs. Use . for the current directory.");
+                        if ui.add_sized([76.0, 26.0], egui::Button::new("Browse…")).clicked() {
+                            if let Some(folder) = rfd::FileDialog::new().pick_folder() { state.cwd = folder.to_string_lossy().into_owned(); }
+                        }
+                    });
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Start command *").size(12.0).strong());
+                    ui.add(egui::TextEdit::singleline(&mut state.command).hint_text("npm run dev")
+                        .font(egui::TextStyle::Monospace).clip_text(true).desired_width(ui.available_width()));
+                    ui.add_space(8.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new("Port").size(12.0).strong());
+                        ui.add(egui::TextEdit::singleline(&mut state.port_str).hint_text("0")
+                            .clip_text(true).desired_width(80.0));
+                        ui.label(RichText::new("0 = no port monitoring").size(11.0).color(palette.text_muted));
+                    });
                     ui.add_space(10.0);
-
-                    // Open Links
-                    ui.label(RichText::new("Open links (label : url)").size(12.0).strong());
-                    ui.label(
-                        RichText::new("e.g. label: 'Localhost', url: 'http://localhost:3000'")
-                            .size(10.5)
-                            .color(Color32::from_rgb(123, 131, 148)),
-                    );
-                    ui.add_space(2.0);
-
-                    let mut remove_link_idx = None;
-                    for (i, (lbl, url)) in state.links.iter_mut().enumerate() {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("label:").size(10.5).color(Color32::from_rgb(123, 131, 148)));
-                            ui.add(egui::TextEdit::singleline(lbl).clip_text(true).desired_width(85.0));
-                            ui.label(RichText::new("url:").size(10.5).color(Color32::from_rgb(123, 131, 148)));
-                            let url_w = (ui.available_width() - 36.0).max(60.0);
-                            ui.add_sized(
-                                [url_w, 20.0],
-                                egui::TextEdit::singleline(url).clip_text(true),
-                            );
-                            if ui
-                                .button(RichText::new(crate::lucide::X).size(11.0).color(Color32::from_rgb(230, 80, 80)))
-                                .clicked()
-                            {
-                                remove_link_idx = Some(i);
+                    egui::CollapsingHeader::new("Launch options").id_salt("server_launch_options").show(ui, |ui| {
+                        ui.checkbox(&mut state.own_console, "Use an external terminal")
+                            .on_hover_text("Launch the server in a separate system terminal window.");
+                        ui.checkbox(&mut state.auto_restart, "Restart after a crash")
+                            .on_hover_text("Restart this server if its process exits unexpectedly.");
+                        ui.checkbox(&mut state.autostart, "Start when Server Launcher opens");
+                    });
+                    egui::CollapsingHeader::new("Advanced settings").id_salt("server_advanced_settings").show(ui, |ui| {
+                        // Edit mode keeps the existing identifier immutable.
+                        ui.label(RichText::new("Identifier (optional)").size(12.0).strong());
+                        ui.add_enabled(!state.is_edit, egui::TextEdit::singleline(&mut state.key)
+                            .hint_text("Generated from the name if empty").clip_text(true).desired_width(ui.available_width()))
+                            .on_hover_text("Unique configuration key. Existing server identifiers cannot be changed here.");
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("Stop command (optional)").size(12.0).strong());
+                        ui.add(egui::TextEdit::singleline(&mut state.stop_command).font(egui::TextStyle::Monospace)
+                            .hint_text("Leave empty to stop the process directly").clip_text(true).desired_width(ui.available_width()))
+                            .on_hover_text("Runs before stopping the server.");
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("Environment variables").size(12.0).strong());
+                        ui.add(egui::TextEdit::multiline(&mut state.env_text).font(egui::TextStyle::Monospace)
+                            .hint_text("KEY=VALUE\nOne variable per line").desired_rows(3).clip_text(true).desired_width(ui.available_width()));
+                    });
+                    egui::CollapsingHeader::new(format!("Actions ({})", state.actions.len()))
+                        .id_salt("server_extra_actions").default_open(!state.actions.is_empty()).show(ui, |ui| {
+                            ui.label(RichText::new("Commands run in this server's working directory.").size(11.0).color(palette.text_muted));
+                            let mut remove = None;
+                            for (index, (label, command)) in state.actions.iter_mut().enumerate() {
+                                ui.push_id(index, |ui| {
+                                    ui.horizontal_wrapped(|ui| {
+                                        let command_width = (ui.available_width() - 154.0).max(100.0);
+                                        ui.add(egui::TextEdit::singleline(label).hint_text("Label").clip_text(true).desired_width(110.0));
+                                        ui.add(egui::TextEdit::singleline(command).hint_text("npm run build")
+                                            .font(egui::TextStyle::Monospace).clip_text(true).desired_width(command_width));
+                                        if ui.button(RichText::new(crate::lucide::X).size(11.0).color(palette.danger))
+                                            .on_hover_text("Remove action").clicked() { remove = Some(index); }
+                                    });
+                                });
                             }
+                            if let Some(index) = remove { state.actions.remove(index); }
+                            if ui.button("+ Add action").clicked() { state.actions.push((String::new(), String::new())); }
                         });
-                        ui.add_space(2.0);
-                    }
-                    if let Some(i) = remove_link_idx {
-                        state.links.remove(i);
-                    }
-
-                    if ui
-                        .button(
-                            RichText::new("+ Add link")
-                                .size(11.0)
-                                .color(palette.accent),
-                        )
-                        .clicked()
-                    {
-                        state.links.push((String::new(), String::new()));
-                    }
-
-                    ui.add_space(12.0);
+                    egui::CollapsingHeader::new(format!("Links ({})", state.links.len()))
+                        .id_salt("server_extra_links").default_open(!state.links.is_empty()).show(ui, |ui| {
+                            let mut remove = None;
+                            for (index, (label, url)) in state.links.iter_mut().enumerate() {
+                                ui.push_id(index, |ui| {
+                                    ui.horizontal_wrapped(|ui| {
+                                        let url_width = (ui.available_width() - 154.0).max(100.0);
+                                        ui.add(egui::TextEdit::singleline(label).hint_text("Label").clip_text(true).desired_width(110.0));
+                                        ui.add(egui::TextEdit::singleline(url).hint_text("http://localhost:3000")
+                                            .clip_text(true).desired_width(url_width));
+                                        if ui.button(RichText::new(crate::lucide::X).size(11.0).color(palette.danger))
+                                            .on_hover_text("Remove link").clicked() { remove = Some(index); }
+                                    });
+                                });
+                            }
+                            if let Some(index) = remove { state.links.remove(index); }
+                            if ui.button("+ Add link").clicked() { state.links.push((String::new(), String::new())); }
+                        });
                 });
-
             ui.add_space(8.0);
             ui.separator();
-            ui.add_space(8.0);
-
-            // Bottom Buttons: Status & Cancel / Save
+            if let Some(error) = &state.error_msg {
+                ui.label(RichText::new(error).size(11.5).color(palette.danger));
+            }
             ui.horizontal(|ui| {
-                if let Some(err) = &state.error_msg {
-                    ui.label(RichText::new("●").size(9.0).color(palette.danger));
-                    ui.label(RichText::new(err).size(11.0).color(palette.danger));
-                } else {
-                    ui.label(RichText::new("●").size(9.0).color(Color32::from_rgb(0, 210, 160)));
-                    ui.label(
-                        RichText::new("Ready to register instance")
-                            .size(11.0)
-                            .monospace()
-                            .color(Color32::from_rgb(120, 126, 142)),
-                    );
-                }
-
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let btn_save = egui::Button::new(
-                        RichText::new("Save")
-                            .size(12.0)
-                            .strong()
-                            .color(Color32::from_rgb(24, 25, 34)),
-                    )
-                    .fill(Color32::from_rgb(196, 192, 255))
-                    .rounding(Rounding::same(8.0))
-                    .min_size(egui::vec2(85.0, 28.0));
-
-                    if ui.add(btn_save).clicked() {
+                    let label = if state.is_edit { "Save changes" } else { "Add server" };
+                    if ui.add(egui::Button::new(RichText::new(label).size(12.0).color(palette.accent_text))
+                        .fill(palette.accent).rounding(Rounding::same(6.0)).min_size(egui::vec2(96.0, 28.0))).clicked() {
                         match state.to_server_config() {
-                            Ok(cfg) => {
-                                let old_key = if state.is_edit {
-                                    Some(state.original_key.clone())
-                                } else {
-                                    None
-                                };
-                                action = ModalAction::SaveServer(cfg, old_key);
+                            Ok(config) => {
+                                let old_key = state.is_edit.then(|| state.original_key.clone());
+                                action = ModalAction::SaveServer(config, old_key);
                                 state.open = false;
                                 is_open = false;
                             }
-                            Err(err) => {
-                                state.error_msg = Some(err);
-                            }
+                            Err(error) => { state.error_msg = Some(error); }
                         }
                     }
-
-                    let btn_cancel = egui::Button::new(
-                        RichText::new("Cancel")
-                            .size(12.0)
-                            .color(palette.text_secondary),
-                    )
-                    .fill(Color32::from_rgb(26, 29, 40))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
-                    .rounding(Rounding::same(6.0))
-                    .min_size(egui::vec2(80.0, 28.0));
-
-                    if ui.add(btn_cancel).clicked() {
-                        state.open = false;
+                    if ui.add(egui::Button::new("Cancel").min_size(egui::vec2(72.0, 28.0))).clicked() {
                         is_open = false;
                     }
                 });
             });
         });
-
-    if !is_open {
-        state.open = false;
-    }
+    if !window_open || !is_open { state.open = false; }
     action
 }
 
@@ -4111,6 +3752,36 @@ mod tests {
                 tpl.name,
                 config_res.err()
             );
+        }
+    }
+
+    #[test]
+    fn test_server_dialog_render_preserves_configuration() {
+        for mode in [crate::theme::ThemeMode::Dark, crate::theme::ThemeMode::Light] {
+            for size in [egui::vec2(800.0, 700.0), egui::vec2(360.0, 480.0)] {
+                let ctx = egui::Context::default();
+                let palette = mode.palette();
+                ctx.set_visuals(palette.egui_visuals());
+                let mut state = AddEditModalState::default();
+                state.open_new();
+                state.key = "ui_example".into();
+                state.name = "Example".into();
+                state.command = "npm run dev".into();
+                state.port_str = "8080".into();
+                state.env_text = "EXAMPLE=value".into();
+                state.actions.push(("Build".into(), "npm run build".into()));
+                state.links.push(("Local".into(), "http://localhost:8080".into()));
+                state.autostart = true;
+                state.auto_restart = true;
+                state.own_console = true;
+                let expected = serde_json::to_value(state.to_server_config().unwrap()).unwrap();
+                let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)), ..Default::default() };
+                let _ = ctx.run(input, |ctx| {
+                    assert!(matches!(render_add_edit_modal(ctx, &mut state, &palette), ModalAction::None));
+                });
+                assert_eq!(serde_json::to_value(state.to_server_config().unwrap()).unwrap(), expected);
+                assert!(state.open);
+            }
         }
     }
 

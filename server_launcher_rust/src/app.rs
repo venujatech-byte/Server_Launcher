@@ -2973,7 +2973,7 @@ impl LauncherApp {
             }
 
             // Split layout: Left panel (width 380px with Tabs on top) + Right panel (Remaining width)
-            let total_h = ui.available_height().max(100.0);
+            let total_h = ui.available_height().max(0.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 ui.set_height(total_h);
@@ -3486,9 +3486,9 @@ impl LauncherApp {
             ui.add_space(4.0);
 
             // Integrated Dark Terminal Window (Output + Prompt at bottom, fills full available height)
-            let total_term_h = (ui.available_height() - 4.0).max(200.0);
+            let total_term_h = (ui.available_height() - 16.0).max(0.0);
             let prompt_bar_h = 36.0;
-            let scroll_h = (total_term_h - prompt_bar_h - 22.0).max(80.0);
+            let scroll_h = (total_term_h - prompt_bar_h - 22.0).max(0.0);
 
             let term_logs = self.get_remote_logs(&host.id);
 
@@ -3546,7 +3546,7 @@ impl LauncherApp {
                             let text_resp = ui.add(
                                 egui::TextEdit::singleline(input_text)
                                     .font(egui::FontId::monospace(12.0))
-                                    .desired_width(ui.available_width() - 85.0)
+                                    .desired_width((ui.available_width() - 85.0).max(0.0))
                                     .hint_text("Type remote command and press Enter (e.g. ls -la, uname -a)..."),
                             );
 
@@ -4362,7 +4362,7 @@ impl eframe::App for LauncherApp {
                         }),
                 )
                 .show(ctx, |ui| {
-                    let total_h = ui.available_height().max(100.0);
+                    let total_h = ui.available_height().max(0.0);
                     let left_w = WORKSPACE_SIDEBAR_WIDTH;
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
@@ -4387,7 +4387,7 @@ impl eframe::App for LauncherApp {
                         ui.add_space(WORKSPACE_GAP);
 
                         // RIGHT MAIN AREA: Fills 100% of remaining width
-                        let right_w = ui.available_width().max(100.0);
+                        let right_w = ui.available_width().max(0.0);
                         ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
                             ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
                     ui.set_width(right_w);
@@ -7304,7 +7304,7 @@ impl LauncherApp {
             // ═════════════════════════════════════════════════════════════════
             // Integrated Dark Terminal Window (Output + Prompt at bottom)
             // ═════════════════════════════════════════════════════════════════
-            let total_h = ui.available_height().max(200.0);
+            let total_h = (ui.available_height() - 16.0).max(0.0);
             let logs_clone = term.logs.clone();
             let mut should_focus = false;
 
@@ -7316,7 +7316,7 @@ impl LauncherApp {
                 .show(ui, |ui| {
                     ui.set_height(total_h);
                     let prompt_bar_h = 36.0;
-                    let scroll_h = (total_h - prompt_bar_h - 16.0).max(80.0);
+                    let scroll_h = (total_h - prompt_bar_h - 16.0).max(0.0);
 
                     // 1. Scrollable Output Log Area
                     let scroll_resp = ScrollArea::vertical()
@@ -7405,7 +7405,7 @@ impl LauncherApp {
                             .font(egui::TextStyle::Monospace)
                             .text_color(Color32::from_rgb(230, 235, 245))
                             .hint_text(hint)
-                            .desired_width(ui.available_width() - 80.0);
+                            .desired_width((ui.available_width() - 80.0).max(0.0));
 
                         let resp = ui.add(text_edit);
 
@@ -8204,7 +8204,7 @@ impl LauncherApp {
                                 })
                             };
 
-                            let log_h = (ui.available_height() - 20.0).max(180.0);
+                            let log_h = (ui.available_height() - 16.0).max(0.0);
                             Frame::none()
                                 .fill(Color32::from_rgb(12, 14, 20))
                                 .stroke(Stroke::NONE)
@@ -8214,6 +8214,7 @@ impl LauncherApp {
                                     ui.set_height(log_h);
                                     ScrollArea::vertical()
                                         .id_salt("journalctl_scroll")
+                                        .max_height(log_h)
                                         .stick_to_bottom(true)
                                         .auto_shrink([false, false])
                                         .show(ui, |ui| {

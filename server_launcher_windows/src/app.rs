@@ -41,6 +41,7 @@ const MACHINE_RAIL_WIDTH: f32 = 52.0;
 const WORKSPACE_SIDEBAR_WIDTH: f32 = 380.0;
 const SENSORS_SIDEBAR_WIDTH: f32 = 240.0;
 const WORKSPACE_GAP: f32 = 8.0;
+const WORKSPACE_HEADER_HEIGHT: f32 = 38.0;
 const WORKSPACE_SIDEBAR_MARGIN: egui::Margin = egui::Margin {
     left: 14.0, right: 12.0, top: 0.0, bottom: 0.0,
 };
@@ -2984,7 +2985,7 @@ impl LauncherApp {
                 }
             }
 
-            self.render_workspace_header(ui, Some(&host.id));
+            let header_rect = ui.available_rect_before_wrap();
 
             // Split layout: Sidebar + remaining content; Sensors uses a compact column.
             let total_h = ui.available_height().max(0.0);
@@ -3005,6 +3006,7 @@ impl LauncherApp {
                     ui.set_max_width(left_w);
                     ui.set_height(total_h);
                     ui.set_min_height(total_h);
+                    ui.add_space(WORKSPACE_HEADER_HEIGHT);
                     // Left panel content for active tab
                     match self.active_sidebar_tab {
                         SidebarTab::Servers => self.render_remote_servers_left_panel(ui, &host),
@@ -3025,6 +3027,9 @@ impl LauncherApp {
                     ui.set_max_width(right_w);
                     ui.set_height(total_h);
                     ui.set_min_height(total_h);
+                    if self.active_sidebar_tab == SidebarTab::Sensors {
+                        ui.add_space(WORKSPACE_HEADER_HEIGHT);
+                    }
                     match self.active_sidebar_tab {
                         SidebarTab::Servers => self.render_remote_servers_right_panel(ui, &host),
                         SidebarTab::Scripts => self.render_scripts_right_panel(ui, Some(&host.id)),
@@ -3034,7 +3039,7 @@ impl LauncherApp {
                     }
                 });
             });
-
+            self.render_workspace_header(ui, header_rect, Some(&host.id));
         });
     }
 
@@ -4372,7 +4377,7 @@ impl eframe::App for LauncherApp {
                         }),
                 )
                 .show(ctx, |ui| {
-                    self.render_workspace_header(ui, None);
+                    let header_rect = ui.available_rect_before_wrap();
                     let total_h = ui.available_height().max(0.0);
                     let left_w = self.workspace_sidebar_width();
                     ui.horizontal(|ui| {
@@ -4392,6 +4397,7 @@ impl eframe::App for LauncherApp {
                                 ui.set_height(total_h);
                                 ui.set_min_height(total_h);
                                 ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
+                                ui.add_space(WORKSPACE_HEADER_HEIGHT);
                                 self.render_left_panel(ui);
                             });
 
@@ -4405,10 +4411,13 @@ impl eframe::App for LauncherApp {
                             ui.set_max_width(right_w);
                             ui.set_height(total_h);
                             ui.set_min_height(total_h);
+                            if self.active_sidebar_tab == SidebarTab::Sensors {
+                                ui.add_space(WORKSPACE_HEADER_HEIGHT);
+                            }
                             self.render_right_panel(ui);
                         });
                     });
-
+                    self.render_workspace_header(ui, header_rect, None);
                 });
         } else if let Some(adb_dev) = self.adb_devices.iter().find(|d| d.id == self.selected_machine).cloned() {
             // ═════════════════════════════════════════════════════════════════
@@ -6291,8 +6300,12 @@ impl LauncherApp {
     // TOP NAVIGATION TABS BAR (Servers, Scripts, Commands, SystemMD, Sensors)
     // ═════════════════════════════════════════════════════════════════════════
     // The top strip keeps one geometry while the workspace below can use a compact sidebar.
-    fn render_workspace_header(&mut self, ui: &mut Ui, host_id: Option<&str>) {
+    fn render_workspace_header(&mut self, ui: &mut Ui, workspace_rect: egui::Rect, host_id: Option<&str>) {
         let p = self.palette();
+        // Reserve header space per column so other detail panes can still start at the top.
+        let rect = egui::Rect::from_min_size(workspace_rect.min, egui::vec2(workspace_rect.width(), 32.0));
+        let mut header_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+        let ui = &mut header_ui;
         ui.horizontal(|ui| {
             ui.set_min_height(32.0);
             ui.spacing_mut().item_spacing.x = 0.0;
@@ -6317,7 +6330,6 @@ impl LauncherApp {
                 );
             }
         });
-        ui.add_space(6.0);
     }
 
     fn render_sidebar_tabs_bar(&mut self, ui: &mut Ui) {

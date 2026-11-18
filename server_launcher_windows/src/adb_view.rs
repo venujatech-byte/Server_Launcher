@@ -97,7 +97,7 @@ impl LauncherApp {
 
         let p = self.palette();
         let screen = ctx.screen_rect();
-        let modal_w = 560.0_f32.min(screen.width() - 32.0);
+        let modal_w = 560.0_f32.min((screen.width() - 80.0).max(0.0));
         let compact = screen.height() < 420.0;
         let option_height = if compact { 82.0 } else { 100.0 };
 
@@ -177,7 +177,11 @@ impl LauncherApp {
 
                 ui.painter().rect(ssh_rect, Rounding::same(12.0), ssh_bg, Stroke::new(1.0_f32, ssh_border));
 
-                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(ssh_rect.shrink(12.0)), |ui| {
+                {
+                    // The card was already reserved above; do not advance the parent cursor again.
+                    let mut card_ui = ui.new_child(egui::UiBuilder::new().max_rect(ssh_rect.shrink(12.0)));
+                    card_ui.set_clip_rect(ssh_rect.shrink(12.0));
+                    let ui = &mut card_ui;
                     ui.horizontal(|ui| {
                         Frame::none()
                             .fill(p.accent_subtle)
@@ -202,12 +206,12 @@ impl LauncherApp {
                             ui.label(RichText::new(crate::lucide::CHEVRON_RIGHT).size(16.0).color(arrow_col));
                         });
                     });
-                });
+                }
                 if ssh_resp.clicked() {
                     choose_ssh = true;
                 }
 
-                ui.add_space(if compact { 6.0 } else { 10.0 });
+                ui.add_space(12.0);
 
                 // Option 2: Android / ADB Device
                 let mut choose_adb = false;
@@ -221,7 +225,11 @@ impl LauncherApp {
 
                 ui.painter().rect(adb_rect, Rounding::same(12.0), adb_bg, Stroke::new(1.0_f32, adb_border));
 
-                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(adb_rect.shrink(12.0)), |ui| {
+                {
+                    // The card was already reserved above; do not advance the parent cursor again.
+                    let mut card_ui = ui.new_child(egui::UiBuilder::new().max_rect(adb_rect.shrink(12.0)));
+                    card_ui.set_clip_rect(adb_rect.shrink(12.0));
+                    let ui = &mut card_ui;
                     ui.horizontal(|ui| {
                         Frame::none()
                             .fill(Color32::from_rgb(14, 40, 58))
@@ -246,7 +254,7 @@ impl LauncherApp {
                             ui.label(RichText::new(crate::lucide::CHEVRON_RIGHT).size(16.0).color(arrow_col));
                         });
                     });
-                });
+                }
                 if adb_resp.clicked() {
                     choose_adb = true;
                 }

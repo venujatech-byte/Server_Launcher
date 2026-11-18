@@ -2964,102 +2964,53 @@ impl LauncherApp {
                 }
             }
 
-            if self.active_sidebar_tab == SidebarTab::Sensors {
-                // Top row: Navigation tabs (380px fixed width) + System Brief Info Panel (remaining width)
-                ui.horizontal(|ui| {
-                    ui.allocate_ui_with_layout(egui::vec2(380.0, 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.set_width(380.0);
-                        ui.set_max_width(380.0);
-                        self.render_sidebar_tabs_bar(ui);
-                    });
+            // Split layout: Left panel (width 380px with Tabs on top) + Right panel (Remaining width)
+            let total_h = ui.available_height().max(100.0);
+            ui.horizontal(|ui| {
+                ui.set_height(total_h);
+                ui.set_min_height(total_h);
 
-                    ui.add_space(8.0);
-
-                    let brief_w = ui.available_width().max(100.0);
-                    ui.allocate_ui_with_layout(egui::vec2(brief_w, 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.set_width(brief_w);
-                        ui.set_max_width(brief_w);
-                        self.render_system_brief_info_panel(ui, Some(&host.id));
-                    });
-                });
-
-                ui.add_space(6.0);
-
-                // Keep the Sensors sidebar on the same column as the other tabs.
-                let total_h = ui.available_height().max(100.0);
                 let left_w = 380.0;
+                let right_w = (ui.available_width() - left_w - 12.0).max(300.0);
 
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                // LEFT PANEL (380px)
+                ui.allocate_ui_with_layout(egui::vec2(left_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(left_w);
+                    ui.set_max_width(left_w);
                     ui.set_height(total_h);
                     ui.set_min_height(total_h);
+                    // 1. Navigation Tabs on top of left panel
+                    self.render_sidebar_tabs_bar(ui);
+                    ui.add_space(6.0);
 
-                    ui.allocate_ui_with_layout(egui::vec2(left_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        ui.set_width(left_w);
-                        ui.set_max_width(left_w);
-                        ui.set_height(total_h);
-                        ui.set_min_height(total_h);
-                        self.render_sensors_left_panel(ui, Some(&host.id));
-                    });
-
-                    ui.separator();
-
-                    let right_w = ui.available_width().max(100.0);
-                    ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        ui.set_width(right_w);
-                        ui.set_max_width(right_w);
-                        ui.set_height(total_h);
-                        ui.set_min_height(total_h);
-                        self.render_sensors_right_panel(ui, Some(&host.id));
-                    });
+                    // 2. Left panel content for active tab
+                    match self.active_sidebar_tab {
+                        SidebarTab::Servers => self.render_remote_servers_left_panel(ui, &host),
+                        SidebarTab::Scripts => self.render_scripts_left_panel(ui, Some(&host.id)),
+                        SidebarTab::Commands => self.render_commands_left_panel(ui, Some(&host.id)),
+                        SidebarTab::SystemMD => self.render_systemd_left_panel(ui, Some(&host.id)),
+                        SidebarTab::Sensors => self.render_sensors_left_panel(ui, Some(&host.id)),
+                    }
                 });
-            } else {
-                // Split layout: Left panel (width 380px with Tabs on top) + Right panel (Remaining width)
-                let total_h = ui.available_height().max(100.0);
-                ui.horizontal(|ui| {
+
+                ui.separator();
+
+                // RIGHT PANEL (Remaining width)
+                ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(right_w);
+                    ui.set_max_width(right_w);
                     ui.set_height(total_h);
                     ui.set_min_height(total_h);
-
-                    let left_w = 380.0;
-                    let right_w = (ui.available_width() - left_w - 12.0).max(300.0);
-
-                    // LEFT PANEL (380px)
-                    ui.allocate_ui_with_layout(egui::vec2(left_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        ui.set_width(left_w);
-                        ui.set_max_width(left_w);
-                        ui.set_height(total_h);
-                        ui.set_min_height(total_h);
-                        // 1. Navigation Tabs on top of left panel
-                        self.render_sidebar_tabs_bar(ui);
-                        ui.add_space(6.0);
-
-                        // 2. Left panel content for active tab
-                        match self.active_sidebar_tab {
-                            SidebarTab::Servers => self.render_remote_servers_left_panel(ui, &host),
-                            SidebarTab::Scripts => self.render_scripts_left_panel(ui, Some(&host.id)),
-                            SidebarTab::Commands => self.render_commands_left_panel(ui, Some(&host.id)),
-                            SidebarTab::SystemMD => self.render_systemd_left_panel(ui, Some(&host.id)),
-                            SidebarTab::Sensors => self.render_sensors_left_panel(ui, Some(&host.id)),
-                        }
-                    });
-
-                    ui.separator();
-
-                    // RIGHT PANEL (Remaining width)
-                    ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        ui.set_width(right_w);
-                        ui.set_max_width(right_w);
-                        ui.set_height(total_h);
-                        ui.set_min_height(total_h);
-                        match self.active_sidebar_tab {
-                            SidebarTab::Servers => self.render_remote_servers_right_panel(ui, &host),
-                            SidebarTab::Scripts => self.render_scripts_right_panel(ui, Some(&host.id)),
-                            SidebarTab::Commands => self.render_commands_right_panel(ui, Some(&host.id)),
-                            SidebarTab::SystemMD => self.render_systemd_right_panel(ui, Some(&host.id)),
-                            SidebarTab::Sensors => self.render_sensors_right_panel(ui, Some(&host.id)),
-                        }
-                    });
+                    match self.active_sidebar_tab {
+                        SidebarTab::Servers => self.render_remote_servers_right_panel(ui, &host),
+                        SidebarTab::Scripts => self.render_scripts_right_panel(ui, Some(&host.id)),
+                        SidebarTab::Commands => self.render_commands_right_panel(ui, Some(&host.id)),
+                        SidebarTab::SystemMD => self.render_systemd_right_panel(ui, Some(&host.id)),
+                        SidebarTab::Sensors => self.render_sensors_right_panel(ui, Some(&host.id)),
+                    }
                 });
-            }
+            });
+
         });
     }
 
@@ -10829,6 +10780,13 @@ impl LauncherApp {
     // SENSORS TAB: Right Main Area (Full Sensors & Hardware Monitor Viewer)
     // ═════════════════════════════════════════════════════════════════════════
     fn render_sensors_right_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
+        // Summary and page content share the workspace content origin.
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), 32.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| self.render_system_brief_info_panel(ui, host_id),
+        );
+        ui.add_space(6.0);
         let p = self.palette();
         let accent = self.sensors_accent_color(&p);
 

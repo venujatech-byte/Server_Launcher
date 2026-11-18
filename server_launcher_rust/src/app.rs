@@ -2985,9 +2985,9 @@ impl LauncherApp {
 
                 ui.add_space(6.0);
 
-                // Split layout below: Shrunk Sensors left sidebar (240px) + Right Subtab Page (remaining width)
+                // Keep the Sensors sidebar on the same column as the other tabs.
                 let total_h = ui.available_height().max(100.0);
-                let left_w = 240.0;
+                let left_w = 380.0;
 
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                     ui.set_height(total_h);
@@ -4397,104 +4397,44 @@ impl eframe::App for LauncherApp {
                         }),
                 )
                 .show(ctx, |ui| {
-                    if self.active_sidebar_tab == SidebarTab::Sensors {
-                        // 1. Top row: Navigation tabs (380px fixed width) + System Brief Info Panel (remaining width)
-                        ui.horizontal(|ui| {
-                            ui.allocate_ui_with_layout(egui::vec2(380.0, 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                ui.set_width(380.0);
-                                ui.set_max_width(380.0);
-                                self.render_sidebar_tabs_bar(ui);
-                            });
+                    let total_h = ui.available_height().max(100.0);
+                    let left_w = 380.0;
+                    ui.horizontal(|ui| {
+                        ui.set_height(total_h);
+                        ui.set_min_height(total_h);
 
-                            ui.add_space(8.0);
-
-                            let brief_w = ui.available_width().max(100.0);
-                            ui.allocate_ui_with_layout(egui::vec2(brief_w, 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                ui.set_width(brief_w);
-                                ui.set_max_width(brief_w);
-                                self.render_system_brief_info_panel(ui, None);
-                            });
-                        });
-
-                        ui.add_space(6.0);
-
-                        // 2. Main split below top row: Shrunk Sensors left sidebar (240px) + Right Subtab Page (remaining width)
-                        let total_h = ui.available_height().max(100.0);
-                        let left_w = 240.0;
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
-                            ui.set_height(total_h);
-                            ui.set_min_height(total_h);
-
-                            Frame::none()
-                                .fill(p.bg_sidebar)
-                                .stroke(Stroke::NONE)
-                                .inner_margin(egui::Margin {
-                                    left: 14.0,
-                                    right: 12.0,
-                                    top: 0.0,
-                                    bottom: 0.0,
-                                })
-                                .show(ui, |ui| {
-                                    ui.set_width(left_w);
-                                    ui.set_min_width(left_w);
-                                    ui.set_max_width(left_w);
-                                    ui.set_height(total_h);
-                                    ui.set_min_height(total_h);
-                                    ui.vertical(|ui| {
-                                        self.render_sensors_left_panel(ui, None);
-                                    });
-                                });
-
-                            ui.add_space(8.0);
-
-                            let right_w = ui.available_width().max(100.0);
-                            ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
-                                ui.set_width(right_w);
-                                ui.set_max_width(right_w);
+                        // LEFT SIDEBAR (380px width)
+                        Frame::none()
+                            .fill(p.bg_sidebar)
+                            .stroke(Stroke::NONE)
+                            .inner_margin(egui::Margin {
+                                left: 14.0,
+                                right: 12.0,
+                                top: 0.0,
+                                bottom: 0.0,
+                            })
+                            .show(ui, |ui| {
+                                ui.set_width(left_w);
+                                ui.set_min_width(left_w);
+                                ui.set_max_width(left_w);
                                 ui.set_height(total_h);
                                 ui.set_min_height(total_h);
-                                self.render_sensors_right_panel(ui, None);
+                                self.render_left_panel(ui);
                             });
-                        });
-                    } else {
-                        let total_h = ui.available_height().max(100.0);
-                        let left_w = 380.0;
-                        ui.horizontal(|ui| {
+
+                        ui.add_space(8.0);
+
+                        // RIGHT MAIN AREA: Fills 100% of remaining width
+                        let right_w = ui.available_width().max(100.0);
+                        ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.set_width(right_w);
+                            ui.set_max_width(right_w);
                             ui.set_height(total_h);
                             ui.set_min_height(total_h);
-
-                            // LEFT SIDEBAR (380px width)
-                            Frame::none()
-                                .fill(p.bg_sidebar)
-                                .stroke(Stroke::NONE)
-                                .inner_margin(egui::Margin {
-                                    left: 14.0,
-                                    right: 12.0,
-                                    top: 0.0,
-                                    bottom: 0.0,
-                                })
-                                .show(ui, |ui| {
-                                    ui.set_width(left_w);
-                                    ui.set_min_width(left_w);
-                                    ui.set_max_width(left_w);
-                                    ui.set_height(total_h);
-                                    ui.set_min_height(total_h);
-                                    self.render_left_panel(ui);
-                                });
-
-                            ui.add_space(8.0);
-
-                            // RIGHT MAIN AREA: Fills 100% of remaining width
-                            let right_w = ui.available_width().max(100.0);
-                            ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
-                                ui.set_width(right_w);
-                                ui.set_max_width(right_w);
-                                ui.set_height(total_h);
-                                ui.set_min_height(total_h);
-                                self.render_right_panel(ui);
-                            });
+                            self.render_right_panel(ui);
                         });
-                    }
+                    });
+
                 });
         } else if let Some(adb_dev) = self.adb_devices.iter().find(|d| d.id == self.selected_machine).cloned() {
             // ═════════════════════════════════════════════════════════════════

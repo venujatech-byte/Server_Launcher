@@ -9231,8 +9231,8 @@ impl LauncherApp {
 
         let mut is_open = self.settings_modal_open;
         let screen = ctx.screen_rect();
-        let modal_w = 640.0_f32.min(screen.width() - 30.0).max(380.0);
-        let max_h = (screen.height() - 50.0).max(480.0);
+        let modal_w = 640.0_f32.min((screen.width() - 76.0).max(0.0));
+        let max_h = (screen.height() - 72.0).max(0.0);
 
         let mut change_theme: Option<ThemeMode> = None;
         let mut change_accent: Option<Option<String>> = None;
@@ -9253,8 +9253,7 @@ impl LauncherApp {
             .pivot(egui::Align2::CENTER_CENTER)
             .min_width(modal_w)
             .max_width(modal_w)
-            .default_height(580.0)
-            .max_height(max_h)
+            .fixed_size(egui::vec2(modal_w, max_h.min(580.0)))
             .frame(
                 egui::Frame::none()
                     .fill(Color32::from_rgb(16, 17, 24))
@@ -9306,6 +9305,7 @@ impl LauncherApp {
                     .inner_margin(egui::Margin::symmetric(5.0, 5.0))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
                             let tabs = SettingsTab::all();
                             let avail_w = ui.available_width() - ((tabs.len() - 1) as f32 * 4.0);
                             let tab_w = (avail_w / tabs.len() as f32).max(50.0);
@@ -9342,7 +9342,7 @@ impl LauncherApp {
                 ScrollArea::vertical()
                     .id_salt("settings_tab_content_scroll")
                     .auto_shrink([false, false])
-                    .max_height((max_h - 145.0).max(100.0))
+                    .max_height((ui.available_height() - 50.0).max(0.0))
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 12.0;
 
@@ -9405,12 +9405,15 @@ impl LauncherApp {
                                         ui.label(RichText::new("CURATED ACCENT SWATCHES").size(10.0).monospace().strong().color(palette.text_muted));
                                         ui.add_space(6.0);
 
-                                        // Swatch Grid: 14 presets (2 columns of 7)
+                                        // Keep swatches inside the body and stack them when two columns cannot fit.
                                         let presets = crate::theme::ACCENT_PRESETS;
+                                        let swatch_columns = if ui.available_width() >= 440.0 { 2 } else { 1 };
+                                        let swatch_width = (ui.available_width() - 8.0 * (swatch_columns - 1) as f32) / swatch_columns as f32;
                                         egui::Grid::new("accent_swatches_grid")
-                                            .num_columns(2)
+                                            .num_columns(swatch_columns)
                                             .spacing(egui::vec2(8.0, 6.0))
-                                            .min_col_width(ui.available_width() * 0.48)
+                                            .min_col_width(swatch_width)
+                                            .max_col_width(swatch_width)
                                             .show(ui, |ui| {
                                                 for (i, p_set) in presets.iter().enumerate() {
                                                     let is_active = if let Some(ref c_str) = self.custom_accent_color {
@@ -9436,6 +9439,7 @@ impl LauncherApp {
                                                         .rounding(Rounding::same(8.0))
                                                         .inner_margin(egui::Margin::symmetric(10.0, 7.0))
                                                         .show(ui, |ui| {
+                                                            ui.set_width((swatch_width - 20.0).max(0.0));
                                                             ui.horizontal(|ui| {
                                                                 ui.spacing_mut().item_spacing.x = 8.0;
 
@@ -9447,6 +9451,7 @@ impl LauncherApp {
                                                                 }
 
                                                                 ui.vertical(|ui| {
+                                                                    ui.set_width((ui.available_width() - 50.0).max(0.0));
                                                                     ui.label(RichText::new(p_set.name).size(11.0).strong().color(palette.text_primary));
                                                                     ui.label(RichText::new(p_set.hex).size(9.5).monospace().color(palette.text_muted));
                                                                 });
@@ -9468,7 +9473,7 @@ impl LauncherApp {
                                                             });
                                                         });
 
-                                                    if i % 2 == 1 {
+                                                    if (i + 1) % swatch_columns == 0 {
                                                         ui.end_row();
                                                     }
                                                 }

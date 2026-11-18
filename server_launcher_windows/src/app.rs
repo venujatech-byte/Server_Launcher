@@ -37,6 +37,13 @@ use std::time::{Duration, Instant};
 use sysinfo::System;
 use chrono::Datelike;
 
+const MACHINE_RAIL_WIDTH: f32 = 52.0;
+const WORKSPACE_SIDEBAR_WIDTH: f32 = 380.0;
+const WORKSPACE_GAP: f32 = 8.0;
+const WORKSPACE_SIDEBAR_MARGIN: egui::Margin = egui::Margin {
+    left: 14.0, right: 12.0, top: 0.0, bottom: 0.0,
+};
+
 #[derive(Clone, Debug)]
 pub enum SlashAction {
     Start,
@@ -2973,7 +2980,7 @@ impl LauncherApp {
                 ui.set_height(total_h);
                 ui.set_min_height(total_h);
 
-                let left_w = 380.0;
+                let left_w = WORKSPACE_SIDEBAR_WIDTH;
                 let right_w = (ui.available_width() - left_w - 12.0).max(300.0);
 
                 // LEFT PANEL (380px)
@@ -4260,10 +4267,10 @@ impl eframe::App for LauncherApp {
                             }
 
                             let available = ui.available_rect_before_wrap();
-                            // The header is drawn before the tabs; use their last layout position.
-                            let tabs_left = ui.ctx().data_mut(|data| data.get_temp::<f32>(egui::Id::new("server_tabs_left")))
-                                .unwrap_or(available.left());
-                            let slot_width = (available.right() - tabs_left.max(available.left()))
+                            // Use the same geometry as the workspace, including on the first frame.
+                            let content_left = ui.ctx().screen_rect().left() + MACHINE_RAIL_WIDTH
+                                + WORKSPACE_SIDEBAR_WIDTH + WORKSPACE_SIDEBAR_MARGIN.sum().x + WORKSPACE_GAP;
+                            let slot_width = (available.right() - content_left.max(available.left()))
                                 .clamp(48.0, available.width().max(48.0));
                             ui.allocate_ui_with_layout(egui::vec2(slot_width, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                 let search_width = slot_width.min(280.0);
@@ -4316,7 +4323,7 @@ impl eframe::App for LauncherApp {
         // ═════════════════════════════════════════════════════════════════════
         egui::SidePanel::left("machines_nav_bar")
             .resizable(false)
-            .exact_width(52.0)
+            .exact_width(MACHINE_RAIL_WIDTH)
             .show_separator_line(false)
             .frame(
                 Frame::none()
@@ -4352,8 +4359,9 @@ impl eframe::App for LauncherApp {
                 )
                 .show(ctx, |ui| {
                     let total_h = ui.available_height().max(100.0);
-                    let left_w = 380.0;
+                    let left_w = WORKSPACE_SIDEBAR_WIDTH;
                     ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
                         ui.set_height(total_h);
                         ui.set_min_height(total_h);
 
@@ -4361,12 +4369,7 @@ impl eframe::App for LauncherApp {
                         Frame::none()
                             .fill(p.bg_sidebar)
                             .stroke(Stroke::NONE)
-                            .inner_margin(egui::Margin {
-                                left: 14.0,
-                                right: 12.0,
-                                top: 0.0,
-                                bottom: 0.0,
-                            })
+                            .inner_margin(WORKSPACE_SIDEBAR_MARGIN)
                             .show(ui, |ui| {
                                 ui.set_width(left_w);
                                 ui.set_min_width(left_w);
@@ -4376,7 +4379,7 @@ impl eframe::App for LauncherApp {
                                 self.render_left_panel(ui);
                             });
 
-                        ui.add_space(8.0);
+                        ui.add_space(WORKSPACE_GAP);
 
                         // RIGHT MAIN AREA: Fills 100% of remaining width
                         let right_w = ui.available_width().max(100.0);
@@ -20881,14 +20884,6 @@ impl LauncherApp {
     // RIGHT PANEL: Notebook Tabs Bar + Overview / Server Log View
     // ═════════════════════════════════════════════════════════════════════════
     fn render_servers_right_panel(&mut self, ui: &mut Ui) {
-        let tabs_left = ui.available_rect_before_wrap().left();
-        let moved = ui.ctx().data_mut(|data| {
-            let id = egui::Id::new("server_tabs_left");
-            let previous = data.get_temp::<f32>(id);
-            data.insert_temp(id, tabs_left);
-            previous != Some(tabs_left)
-        });
-        if moved { ui.ctx().request_repaint(); }
         let p = self.palette();
         ui.vertical(|ui| {
             // Notebook Tabs Strip (Material 3 Dark Cockpit)

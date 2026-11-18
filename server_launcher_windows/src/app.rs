@@ -5390,6 +5390,54 @@ fn draw_card_sparkline(
     }
 }
 
+// Keep metric cards readable instead of squeezing four or five into a narrow pane.
+fn sensor_card_columns(ui: &mut Ui, count: usize, mut render: impl FnMut(&mut Ui, usize)) {
+    let gap = ui.spacing().item_spacing.x;
+    let available = ui.available_width();
+    let mut columns = (((available + gap) / (180.0 + gap)).floor() as usize).clamp(1, count);
+    if count == 4 && columns == 3 { columns = 2; }
+    let width = ((available - gap * (columns - 1) as f32) / columns as f32).max(0.0);
+    ui.horizontal_wrapped(|ui| {
+        for index in 0..count {
+            ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.set_width(width);
+                ui.set_max_width(width);
+                render(ui, index);
+            });
+        }
+    });
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn sensor_cards_wrap_without_leaving_the_content_column() {
+        for (width, expected_rows) in [(340.0, 4), (740.0, 2), (1000.0, 1)] {
+            let ctx = Context::default();
+            let mut cards = Vec::new();
+            let _ = ctx.run(egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 800.0))),
+                ..Default::default()
+            }, |ctx| {
+                egui::CentralPanel::default().frame(Frame::none()).show(ctx, |ui| {
+                    sensor_card_columns(ui, 4, |ui, _| {
+                        cards.push(ui.allocate_exact_size(egui::vec2(ui.available_width(), 60.0), egui::Sense::hover()).0);
+                    });
+                });
+            });
+            assert_eq!(cards.len(), 4);
+            let mut rows: Vec<_> = cards.iter().map(|r| r.top()).collect();
+            rows.dedup();
+            assert_eq!(rows.len(), expected_rows);
+            for card in cards {
+                assert!(card.left() >= 0.0 && card.right() <= width + 1.0);
+            }
+        }
+    }
+}
+
 fn render_big_stat_card(
     ui: &mut Ui,
     icon: &str,
@@ -5415,23 +5463,23 @@ fn render_big_stat_card(
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 ui.label(RichText::new(icon).size(12.0).color(accent_color));
-                ui.label(RichText::new(title).size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                ui.add(egui::Label::new(RichText::new(title).size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184))).truncate()).on_hover_text(title);
             });
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 ui.label(RichText::new(hero_val).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
                 if !hero_unit.is_empty() {
-                    ui.label(RichText::new(hero_unit).size(12.0).color(text_muted));
+                    ui.add(egui::Label::new(RichText::new(hero_unit).size(12.0).color(text_muted)).truncate()).on_hover_text(hero_unit);
                 }
             });
             ui.add_space(2.0);
-            ui.label(RichText::new(subtitle).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+            ui.add(egui::Label::new(RichText::new(subtitle).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184))).truncate()).on_hover_text(subtitle);
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(left_stat).size(8.5).monospace().color(text_muted));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new(right_stat).size(8.5).monospace().color(text_muted));
+            ui.columns(2, |cols| {
+                cols[0].add(egui::Label::new(RichText::new(left_stat).size(8.5).monospace().color(text_muted)).truncate()).on_hover_text(left_stat);
+                cols[1].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(egui::Label::new(RichText::new(right_stat).size(8.5).monospace().color(text_muted)).truncate()).on_hover_text(right_stat);
                 });
             });
             ui.add_space(4.0);
@@ -11017,13 +11065,14 @@ impl LauncherApp {
                 ui.set_width(ui.available_width());
 
                 // 1. Top Row: 4 Metric Cards (CPU, RAM, SWAP, STORAGE)
-                ui.columns(4, |cols| {
+                sensor_card_columns(ui, 4, |ui, column| match column {
+                    0 => {
                     // Card 1: CPU
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                        .show(&mut cols[0], |ui| {
+                        .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
@@ -11056,12 +11105,14 @@ impl LauncherApp {
                             draw_card_sparkline(ui, 40.0, &cpu_slice, 100.0, Some(0.12), accent);
                         });
 
+                    },
+                    1 => {
                     // Card 2: RAM
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                        .show(&mut cols[1], |ui| {
+                        .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
@@ -11097,12 +11148,14 @@ impl LauncherApp {
                             draw_card_sparkline(ui, 40.0, &ram_slice, 100.0, Some(0.85), accent);
                         });
 
+                    },
+                    2 => {
                     // Card 3: SWAP
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                        .show(&mut cols[2], |ui| {
+                        .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
@@ -11132,12 +11185,14 @@ impl LauncherApp {
                             draw_card_sparkline(ui, 40.0, &swap_slice, 100.0, Some(0.08), accent);
                         });
 
+                    },
+                    3 => {
                     // Card 4: STORAGE
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                        .show(&mut cols[3], |ui| {
+                        .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
@@ -11171,6 +11226,8 @@ impl LauncherApp {
                             ui.add_space(4.0);
                             draw_card_sparkline(ui, 40.0, &self.storage_history.iter().copied().collect::<Vec<_>>(), 100.0, None, accent);
                         });
+                    },
+                    _ => unreachable!(),
                 });
 
                 ui.add_space(10.0);
@@ -11422,10 +11479,11 @@ impl LauncherApp {
                 let temp_val = snap.cpu_temp.unwrap_or(42.0);
                 let tj_max = snap.cpu_tjunction_max.unwrap_or(100.0);
 
-                ui.columns(4, |cols| {
+                sensor_card_columns(ui, 4, |ui, column| match column {
+                    0 => {
                     // Card 1: CPU LOAD
                     render_big_stat_card(
-                        &mut cols[0],
+                        ui,
                         crate::lucide::ACTIVITY,
                         "CPU LOAD",
                         &format!("{:.1}", snap.cpu_global_usage),
@@ -11441,6 +11499,8 @@ impl LauncherApp {
                         p.text_muted,
                     );
 
+                    },
+                    1 => {
                     // Card 2: CLOCK FREQUENCY
                     let clock_hist: Vec<f32> = if !cpu_slice.is_empty() {
                         cpu_slice.iter().map(|&u| 1.1 + (u / 100.0) * (3.1 - 1.1)).collect()
@@ -11455,7 +11515,7 @@ impl LauncherApp {
                         "Base 1.10 · Turbo 3.10 GHz".to_string()
                     };
                     render_big_stat_card(
-                        &mut cols[1],
+                        ui,
                         crate::lucide::GAUGE,
                         "CLOCK FREQUENCY",
                         &format!("{:.2}", freq_ghz),
@@ -11471,6 +11531,8 @@ impl LauncherApp {
                         p.text_muted,
                     );
 
+                    },
+                    2 => {
                     // Card 3: PACKAGE POWER
                     let power_hist: Vec<f32> = if !cpu_slice.is_empty() {
                         cpu_slice.iter().map(|&u| 4.5 + (u / 100.0) * (tdp - 4.5)).collect()
@@ -11478,7 +11540,7 @@ impl LauncherApp {
                         vec![watts; 5]
                     };
                     render_big_stat_card(
-                        &mut cols[2],
+                        ui,
                         crate::lucide::ZAP,
                         "PACKAGE POWER",
                         &format!("{:.1}", watts),
@@ -11494,6 +11556,8 @@ impl LauncherApp {
                         p.text_muted,
                     );
 
+                    },
+                    3 => {
                     // Card 4: CORE TEMPERATURE
                     let temp_hist: Vec<f32> = if !cpu_slice.is_empty() {
                         cpu_slice.iter().map(|&u| 38.0 + (u / 100.0) * 28.0).collect()
@@ -11501,7 +11565,7 @@ impl LauncherApp {
                         vec![temp_val; 5]
                     };
                     render_big_stat_card(
-                        &mut cols[3],
+                        ui,
                         crate::lucide::THERMOMETER,
                         "CORE TEMPERATURE",
                         &format!("{:.1}", temp_val),
@@ -11516,6 +11580,8 @@ impl LauncherApp {
                         p.bg_card,
                         p.text_muted,
                     );
+                    },
+                    _ => unreachable!(),
                 });
 
                 ui.add_space(8.0);
@@ -11883,10 +11949,11 @@ impl LauncherApp {
                 let swap_avg = if !self.ram_history.is_empty() { self.ram_history.iter().map(|(_, s)| *s).sum::<f32>() / self.ram_history.len() as f32 } else { snap.swap_usage_pct };
                 let swap_peak = self.ram_history.iter().map(|(_, s)| *s).fold(snap.swap_usage_pct, f32::max);
 
-                ui.columns(4, |cols| {
+                sensor_card_columns(ui, 4, |ui, column| match column {
+                    0 => {
                     // Card 1: MEMORY IN USE
                     render_big_stat_card(
-                        &mut cols[0],
+                        ui,
                         crate::lucide::RAM,
                         "MEMORY IN USE",
                         &format!("{:.1}", used_gb_val),
@@ -11902,10 +11969,12 @@ impl LauncherApp {
                         p.text_muted,
                     );
 
+                    },
+                    1 => {
                     // Card 2: AVAILABLE MEMORY
                     let avail_slice: Vec<f32> = ram_slice.iter().map(|&u| (100.0 - u).max(0.0)).collect();
                     render_big_stat_card(
-                        &mut cols[1],
+                        ui,
                         crate::lucide::CHECK,
                         "FREE MEMORY",
                         &format!("{:.1}", avail_gb_val),
@@ -11921,10 +11990,12 @@ impl LauncherApp {
                         p.text_muted,
                     );
 
+                    },
+                    2 => {
                     // Card 3: CACHED & BUFFERS
                     let cache_slice: Vec<f32> = Vec::new();
                     render_big_stat_card(
-                        &mut cols[2],
+                        ui,
                         crate::lucide::FILE_TEXT,
                         "RECLAIMABLE ESTIMATE",
                         &format!("{:.1}", cached_gb_val),
@@ -11940,9 +12011,11 @@ impl LauncherApp {
                         p.text_muted,
                     );
 
+                    },
+                    3 => {
                     // Card 4: SWAP ALLOCATION
                     render_big_stat_card(
-                        &mut cols[3],
+                        ui,
                         crate::lucide::REFRESH_CW,
                         "SWAP ALLOCATION",
                         &format!("{:.1}", snap.swap_usage_pct),
@@ -11957,6 +12030,8 @@ impl LauncherApp {
                         p.bg_card,
                         p.text_muted,
                     );
+                    },
+                    _ => unreachable!(),
                 });
 
                 ui.add_space(8.0);
@@ -12386,12 +12461,13 @@ impl LauncherApp {
                         }
                     };
 
-                ui.columns(4, |cols| {
+                sensor_card_columns(ui, 4, |ui, column| match column {
+                    0 => {
                     // Card 1: GPU CORE LOAD
                     let mode_lbl = "";
                     let compute_array_lbl = "Reported GPU utilization";
                     render_big_stat_card(
-                        &mut cols[0],
+                        ui,
                         crate::lucide::GAUGE,
                         "GPU CORE LOAD",
                         &gpu.and_then(|g| g.load_pct).map(|v| format!("{:.1}", v)).unwrap_or_else(|| "—".to_string()),
@@ -12407,11 +12483,13 @@ impl LauncherApp {
                         p.text_muted,
                     );
 
+                    },
+                    1 => {
                     // Card 2: CORE CLOCK
                     let min_clk_str = "Clock range unavailable";
                     let max_clk_str = "";
                     render_big_stat_card(
-                        &mut cols[1],
+                        ui,
                         crate::lucide::ZAP,
                         "CORE CLOCK",
                         &gpu.and_then(|g| g.clock_mhz).map(|v| v.to_string()).unwrap_or_else(|| "—".to_string()),
@@ -12427,9 +12505,11 @@ impl LauncherApp {
                         p.text_muted,
                     );
 
+                    },
+                    2 => {
                     // Card 3: 3D RENDER ENGINE
                     render_big_stat_card(
-                        &mut cols[2],
+                        ui,
                         crate::lucide::BOX,
                         "3D RENDER ENGINE",
                         "—",
@@ -12445,12 +12525,14 @@ impl LauncherApp {
                         p.text_muted,
                     );
 
+                    },
+                    3 => {
                     // Card 4: SHARED / DEDICATED VRAM
                     let card_title = "GPU MEMORY";
                     let card_subtitle = "Reported GPU memory";
 
                     render_big_stat_card(
-                        &mut cols[3],
+                        ui,
                         crate::lucide::DATABASE,
                         card_title,
                         &vram_val,
@@ -12465,6 +12547,8 @@ impl LauncherApp {
                         p.bg_card,
                         p.text_muted,
                     );
+                    },
+                    _ => unreachable!(),
                 });
 
                 // Multi-GPU Cluster Subsystem Matrix (when host has 2+ GPUs)
@@ -13166,10 +13250,11 @@ impl LauncherApp {
                     "No physical drive data".to_string()
                 };
 
-                ui.columns(4, |cols| {
+                sensor_card_columns(ui, 4, |ui, column| match column {
+                    0 => {
                     // Card 1: TOTAL STORAGE
                     render_big_stat_card(
-                        &mut cols[0],
+                        ui,
                         crate::lucide::STORAGE,
                         "TOTAL STORAGE",
                         &format!("{:.1}", total_gb),
@@ -13185,9 +13270,11 @@ impl LauncherApp {
                         p.text_muted,
                     );
 
+                    },
+                    1 => {
                     // Card 2: PHYSICAL DRIVES
                     render_big_stat_card(
-                        &mut cols[1],
+                        ui,
                         crate::lucide::HARD_DRIVE,
                         "PHYSICAL DRIVES",
                         &format!("{}", drive_count),
@@ -13203,9 +13290,11 @@ impl LauncherApp {
                         p.text_muted,
                     );
 
+                    },
+                    2 => {
                     // Card 3: READ THROUGHPUT
                     render_big_stat_card(
-                        &mut cols[2],
+                        ui,
                         crate::lucide::ARROW_DOWN,
                         "READ THROUGHPUT",
                         &format!("{:.1}", read_mb),
@@ -13221,9 +13310,11 @@ impl LauncherApp {
                         p.text_muted,
                     );
 
+                    },
+                    3 => {
                     // Card 4: WRITE THROUGHPUT
                     render_big_stat_card(
-                        &mut cols[3],
+                        ui,
                         crate::lucide::ARROW_UP,
                         "WRITE THROUGHPUT",
                         &format!("{:.1}", write_mb),
@@ -13238,6 +13329,8 @@ impl LauncherApp {
                         p.bg_card,
                         p.text_muted,
                     );
+                    },
+                    _ => unreachable!(),
                 });
 
                 ui.add_space(8.0);
@@ -13645,13 +13738,14 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 5. Row of 4 Telemetry Cards
-                ui.columns(4, |cols| {
+                sensor_card_columns(ui, 4, |ui, column| match column {
+                    0 => {
                     // Card 1: THERMAL CORE
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                        .show(&mut cols[0], |ui| {
+                        .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("THERMAL CORE").size(9.5).monospace().strong().color(p.text_muted));
@@ -13688,12 +13782,14 @@ impl LauncherApp {
                             });
                         });
 
+                    },
+                    1 => {
                     // Card 2: S.M.A.R.T. STATUS
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                        .show(&mut cols[1], |ui| {
+                        .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("S.M.A.R.T. STATUS").size(9.5).monospace().strong().color(p.text_muted));
@@ -13721,12 +13817,14 @@ impl LauncherApp {
                             });
                         });
 
+                    },
+                    2 => {
                     // Card 3: DRIVE BUS INTERFACE
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                        .show(&mut cols[2], |ui| {
+                        .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("DRIVE BUS INTERFACE").size(9.5).monospace().strong().color(p.text_muted));
@@ -13749,12 +13847,14 @@ impl LauncherApp {
                             });
                         });
 
+                    },
+                    3 => {
                     // Card 4: TRIM / DISCARD
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                        .show(&mut cols[3], |ui| {
+                        .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new("TRIM / DISCARD").size(9.5).monospace().strong().color(p.text_muted));
@@ -13782,6 +13882,8 @@ impl LauncherApp {
                                 });
                             });
                         });
+                    },
+                    _ => unreachable!(),
                 });
 
                 ui.add_space(8.0);
@@ -14369,11 +14471,12 @@ impl LauncherApp {
                 let sock_slice: [f32; 0] = [];
                 let loss_slice: [f32; 0] = [];
 
-                ui.columns(4, |cols| {
+                sensor_card_columns(ui, 4, |ui, column| match column {
+                    0 => {
                     // Card 1: BYTES SENT
                     let egress_sub = "All interfaces • since boot";
                     render_big_stat_card(
-                        &mut cols[0],
+                        ui,
                         crate::lucide::UPLOAD,
                         "BYTES SENT",
                         &format!("{:.2}", tx_gb),
@@ -14389,10 +14492,12 @@ impl LauncherApp {
                         p.text_muted,
                     );
 
+                    },
+                    1 => {
                     // Card 2: BYTES RECV
                     let ingress_sub = "All interfaces • since boot";
                     render_big_stat_card(
-                        &mut cols[1],
+                        ui,
                         crate::lucide::DOWNLOAD,
                         "BYTES RECV",
                         &format!("{:.2}", rx_gb),
@@ -14408,10 +14513,12 @@ impl LauncherApp {
                         p.text_muted,
                     );
 
+                    },
+                    2 => {
                     // Card 3: GATEWAY LATENCY (Local) or ACTIVE SOCKETS (Remote)
                     if is_remote {
                         render_big_stat_card(
-                            &mut cols[2],
+                            ui,
                             crate::lucide::ACTIVITY,
                             "SOCKETS",
                             &format!("{}", snap.socket_total),
@@ -14429,7 +14536,7 @@ impl LauncherApp {
                     } else {
                         let gw_sub = format!("To {}", wifi_snap.gateway);
                         render_big_stat_card(
-                            &mut cols[2],
+                            ui,
                             crate::lucide::ACTIVITY,
                             "LATENCY",
                             "—",
@@ -14446,9 +14553,11 @@ impl LauncherApp {
                         );
                     }
 
+                    },
+                    3 => {
                     // Card 4: LOSS
                     render_big_stat_card(
-                        &mut cols[3],
+                        ui,
                         crate::lucide::CHECK,
                         "LOSS",
                         "—",
@@ -14463,6 +14572,8 @@ impl LauncherApp {
                         p.bg_card,
                         p.text_muted,
                     );
+                    },
+                    _ => unreachable!(),
                 });
 
                 ui.add_space(8.0);
@@ -18463,14 +18574,13 @@ impl LauncherApp {
                     ("MOTHERBOARD VRM", vrm_temp, sensor_limit(&["vrm", "motherboard", "pch"]), "", Color32::from_rgb(203, 213, 225)),
                 ];
 
-                ui.columns(5, |cols| {
-                    for (i, (name, val, limit, _delta, accent)) in sensor_cards.iter().enumerate() {
-                        let c = &mut cols[i];
+                sensor_card_columns(ui, sensor_cards.len(), |ui, i| {
+                    let (name, val, limit, _delta, accent) = &sensor_cards[i];
                         Frame::none()
                             .fill(p.bg_card)
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                            .show(c, |ui| {
+                            .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.label(RichText::new(*name).size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                                 ui.add_space(4.0);
@@ -18491,7 +18601,6 @@ impl LauncherApp {
                                 ui.add_space(4.0);
                                 ui.label(RichText::new(if limit.is_finite() { format!("LIMIT: {limit:.1}°C") } else { "Limit unavailable".to_string() }).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                             });
-                    }
                 });
 
                 ui.add_space(8.0);

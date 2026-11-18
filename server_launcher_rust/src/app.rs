@@ -4390,7 +4390,7 @@ impl eframe::App for LauncherApp {
                         let right_w = ui.available_width().max(0.0);
                         ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
                             ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
-                    ui.set_width(right_w);
+                            ui.set_width(right_w);
                             ui.set_max_width(right_w);
                             ui.set_height(total_h);
                             ui.set_min_height(total_h);
@@ -5394,7 +5394,7 @@ fn sensor_card_columns(ui: &mut Ui, count: usize, mut render: impl FnMut(&mut Ui
     let mut columns = (((available + gap) / (180.0 + gap)).floor() as usize).clamp(1, count);
     if count == 4 && columns == 3 { columns = 2; }
     let width = ((available - gap * (columns - 1) as f32) / columns as f32).max(0.0);
-    ui.horizontal_wrapped(|ui| {
+    ui.allocate_ui_with_layout(egui::vec2(available, 0.0), egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true), |ui| {
         for index in 0..count {
             ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                 ui.set_width(width);
@@ -5419,12 +5419,13 @@ mod layout_tests {
                 ..Default::default()
             }, |ctx| {
                 egui::CentralPanel::default().frame(Frame::none()).show(ctx, |ui| {
-                    sensor_card_columns(ui, 4, |ui, _| {
-                        cards.push(ui.allocate_exact_size(egui::vec2(ui.available_width(), 60.0), egui::Sense::hover()).0);
+                    sensor_card_columns(ui, 4, |ui, index| {
+                        cards.push(ui.allocate_exact_size(egui::vec2(ui.available_width(), 60.0 + index as f32 * 20.0), egui::Sense::hover()).0);
                     });
                 });
             });
             assert_eq!(cards.len(), 4);
+            if expected_rows < 4 { assert_eq!(cards[0].top(), cards[1].top()); }
             let mut rows: Vec<_> = cards.iter().map(|r| r.top()).collect();
             rows.dedup();
             assert_eq!(rows.len(), expected_rows);
@@ -11233,12 +11234,15 @@ impl LauncherApp {
                 // 2. Bottom Row: 2 Cards (OVERALL SPEED & CONNECTION STATS)
                 let total_w = ui.available_width();
                 let gap = 10.0_f32;
-                let left_w = ((total_w - gap) * 0.64).max(300.0);
-                let right_w = (total_w - left_w - gap).max(200.0);
+                let side_by_side = total_w >= 560.0;
+                let left_w = if side_by_side { (total_w - gap) * 0.64 } else { total_w };
+                let right_w = if side_by_side { total_w - left_w - gap } else { total_w };
 
-                ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(egui::vec2(total_w, 0.0), egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true), |ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
                     // Left Card: OVERALL SPEED (~64%)
-                    ui.allocate_ui_with_layout(egui::vec2(left_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
                         Frame::none()
                             .fill(p.bg_card)
                             .rounding(Rounding::same(8.0))
@@ -11311,7 +11315,8 @@ impl LauncherApp {
                     ui.add_space(gap);
 
                     // Right Card: CONNECTION STATS (~36%)
-                    ui.allocate_ui_with_layout(egui::vec2(right_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.allocate_ui_with_layout(egui::vec2(right_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
                         Frame::none()
                             .fill(p.bg_card)
                             .rounding(Rounding::same(8.0))
@@ -14234,12 +14239,15 @@ impl LauncherApp {
                 // 2. Top Two Columns: 60-Second Realtime Waveform vs Access Point / Link Infrastructure
                 let total_w = ui.available_width();
                 let gap = 10.0_f32;
-                let left_w = (total_w - gap) * 0.58;
-                let right_w = total_w - left_w - gap;
+                let side_by_side = total_w >= 600.0;
+                let left_w = if side_by_side { (total_w - gap) * 0.58 } else { total_w };
+                let right_w = if side_by_side { total_w - left_w - gap } else { total_w };
 
-                ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(egui::vec2(total_w, 0.0), egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true), |ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
                     // Left Column: 60-Second Realtime Waveform
-                    ui.allocate_ui_with_layout(egui::vec2(left_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
                         Frame::none()
                             .fill(p.bg_card)
                             .rounding(Rounding::same(8.0))
@@ -14305,7 +14313,8 @@ impl LauncherApp {
                     ui.add_space(gap);
 
                     // Right Column: Access Point (Local) or Network Interface Topology (Remote)
-                    ui.allocate_ui_with_layout(egui::vec2(right_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.allocate_ui_with_layout(egui::vec2(right_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
                         Frame::none()
                             .fill(p.bg_card)
                             .rounding(Rounding::same(8.0))
@@ -16340,8 +16349,9 @@ impl LauncherApp {
                 // 2. Middle Row: Left Column (Power Source & Presets) + Right Column (Live Telemetry)
                 let total_w = ui.available_width();
                 let gap = 10.0_f32;
-                let left_w = ((total_w - gap) * 0.64).max(380.0);
-                let right_w = (total_w - left_w - gap).max(220.0);
+                let side_by_side = total_w >= 620.0;
+                let left_w = if side_by_side { (total_w - gap) * 0.64 } else { total_w };
+                let right_w = if side_by_side { total_w - left_w - gap } else { total_w };
 
                 let num_cores = snap.cpu_cores_physical.max(snap.cpu_cores_logical).max(1);
                 let profile = if is_remote {
@@ -16366,9 +16376,11 @@ impl LauncherApp {
                     idle + (tdp - idle) * (0.35 * cpu_load + 0.65 * cpu_load.powf(1.35))
                 });
 
-                ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(egui::vec2(total_w, 0.0), egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true), |ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
                     // Left Column
-                    ui.allocate_ui_with_layout(egui::vec2(left_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
                         if !has_battery {
                             // Direct AC Power Supply Card (Desktop, Mini-PC, Server, or Workstation without battery)
                             Frame::none()
@@ -16943,7 +16955,8 @@ impl LauncherApp {
                     ui.add_space(gap);
 
                     // Right Column: LIVE TELEMETRY
-                    ui.allocate_ui_with_layout(egui::vec2(right_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.allocate_ui_with_layout(egui::vec2(right_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
                         Frame::none()
                             .fill(p.bg_card)
                             .rounding(Rounding::same(8.0))

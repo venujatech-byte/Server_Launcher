@@ -2099,8 +2099,8 @@ pub fn render_script_modal(
     };
 
     let screen = ctx.screen_rect();
-    let modal_w = 540.0_f32.min(screen.width() - 40.0).max(360.0);
-    let max_h = (screen.height() - 40.0).max(400.0);
+    let modal_w = 540.0_f32.min((screen.width() - 68.0).max(0.0));
+    let max_h = (screen.height() - 60.0).max(0.0);
 
     let mut is_open = state.open;
     let window_id = egui::Id::new("script_modal_dialog");
@@ -2115,8 +2115,7 @@ pub fn render_script_modal(
         .pivot(egui::Align2::CENTER_CENTER)
         .min_width(modal_w)
         .max_width(modal_w)
-        .default_height(480.0)
-        .max_height(max_h)
+        .fixed_size(egui::vec2(modal_w, max_h.min(520.0)))
         .frame(
             egui::Frame::none()
                 .fill(Color32::from_rgb(17, 19, 27))
@@ -2135,6 +2134,12 @@ pub fn render_script_modal(
             ui.add_space(8.0);
             ui.add_space(4.0);
 
+            let body_height = (ui.available_height() - 60.0).max(0.0);
+            egui::ScrollArea::vertical()
+                .id_salt("script_modal_body")
+                .max_height(body_height)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
             // Error display if any
             if let Some(err) = &state.error {
                 ui.label(RichText::new(err).size(11.5).color(palette.danger));
@@ -2151,8 +2156,8 @@ pub fn render_script_modal(
             ui.add_space(8.0);
 
             // Shell & CWD row
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
+            ui.columns(2, |cols| {
+                cols[0].vertical(|ui| {
                     ui.label(RichText::new("Shell / Interpreter:").size(12.0).strong().color(palette.text_primary));
                     egui::ComboBox::from_id_salt("script_shell_combo")
                         .selected_text(&state.shell)
@@ -2164,15 +2169,13 @@ pub fn render_script_modal(
                         });
                 });
 
-                ui.add_space(12.0);
-
-                ui.vertical(|ui| {
+                cols[1].vertical(|ui| {
                     ui.label(RichText::new("Working Directory (optional):").size(12.0).strong().color(palette.text_primary));
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::TextEdit::singleline(&mut state.cwd)
                                 .hint_text("Default (current / home)")
-                                .desired_width(ui.available_width() - 80.0),
+                                .desired_width((ui.available_width() - 80.0).max(0.0)),
                         );
                         if ui.button("Browse...").clicked() {
                             if let Some(path) = rfd::FileDialog::new().pick_folder() {
@@ -2201,8 +2204,8 @@ pub fn render_script_modal(
 
             // Script Body
             ui.label(RichText::new("Script Content:").size(12.0).strong().color(palette.text_primary));
-            let text_height = (ui.available_height() - 50.0).max(160.0);
-            egui::ScrollArea::vertical().show(ui, |ui| {
+            let text_height = (body_height - 230.0).clamp(80.0, 240.0);
+            egui::ScrollArea::vertical().id_salt("script_modal_editor").max_height(text_height).show(ui, |ui| {
                 ui.add(
                     egui::TextEdit::multiline(&mut state.script_body)
                         .font(egui::TextStyle::Monospace)
@@ -2212,6 +2215,7 @@ pub fn render_script_modal(
                 );
             });
 
+                });
             ui.add_space(12.0);
             ui.separator();
             ui.add_space(6.0);

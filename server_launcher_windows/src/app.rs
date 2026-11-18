@@ -2984,7 +2984,9 @@ impl LauncherApp {
                 }
             }
 
-            // Split layout: Sidebar with tabs + remaining content; Sensors uses a compact column.
+            self.render_workspace_header(ui, Some(&host.id));
+
+            // Split layout: Sidebar + remaining content; Sensors uses a compact column.
             let total_h = ui.available_height().max(0.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
@@ -3003,11 +3005,7 @@ impl LauncherApp {
                     ui.set_max_width(left_w);
                     ui.set_height(total_h);
                     ui.set_min_height(total_h);
-                    // 1. Navigation Tabs on top of left panel
-                    self.render_sidebar_tabs_bar(ui);
-                    ui.add_space(6.0);
-
-                    // 2. Left panel content for active tab
+                    // Left panel content for active tab
                     match self.active_sidebar_tab {
                         SidebarTab::Servers => self.render_remote_servers_left_panel(ui, &host),
                         SidebarTab::Scripts => self.render_scripts_left_panel(ui, Some(&host.id)),
@@ -4285,7 +4283,7 @@ impl eframe::App for LauncherApp {
                             let available = ui.available_rect_before_wrap();
                             // Use the same geometry as the workspace, including on the first frame.
                             let content_left = ui.ctx().screen_rect().left() + MACHINE_RAIL_WIDTH
-                                + self.workspace_sidebar_width() + WORKSPACE_SIDEBAR_MARGIN.sum().x + WORKSPACE_GAP;
+                                + WORKSPACE_SIDEBAR_WIDTH + WORKSPACE_SIDEBAR_MARGIN.sum().x + WORKSPACE_GAP;
                             let slot_width = (available.right() - content_left.max(available.left()))
                                 .clamp(48.0, available.width().max(48.0));
                             ui.allocate_ui_with_layout(egui::vec2(slot_width, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -4374,6 +4372,7 @@ impl eframe::App for LauncherApp {
                         }),
                 )
                 .show(ctx, |ui| {
+                    self.render_workspace_header(ui, None);
                     let total_h = ui.available_height().max(0.0);
                     let left_w = self.workspace_sidebar_width();
                     ui.horizontal(|ui| {
@@ -6291,6 +6290,36 @@ impl LauncherApp {
     // ═════════════════════════════════════════════════════════════════════════
     // TOP NAVIGATION TABS BAR (Servers, Scripts, Commands, SystemMD, Sensors)
     // ═════════════════════════════════════════════════════════════════════════
+    // The top strip keeps one geometry while the workspace below can use a compact sidebar.
+    fn render_workspace_header(&mut self, ui: &mut Ui, host_id: Option<&str>) {
+        let p = self.palette();
+        ui.horizontal(|ui| {
+            ui.set_min_height(32.0);
+            ui.spacing_mut().item_spacing.x = 0.0;
+            Frame::none()
+                .fill(p.bg_sidebar)
+                .inner_margin(WORKSPACE_SIDEBAR_MARGIN)
+                .show(ui, |ui| {
+                    ui.set_width(WORKSPACE_SIDEBAR_WIDTH);
+                    ui.set_max_width(WORKSPACE_SIDEBAR_WIDTH);
+                    ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
+                    self.render_sidebar_tabs_bar(ui);
+                });
+            ui.add_space(WORKSPACE_GAP);
+            if self.active_sidebar_tab == SidebarTab::Sensors {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width().max(0.0), 32.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
+                        self.render_system_brief_info_panel(ui, host_id);
+                    },
+                );
+            }
+        });
+        ui.add_space(6.0);
+    }
+
     fn render_sidebar_tabs_bar(&mut self, ui: &mut Ui) {
         let p = self.palette();
         Frame::none()
@@ -6360,10 +6389,6 @@ impl LauncherApp {
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
             ui.set_max_width(ui.available_width());
-            // 0. Top 5 Navigation Tabs Bar
-            self.render_sidebar_tabs_bar(ui);
-            ui.add_space(6.0);
-
             match self.active_sidebar_tab {
                 SidebarTab::Servers => self.render_servers_left_panel(ui),
                 SidebarTab::Scripts => self.render_scripts_left_panel(ui, None),
@@ -10863,13 +10888,6 @@ impl LauncherApp {
     // SENSORS TAB: Right Main Area (Full Sensors & Hardware Monitor Viewer)
     // ═════════════════════════════════════════════════════════════════════════
     fn render_sensors_right_panel(&mut self, ui: &mut Ui, host_id: Option<&str>) {
-        // Summary and page content share the workspace content origin.
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), 32.0),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| self.render_system_brief_info_panel(ui, host_id),
-        );
-        ui.add_space(6.0);
         let p = self.palette();
         let accent = self.sensors_accent_color(&p);
 

@@ -3003,7 +3003,8 @@ impl LauncherApp {
                     ui.set_max_width(left_w);
                     ui.set_height(total_h);
                     ui.set_min_height(total_h);
-                    ui.add_space(WORKSPACE_HEADER_HEIGHT);
+                    let mut body_ui = workspace_sidebar_body(ui);
+                    let ui = &mut body_ui;
                     // Left panel content for active tab
                     match self.active_sidebar_tab {
                         SidebarTab::Servers => self.render_remote_servers_left_panel(ui, &host),
@@ -4394,8 +4395,8 @@ impl eframe::App for LauncherApp {
                                 ui.set_height(total_h);
                                 ui.set_min_height(total_h);
                                 ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
-                                ui.add_space(WORKSPACE_HEADER_HEIGHT);
-                                self.render_left_panel(ui);
+                                let mut body_ui = workspace_sidebar_body(ui);
+                                self.render_left_panel(&mut body_ui);
                             });
 
                         ui.add_space(WORKSPACE_GAP);
@@ -5404,6 +5405,18 @@ fn draw_card_sparkline(
     }
 }
 
+// Sidebar frames inherit the horizontal split layout; give their content a vertical, clipped body.
+fn workspace_sidebar_body(ui: &mut Ui) -> Ui {
+    let mut rect = ui.max_rect();
+    rect.min.y = (rect.top() + WORKSPACE_HEADER_HEIGHT).min(rect.bottom());
+    let mut body = ui.new_child(egui::UiBuilder::new()
+        .id_salt("workspace_sidebar_body")
+        .max_rect(rect)
+        .layout(egui::Layout::top_down(egui::Align::Min)));
+    body.set_clip_rect(ui.clip_rect().intersect(rect));
+    body
+}
+
 // Keep metric cards readable instead of squeezing four or five into a narrow pane.
 fn sensor_card_columns(ui: &mut Ui, count: usize, mut render: impl FnMut(&mut Ui, usize)) {
     let gap = ui.spacing().item_spacing.x;
@@ -5425,6 +5438,31 @@ fn sensor_card_columns(ui: &mut Ui, count: usize, mut render: impl FnMut(&mut Ui
 #[cfg(test)]
 mod layout_tests {
     use super::*;
+
+    #[test]
+    fn sidebar_content_starts_below_tabs_without_moving_right() {
+        let ctx = Context::default();
+        let _ = ctx.run(egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+            ..Default::default()
+        }, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.set_width(WORKSPACE_SIDEBAR_WIDTH);
+                    ui.set_height(400.0);
+                    let parent = ui.max_rect();
+                    let mut body = workspace_sidebar_body(ui);
+                    let first = body.label("Group filter").rect;
+                    let second = body.label("Server list").rect;
+                    assert_eq!(first.left(), parent.left());
+                    assert!(first.top() >= parent.top() + WORKSPACE_HEADER_HEIGHT);
+                    assert!(second.top() >= first.bottom());
+                    assert!(body.clip_rect().top() >= parent.top() + WORKSPACE_HEADER_HEIGHT);
+                });
+            });
+        });
+    }
+
 
     #[test]
     fn sensor_cards_wrap_without_leaving_the_content_column() {

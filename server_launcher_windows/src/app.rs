@@ -2928,6 +2928,7 @@ impl LauncherApp {
     }
 
     fn render_remote_pc_dashboard(&mut self, ui: &mut Ui, host_id: &str) {
+        let p = self.palette();
         let host_opt = self.ssh_hosts.iter().find(|h| h.id == host_id).cloned();
         let host = match host_opt {
             Some(h) => h,
@@ -2977,14 +2978,18 @@ impl LauncherApp {
             // Split layout: Left panel (width 380px with Tabs on top) + Right panel (Remaining width)
             let total_h = ui.available_height().max(100.0);
             ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
                 ui.set_height(total_h);
                 ui.set_min_height(total_h);
 
                 let left_w = WORKSPACE_SIDEBAR_WIDTH;
-                let right_w = (ui.available_width() - left_w - 12.0).max(300.0);
 
                 // LEFT PANEL (380px)
-                ui.allocate_ui_with_layout(egui::vec2(left_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
+                Frame::none()
+                    .fill(p.bg_sidebar)
+                    .inner_margin(WORKSPACE_SIDEBAR_MARGIN)
+                    .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
                     ui.set_width(left_w);
                     ui.set_max_width(left_w);
                     ui.set_height(total_h);
@@ -3003,10 +3008,12 @@ impl LauncherApp {
                     }
                 });
 
-                ui.separator();
+                ui.add_space(WORKSPACE_GAP);
+                let right_w = ui.available_width().max(0.0);
 
                 // RIGHT PANEL (Remaining width)
                 ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
                     ui.set_width(right_w);
                     ui.set_max_width(right_w);
                     ui.set_height(total_h);
@@ -4376,6 +4383,7 @@ impl eframe::App for LauncherApp {
                                 ui.set_max_width(left_w);
                                 ui.set_height(total_h);
                                 ui.set_min_height(total_h);
+                                ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
                                 self.render_left_panel(ui);
                             });
 
@@ -4384,7 +4392,8 @@ impl eframe::App for LauncherApp {
                         // RIGHT MAIN AREA: Fills 100% of remaining width
                         let right_w = ui.available_width().max(100.0);
                         ui.allocate_ui_with_layout(egui::vec2(right_w, total_h), egui::Layout::top_down(egui::Align::Min), |ui| {
-                            ui.set_width(right_w);
+                            ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
+                    ui.set_width(right_w);
                             ui.set_max_width(right_w);
                             ui.set_height(total_h);
                             ui.set_min_height(total_h);
@@ -4407,8 +4416,8 @@ impl eframe::App for LauncherApp {
                     Frame::none()
                         .fill(p.bg_main)
                         .inner_margin(egui::Margin {
-                            left: 12.0,
-                            right: 18.0,
+                            left: 0.0,
+                            right: 16.0,
                             top: 4.0,
                             bottom: 6.0,
                         }),

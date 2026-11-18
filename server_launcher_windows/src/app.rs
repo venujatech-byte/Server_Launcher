@@ -39,6 +39,7 @@ use chrono::Datelike;
 
 const MACHINE_RAIL_WIDTH: f32 = 52.0;
 const WORKSPACE_SIDEBAR_WIDTH: f32 = 380.0;
+const SENSORS_SIDEBAR_WIDTH: f32 = 240.0;
 const WORKSPACE_GAP: f32 = 8.0;
 const WORKSPACE_SIDEBAR_MARGIN: egui::Margin = egui::Margin {
     left: 14.0, right: 12.0, top: 0.0, bottom: 0.0,
@@ -740,6 +741,14 @@ fn render_window_button(
 }
 
 impl LauncherApp {
+    fn workspace_sidebar_width(&self) -> f32 {
+        if self.active_sidebar_tab == SidebarTab::Sensors {
+            SENSORS_SIDEBAR_WIDTH
+        } else {
+            WORKSPACE_SIDEBAR_WIDTH
+        }
+    }
+
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let config_path = ConfigFile::default_path();
         let config_file = ConfigFile::load_from_file(&config_path);
@@ -2975,16 +2984,16 @@ impl LauncherApp {
                 }
             }
 
-            // Split layout: Left panel (width 380px with Tabs on top) + Right panel (Remaining width)
+            // Split layout: Sidebar with tabs + remaining content; Sensors uses a compact column.
             let total_h = ui.available_height().max(0.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 ui.set_height(total_h);
                 ui.set_min_height(total_h);
 
-                let left_w = WORKSPACE_SIDEBAR_WIDTH;
+                let left_w = self.workspace_sidebar_width();
 
-                // LEFT PANEL (380px)
+                // LEFT PANEL
                 Frame::none()
                     .fill(p.bg_sidebar)
                     .inner_margin(WORKSPACE_SIDEBAR_MARGIN)
@@ -4276,7 +4285,7 @@ impl eframe::App for LauncherApp {
                             let available = ui.available_rect_before_wrap();
                             // Use the same geometry as the workspace, including on the first frame.
                             let content_left = ui.ctx().screen_rect().left() + MACHINE_RAIL_WIDTH
-                                + WORKSPACE_SIDEBAR_WIDTH + WORKSPACE_SIDEBAR_MARGIN.sum().x + WORKSPACE_GAP;
+                                + self.workspace_sidebar_width() + WORKSPACE_SIDEBAR_MARGIN.sum().x + WORKSPACE_GAP;
                             let slot_width = (available.right() - content_left.max(available.left()))
                                 .clamp(48.0, available.width().max(48.0));
                             ui.allocate_ui_with_layout(egui::vec2(slot_width, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -4350,7 +4359,7 @@ impl eframe::App for LauncherApp {
 
         if self.selected_machine == "local" {
             // ═════════════════════════════════════════════════════════════════
-            // LOCAL PC VIEW: Left Sidebar (380px) + Right Main Area (Remaining)
+            // LOCAL PC VIEW: Left Sidebar + Right Main Area (Remaining)
             // ═════════════════════════════════════════════════════════════════
             egui::CentralPanel::default()
                 .frame(
@@ -4366,13 +4375,13 @@ impl eframe::App for LauncherApp {
                 )
                 .show(ctx, |ui| {
                     let total_h = ui.available_height().max(0.0);
-                    let left_w = WORKSPACE_SIDEBAR_WIDTH;
+                    let left_w = self.workspace_sidebar_width();
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
                         ui.set_height(total_h);
                         ui.set_min_height(total_h);
 
-                        // LEFT SIDEBAR (380px width)
+                        // LEFT SIDEBAR
                         Frame::none()
                             .fill(p.bg_sidebar)
                             .stroke(Stroke::NONE)
@@ -5414,7 +5423,7 @@ mod layout_tests {
 
     #[test]
     fn sensor_cards_wrap_without_leaving_the_content_column() {
-        for (width, expected_rows) in [(340.0, 4), (740.0, 2), (1000.0, 1)] {
+        for (width, expected_rows) in [(340.0, 4), (740.0, 2), (840.0, 1), (1000.0, 1)] {
             let ctx = Context::default();
             let mut cards = Vec::new();
             let _ = ctx.run(egui::RawInput {
@@ -6290,9 +6299,9 @@ impl LauncherApp {
             .rounding(Rounding::same(999.0))
             .inner_margin(egui::Margin::symmetric(4.0, 3.5))
             .show(ui, |ui| {
-                const TAB_W: f32 = 66.0;
                 const TAB_GAP: f32 = 3.0;
-                let tabs_width = 5.0 * TAB_W + 4.0 * TAB_GAP;
+                let tab_width = ((ui.available_width() - 4.0 * TAB_GAP) / 5.0).clamp(0.0, 66.0);
+                let tabs_width = 5.0 * tab_width + 4.0 * TAB_GAP;
                 ui.set_min_width(tabs_width);
                 ui.set_max_width(tabs_width);
                 ui.horizontal(|ui| {
@@ -6318,8 +6327,9 @@ impl LauncherApp {
                         } else {
                             p.text_secondary
                         };
+                        let compact_label = label.split_once(' ').map_or(label, |(_, text)| text);
                         let btn = egui::Button::new(
-                            RichText::new(label)
+                            RichText::new(if tab_width < 60.0 { compact_label } else { label })
                                 .size(10.0)
                                 .strong()
                                 .color(fg),
@@ -6328,8 +6338,8 @@ impl LauncherApp {
                         .stroke(Stroke::NONE)
                         .rounding(Rounding::same(999.0));
 
-                        let (rect, _) = ui.allocate_exact_size(egui::vec2(TAB_W, 24.0), egui::Sense::hover());
-                        if ui.put(rect, btn).clicked() {
+                        let (rect, _) = ui.allocate_exact_size(egui::vec2(tab_width, 24.0), egui::Sense::hover());
+                        if ui.put(rect, btn).on_hover_text(label).clicked() {
                             self.active_sidebar_tab = tab;
                             if tab == SidebarTab::Commands {
                                 if self.selected_machine == "local" {
@@ -10685,8 +10695,8 @@ impl LauncherApp {
         let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         ui.vertical(|ui| {
-            // Keep navigation compact without moving the shared workspace column.
-            let navigation_width = ui.available_width().min(240.0);
+            // Match the compact Sensors workspace column.
+            let navigation_width = ui.available_width().min(SENSORS_SIDEBAR_WIDTH);
             ui.set_width(navigation_width);
             ui.set_max_width(navigation_width);
 

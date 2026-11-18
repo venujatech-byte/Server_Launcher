@@ -10681,8 +10681,10 @@ impl LauncherApp {
         let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         ui.vertical(|ui| {
-            ui.set_width(ui.available_width());
-            ui.set_max_width(ui.available_width());
+            // Keep navigation compact without moving the shared workspace column.
+            let navigation_width = ui.available_width().min(240.0);
+            ui.set_width(navigation_width);
+            ui.set_max_width(navigation_width);
 
             let is_fetching = if let Some(hid) = host_id {
                 self.remote_sensors_in_flight.lock().unwrap().contains(hid)

@@ -2011,25 +2011,13 @@ impl LauncherApp {
                                         if logs.is_empty() {
                                             ui.label(
                                                 RichText::new("No captured output yet. Run a command below or use Refresh Logs for available process logs.")
-                                                    .italics()
-                                                    .size(11.0)
+                                                    .size(10.5)
                                                     .color(p.text_muted),
                                             );
                                         } else {
-                                            for entry in logs.iter() {
-                                                let color = match entry.kind {
-                                                    crate::service::LogKind::Stderr | crate::service::LogKind::Error => p.log_stderr,
-                                                    crate::service::LogKind::Warning => p.log_warning,
-                                                    crate::service::LogKind::Launcher => p.log_launcher,
-                                                    crate::service::LogKind::Stdin => p.log_stdin,
-                                                    crate::service::LogKind::Stdout => p.log_stdout,
-                                                };
-                                                let rt = RichText::new(format!("[{}] {}", entry.timestamp, entry.text))
-                                                    .color(color)
-                                                    .monospace()
-                                                    .size(10.5);
-                                                ui.add(egui::Label::new(rt).wrap());
-                                            }
+                                            // One selectable label allows copying across log-entry boundaries.
+                                            let output = inline_console_log_layout(&logs, &p);
+                                            ui.add(egui::Label::new(output).wrap().selectable(true));
                                         }
                                     }
                                 }
@@ -5501,6 +5489,26 @@ mod layout_tests {
     use super::*;
 
     #[test]
+    fn console_output_preserves_copy_text_and_separates_timestamp_colours() {
+        let logs = VecDeque::from([
+            crate::service::LogEntry { timestamp: "12:00:01".into(), text: "ready ✓\ncontinued".into(), kind: LogKind::Stdout },
+            crate::service::LogEntry { timestamp: "12:00:02".into(), text: "failed".into(), kind: LogKind::Error },
+            crate::service::LogEntry { timestamp: "12:00:03".into(), text: "warning".into(), kind: LogKind::Warning },
+        ]);
+        for mode in crate::theme::ThemeMode::all() {
+            let p = mode.palette();
+            let job = inline_console_log_layout(&logs, &p);
+            assert_eq!(job.text, "[12:00:01] ready ✓\ncontinued\n[12:00:02] failed\n[12:00:03] warning");
+            for (index, message_colour) in [p.log_stdout, p.log_stderr, p.log_warning].into_iter().enumerate() {
+                assert_eq!(job.sections[index * 2].format.color, p.text_muted);
+                assert_eq!(job.sections[index * 2 + 1].format.color, message_colour);
+            }
+        }
+        assert!(inline_console_log_layout(&VecDeque::new(), &crate::theme::ThemeMode::Dark.palette()).text.is_empty());
+    }
+
+
+    #[test]
     fn notebook_tabs_keep_equal_width_and_one_baseline_as_count_grows() {
         let p = crate::theme::ThemeMode::Dark.palette();
         for available in [320.0, 800.0, 1200.0] {
@@ -6081,6 +6089,28 @@ fn render_notebook_tab(ui: &mut Ui, mut label: egui::text::LayoutJob, width: f32
         ui.painter().rect_stroke(rect, Rounding::same(6.0), Stroke::new(1.0_f32, p.accent));
     }
     response
+}
+
+fn inline_console_log_layout(logs: &VecDeque<crate::service::LogEntry>, p: &crate::theme::ThemePalette) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    for (index, entry) in logs.iter().enumerate() {
+        let color = match entry.kind {
+            LogKind::Stderr | LogKind::Error => p.log_stderr,
+            LogKind::Warning => p.log_warning,
+            LogKind::Launcher => p.log_launcher,
+            LogKind::Stdin => p.log_stdin,
+            LogKind::Stdout => p.log_stdout,
+        };
+        job.append(&format!("{}[{}] ", if index == 0 { "" } else { "\n" }, entry.timestamp), 0.0, egui::TextFormat {
+            font_id: egui::FontId::monospace(10.5), color: p.text_muted, line_height: Some(14.0),
+            ..Default::default()
+        });
+        job.append(&entry.text, 0.0, egui::TextFormat {
+            font_id: egui::FontId::monospace(10.5), color, line_height: Some(14.0),
+            ..Default::default()
+        });
+    }
+    job
 }
 
 fn render_server_card_title(ui: &mut Ui, name: &str, width: f32, height: f32, selected: bool, p: &crate::theme::ThemePalette) -> egui::Response {

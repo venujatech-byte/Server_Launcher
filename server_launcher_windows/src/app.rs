@@ -6775,8 +6775,8 @@ impl LauncherApp {
         Frame::none()
             .fill(p.bg_card)
             .stroke(Stroke::NONE)
-            .rounding(Rounding::same(999.0))
-            .inner_margin(egui::Margin::symmetric(4.0, 3.5))
+            .rounding(Rounding::same(10.0))
+            .inner_margin(egui::Margin::symmetric(3.0, 3.0))
             .show(ui, |ui| {
                 const TAB_GAP: f32 = 3.0;
                 let tab_width = ((ui.available_width() - 4.0 * TAB_GAP) / 5.0).clamp(0.0, 66.0);
@@ -6799,7 +6799,7 @@ impl LauncherApp {
                         let bg = if is_active {
                             p.accent
                         } else {
-                            p.bg_button
+                            Color32::TRANSPARENT
                         };
                         let fg = if is_active {
                             p.accent_text
@@ -6809,15 +6809,16 @@ impl LauncherApp {
                         let compact_label = label.split_once(' ').map_or(label, |(_, text)| text);
                         let btn = egui::Button::new(
                             RichText::new(if tab_width < 60.0 { compact_label } else { label })
-                                .size(10.0)
+                                .size(10.5)
                                 .strong()
                                 .color(fg),
                         )
                         .fill(bg)
                         .stroke(Stroke::NONE)
-                        .rounding(Rounding::same(999.0));
+                        .rounding(Rounding::same(8.0))
+                        .wrap_mode(egui::TextWrapMode::Truncate);
 
-                        let (rect, _) = ui.allocate_exact_size(egui::vec2(tab_width, 24.0), egui::Sense::hover());
+                        let (rect, _) = ui.allocate_exact_size(egui::vec2(tab_width, 26.0), egui::Sense::hover());
                         if ui.put(rect, btn).on_hover_text(label).clicked() {
                             self.active_sidebar_tab = tab;
                             if tab == SidebarTab::Commands {
@@ -20859,60 +20860,45 @@ impl LauncherApp {
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
             ui.set_max_width(ui.available_width());
-            // 1. Group Filter Pills Bar
-            // 1. Group Filter Pills Bar (single-line horizontal scrollable)
-            ScrollArea::horizontal()
-                .id_salt("server_groups_hscroll")
-                .auto_shrink([false, true])
-                .max_height(32.0)
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        ui.label(RichText::new("Group:").size(11.0).color(p.text_muted));
-
-                        let mut all_groups = vec!["All".to_string()];
-                        let mut unique_groups = BTreeSet::new();
-                        for s in &self.services {
-                            unique_groups.insert(s.config.group.clone());
-                        }
-                        all_groups.extend(unique_groups);
-
-                        for grp in all_groups {
-                            let is_active = self.active_group_filter == grp;
-                            let bg_color = if is_active {
-                                p.accent
-                            } else {
-                                p.bg_button
-                            };
-                            let text_color = if is_active {
-                                p.accent_text
-                            } else {
-                                p.text_secondary
-                            };
-
-                            let btn = egui::Button::new(RichText::new(&grp).size(11.0).color(text_color))
-                                .fill(bg_color)
-                                .rounding(Rounding::same(999.0))
-                                .stroke(Stroke::NONE);
-
-                            if ui.add(btn).clicked() {
-                                self.active_group_filter = grp.clone();
-                            }
-                        }
-
-                        ui.add_space(6.0);
-                        let btn_add = egui::Button::new(RichText::new(format!("{} Add", crate::lucide::PLUS)).size(11.0).strong().color(p.accent_text))
-                            .fill(p.accent)
-                            .rounding(Rounding::same(999.0))
-                            .stroke(Stroke::NONE);
-
-                        if ui.add(btn_add).on_hover_text("Configure and add a new server service").clicked() {
-                            self.add_edit_modal.open_new();
-                        }
-                    });
+            // Keep filters scrollable while the Add action stays visible.
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.label(RichText::new("Group").size(10.5).color(p.text_muted));
+                let filters_width = (ui.available_width() - 54.0 - ui.spacing().item_spacing.x).max(0.0);
+                ui.allocate_ui_with_layout(egui::vec2(filters_width, 28.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ScrollArea::horizontal()
+                        .id_salt("server_groups_hscroll")
+                        .auto_shrink([false, true])
+                        .max_height(28.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                ui.spacing_mut().button_padding = egui::vec2(9.0, 3.0);
+                                let mut all_groups = vec!["All".to_string()];
+                                let unique_groups: BTreeSet<_> = self.services.iter().map(|service| service.config.group.clone()).collect();
+                                all_groups.extend(unique_groups);
+                                for group in all_groups {
+                                    let selected = self.active_group_filter == group;
+                                    let button = egui::Button::new(RichText::new(&group).size(10.5)
+                                        .color(if selected { p.accent } else { p.text_secondary }))
+                                        .fill(if selected { p.accent_subtle } else { p.bg_subtle })
+                                        .rounding(Rounding::same(8.0)).stroke(Stroke::NONE)
+                                        .min_size(egui::vec2(32.0, 24.0));
+                                    if ui.add(button).on_hover_text(format!("Show {} servers", group)).clicked() {
+                                        self.active_group_filter = group;
+                                    }
+                                }
+                            });
+                        });
                 });
+                let add = egui::Button::new(RichText::new(format!("{} Add", crate::lucide::PLUS)).size(10.5).color(p.accent))
+                    .fill(p.bg_button).rounding(Rounding::same(8.0)).stroke(Stroke::NONE);
+                if ui.add_sized([54.0, 24.0], add).on_hover_text("Configure and add a new server").clicked() {
+                    self.add_edit_modal.open_new();
+                }
+            });
 
-            ui.add_space(6.0);
+            ui.add_space(10.0);
 
             // 2. Scrollable list of Groups & Server Cards (NEVER shrinks, fills full height!)
             ScrollArea::vertical()

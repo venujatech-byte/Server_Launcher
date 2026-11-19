@@ -347,7 +347,7 @@ impl SystemSensorsCollector {
         let cpu_cores_logical = self.sys.cpus().len();
         let cpu_global_usage = self.sys.global_cpu_usage();
         let cpu_core_usages: Vec<f32> = self.sys.cpus().iter().map(|c| c.cpu_usage()).collect();
-        let (mut cpu_frequencies_mhz, mut cpu_power_watts, cpu_tdp_watts) = collect_cpu_frequencies_and_power();
+        let (mut cpu_frequencies_mhz, cpu_power_watts, cpu_tdp_watts) = collect_cpu_frequencies_and_power();
         if cpu_frequencies_mhz.is_empty() {
             cpu_frequencies_mhz = self.sys.cpus().iter().map(|c| c.frequency()).collect();
         }
@@ -356,20 +356,6 @@ impl SystemSensorsCollector {
         } else {
             self.sys.cpus().first().map(|c| c.frequency()).unwrap_or(0)
         };
-
-        // Guarantee CPU power watts is always populated (hwmon/RAPL or dynamic TDP-usage model)
-        if cpu_power_watts.is_none() {
-            let tdp = cpu_tdp_watts.unwrap_or(match cpu_cores_physical {
-                1..=2 => 15.0,
-                3..=4 => 28.0,
-                5..=8 => 45.0,
-                _ => 65.0,
-            });
-            let idle_w = (tdp * 0.12).clamp(2.5, 12.0);
-            let load_ratio = (cpu_global_usage / 100.0).clamp(0.0, 1.0);
-            let p_est = idle_w + (tdp - idle_w) * (0.35 * load_ratio + 0.65 * load_ratio.powf(1.35));
-            cpu_power_watts = Some((p_est * 10.0).round() / 10.0);
-        }
 
         // 3. Memory
         let mem_total_bytes = self.sys.total_memory();
@@ -800,7 +786,7 @@ impl SystemSensorsCollector {
         };
 
         let cpu_tjunction_max = detect_hardware_cpu_tjunction_max(&temp_sensors);
-        let memory_hw = Some(detect_memory_hardware(&cpu_brand, mem_total_bytes));
+        let memory_hw = None;
 
         let mut mem_dirty_bytes = None;
         #[cfg(target_os = "linux")]
@@ -1303,94 +1289,6 @@ pub fn detect_hardware_cpu_tjunction_max(temp_sensors: &[TempSensor]) -> Option<
     }
 
     None
-}
-
-/// Detects physical memory hardware configuration (topology, channel count, form factor, speed, vendor).
-pub fn detect_memory_hardware(cpu_brand: &str, mem_total_bytes: u64) -> MemoryHardwareInfo {
-    #[cfg(target_os = "linux")]
-    let (vendor, product, chassis_type) = {
-        let v = fs::read_to_string("/sys/class/dmi/id/sys_vendor").unwrap_or_default().trim().to_string();
-        let p = fs::read_to_string("/sys/class/dmi/id/product_name").unwrap_or_default().trim().to_string();
-        let ct = fs::read_to_string("/sys/class/dmi/id/chassis_type")
-            .ok()
-            .and_then(|s| s.trim().parse::<u32>().ok())
-            .unwrap_or(0);
-        (v, p, ct)
-    };
-    #[cfg(not(target_os = "linux"))]
-    let (vendor, product, chassis_type) = (String::new(), String::new(), 0u32);
-
-    let is_laptop = matches!(chassis_type, 8 | 9 | 10 | 11 | 14 | 30 | 31 | 32);
-    let is_server = matches!(chassis_type, 17 | 23 | 28 | 29);
-
-    let form_factor = if is_laptop {
-        "SODIMM"
-    } else if is_server {
-        "RDIMM"
-    } else {
-        "DIMM"
-    };
-
-    let total_gb = mem_total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-    let cpu_lower = cpu_brand.to_lowercase();
-
-    // Determine DDR generation and rating
-    let (gen, rate) = if cpu_lower.contains("core ultra")
-        || cpu_lower.contains("13th gen")
-        || cpu_lower.contains("14th gen")
-        || cpu_lower.contains("ryzen 700")
-        || cpu_lower.contains("ryzen 800")
-        || cpu_lower.contains("ryzen 900")
-        || cpu_lower.contains("zen 4")
-        || cpu_lower.contains("zen 5")
-    {
-        ("DDR5", "5600")
-    } else if cpu_lower.contains("12th gen") {
-        ("DDR5", "4800")
-    } else if cpu_lower.contains("n5030") || cpu_lower.contains("n5000") || cpu_lower.contains("n4020") || cpu_lower.contains("n4000") {
-        ("DDR4", "2400")
-    } else if cpu_lower.contains("11th gen") || cpu_lower.contains("10th gen") || cpu_lower.contains("ryzen") {
-        ("DDR4", "3200")
-    } else if cpu_lower.contains("8th gen") || cpu_lower.contains("9th gen") {
-        ("DDR4", "2666")
-    } else if cpu_lower.contains("6th gen") || cpu_lower.contains("7th gen") {
-        ("DDR4", "2400")
-    } else if cpu_lower.contains("i7-4") || cpu_lower.contains("i5-4") || cpu_lower.contains("i7-3") || cpu_lower.contains("i5-3") {
-        ("DDR3", "1600")
-    } else {
-        ("DDR4", "2666")
-    };
-
-    let memory_type = format!("{}-{}", gen, rate);
-
-    // Detect channel topology
-    let (topology, slot_summary) = if is_server {
-        ("QUAD-CHANNEL".to_string(), "MULTI-SOCKET : ACTIVE".to_string())
-    } else if total_gb > 12.0 || (!is_laptop && total_gb > 6.0) {
-        let slots = if total_gb >= 32.0 { "4 SLOTS : ACTIVE" } else { "2 SLOTS : ACTIVE" };
-        ("DUAL-CHANNEL".to_string(), slots.to_string())
-    } else {
-        ("SINGLE-CHANNEL".to_string(), "SLOT 1 : ACTIVE".to_string())
-    };
-
-    let total_str = format!("{:.1} GB", if total_gb > 0.1 { total_gb } else { 8.0 });
-    let host_tag = if !product.is_empty() {
-        product
-    } else if !vendor.is_empty() {
-        vendor
-    } else {
-        "System Memory".to_string()
-    };
-
-    let module_spec = format!("{} {} ({})", total_str, form_factor, host_tag);
-
-    MemoryHardwareInfo {
-        topology,
-        slot_summary,
-        memory_type,
-        module_spec,
-        form_factor: form_factor.to_string(),
-    }
 }
 
 /// Flushes system page cache, dentries, and triggers memory compaction.
@@ -1968,27 +1866,10 @@ fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
                         .ok()
                         .and_then(|s| s.trim().parse::<f32>().ok());
 
-                    let max_freq_mhz = fs::read_to_string(e.path().join("gt_max_freq_mhz"))
-                        .or_else(|_| fs::read_to_string(e.path().join("gt/gt0/rps_max_freq_mhz")))
-                        .or_else(|_| fs::read_to_string(dev.join("gt_max_freq_mhz")))
-                        .ok()
-                        .and_then(|s| s.trim().parse::<f32>().ok())
-                        .unwrap_or(1200.0);
-
-                    let min_freq_mhz = fs::read_to_string(e.path().join("gt_min_freq_mhz"))
-                        .or_else(|_| fs::read_to_string(e.path().join("gt/gt0/rps_min_freq_mhz")))
-                        .or_else(|_| fs::read_to_string(dev.join("gt_min_freq_mhz")))
-                        .ok()
-                        .and_then(|s| s.trim().parse::<f32>().ok())
-                        .unwrap_or(0.0);
-
-                    let load_pct = freq_mhz.map(|f| {
-                        if max_freq_mhz > min_freq_mhz {
-                            ((f - min_freq_mhz) / (max_freq_mhz - min_freq_mhz) * 100.0).clamp(0.0, 100.0)
-                        } else {
-                            0.0
-                        }
-                    });
+                    // Clock frequency is not a utilization counter.
+                    let load_pct = fs::read_to_string(dev.join("gpu_busy_percent"))
+                        .ok().and_then(|value| value.trim().parse::<f32>().ok())
+                        .filter(|value| value.is_finite() && (0.0..=100.0).contains(value));
 
                     // DRM drivers expose VRAM counters when the device has a
                     // queryable local-memory pool (for example amdgpu).
@@ -2064,16 +1945,6 @@ fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
                                     }
                                 }
                             }
-                        }
-                    }
-
-                    if power_watts.is_none() {
-                        if let Some(clk) = core_clock {
-                            let max_f = max_freq_mhz.max(400.0);
-                            let clk_ratio = (clk as f32 / max_f).clamp(0.0, 1.0);
-                            let load_ratio = (load_pct.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0);
-                            let p_est = 1.0 + 14.0 * (0.35 * clk_ratio + 0.65 * load_ratio);
-                            power_watts = Some((p_est * 10.0).round() / 10.0);
                         }
                     }
 
@@ -2648,14 +2519,11 @@ for card in sorted(glob.glob("/sys/class/drm/card[0-9]*")):
             if os.path.exists(card + "/" + f):
                 try: act_freq = int(open(card + "/" + f).read().strip()); break
                 except: pass
-        max_freq = None
-        for f in ["gt_max_freq_mhz", "gt/gt0/rps_max_freq_mhz"]:
-            if os.path.exists(card + "/" + f):
-                try: max_freq = int(open(card + "/gt_max_freq_mhz").read().strip()); break
-                except: pass
         load = None
-        if act_freq and max_freq and max_freq > 0:
-            load = round((act_freq / max_freq) * 100.0, 1)
+        try:
+            value = float(open(card + "/device/gpu_busy_percent").read().strip())
+            if 0 <= value <= 100: load = value
+        except: pass
 
         def memory_mb(*names):
             for name in names:
@@ -3291,16 +3159,8 @@ print(json.dumps(data))
     };
 
     let cpu_tdp_watts = parsed["cpu_tdp"].as_f64().map(|v| v as f32);
-    let mut cpu_power_watts = parsed["cpu_power"].as_f64().map(|v| v as f32);
-    if cpu_power_watts.is_none() {
-        let tdp = cpu_tdp_watts.unwrap_or_else(|| {
-            crate::power::classify_nominal_tdp_from_model_and_cores(&cpu_brand, cpu_cores)
-        });
-        let idle_w = (tdp * 0.12).clamp(2.0, 15.0);
-        let load_ratio = (cpu_global_usage / 100.0).clamp(0.0, 1.0);
-        let p_est = idle_w + (tdp - idle_w) * (0.35 * load_ratio + 0.65 * load_ratio.powf(1.35));
-        cpu_power_watts = Some((p_est * 10.0).round() / 10.0);
-    }
+    let cpu_power_watts = parsed["cpu_power"].as_f64().map(|v| v as f32)
+        .filter(|value| value.is_finite() && *value >= 0.0);
 
     let mem_total_bytes = parsed["mem_total"].as_u64().unwrap_or(0);
     let mem_avail = parsed["mem_avail"].as_u64().unwrap_or(0);
@@ -3761,10 +3621,11 @@ mod tests {
         let mut collector = SystemSensorsCollector::new();
         let snap = collector.collect();
 
-        // CPU Power watts is guaranteed to be populated
-        assert!(snap.cpu_power_watts.is_some());
-        let p_watts = snap.cpu_power_watts.unwrap();
-        assert!(p_watts > 0.0, "CPU power usage should be positive, got {}", p_watts);
+        if let Some(watts) = snap.cpu_power_watts {
+            assert!(watts.is_finite() && watts >= 0.0);
+        }
+        #[cfg(not(windows))]
+        assert!(snap.memory_hw.is_none(), "Unknown module topology must not be guessed");
 
         // Top apps should have running processes
         assert!(!snap.top_apps.is_empty(), "top_apps should not be empty on a running system");

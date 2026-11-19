@@ -1,0 +1,94 @@
+# Sensors audit and proposed roadmap
+
+Date: 2026-11-19. Branch: `fix/ui-alignment`.
+Status: proposal awaiting approval; no application code changed for this audit.
+
+## Scope and evidence
+
+Reviewed the twelve supplied screenshots, native egui sensor pages and charts in both `src/app.rs` files, Linux/local/SSH collectors, Windows collector, and Wi-Fi, Bluetooth and power modules. The Windows power, Wi-Fi and Bluetooth modules are byte-for-byte identical to their Linux counterparts. This is a source and screenshot audit, not a hardware compatibility certification or runtime benchmark.
+
+The requested Gemini planner is unavailable in this session. The audit follows Ponytail: keep native egui, existing collectors, theme tokens and dependencies; prioritize correct information and checked operations before restyling. No services, power limits, cache settings, radios or battery settings were changed.
+
+## Confirmed findings
+
+| ID | Priority | Finding and evidence | Proposed correction |
+|---|---|---|---|
+| S01 | High | CPU card histories are constructed from CPU utilization rather than frequency/power/temperature samples. Temperature extrema are literal `38.0` and `72.0`; clock extrema include `0.80` and `3.10`. Missing values become `2.25 GHz`, `8.5 W`, `42 C`, etc. See Linux `src/app.rs:11627` through the metric-card section; Windows mirrors this UI. | Record each real metric separately. Calculate statistics from its samples; do not replace absent hardware readings with numbers. |
+| S02 | High | `draw_power_realtime_waveform` generates sine/cosine ripples and a bell-shaped bump from the current watts and GUI time (`src/app.rs:6510`). This is not a measurement history. | Plot timestamped observed samples. Empty, paused and stale periods must remain visible as such. |
+| S03 | High | Collector CPU watts fall back to a core-count/TDP utilization formula (`src/sensors.rs:367`). DRM GPU load is calculated from frequency/min/max frequency and GPU watts can be estimated from clocks (`src/sensors.rs:1976`). The UI lacks per-metric provenance. | Default to reported counters. If retaining an estimate has a concrete use, label it explicitly and exclude it from measured histories and hardware-control decisions. Clock speed is not utilization. |
+| S04 | High | Battery UI defaults missing health to 96%, capacity to 50 Wh, missing cycle count to zero, then prints `Fresh`, `1000 (New)` and `Optimal`; the badge is always `HEALTHY`. Manufacturer/model can fall back to `COMPAL`/`PABAS0241231`. AC plus 99% charge is called `Mains Bypass`. See `src/app.rs:16343`, `16786`, `16925`. | Keep charge, reported condition, capacity retention, cycle count, charging state and bypass support separate. Missing cycles mean unknown. Do not infer a universal lifespan, hardware identity or bypass mode. |
+| S05 | High | Power controls can report success after ignored writes or unobserved background authorization. `apply_thermal_power_preset` returns an active/configured success even when no action succeeded (`src/power.rs:503`). Remote preset and charge scripts suppress errors using `|| true`. Some charge/USB success text claims fixed wattages or electrical capabilities. | One checked action path per target: detect support, obtain sudo/UAC only when required, await completion, read back the setting and report partial failure. A notification reminding the user to unplug is not a hardware charge limit. |
+| S06 | High | Preset code derives PL1/PL2 targets from heuristics and can write them alongside governor/platform/vendor controls (`src/power.rs:346`, `515`). These operations have different semantics and availability. | Offer only discovered supported OS power profiles/governors initially. Do not increase hardware power limits from guessed TDP values. Keep any future explicit power-cap editing separate and bounded by reported capabilities. |
+| S07 | High | Windows `src/power.rs`, `wifi.rs` and `bluetooth.rs` are identical to Linux files, using sysfs, nmcli, bluetoothctl, pkexec, etc. Windows sensor collection has a separate implementation, but these companion features do not. | Gate local features by platform and capability. Add documented native Windows support where justified; otherwise expose an honest unavailable state. Remote Linux support must remain independent of the local OS. |
+| S08 | High | Windows CIM discovery caches battery and temperature data with static hardware for 30 seconds (`server_launcher_windows/src/sensors.rs:3811`). It suppresses query errors and replaces failures with a default snapshot. GPU temperature entries are added to the generic sensor list but not attached to GPU inventory entries. | Separate inventory from live measurements, retain last successful values with age/error, map sensor device identities and reveal the optional temperature-provider requirement. No mandatory bundled driver. |
+| S09 | High | Linux per-process disk collection subtracts the previous `read_bytes`/`written_bytes`, although these are already per-refresh deltas (`src/sensors.rs:701`). The Windows branch uses cumulative fields instead. Linux elapsed time also comes from the disk loop rather than a dedicated process sample clock. | Use cumulative process counters with the actual process sample interval, including PID/start-time identity; handle counter resets and first samples. Test constant workload, pause/resume and PID reuse. |
+| S10 | Medium | Disk mount and base-device rates share mutable previous-counter maps. Base-device and partition fallbacks use string-prefix matches (`src/sensors.rs:440`, `513`), which can collide and consume a baseline twice. Physical capacity and mounted capacity also have different denominators in Overview, Storage and the host strip. | Resolve stable device/partition/filesystem relationships. Compute deltas once per device; keep mounted filesystem usage separate from installed drive capacity. Exclude duplicate filesystem accounting. |
+| S11 | Medium | Top Apps truncates to the first 250 CPU-prioritized processes before UI search/memory sorting. Grouping uses only executable display names; Apps/background classification is a Linux-name heuristic (`src/app.rs:19439`). Per-process network data is visible TCP socket payload only, not complete network traffic. | Retain all collected process records; virtualize displayed rows. Name grouping and partial network coverage honestly; never let a display limit alter search correctness. Verify group termination against current process identity. |
+| S12 | Medium | Count-only histories are appended once per second from the displayed snapshot, including repeated or stale snapshots (`src/app.rs:11095`). The header always says `LIVE` (`10847`). Remote failed queries do not update the retry timestamp (`1225`). | Sample only fresh snapshot identities, use timestamps for a real time window, show last updated/paused/stale and add bounded retry backoff. Keep history per host and device. |
+| S13 | Medium | RAM generation/speed/channel count/form factor and slots are inferred from CPU model, chassis and total RAM (`src/sensors.rs:1319`). Linux uses free memory while Windows and remote collection use available memory in the same field. | Read actual supported module metadata; otherwise omit it. Split available/free/used/cache semantics explicitly and use consistent labels and formulas across platforms. |
+| S14 | Medium | GPU Memory can display system-wide used RAM under a GPU-memory heading for Intel adapters (`src/app.rs:12590`). The explanatory sublabel does not make it per-GPU allocation. Unavailable engine panels still draw flat chart lines. | Show only actual GPU memory counters here; put shared system-memory context elsewhere. Unsupported engine metrics get a compact explanation without a fake zero plot. |
+| S15 | Medium | Wi-Fi hardware is cached once and selected by a `wl` name prefix (`src/wifi.rs:104`). Remote primary-interface selection takes the first active interface rather than a selected wireless/default-route interface (`src/app.rs:14138`). Totals include loopback bytes while Linux summary rates exclude loopback; VPN and physical traffic can be counted together. | Re-enumerate adapters, allow selection, distinguish Wi-Fi/wired/virtual/loopback and make aggregation scope explicit. A missing latency probe is not zero latency. |
+| S16 | Medium | Both Linux RAM buttons call the same flush function. The function performs synchronous external commands from a UI click, ignores some results and includes `|| true` in its elevated command (`src/app.rs:12006`, `src/sensors.rs:1397`). | One clearly named platform-appropriate maintenance action, moved off the UI thread with checked completion. Keep it in an advanced area; it is not a normal monitoring or memory-optimization workflow. |
+| S17 | Medium | Bluetooth capability copy advertises LE Audio/aptX without querying it (`src/app.rs:18142`). The RSSI slider only updates UI state; references do not apply it to device selection or scanning. Fan support is fixed false while dormant fan interaction code remains (`18786`). | Remove unsupported claims and disconnected controls. Bluetooth should show reported radio/device state; fan monitoring/control must be separately detected. Keep unavailable hardware compact and clear. |
+| S18 | Medium | Extensive hard-coded dark/blue RGBs and 7.5–10 px text remain in sensor pages. Data Usage uses a wide fixed-width grid, peer cards have uneven heights, and Temperature leaves one card on a second row. Screenshots also show a clipped Bluetooth heading. | Use existing theme tokens, a consistent readable scale, equal peer heights and bounded wrapping. Fix scroll-state ownership, headers, tables and grid row packing without moving the shared workspace top row. |
+| S19 | Cleanup | An uncalled `render_sensors_data_usage_page_legacy` remains. Refresh scheduling is duplicated in left/right page renderers. Existing tests require synthetic CPU power to always be populated (`src/sensors.rs:3760`). | Delete only confirmed unused code; keep valid parsers and design notes. Centralize polling decisions without introducing a plugin framework. Replace host-dependent/synthetic-value assertions with deterministic fixtures. |
+
+## Visual direction
+
+Keep the current desktop shell, theme selection, compact sidebar and existing 4-card desktop rows. Improve information hierarchy and consistency rather than redesigning navigation again.
+
+- Header: selected host, relevant device selector, sample interval, state and last-update age. Keep it separate from body scrolling.
+- Metrics: compact label/value/unit rows, real observed min/max/average only; details in tooltips or expandable sections.
+- Charts: one consistent chart style, timestamped x axis, appropriate units and real gaps; distinguish unavailable from measured zero.
+- Layout: fill rows evenly; narrow screens can use 2 or 1 columns while desktop keeps 4 where readable. Five thermal sensors should not leave one tall orphan panel.
+- Unsupported hardware: one concise explanation and optional setup detail; no pages of empty charts or realistic-looking mock values.
+- Controls: compact, checked actions with pending/result feedback. Separate read-only telemetry from system configuration.
+- Themes/accessibility: existing accent/danger tokens, readable secondary labels, keyboard focus, full-value tooltips and sufficient contrast in light and dark themes.
+
+## Page-by-page outcome
+
+| Page | Target |
+|---|---|
+| Overview | One reliable summary; consistent mounted-space accounting; selected scope for network totals; eliminate redundant empty charts. |
+| Top Apps | Responsive or internally scrollable table with stable numeric columns, full process search, correctly calculated I/O, explicit partial network coverage and meaningful grouping. |
+| CPU | Observed utilization/frequency/power/temperature histories; actual core/socket information and limits; no fixed extrema or guessed readings. |
+| RAM | Used and available first; clearly named cache/reclaimable estimates and swap; actual module data only; maintenance actions under Advanced. |
+| GPU | Selectable detected adapters, actual counters by device, honest shared/dedicated memory, compact unsupported engines. |
+| Storage | Clear Drives versus Mounted filesystems; correctly mapped partitions and mount points, accurate device I/O; SMART queried only when supported and authorized. |
+| Wi-Fi | Correct selected adapter, current connection, reported signal/security/link rate; network graph scoped and labelled correctly. |
+| Data Usage | Explicit totals scope and time basis; identify VPN/loopback correctly; flexible columns and complete rate text. |
+| Power | Reported battery condition/capacity/cycles/charging state; real power histories; supported power profiles only. |
+| Bluetooth | Real local radio/device capability detection, connected/paired filters and checked operations; remove unverified codec and RF claims. |
+| Temperature | Discovered sensor identities with reported limits; consistent packed layout; fan readings only if actually available, no fake control surface. |
+
+## Proposed implementation sequence
+
+Each milestone is split into focused commits by issue, checked in both crates. Show the UI changes for review after each milestone before continuing visual changes.
+
+| Phase | Work | Acceptance criteria |
+|---|---|---|
+| 1 — Truth and capability states | S01–S04, S13–S14; introduce the minimum per-metric status/source/age representation needed. | No invented hardware names, measurements, extrema, health or cycle life. Unknown, unavailable, error, stale and zero remain distinguishable. |
+| 2 — Checked configuration | S05–S06, S16. | Supported settings only; explicit original target, authorization when needed, awaited result/read-back; canceled/failed authorization cannot produce a success state. No guessed power-limit writes. |
+| 3 — Sampling and rates | S09–S12 and aggregation aspects of S15. | Correct process/device deltas; full search; pause/resume and actual time windows; bounded offline retries; no stale snapshots appended as fresh measurements. |
+| 4 — Windows capabilities | S07–S08. | Native CPU/RAM/network/volume metrics preserved; dynamic data sampled separately from inventory; Windows Wi-Fi/Bluetooth/power either use supported OS facilities or show unsupported explicitly. Missing optional providers cannot look like measured zero. |
+| 5 — Shared UI foundation | Layout part of S18. | Top row remains fixed across pages; consistent typography/surfaces/spacing; peer grids and tables fit at representative desktop and narrow window sizes and display scaling. |
+| 6 — Compute and storage pages | Overview, Top Apps, CPU, RAM, GPU, Storage, Temperature. | Apply the shared UI with real data; no clipped controls, orphan metric panels or blank engine plots. |
+| 7 — Connectivity and power pages | Wi-Fi, Data Usage, Bluetooth, Power. | Correct target/adapter/device selection; compact capability states; controls and labels agree with collectors. |
+| 8 — Cleanup and verification | S19 and cross-platform review. | Remove confirmed dead paths; deterministic regression coverage; compare idle/scrolling CPU and polling frequency; validate themes and DPI; document remaining hardware/provider limits. |
+
+## Verification and limits
+
+Planned fixtures: no battery, multiple batteries, unknown cycle count, missing temperature, missing GPU/provider, multiple GPUs, no Wi-Fi/Bluetooth, VPN/loopback, detached/new disk, encrypted/LVM/Btrfs mounts, denied permissions, failed authorization, offline SSH, malformed collector output, process exit/PID reuse, paused and stale data.
+
+Validation after implementation: `cargo check --locked --offline --tests` for both applications. Follow workspace rules: no `cargo build`. A Linux-host check of the Windows crate is not a native Windows validation; Windows target checks/CI and actual runtime testing are separately required. Tests compiled by `cargo check` are not executed tests.
+
+Visual review should include 1366×768 (the supplied screenshots), 1920×1080, a narrow resizable window, and representative 125–200% scaling in dark and light themes. Runtime measurements should compare repeated idle and scrolling samples on the same machine; do not invent a CPU percentage target before taking a baseline.
+
+## Documentation checked
+
+- Installed `sysinfo 0.31.4` source, `src/common/system.rs:911`: `read_bytes`/`written_bytes` are per-refresh deltas; `total_*` fields are cumulative. Online overview: https://docs.rs/sysinfo/latest/sysinfo/struct.DiskUsage.html
+- Linux power supply documentation: attributes may be missing; charge, energy, status and health have distinct meanings and units: https://docs.kernel.org/power/power_supply_class.html
+- Microsoft Native Wi-Fi API: documented platform functions for wireless interfaces and profiles: https://learn.microsoft.com/en-us/windows/win32/nativewifi/about-the-native-wifi-api
+- Microsoft GPU telemetry explanation: Windows GPU metrics depend on driver support, including WDDM requirements: https://devblogs.microsoft.com/directx/gpus-in-the-task-manager/
+
+No implementation changes or commits were made for this proposal. Approval is required by the user's requested workflow before implementation starts.

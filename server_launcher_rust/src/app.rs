@@ -3218,9 +3218,9 @@ impl LauncherApp {
 
                                         // Stop Button
                                         let stop_btn = egui::Button::new(
-                                            RichText::new(format!("{} Stop", crate::lucide::STOP)).size(10.0).strong().color(Color32::from_rgb(0xfe, 0xf2, 0xf2)),
+                                            RichText::new(format!("{} Stop", crate::lucide::STOP)).size(10.0).strong().color(Color32::WHITE),
                                         )
-                                        .fill(Color32::from_rgb(0x99, 0x1b, 0x1b))
+                                        .fill(p.danger)
                                         .rounding(Rounding::same(999.0));
                                         if ui.add(stop_btn).on_hover_text("Stop this remote server gracefully").clicked() {
                                             let stop_cmd = build_remote_stop_cmd(&l.name, l.port, l.pid);
@@ -7029,8 +7029,8 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.set_min_height(24.0);
                                     let button = if is_running {
-                                        egui::Button::new(RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED)).size(10.5).color(p.danger))
-                                            .fill(p.danger_subtle)
+                                        egui::Button::new(RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED)).size(10.5).color(Color32::WHITE))
+                                            .fill(p.danger)
                                     } else {
                                         egui::Button::new(RichText::new(format!("{} Run", crate::lucide::PLAY_FILLED)).size(10.5).color(p.accent_text))
                                             .fill(p.accent)
@@ -7664,9 +7664,9 @@ impl LauncherApp {
                                         RichText::new(format!("{} Interrupt", crate::lucide::STOP_FILLED))
                                             .size(11.0)
                                             .strong()
-                                            .color(p.danger),
+                                            .color(Color32::WHITE),
                                     )
-                                    .fill(p.danger_subtle).stroke(Stroke::NONE)
+                                    .fill(p.danger).stroke(Stroke::NONE)
                                     .rounding(Rounding::same(6.0));
                                     if ui.add_sized([88.0, 24.0], btn_stop).on_hover_text("Interrupt command · Ctrl+C").clicked() {
                                         term.interrupt();
@@ -7890,9 +7890,9 @@ impl LauncherApp {
                         // Inline Action Button
                         if is_running {
                             let btn_stop = egui::Button::new(
-                                RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED)).size(11.0).color(p.danger),
+                                RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED)).size(11.0).color(Color32::WHITE),
                             )
-                            .fill(p.danger_subtle).stroke(Stroke::NONE)
+                            .fill(p.danger).stroke(Stroke::NONE)
                             .rounding(Rounding::same(6.0));
                             if ui.add_sized([64.0, 28.0], btn_stop).on_hover_text("Interrupt running process (Ctrl+C)").clicked() {
                                 term.interrupt();
@@ -8313,8 +8313,8 @@ impl LauncherApp {
                                     ui.label(RichText::new("Executing remote action...").size(11.0).color(p.accent));
                                 } else {
                                     if is_active {
-                                        let btn_stop = egui::Button::new(RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED)).size(11.0).color(p.danger))
-                                            .fill(p.danger_subtle)
+                                        let btn_stop = egui::Button::new(RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED)).size(11.0).color(Color32::WHITE))
+                                            .fill(p.danger)
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(999.0))
                                             .min_size(egui::vec2(76.0, 26.0));
@@ -22753,8 +22753,8 @@ impl LauncherApp {
                     if edit_resp.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) { do_send = true; }
                     if ui.add_enabled(!input_val.trim().is_empty(), egui::Button::new(RichText::new("Send").size(11.0).color(p.accent_text))
                         .fill(p.accent).rounding(Rounding::same(4.0)).min_size(egui::vec2(48.0, 24.0))).clicked() { do_send = true; }
-                    if ui.add_enabled(pid.is_some() || is_running, egui::Button::new(RichText::new(crate::lucide::STOP).size(11.0).color(p.warning))
-                        .fill(p.bg_button).rounding(Rounding::same(4.0)).min_size(egui::vec2(24.0, 24.0)))
+                    if ui.add_enabled(pid.is_some() || is_running, egui::Button::new(RichText::new(crate::lucide::STOP).size(11.0).color(Color32::WHITE))
+                        .fill(p.danger).rounding(Rounding::same(4.0)).min_size(egui::vec2(24.0, 24.0)))
                         .on_hover_text("Send Ctrl+C to the server").clicked() {
                         if let Some(server) = self.find_service(key) { server.send_interrupt(); }
                     }

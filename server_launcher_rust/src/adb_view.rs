@@ -1024,7 +1024,7 @@ impl LauncherApp {
                         } else {
                             RichText::new("⚡ scrcpy HD").size(10.5).strong().color(Color32::WHITE)
                         };
-                        let scrcpy_btn_bg = if is_scrcpy_on { Color32::from_rgb(220, 38, 38) } else { Color32::from_rgb(14, 116, 144) };
+                        let scrcpy_btn_bg = if is_scrcpy_on { p.danger } else { Color32::from_rgb(14, 116, 144) };
                         let btn_scrcpy = egui::Button::new(scrcpy_btn_text)
                             .fill(scrcpy_btn_bg)
                             .rounding(Rounding::same(6.0));
@@ -1681,8 +1681,8 @@ impl LauncherApp {
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if is_scrcpy_on {
-                            let btn_stop = egui::Button::new(RichText::new("■ Stop scrcpy").size(10.5).color(Color32::from_rgb(248, 113, 113)))
-                                .fill(p.bg_button)
+                            let btn_stop = egui::Button::new(RichText::new("■ Stop scrcpy").size(10.5).color(Color32::WHITE))
+                                .fill(p.danger)
                                 .rounding(Rounding::same(6.0));
                             if ui.add(btn_stop).on_hover_text("Terminate active external scrcpy process").clicked() {
                                 self.launch_scrcpy_for_device(&serial);
@@ -2054,7 +2054,7 @@ impl LauncherApp {
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 if is_running {
                                     let btn_stop = egui::Button::new(RichText::new(format!("{} Stop Mirroring", crate::lucide::SQUARE)).size(12.0).strong().color(Color32::WHITE))
-                                        .fill(Color32::from_rgb(220, 38, 38))
+                                        .fill(p.danger)
                                         .rounding(Rounding::same(8.0))
                                         .min_size(Vec2::new(140.0, 34.0));
                                     if ui.add(btn_stop).clicked() {
@@ -2826,8 +2826,8 @@ impl LauncherApp {
                                         }
 
                                         // Force Stop
-                                        let btn_stp = egui::Button::new(RichText::new("Stop").size(9.5).color(p.text_secondary))
-                                            .fill(p.bg_button)
+                                        let btn_stp = egui::Button::new(RichText::new("Stop").size(9.5).color(Color32::WHITE))
+                                            .fill(p.danger)
                                             .rounding(Rounding::same(4.0));
                                         if ui.add(btn_stp).on_hover_text("Force stop running process").clicked() {
                                             stop_target = Some(pkg.name.clone());

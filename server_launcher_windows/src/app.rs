@@ -764,53 +764,11 @@ impl LauncherApp {
             .map(Service::new)
             .collect();
 
-        // 🚀 Detect previously running servers and reconnect
-        let active_listeners = crate::scanner::scan_system_listening_ports();
-        let mut port_to_listener: HashMap<u16, &crate::scanner::ListenerInfo> = HashMap::new();
-        for l in &active_listeners {
-            port_to_listener.insert(l.port, l);
-        }
-
-        for s in &mut services {
-            let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", s.config.key));
-            let mut detected_pid: Option<u32> = None;
-            let mut matched_by_port = false;
-
-            if let Ok(content) = std::fs::read_to_string(&pid_file) {
-                if let Ok(p) = content.trim().parse::<u32>() {
-                    #[cfg(unix)]
-                    let alive = unsafe { libc::kill(p as i32, 0) == 0 };
-                    #[cfg(not(unix))]
-                    let alive = true;
-
-                    if alive {
-                        detected_pid = Some(p);
-                    } else {
-                        let _ = std::fs::remove_file(&pid_file);
-                    }
-                }
-            }
-
-            if detected_pid.is_none() && s.config.port > 0 {
-                if let Some(l) = port_to_listener.get(&s.config.port) {
-                    if let Some(p) = l.pid {
-                        #[cfg(unix)]
-                        let alive = unsafe { libc::kill(p as i32, 0) == 0 };
-                        #[cfg(not(unix))]
-                        let alive = true;
-
-                        if alive {
-                            detected_pid = Some(p);
-                            matched_by_port = true;
-                        }
-                    }
-                }
-            }
-
-            if let Some(pid) = detected_pid {
-                s.attach_existing(pid, matched_by_port);
-            } else if s.config.autostart {
-                s.start();
+        // 🚀 Detect previously running servers and reconnect by verified process identity.
+        crate::service::reconnect_services(&mut services);
+        for service in &mut services {
+            if service.state == ServiceState::Stopped && service.config.autostart {
+                service.start();
             }
         }
 
@@ -6730,55 +6688,9 @@ fn draw_power_realtime_waveform(ui: &mut Ui, height: f32, watts: f32, _is_ac: bo
 impl LauncherApp {
     pub fn refresh_server_list(&mut self) {
         self.scanner.trigger_scan();
-        let listeners = self.scanner.get_listeners();
-        let mut port_to_listener: HashMap<u16, &crate::scanner::ListenerInfo> = HashMap::new();
-        for l in &listeners {
-            port_to_listener.insert(l.port, l);
-        }
-
-        for s in &mut self.services {
-            if s.state == ServiceState::Stopped {
-                let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", s.config.key));
-                let mut detected_pid: Option<u32> = None;
-                let mut matched_by_port = false;
-
-                if let Ok(content) = std::fs::read_to_string(&pid_file) {
-                    if let Ok(p) = content.trim().parse::<u32>() {
-                        #[cfg(unix)]
-                        let alive = unsafe { libc::kill(p as i32, 0) == 0 };
-                        #[cfg(not(unix))]
-                        let alive = true;
-
-                        if alive {
-                            detected_pid = Some(p);
-                        } else {
-                            let _ = std::fs::remove_file(&pid_file);
-                        }
-                    }
-                }
-
-                if detected_pid.is_none() && s.config.port > 0 {
-                    if let Some(l) = port_to_listener.get(&s.config.port) {
-                        if let Some(p) = l.pid {
-                            #[cfg(unix)]
-                            let alive = unsafe { libc::kill(p as i32, 0) == 0 };
-                            #[cfg(not(unix))]
-                            let alive = true;
-
-                            if alive {
-                                detected_pid = Some(p);
-                                matched_by_port = true;
-                            }
-                        }
-                    }
-                }
-
-                if let Some(pid) = detected_pid {
-                    s.attach_existing(pid, matched_by_port);
-                }
-            }
-
-            s.poll_status(&mut self.sys);
+        crate::service::reconnect_services(&mut self.services);
+        for service in &mut self.services {
+            service.poll_status(&mut self.sys);
         }
         self.last_poll = Instant::now();
     }

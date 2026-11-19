@@ -46,6 +46,113 @@ impl LogEntry {
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ProcessIdentity {
+    key: String,
+    command: String,
+    cwd: String,
+    pid: u32,
+    start_time: u64,
+}
+
+impl ProcessIdentity {
+    fn matches(&self, config: &ServerConfig, pid: u32, start_time: u64) -> bool {
+        self.pid == pid && pid > 0 && self.start_time > 0 && self.start_time == start_time
+            && self.key == config.key && self.command == config.command && self.cwd == config.cwd
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+enum ProcessRecord {
+    Identity(ProcessIdentity),
+    Legacy(u32),
+}
+
+impl ProcessRecord {
+    fn pid(&self) -> u32 {
+        match self { Self::Identity(identity) => identity.pid, Self::Legacy(pid) => *pid }
+    }
+}
+
+fn pid_file(config: &ServerConfig) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("launcher_{}.pid", config.key))
+}
+
+fn read_process_record(config: &ServerConfig) -> Option<ProcessRecord> {
+    serde_json::from_str(&std::fs::read_to_string(pid_file(config)).ok()?).ok()
+}
+
+fn write_process_record(config: &ServerConfig, pid: u32) -> std::io::Result<()> {
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[Pid::from_u32(pid)]), sysinfo::ProcessRefreshKind::new());
+    let process = sys.process(Pid::from_u32(pid)).filter(|p| p.start_time() > 0)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Process identity unavailable"))?;
+    let identity = ProcessIdentity {
+        key: config.key.clone(), command: config.command.clone(), cwd: config.cwd.clone(),
+        pid, start_time: process.start_time(),
+    };
+    write_identity(config, &identity)
+}
+
+fn write_identity(config: &ServerConfig, identity: &ProcessIdentity) -> std::io::Result<()> {
+    std::fs::write(pid_file(config), serde_json::to_vec(identity)?)
+}
+
+fn refresh_process_alive(sys: &mut System, pid: u32) -> bool {
+    // Targeted sysinfo refreshes retain dead entries, so presence in the cache is not enough.
+    let updated = sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[Pid::from_u32(pid)]), sysinfo::ProcessRefreshKind::new());
+    updated > 0 && sys.process(Pid::from_u32(pid)).is_some_and(|p| p.status() != sysinfo::ProcessStatus::Zombie)
+}
+
+fn legacy_process_matches(config: &ServerConfig, command: &[std::ffi::OsString], cwd: Option<&std::path::Path>) -> bool {
+    if config.command.trim().is_empty() { return false; }
+    let expected_cwd = std::fs::canonicalize(&config.cwd).ok();
+    let actual_cwd = cwd.and_then(|path| std::fs::canonicalize(path).ok());
+    if expected_cwd.is_none() || expected_cwd != actual_cwd { return false; }
+    let args: Vec<_> = command.iter().map(|arg| arg.to_string_lossy()).collect();
+    let shell_command = args.windows(2).any(|pair| {
+        (pair[0] == "-c" || pair[0].eq_ignore_ascii_case("/C") || pair[0].eq_ignore_ascii_case("/K"))
+            && pair[1] == config.command
+    });
+    let wrapper = std::env::temp_dir().join(format!("launcher_{}.sh", config.key));
+    shell_command || args.join(" ") == config.command
+        || (config.own_console && command.iter().any(|arg| std::path::Path::new(arg) == wrapper))
+}
+
+// A port describes availability, never which config owns a process.
+// Reject ambiguous legacy records rather than assigning the same PID to multiple configs.
+pub fn reconnect_services(services: &mut [Service]) {
+    let records: Vec<_> = services.iter().map(|service| {
+        if service.state == ServiceState::Stopped { read_process_record(&service.config) } else { None }
+    }).collect();
+    let pids: Vec<_> = records.iter().flatten().map(ProcessRecord::pid).filter(|&pid| pid > 0).map(Pid::from_u32).collect();
+    if pids.is_empty() { return; }
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(ProcessesToUpdate::Some(&pids), sysinfo::ProcessRefreshKind::new()
+        .with_cmd(sysinfo::UpdateKind::Always).with_cwd(sysinfo::UpdateKind::Always));
+    let candidates: Vec<_> = records.iter().zip(services.iter()).map(|(record, service)| {
+        let record = record.as_ref()?;
+        let process = sys.process(Pid::from_u32(record.pid()))?;
+        if process.status() == sysinfo::ProcessStatus::Zombie { return None; }
+        let matches = match record {
+            ProcessRecord::Identity(identity) => identity.matches(&service.config, record.pid(), process.start_time()),
+            ProcessRecord::Legacy(_) => legacy_process_matches(&service.config, process.cmd(), process.cwd()),
+        };
+        matches.then_some((record.pid(), process.start_time()))
+    }).collect();
+    let claimed: std::collections::HashSet<_> = services.iter().filter_map(|service| service.pid).collect();
+    for (service, candidate) in services.iter_mut().zip(candidates.iter()) {
+        if let Some((pid, start_time)) = candidate {
+            if !claimed.contains(pid) && candidates.iter().filter(|candidate| candidate.is_some_and(|(other, _)| other == *pid)).count() == 1 {
+                service.attach_existing(*pid, *start_time);
+            } else {
+                service.append_log(format!("[launcher] Cannot reconnect: PID {} is claimed by multiple server configs. Start this server explicitly to record its identity.", pid), LogKind::Warning);
+            }
+        }
+    }
+}
+
 pub struct Service {
     pub config: ServerConfig,
     pub state: ServiceState,
@@ -227,6 +334,7 @@ impl Service {
             LogKind::Launcher,
         );
         self.state = ServiceState::Starting;
+        let _ = std::fs::remove_file(pid_file(&self.config));
 
         let cmd_str = self.config.command.clone();
         let cwd_str = self.config.cwd.clone();
@@ -254,6 +362,8 @@ impl Service {
                         format!("[launcher] Running in console window (PID: {})", pid),
                         LogKind::Launcher,
                     );
+                    #[cfg(target_os = "windows")]
+                    self.save_process_identity(pid);
                     self.child_handle = Some(child);
                     return;
                 }
@@ -301,8 +411,7 @@ impl Service {
                 self.started_at = Some(std::time::Instant::now());
                 self.state = ServiceState::Running;
 
-                let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
-                let _ = std::fs::write(&pid_file, pid.to_string());
+                self.save_process_identity(pid);
 
                 self.append_log(
                     format!("[launcher] Process spawned (PID: {})", pid),
@@ -355,7 +464,13 @@ impl Service {
         }
     }
 
-    pub fn attach_existing(&mut self, pid: u32, is_port_listener: bool) {
+    fn save_process_identity(&self, pid: u32) {
+        if let Err(error) = write_process_record(&self.config, pid) {
+            self.append_log(format!("[launcher] Could not save process identity: {}", error), LogKind::Warning);
+        }
+    }
+
+    fn attach_existing(&mut self, pid: u32, start_time: u64) {
         if self.state == ServiceState::Running {
             return;
         }
@@ -368,14 +483,15 @@ impl Service {
         // Allow port check to run soon after reconnect
         self.last_port_check = std::time::Instant::now() - std::time::Duration::from_secs(10);
 
-        let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
-        let _ = std::fs::write(&pid_file, pid.to_string());
-
-        let reason = if is_port_listener {
-            format!("active listener on port :{}", self.config.port)
-        } else {
-            "recorded in PID file from previous session".to_string()
+        // Preserve the start time we verified; a fresh lookup could observe a reused PID.
+        let identity = ProcessIdentity {
+            key: self.config.key.clone(), command: self.config.command.clone(), cwd: self.config.cwd.clone(),
+            pid, start_time,
         };
+        if let Err(error) = write_identity(&self.config, &identity) {
+            self.append_log(format!("[launcher] Could not save process identity: {}", error), LogKind::Warning);
+        }
+        let reason = "verified process identity from previous session";
 
         self.append_log(
             format!(
@@ -441,15 +557,6 @@ impl Service {
         }
 
         let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
-        if let Ok(content) = std::fs::read_to_string(&pid_file) {
-            if let Ok(p) = content.trim().parse::<u32>() {
-                #[cfg(unix)]
-                unsafe {
-                    libc::kill(-(p as i32), libc::SIGKILL);
-                    libc::kill(p as i32, libc::SIGKILL);
-                }
-            }
-        }
         let _ = std::fs::remove_file(&pid_file);
 
         if let Some(pid) = self.pid {
@@ -594,16 +701,17 @@ impl Service {
 
         if self.config.own_console {
             let pid_file = std::env::temp_dir().join(format!("launcher_{}.pid", self.config.key));
-            if let Ok(content) = std::fs::read_to_string(&pid_file) {
-                if let Ok(p) = content.trim().parse::<u32>() {
-                    self.pid = Some(p);
+            // Unix terminal wrappers publish their shell PID after the terminal starts.
+            if let Some(ProcessRecord::Legacy(pid)) = read_process_record(&self.config) {
+                if pid > 0 {
+                    self.pid = Some(pid);
+                    self.save_process_identity(pid);
                 }
             }
 
             if let Some(pid) = self.pid {
-                #[cfg(unix)]
                 {
-                    let alive = unsafe { libc::kill(pid as i32, 0) == 0 };
+                    let alive = refresh_process_alive(sys, pid);
                     if !alive {
                         self.state = ServiceState::Stopped;
                         self.pid = None;
@@ -699,10 +807,7 @@ impl Service {
                 Err(_) => {}
             }
         } else if let Some(pid) = self.pid {
-            #[cfg(unix)]
-            let alive = unsafe { libc::kill(pid as i32, 0) == 0 };
-            #[cfg(not(unix))]
-            let alive = sys.process(Pid::from_u32(pid)).is_some();
+            let alive = refresh_process_alive(sys, pid);
 
             if !alive {
                 self.state = ServiceState::Stopped;
@@ -1501,6 +1606,118 @@ mod tests {
         assert!(logs[0].text.contains("Cannot send 'h': server is not running or stdin is closed."));
     }
 
+    fn identity_test_config() -> ServerConfig {
+        ServerConfig {
+            key: format!("identity_test_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()),
+            command: "python run.py".into(), cwd: ".".into(), port: 5173,
+            ..Default::default()
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dead_processes_are_not_reported_alive_from_stale_sysinfo_entries() {
+        let mut child = Command::new("sleep").arg("60").spawn().unwrap();
+        let pid = child.id();
+        let mut sys = System::new();
+        assert!(refresh_process_alive(&mut sys, pid));
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(sys.process(Pid::from_u32(pid)).is_some());
+        assert!(!refresh_process_alive(&mut sys, pid));
+    }
+
+    #[test]
+    fn process_identity_rejects_reused_pids_and_changed_configs() {
+        let config = identity_test_config();
+        let record = ProcessIdentity { key: config.key.clone(), command: config.command.clone(), cwd: config.cwd.clone(), pid: 123, start_time: 456 };
+        assert!(record.matches(&config, 123, 456));
+        assert!(!record.matches(&config, 124, 456));
+        assert!(!record.matches(&config, 123, 457));
+        assert!(!ProcessIdentity { start_time: 0, ..record.clone() }.matches(&config, 123, 0));
+        for other in [
+            ServerConfig { key: "another config".into(), ..config.clone() },
+            ServerConfig { command: "npm run dev".into(), ..config.clone() },
+            ServerConfig { cwd: "another directory".into(), ..config.clone() },
+        ] { assert!(!record.matches(&other, 123, 456)); }
+    }
+
+    #[test]
+    fn shared_ports_reconnect_only_the_recorded_config_on_restart_and_refresh() {
+        let owner = identity_test_config();
+        let other = identity_test_config();
+        let pid = std::process::id();
+        write_process_record(&owner, pid).unwrap();
+        let mut services = vec![Service::new(other), Service::new(owner.clone())];
+        reconnect_services(&mut services);
+        assert_eq!(services[0].state, ServiceState::Stopped);
+        assert_eq!(services[0].pid, None);
+        assert_eq!(services[1].state, ServiceState::Running);
+        assert_eq!(services[1].pid, Some(pid));
+        // Refresh must not let a second config take ownership of an already attached PID.
+        write_process_record(&services[0].config, pid).unwrap();
+        reconnect_services(&mut services);
+        assert_eq!(services[0].state, ServiceState::Stopped);
+        assert_eq!(services[1].pid, Some(pid));
+        for service in services { let _ = std::fs::remove_file(pid_file(&service.config)); }
+    }
+
+    #[test]
+    fn conflicting_records_and_stale_start_times_do_not_attach() {
+        let first = identity_test_config();
+        let second = identity_test_config();
+        let pid = std::process::id();
+        write_process_record(&first, pid).unwrap();
+        write_process_record(&second, pid).unwrap();
+        let mut services = vec![Service::new(first), Service::new(second)];
+        reconnect_services(&mut services);
+        assert!(services.iter().all(|service| service.state == ServiceState::Stopped));
+        let ProcessRecord::Identity(mut identity) = read_process_record(&services[0].config).unwrap() else { panic!("Expected identity record"); };
+        identity.start_time += 1;
+        std::fs::write(pid_file(&services[0].config), serde_json::to_vec(&identity).unwrap()).unwrap();
+        reconnect_services(&mut services[..1]);
+        assert_eq!(services[0].state, ServiceState::Stopped);
+        for service in services { let _ = std::fs::remove_file(pid_file(&service.config)); }
+    }
+
+    #[test]
+    fn legacy_records_migrate_but_duplicate_pid_claims_are_rejected() {
+        let pid = std::process::id();
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[Pid::from_u32(pid)]), sysinfo::ProcessRefreshKind::new()
+            .with_cmd(sysinfo::UpdateKind::Always).with_cwd(sysinfo::UpdateKind::Always));
+        let process = sys.process(Pid::from_u32(pid)).unwrap();
+        let mut config = identity_test_config();
+        config.command = process.cmd().iter().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>().join(" ");
+        config.cwd = process.cwd().unwrap().to_string_lossy().into_owned();
+        let mut duplicate = config.clone();
+        duplicate.key = identity_test_config().key;
+        for config in [&config, &duplicate] { std::fs::write(pid_file(config), pid.to_string()).unwrap(); }
+        let mut services = vec![Service::new(config), Service::new(duplicate)];
+        reconnect_services(&mut services);
+        assert!(services.iter().all(|service| service.state == ServiceState::Stopped));
+        // With only one claim, a validated old integer PID file becomes an identity record.
+        reconnect_services(&mut services[..1]);
+        assert_eq!(services[0].pid, Some(pid));
+        assert!(matches!(read_process_record(&services[0].config), Some(ProcessRecord::Identity(_))));
+        for service in services { let _ = std::fs::remove_file(pid_file(&service.config)); }
+    }
+
+    #[test]
+    fn legacy_pid_files_require_command_and_directory_evidence() {
+        let config = identity_test_config();
+        let cwd = std::env::current_dir().unwrap();
+        let args = ["sh".into(), "-c".into(), config.command.clone().into()];
+        assert!(legacy_process_matches(&config, &args, Some(&cwd)));
+        assert!(!legacy_process_matches(&config, &args, None));
+        assert!(!legacy_process_matches(&config, &["node".into(), "other.js".into()], Some(&cwd)));
+        assert!(matches!(serde_json::from_str::<ProcessRecord>("123\n").unwrap(), ProcessRecord::Legacy(123)));
+        assert!(serde_json::from_str::<ProcessRecord>("not a pid").is_err());
+        let console = ServerConfig { own_console: true, ..config.clone() };
+        let wrapper = std::env::temp_dir().join(format!("launcher_{}.sh", config.key));
+        assert!(legacy_process_matches(&console, &["bash".into(), wrapper.into_os_string()], Some(&cwd)));
+    }
+
     #[test]
     fn test_service_attach_existing_and_stop() {
         let cfg = ServerConfig {
@@ -1525,7 +1742,10 @@ mod tests {
 
         // Attach to current test process PID
         let current_pid = std::process::id();
-        s.attach_existing(current_pid, true);
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[Pid::from_u32(current_pid)]), sysinfo::ProcessRefreshKind::new());
+        let start_time = sys.process(Pid::from_u32(current_pid)).unwrap().start_time();
+        s.attach_existing(current_pid, start_time);
 
         assert_eq!(s.state, ServiceState::Running);
         assert_eq!(s.pid, Some(current_pid));

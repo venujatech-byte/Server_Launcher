@@ -2027,17 +2027,26 @@ impl LauncherApp {
                 ui.separator();
 
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(">").monospace().strong().color(p.accent));
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.label(RichText::new(">").size(11.5).monospace().strong().color(p.accent));
+                    let input_width = (ui.available_width() - 32.0 - 58.0 - 2.0 * ui.spacing().item_spacing.x).max(0.0);
                     let input_ref = self.inline_terminal_inputs.entry(port).or_default();
-                    let resp = ui.add(
+                    let resp = ui.add_sized([input_width, 24.0],
                         egui::TextEdit::singleline(input_ref)
-                            .hint_text("Run shell command in directory (e.g. ps, ls -la, tail log, curl)...")
-                            .desired_width(ui.available_width() - 65.0)
-                            .font(egui::TextStyle::Monospace),
+                            .hint_text("Enter command…")
+                            .desired_width(input_width)
+                            .font(egui::FontId::monospace(11.5))
+                            .margin(egui::vec2(8.0, 4.0)),
                     );
-
+                    ui.add_sized([32.0, 24.0], egui::Label::new(RichText::new("Enter").size(10.0).color(p.text_muted)))
+                        .on_hover_text("Press Enter to run the command");
+                    let run = egui::Button::new(RichText::new(format!("{} Run", crate::lucide::PLAY_FILLED))
+                        .size(10.5).strong().color(p.accent_text))
+                        .fill(p.accent).rounding(Rounding::same(6.0)).min_size(egui::vec2(58.0, 24.0));
+                    let run_clicked = ui.add_enabled(!input_ref.trim().is_empty(), run)
+                        .on_hover_text("Run command · Enter").clicked();
                     let enter_pressed = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    if (enter_pressed || ui.button("Run").clicked()) && !input_ref.trim().is_empty() {
+                    if (enter_pressed || run_clicked) && !input_ref.trim().is_empty() {
                         let cmd = input_ref.trim().to_string();
                         input_ref.clear();
                         self.run_inline_command(port, &cmd, cwd);

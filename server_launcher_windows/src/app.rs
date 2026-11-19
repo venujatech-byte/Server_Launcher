@@ -5132,6 +5132,31 @@ fn draw_dotted_hline(
     }
 }
 
+fn reported_sensor_value(value: Option<f32>, decimals: usize) -> String {
+    value.filter(|value| value.is_finite()).map(|value| format!("{value:.decimals$}"))
+        .unwrap_or_else(|| "—".to_string())
+}
+
+fn record_sensor_sample(history: &mut VecDeque<(Instant, f32)>, timestamp: Instant, value: Option<f32>) {
+    while history.front().is_some_and(|sample| timestamp.saturating_duration_since(sample.0) > Duration::from_secs(60)) {
+        history.pop_front();
+    }
+    if history.back().is_some_and(|sample| sample.0 >= timestamp) { return; }
+    if let Some(value) = value.filter(|value| value.is_finite()) {
+        history.push_back((timestamp, value));
+        if history.len() > 120 { history.pop_front(); }
+    }
+}
+
+fn sensor_metric_history(ui: &Ui, host_id: Option<&str>, metric: &str, timestamp: Option<Instant>, value: Option<f32>) -> Vec<f32> {
+    let id = egui::Id::new(("reported_sensor_history", host_id, metric));
+    ui.ctx().data_mut(|data| {
+        let history = data.get_temp_mut_or_default::<VecDeque<(Instant, f32)>>(id);
+        if let Some(timestamp) = timestamp { record_sensor_sample(history, timestamp, value); }
+        if value.is_some_and(f32::is_finite) { history.iter().map(|sample| sample.1).collect() } else { Vec::new() }
+    })
+}
+
 fn push_telemetry<T>(history: &mut VecDeque<T>, value: T, capacity: usize) {
     if history.len() == capacity { history.pop_front(); }
     history.push_back(value);
@@ -5233,6 +5258,24 @@ fn sensor_card_columns(ui: &mut Ui, count: usize, mut render: impl FnMut(&mut Ui
 #[cfg(test)]
 mod layout_tests {
     use super::*;
+    #[test]
+    fn reported_sensor_history_never_invents_samples() {
+        let now = Instant::now();
+        let mut history = VecDeque::new();
+        record_sensor_sample(&mut history, now, None);
+        assert!(history.is_empty());
+        record_sensor_sample(&mut history, now, Some(0.0));
+        record_sensor_sample(&mut history, now, Some(99.0));
+        assert_eq!(history.iter().map(|sample| sample.1).collect::<Vec<_>>(), vec![0.0]);
+        record_sensor_sample(&mut history, now + Duration::from_secs(1), Some(f32::NAN));
+        assert_eq!(history.len(), 1);
+        record_sensor_sample(&mut history, now + Duration::from_secs(61), Some(12.0));
+        assert_eq!(history.iter().map(|sample| sample.1).collect::<Vec<_>>(), vec![12.0]);
+        assert_eq!(reported_sensor_value(None, 1), "—");
+        assert_eq!(reported_sensor_value(Some(0.0), 1), "0.0");
+    }
+
+
     #[test]
     fn sudo_retries_resume_after_writes_instead_of_recreating_files() {
         let action = PendingSudoAction::CreateService { def: crate::systemd::NewServiceDefinition::default() };
@@ -11608,8 +11651,6 @@ impl LauncherApp {
                                 ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
                                 ui.label(RichText::new(format!("{} Cores / {} Threads", phys, log)).size(10.0).monospace().color(p.text_muted));
                                 ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
-                                ui.label(RichText::new("Socket 1").size(10.0).monospace().color(p.text_muted));
-                                ui.label(RichText::new("•").size(9.0).color(Color32::from_rgb(71, 85, 105)));
                                 ui.label(RichText::new(format!("Uptime {}", uptime_str)).size(10.0).monospace().color(p.text_muted));
                             });
                         });
@@ -11618,117 +11659,34 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 2. Row of 4 Big Metric Cards (matching Overview page architecture)
-                let cpu_slice: Vec<f32> = self.cpu_history.iter().copied().collect();
-                let cpu_avg = if !self.cpu_history.is_empty() { self.cpu_history.iter().sum::<f32>() / self.cpu_history.len() as f32 } else { snap.cpu_global_usage };
-                let freq_ghz = if snap.cpu_frequency_mhz > 0 { snap.cpu_frequency_mhz as f32 / 1000.0 } else { 2.25 };
-                let watts = snap.cpu_power_watts.unwrap_or(8.5);
-                let tdp = snap.cpu_tdp_watts.unwrap_or(12.0);
-                let temp_val = snap.cpu_temp.unwrap_or(42.0);
-                let tj_max = snap.cpu_tjunction_max.unwrap_or(100.0);
-
-                sensor_card_columns(ui, 4, |ui, column| match column {
-                    0 => {
-                    // Card 1: CPU LOAD
-                    render_big_stat_card(
-                        ui,
-                        crate::lucide::ACTIVITY,
-                        "CPU LOAD",
-                        &format!("{:.1}", snap.cpu_global_usage),
-                        "%",
-                        &format!("{} Cores / {} Threads", phys, log),
-                        &format!("AVG {:.0}%", cpu_avg),
-                        &format!("PEAK {:.0}%", self.cpu_peak_usage),
-                        &cpu_slice,
-                        100.0,
-                        Some(0.12),
-                        accent,
-                        p.bg_card,
-                        p.text_muted,
-                    );
-
-                    },
-                    1 => {
-                    // Card 2: CLOCK FREQUENCY
-                    let clock_hist: Vec<f32> = if !cpu_slice.is_empty() {
-                        cpu_slice.iter().map(|&u| 1.1 + (u / 100.0) * (3.1 - 1.1)).collect()
-                    } else {
-                        vec![freq_ghz; 5]
+                let readings = [
+                    Some(snap.cpu_global_usage).filter(|_| snap.timestamp.is_some()),
+                    (snap.cpu_frequency_mhz > 0).then_some(snap.cpu_frequency_mhz as f32 / 1000.0),
+                    snap.cpu_power_watts,
+                    snap.cpu_temp,
+                ];
+                let labels = ["CPU LOAD", "CLOCK FREQUENCY", "PACKAGE POWER", "CORE TEMPERATURE"];
+                let units = ["%", "GHz", "W", "°C"];
+                let icons = [crate::lucide::ACTIVITY, crate::lucide::GAUGE, crate::lucide::ZAP, crate::lucide::THERMOMETER];
+                let histories: Vec<_> = labels.iter().enumerate().map(|(index, label)|
+                    sensor_metric_history(ui, host_id, label, snap.timestamp, readings[index])).collect();
+                sensor_card_columns(ui, 4, |ui, column| {
+                    let history = &histories[column];
+                    let minimum = history.iter().copied().reduce(f32::min);
+                    let maximum = history.iter().copied().reduce(f32::max);
+                    let subtitle = match column {
+                        0 => format!("{} Cores / {} Threads", phys, log),
+                        1 => "Reported clock".to_string(),
+                        2 => snap.cpu_tdp_watts.map(|value| format!("Reported limit: {:.1} W", value)).unwrap_or_else(|| "Power limit unavailable".into()),
+                        _ => snap.cpu_tjunction_max.map(|value| format!("Reported limit: {:.0}°C", value)).unwrap_or_else(|| "Temperature limit unavailable".into()),
                     };
-                    let freq_sub = if snap.cpu_frequency_mhz > 0 {
-                        format!("Target: {:.2} GHz", freq_ghz)
-                    } else if host_id.is_some() {
-                        "Host Clock Governor".to_string()
-                    } else {
-                        "Base 1.10 · Turbo 3.10 GHz".to_string()
-                    };
-                    render_big_stat_card(
-                        ui,
-                        crate::lucide::GAUGE,
-                        "CLOCK FREQUENCY",
-                        &format!("{:.2}", freq_ghz),
-                        "GHz",
-                        &freq_sub,
-                        "MIN 0.80 GHz",
-                        &format!("MAX {:.2} GHz", freq_ghz.max(3.10)),
-                        &clock_hist,
-                        3.5,
-                        Some(0.4),
-                        accent,
-                        p.bg_card,
-                        p.text_muted,
-                    );
-
-                    },
-                    2 => {
-                    // Card 3: PACKAGE POWER
-                    let power_hist: Vec<f32> = if !cpu_slice.is_empty() {
-                        cpu_slice.iter().map(|&u| 4.5 + (u / 100.0) * (tdp - 4.5)).collect()
-                    } else {
-                        vec![watts; 5]
-                    };
-                    render_big_stat_card(
-                        ui,
-                        crate::lucide::ZAP,
-                        "PACKAGE POWER",
-                        &format!("{:.1}", watts),
-                        "W",
-                        &format!("PL1 Limit: {:.1}W", tdp),
-                        &format!("AVG {:.1}W", watts * 0.75),
-                        &format!("PEAK {:.1}W", tdp),
-                        &power_hist,
-                        tdp.max(15.0),
-                        Some(0.75),
-                        accent,
-                        p.bg_card,
-                        p.text_muted,
-                    );
-
-                    },
-                    3 => {
-                    // Card 4: CORE TEMPERATURE
-                    let temp_hist: Vec<f32> = if !cpu_slice.is_empty() {
-                        cpu_slice.iter().map(|&u| 38.0 + (u / 100.0) * 28.0).collect()
-                    } else {
-                        vec![temp_val; 5]
-                    };
-                    render_big_stat_card(
-                        ui,
-                        crate::lucide::THERMOMETER,
-                        "CORE TEMPERATURE",
-                        &format!("{:.1}", temp_val),
-                        "°C",
-                        &format!("Tjunction Max: {:.0}°C", tj_max),
-                        "MIN 38.0°C",
-                        "MAX 72.0°C",
-                        &temp_hist,
-                        tj_max,
-                        Some(0.7),
-                        accent,
-                        p.bg_card,
-                        p.text_muted,
-                    );
-                    },
-                    _ => unreachable!(),
+                    let scale = if column == 0 { 100.0 } else { maximum.unwrap_or(1.0).max(1.0) * 1.1 };
+                    render_big_stat_card(ui, icons[column], labels[column],
+                        &reported_sensor_value(readings[column], if column == 1 { 2 } else { 1 }), units[column],
+                        if readings[column].is_some() { &subtitle } else { "Unavailable from this collector" },
+                        &format!("MIN {}", reported_sensor_value(minimum, 1)),
+                        &format!("MAX {}", reported_sensor_value(maximum, 1)),
+                        history, scale, None, accent, p.bg_card, p.text_muted);
                 });
 
                 ui.add_space(8.0);
@@ -12592,20 +12550,7 @@ impl LauncherApp {
                         (format!("{:.1}", used as f64 / 1024.0), format!("/ {:.1} GB", total as f64 / 1024.0),
                          format!("USED {:.0}%", pct), gpu.and_then(|g| g.power_watts).map(|w| format!("POWER {:.1}W", w)).unwrap_or_else(|| "Power unavailable".to_string()), true, total, used)
                     } else {
-                        // Integrated GPUs share system RAM; report host totals, not guessed per-GPU allocation.
-                        let shared_memory = gpu.is_some_and(|g| {
-                            g.name.to_ascii_lowercase().contains("intel")
-                                || g.driver.contains("i915")
-                                || g.driver.contains("xe")
-                        });
-                        let total = (snap.mem_total_bytes / (1024 * 1024)) as u64;
-                        let used = (snap.mem_used_bytes / (1024 * 1024)) as u64;
-                        if shared_memory && total > 0 {
-                            (format!("{:.1}", used as f64 / 1024.0), format!("/ {:.1} GB shared", total as f64 / 1024.0),
-                             "SYSTEM-WIDE USE".to_string(), "Shared system memory".to_string(), false, total, used.min(total))
-                        } else {
-                            ("—".to_string(), String::new(), "Unavailable".to_string(), String::new(), false, 0, 0)
-                        }
+                        ("—".to_string(), String::new(), "Unavailable from this collector".to_string(), String::new(), false, 0, 0)
                     };
 
                 sensor_card_columns(ui, 4, |ui, column| match column {

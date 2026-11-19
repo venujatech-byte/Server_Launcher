@@ -5460,6 +5460,59 @@ mod layout_tests {
     use super::*;
 
     #[test]
+    fn offscreen_rows_reuse_only_matching_measured_heights() {
+        let ctx = Context::default();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let id = ui.make_persistent_id("measured_row_test");
+                let layout = ProcessRowLayout {
+                    width: ui.available_width().to_bits(), scale: 1.0_f32.to_bits(),
+                    expanded: true, console: true, metrics: None,
+                };
+                ui.ctx().data_mut(|data| data.insert_temp(id, MeasuredProcessRow { layout, height: 240.0 }));
+                let start = ui.cursor().min;
+                ui.set_clip_rect(egui::Rect::from_min_size(start + egui::vec2(0.0, 600.0), egui::vec2(400.0, 100.0)));
+                assert!(!skip_measured_process_row(ui, id, ProcessRowLayout { expanded: false, ..layout }));
+                assert!(!skip_measured_process_row(ui, id, ProcessRowLayout { console: false, ..layout }));
+                assert!(!skip_measured_process_row(ui, id, ProcessRowLayout { width: 200.0_f32.to_bits(), ..layout }));
+                assert_eq!(ui.cursor().min, start);
+                assert!(skip_measured_process_row(ui, id, layout));
+                assert!((ui.cursor().min.y - start.y - 240.0 - ui.spacing().item_spacing.y).abs() < 0.5);
+                ui.set_clip_rect(ui.max_rect());
+                assert!(!skip_measured_process_row(ui, id, layout));
+            });
+        });
+    }
+
+    #[test]
+    fn console_layout_cache_refreshes_for_content_theme_and_width() {
+        let ctx = Context::default();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let mut p = crate::theme::ThemeMode::Dark.palette();
+                let mut logs = VecDeque::from([
+                    crate::service::LogEntry { timestamp: "12:00:01".into(), text: "first".into(), kind: LogKind::Stdout },
+                    crate::service::LogEntry { timestamp: "12:00:02".into(), text: "middle ".repeat(100), kind: LogKind::Stdout },
+                    crate::service::LogEntry { timestamp: "12:00:03".into(), text: "last".into(), kind: LogKind::Stdout },
+                ]);
+                let first = cached_inline_console_galley(ui, 8000, &logs, &p);
+                assert!(Arc::ptr_eq(&first, &cached_inline_console_galley(ui, 8000, &logs, &p)));
+                logs[1].text = "updated ".repeat(100);
+                let updated = cached_inline_console_galley(ui, 8000, &logs, &p);
+                assert!(!Arc::ptr_eq(&first, &updated));
+                assert!(updated.job.text.contains("updated"));
+                p.log_stdout = Color32::RED;
+                let themed = cached_inline_console_galley(ui, 8000, &logs, &p);
+                assert!(!Arc::ptr_eq(&updated, &themed));
+                ui.set_width(120.0);
+                let narrow = cached_inline_console_galley(ui, 8000, &logs, &p);
+                assert!(!Arc::ptr_eq(&themed, &narrow));
+                assert!(narrow.rows.len() > themed.rows.len());
+            });
+        });
+    }
+
+    #[test]
     fn long_process_details_do_not_widen_the_card() {
         for width in [260.0, 720.0] {
             let ctx = Context::default();
@@ -6150,6 +6203,65 @@ fn render_notebook_tab(ui: &mut Ui, mut label: egui::text::LayoutJob, width: f32
     response
 }
 
+#[derive(Clone, Copy, PartialEq)]
+struct ProcessRowLayout {
+    width: u32,
+    scale: u32,
+    expanded: bool,
+    console: bool,
+    metrics: Option<(u32, u32)>,
+}
+
+#[derive(Clone, Copy)]
+struct MeasuredProcessRow {
+    layout: ProcessRowLayout,
+    height: f32,
+}
+
+// Reuse actual heights so skipping offscreen cards does not shift the scroll position.
+fn skip_measured_process_row(ui: &mut Ui, id: egui::Id, layout: ProcessRowLayout) -> bool {
+    if let Some(measured) = ui.ctx().data_mut(|data| data.get_temp::<MeasuredProcessRow>(id)) {
+        if measured.layout == layout && measured.height.is_finite() && measured.height > 0.0 {
+            let rect = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), measured.height));
+            if !ui.clip_rect().expand(80.0).intersects(rect) {
+                ui.allocate_space(rect.size());
+                return true;
+            }
+        }
+    }
+    false
+}
+
+#[derive(Clone)]
+struct CachedConsoleGalley {
+    fingerprint: u64,
+    galley: Arc<egui::Galley>,
+}
+
+fn cached_inline_console_galley(ui: &Ui, port: u16, logs: &VecDeque<crate::service::LogEntry>, p: &crate::theme::ThemePalette) -> Arc<egui::Galley> {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    ui.available_width().to_bits().hash(&mut hasher);
+    ui.ctx().pixels_per_point().to_bits().hash(&mut hasher);
+    [p.text_muted, p.log_stdout, p.log_stderr, p.log_warning, p.log_launcher, p.log_stdin].hash(&mut hasher);
+    logs.len().hash(&mut hasher);
+    for entry in logs {
+        entry.timestamp.hash(&mut hasher);
+        entry.text.hash(&mut hasher);
+        std::mem::discriminant(&entry.kind).hash(&mut hasher);
+    }
+    let fingerprint = hasher.finish();
+    let id = ui.make_persistent_id(("console_text_layout", port));
+    if let Some(cached) = ui.ctx().data_mut(|data| data.get_temp::<CachedConsoleGalley>(id)) {
+        if cached.fingerprint == fingerprint { return cached.galley; }
+    }
+    let mut job = inline_console_log_layout(logs, p);
+    job.wrap.max_width = ui.available_width().max(0.0);
+    let galley = ui.fonts(|fonts| fonts.layout_job(job));
+    ui.ctx().data_mut(|data| data.insert_temp(id, CachedConsoleGalley { fingerprint, galley: galley.clone() }));
+    galley
+}
+
 fn process_detail_value(ui: &mut Ui, text: &str, color: Color32) -> egui::Response {
     ui.add(egui::Label::new(RichText::new(text).size(10.5).monospace().color(color)).truncate())
         .on_hover_text(text)
@@ -6166,7 +6278,7 @@ fn render_inline_console_output(ui: &mut Ui, port: u16, logs: Option<&VecDeque<c
                     ui.set_width(ui.available_width());
                     if let Some(logs) = logs.filter(|logs| !logs.is_empty()) {
                         // One selectable label allows copying across log-entry boundaries.
-                        ui.add(egui::Label::new(inline_console_log_layout(logs, p)).wrap().selectable(true));
+                        ui.add(egui::Label::new(cached_inline_console_galley(ui, port, logs, p)).selectable(true));
                     } else {
                         ui.label(RichText::new("No captured output yet. Run a command below or use Refresh Logs for available process logs.")
                             .size(10.5).color(p.text_muted));
@@ -21824,13 +21936,29 @@ impl LauncherApp {
                         });
                 } else {
                     for listener in &unmanaged_listeners {
+                        let metrics = if self.show_other_process_metrics {
+                            listener.pid.map(|pid| {
+                                let (cpu, mem) = self.other_metrics.get(&pid).copied().unwrap_or((0.0, 0.0));
+                                (cpu.to_bits(), mem.to_bits())
+                            })
+                        } else { None };
+                        let row_layout = ProcessRowLayout {
+                            width: ui.available_width().to_bits(), scale: ui.ctx().pixels_per_point().to_bits(),
+                            expanded: self.expanded_listeners.contains(&listener.port),
+                            console: self.open_inline_terminals.contains(&listener.port), metrics,
+                        };
+                        let height_id = ui.make_persistent_id(("listener_measured_height", &listener.proto, listener.port, listener.pid));
+                        if skip_measured_process_row(ui, height_id, row_layout) {
+                            ui.add_space(6.0);
+                            continue;
+                        }
                         let (cmd_opt, cwd_opt) = listener.pid
                             .map(|p| self.get_proc_cmd_and_cwd(p))
                             .unwrap_or((None, None));
                         let cmd_str = cmd_opt.unwrap_or_default();
                         let cwd_str = cwd_opt.unwrap_or_default();
 
-                        ui.push_id(("external_process_card", &listener.proto, listener.port, listener.pid), |ui| Frame::none()
+                        let row = ui.push_id(("external_process_card", &listener.proto, listener.port, listener.pid), |ui| Frame::none()
                             .fill(p.bg_card)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(12.0))
@@ -21999,12 +22127,25 @@ impl LauncherApp {
                                 });
                             }));
 
+                        ui.ctx().data_mut(|data| data.insert_temp(height_id, MeasuredProcessRow {
+                            layout: row_layout, height: row.response.rect.height(),
+                        }));
                         ui.add_space(6.0);
                     }
 
                     // Render any stopped external processes
                     for (port, name, cmd, cwd) in &visible_stopped {
-                        ui.push_id(("stopped_process_card", *port), |ui| Frame::none()
+                        let row_layout = ProcessRowLayout {
+                            width: ui.available_width().to_bits(), scale: ui.ctx().pixels_per_point().to_bits(),
+                            expanded: self.expanded_listeners.contains(port),
+                            console: self.open_inline_terminals.contains(port), metrics: None,
+                        };
+                        let height_id = ui.make_persistent_id(("stopped_measured_height", *port));
+                        if skip_measured_process_row(ui, height_id, row_layout) {
+                            ui.add_space(6.0);
+                            continue;
+                        }
+                        let row = ui.push_id(("stopped_process_card", *port), |ui| Frame::none()
                             .fill(p.bg_card)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(12.0))
@@ -22158,6 +22299,9 @@ impl LauncherApp {
                                 });
                             }));
 
+                        ui.ctx().data_mut(|data| data.insert_temp(height_id, MeasuredProcessRow {
+                            layout: row_layout, height: row.response.rect.height(),
+                        }));
                         ui.add_space(6.0);
                     }
                 }

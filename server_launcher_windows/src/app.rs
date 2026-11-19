@@ -1790,7 +1790,7 @@ impl LauncherApp {
     ) {
         if !self.inline_terminal_sessions.contains_key(&port) {
             let logs = Arc::new(Mutex::new(VecDeque::with_capacity(1000)));
-            let pid_str = pid.map(|p| p.to_string()).unwrap_or_else(|| "N/A".to_string());
+            let pid_str = pid.map(|p| p.to_string()).unwrap_or_else(|| "unavailable".to_string());
             let entry_welcome = crate::service::LogEntry::new(
                 format!("[console] Opened for {} (Port :{}, PID {})", name, port, pid_str),
                 crate::service::LogKind::Launcher,
@@ -1941,8 +1941,8 @@ impl LauncherApp {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     ui.spacing_mut().button_padding = egui::vec2(6.0, 3.0);
-                    let pid_str = pid.map(|p| p.to_string()).unwrap_or_else(|| "N/A".to_string());
-                    let metadata = format!("Port :{} | PID {}", port, pid_str);
+                    let pid_str = pid.map(|p| p.to_string()).unwrap_or_else(|| "unavailable".to_string());
+                    let metadata = format!("Port :{} · PID {}", port, pid_str);
                     let mut heading = egui::text::LayoutJob::default();
                     heading.append(&format!("{} ", crate::lucide::TERMINAL), 0.0, egui::TextFormat {
                         font_id: egui::FontId::proportional(11.5), color: p.accent,
@@ -21967,10 +21967,9 @@ impl LauncherApp {
                                                     }
                                                     if cwd_str.is_empty() && cmd_str.is_empty() {
                                                         ui.label(
-                                                            RichText::new("Location or command line details not accessible for this system process.")
+                                                            RichText::new("Directory and command details unavailable.")
                                                                 .size(10.5)
-                                                                .italics()
-                                                                .color(p.text_muted),
+                                                                .color(p.text_secondary),
                                                         );
                                                     }
 

@@ -1209,12 +1209,12 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     ui.columns(columns, |cols| {
                         cols[0].vertical(|ui| {
                             ui.label(RichText::new("Server name *").size(12.0).strong());
-                            ui.add(egui::TextEdit::singleline(&mut state.name).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text("e.g. Frontend app")
+                            ui.add(egui::TextEdit::singleline(&mut state.name).text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text(RichText::new("e.g. Frontend app").color(palette.text_muted))
                                 .clip_text(true).desired_width(ui.available_width()));
                         });
                         cols[columns - 1].vertical(|ui| {
                             ui.label(RichText::new("Group").size(12.0).strong());
-                            ui.add(egui::TextEdit::singleline(&mut state.group).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text("General")
+                            ui.add(egui::TextEdit::singleline(&mut state.group).text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text(RichText::new("General").color(palette.text_muted))
                                 .clip_text(true).desired_width(ui.available_width()));
                         });
                     });
@@ -1234,8 +1234,8 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     ui.label(RichText::new("Working directory *").size(12.0).strong());
                     ui.horizontal(|ui| {
                         let width = (ui.available_width() - 76.0 - ui.spacing().item_spacing.x).max(48.0);
-                        ui.add_sized([width, 30.0], egui::TextEdit::singleline(&mut state.cwd).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0))
-                            .hint_text(if cfg!(windows) { r"C:\Projects\my-app" } else { "/home/you/my-app" })
+                        ui.add_sized([width, 30.0], egui::TextEdit::singleline(&mut state.cwd).text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0))
+                            .hint_text(RichText::new(if cfg!(windows) { r"C:\Projects\my-app" } else { "/home/you/my-app" }).color(palette.text_muted))
                             .font(egui::TextStyle::Monospace).clip_text(true))
                             .on_hover_text("Folder where the command runs. Use . for the current directory.");
                         if ui.add_sized([76.0, 30.0], egui::Button::new(RichText::new("Browse…").size(11.5).color(palette.text_secondary))
@@ -1245,12 +1245,12 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     });
                     ui.add_space(8.0);
                     ui.label(RichText::new("Start command *").size(12.0).strong());
-                    ui.add(egui::TextEdit::singleline(&mut state.command).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text("npm run dev")
+                    ui.add(egui::TextEdit::singleline(&mut state.command).text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text(RichText::new("npm run dev").color(palette.text_muted))
                         .font(egui::TextStyle::Monospace).clip_text(true).desired_width(ui.available_width()));
                     ui.add_space(8.0);
                     ui.horizontal_wrapped(|ui| {
                         ui.label(RichText::new("Port").size(12.0).strong());
-                        ui.add(egui::TextEdit::singleline(&mut state.port_str).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text("0")
+                        ui.add(egui::TextEdit::singleline(&mut state.port_str).text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text(RichText::new("0").color(palette.text_muted))
                             .clip_text(true).desired_width(80.0));
                         ui.label(RichText::new("Optional · 0 disables port monitoring").size(11.0).color(palette.text_muted));
                     });
@@ -1268,18 +1268,18 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                         egui::CollapsingHeader::new(RichText::new("Advanced settings").size(11.5)).id_salt("server_advanced_settings").show(ui, |ui| {
                             // Edit mode keeps the existing identifier immutable.
                             ui.label(RichText::new("Identifier (optional)").size(12.0).strong());
-                            ui.add_enabled(!state.is_edit, egui::TextEdit::singleline(&mut state.key).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0))
-                                .hint_text("Generated from the name if empty").clip_text(true).desired_width(ui.available_width()))
+                            ui.add_enabled(!state.is_edit, egui::TextEdit::singleline(&mut state.key).text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0))
+                                .hint_text(RichText::new("Generated from the name if empty").color(palette.text_muted)).clip_text(true).desired_width(ui.available_width()))
                                 .on_hover_text("Unique configuration key. Existing server identifiers cannot be changed here.");
                             ui.add_space(8.0);
                             ui.label(RichText::new("Stop command (optional)").size(12.0).strong());
-                            ui.add(egui::TextEdit::singleline(&mut state.stop_command).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).font(egui::TextStyle::Monospace)
-                                .hint_text("Leave empty to stop the process directly").clip_text(true).desired_width(ui.available_width()))
+                            ui.add(egui::TextEdit::singleline(&mut state.stop_command).text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).font(egui::TextStyle::Monospace)
+                                .hint_text(RichText::new("Leave empty to stop the process directly").color(palette.text_muted)).clip_text(true).desired_width(ui.available_width()))
                                 .on_hover_text("Runs before stopping the server.");
                             ui.add_space(8.0);
                             ui.label(RichText::new("Environment variables").size(12.0).strong());
-                            ui.add(egui::TextEdit::multiline(&mut state.env_text).font(egui::TextStyle::Monospace)
-                                .hint_text("KEY=VALUE\nOne variable per line").desired_rows(3).clip_text(true).desired_width(ui.available_width()));
+                            ui.add(egui::TextEdit::multiline(&mut state.env_text).text_color(palette.text_secondary).font(egui::TextStyle::Monospace)
+                                .hint_text(RichText::new("KEY=VALUE\nOne variable per line").color(palette.text_muted)).desired_rows(3).clip_text(true).desired_width(ui.available_width()));
                         });
                         egui::CollapsingHeader::new(RichText::new(format!("Actions ({})", state.actions.len())).size(11.5))
                             .id_salt("server_extra_actions").default_open(!state.actions.is_empty()).show(ui, |ui| {
@@ -1289,8 +1289,8 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                                     ui.push_id(index, |ui| {
                                         ui.horizontal_wrapped(|ui| {
                                             let command_width = (ui.available_width() - 154.0).max(100.0);
-                                            ui.add(egui::TextEdit::singleline(label).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text("Label").clip_text(true).desired_width(110.0));
-                                            ui.add(egui::TextEdit::singleline(command).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text("npm run build")
+                                            ui.add(egui::TextEdit::singleline(label).text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text(RichText::new("Label").color(palette.text_muted)).clip_text(true).desired_width(110.0));
+                                            ui.add(egui::TextEdit::singleline(command).text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text(RichText::new("npm run build").color(palette.text_muted))
                                                 .font(egui::TextStyle::Monospace).clip_text(true).desired_width(command_width));
                                             if ui.button(RichText::new(crate::lucide::X).size(11.0).color(palette.danger))
                                                 .on_hover_text("Remove action").clicked() { remove = Some(index); }
@@ -1307,8 +1307,8 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                                     ui.push_id(index, |ui| {
                                         ui.horizontal_wrapped(|ui| {
                                             let url_width = (ui.available_width() - 154.0).max(100.0);
-                                            ui.add(egui::TextEdit::singleline(label).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text("Label").clip_text(true).desired_width(110.0));
-                                            ui.add(egui::TextEdit::singleline(url).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text("http://localhost:3000")
+                                            ui.add(egui::TextEdit::singleline(label).text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text(RichText::new("Label").color(palette.text_muted)).clip_text(true).desired_width(110.0));
+                                            ui.add(egui::TextEdit::singleline(url).text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text(RichText::new("http://localhost:3000").color(palette.text_muted))
                                                 .clip_text(true).desired_width(url_width));
                                             if ui.button(RichText::new(crate::lucide::X).size(11.0).color(palette.danger))
                                                 .on_hover_text("Remove link").clicked() { remove = Some(index); }

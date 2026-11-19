@@ -1994,36 +1994,9 @@ impl LauncherApp {
                     .on_hover_text(format!("Working directory: {}\nEach command starts a separate shell; it does not send input to the server process.\nRefresh Logs loads available process logs on demand.", directory));
                 ui.add_space(4.0);
 
-                Frame::none()
-                    .fill(p.terminal_bg)
-                    .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::same(8.0))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ScrollArea::both()
-                            .id_salt(("inline_console_output", port))
-                            .stick_to_bottom(true)
-                            .max_height(200.0)
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                if let Some(session) = self.inline_terminal_sessions.get(&port) {
-                                    if let Ok(logs) = session.logs.lock() {
-                                        if logs.is_empty() {
-                                            ui.label(
-                                                RichText::new("No captured output yet. Run a command below or use Refresh Logs for available process logs.")
-                                                    .size(10.5)
-                                                    .color(p.text_muted),
-                                            );
-                                        } else {
-                                            // One selectable label allows copying across log-entry boundaries.
-                                            let output = inline_console_log_layout(&logs, &p);
-                                            ui.add(egui::Label::new(output).wrap().selectable(true));
-                                        }
-                                    }
-                                }
-                            });
-                    });
+                let logs = self.inline_terminal_sessions.get(&port).and_then(|session| session.logs.lock().ok());
+                render_inline_console_output(ui, port, logs.as_deref(), &p);
+                drop(logs);
 
                 ui.add_space(4.0);
 
@@ -5487,6 +5460,61 @@ mod layout_tests {
     use super::*;
 
     #[test]
+    fn long_process_details_do_not_widen_the_card() {
+        for width in [260.0, 720.0] {
+            let ctx = Context::default();
+            let p = crate::theme::ThemeMode::Dark.palette();
+            let long_command = "/very/long/process/path/".repeat(80);
+            let mut card = egui::Rect::NOTHING;
+            let _ = ctx.run(egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 300.0))),
+                ..Default::default()
+            }, |ctx| {
+                egui::CentralPanel::default().frame(Frame::none()).show(ctx, |ui| {
+                    card = Frame::none().inner_margin(egui::Margin::same(12.0)).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Command:");
+                            process_detail_value(ui, &long_command, p.text_secondary);
+                        });
+                    }).response.rect;
+                });
+            });
+            assert!(card.right() <= width + 0.5);
+        }
+    }
+
+    #[test]
+    fn console_viewport_keeps_list_height_stable_while_scrolling() {
+        let p = crate::theme::ThemeMode::Dark.palette();
+        let logs = VecDeque::from([crate::service::LogEntry {
+            timestamp: "12:00:00".into(), text: "A long console message ".repeat(100), kind: LogKind::Stdout,
+        }]);
+        let mut heights = Vec::new();
+        for offset in [0.0, 180.0, 400.0] {
+            let ctx = Context::default();
+            let mut height = 0.0;
+            let _ = ctx.run(egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500.0, 300.0))),
+                ..Default::default()
+            }, |ctx| {
+                egui::CentralPanel::default().frame(Frame::none()).show(ctx, |ui| {
+                    let outer = ScrollArea::vertical().id_salt("console_list_test")
+                        .scroll_offset(egui::vec2(0.0, offset)).show(ui, |ui| {
+                            for port in [8000, 8001, 8002] {
+                                let rect = render_inline_console_output(ui, port, Some(&logs), &p);
+                                assert!((rect.height() - 216.0).abs() < 0.5);
+                            }
+                        });
+                    height = outer.content_size.y;
+                });
+            });
+            heights.push(height);
+        }
+        assert!(heights.iter().all(|height| (height - heights[0]).abs() < 0.5));
+    }
+
+
+    #[test]
     fn console_output_preserves_copy_text_and_separates_timestamp_colours() {
         let logs = VecDeque::from([
             crate::service::LogEntry { timestamp: "12:00:01".into(), text: "ready ✓\ncontinued".into(), kind: LogKind::Stdout },
@@ -6120,6 +6148,31 @@ fn render_notebook_tab(ui: &mut Ui, mut label: egui::text::LayoutJob, width: f32
         ui.painter().rect_stroke(rect, Rounding::same(6.0), Stroke::new(1.0_f32, p.accent));
     }
     response
+}
+
+fn process_detail_value(ui: &mut Ui, text: &str, color: Color32) -> egui::Response {
+    ui.add(egui::Label::new(RichText::new(text).size(10.5).monospace().color(color)).truncate())
+        .on_hover_text(text)
+}
+
+fn render_inline_console_output(ui: &mut Ui, port: u16, logs: Option<&VecDeque<crate::service::LogEntry>>, p: &crate::theme::ThemePalette) -> egui::Rect {
+    Frame::none().fill(p.terminal_bg).rounding(Rounding::same(8.0))
+        .inner_margin(egui::Margin::same(8.0)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            // A fixed viewport keeps the surrounding list height stable as it scrolls past the console.
+            ScrollArea::vertical().id_salt(("inline_console_output", port))
+                .min_scrolled_height(200.0).max_height(200.0).auto_shrink([false, false])
+                .drag_to_scroll(false).stick_to_bottom(true).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    if let Some(logs) = logs.filter(|logs| !logs.is_empty()) {
+                        // One selectable label allows copying across log-entry boundaries.
+                        ui.add(egui::Label::new(inline_console_log_layout(logs, p)).wrap().selectable(true));
+                    } else {
+                        ui.label(RichText::new("No captured output yet. Run a command below or use Refresh Logs for available process logs.")
+                            .size(10.5).color(p.text_muted));
+                    }
+                });
+        }).response.rect
 }
 
 fn inline_console_log_layout(logs: &VecDeque<crate::service::LogEntry>, p: &crate::theme::ThemePalette) -> egui::text::LayoutJob {
@@ -21729,7 +21782,7 @@ impl LauncherApp {
                     )
                 };
 
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label(
                         RichText::new(other_title)
                             .size(13.5)
@@ -21771,29 +21824,13 @@ impl LauncherApp {
                         });
                 } else {
                     for listener in &unmanaged_listeners {
-                        let is_expanded = self.expanded_listeners.contains(&listener.port);
-                        let card_height = if is_expanded {
-                            170.0
-                        } else if self.show_other_process_metrics {
-                            76.0
-                        } else {
-                            50.0
-                        };
-                        let current_pos = ui.cursor().min;
-                        let approx_rect = egui::Rect::from_min_size(current_pos, egui::vec2(ui.available_width(), card_height));
-                        if !ui.clip_rect().expand(120.0).intersects(approx_rect) {
-                            ui.allocate_space(egui::vec2(ui.available_width(), card_height));
-                            ui.add_space(6.0);
-                            continue;
-                        }
-
                         let (cmd_opt, cwd_opt) = listener.pid
                             .map(|p| self.get_proc_cmd_and_cwd(p))
                             .unwrap_or((None, None));
                         let cmd_str = cmd_opt.unwrap_or_default();
                         let cwd_str = cwd_opt.unwrap_or_default();
 
-                        Frame::none()
+                        ui.push_id(("external_process_card", listener.port), |ui| Frame::none()
                             .fill(p.bg_card)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(12.0))
@@ -21928,12 +21965,7 @@ impl LauncherApp {
                                                     if !cwd_str.is_empty() {
                                                         ui.horizontal(|ui| {
                                                             ui.label(RichText::new(format!("{} Location:", crate::lucide::FOLDER)).size(11.0).strong().color(p.accent));
-                                                            ui.label(
-                                                                RichText::new(&cwd_str)
-                                                                    .size(10.5)
-                                                                    .monospace()
-                                                                    .color(p.text_primary),
-                                                            );
+                                                            process_detail_value(ui, &cwd_str, p.text_primary);
                                                         });
                                                     }
                                                     if !cmd_str.is_empty() {
@@ -21942,12 +21974,7 @@ impl LauncherApp {
                                                         }
                                                         ui.horizontal(|ui| {
                                                             ui.label(RichText::new(format!("{} Command:", crate::lucide::SETTINGS)).size(11.0).strong().color(p.accent));
-                                                            ui.label(
-                                                                RichText::new(&cmd_str)
-                                                                    .size(10.5)
-                                                                    .monospace()
-                                                                    .color(p.text_secondary),
-                                                            );
+                                                            process_detail_value(ui, &cmd_str, p.text_secondary);
                                                         });
                                                     }
                                                     if cwd_str.is_empty() && cmd_str.is_empty() {
@@ -21959,7 +21986,7 @@ impl LauncherApp {
                                                     }
 
                                                     ui.add_space(8.0);
-                                                    ui.horizontal(|ui| {
+                                                    ui.horizontal_wrapped(|ui| {
                                                         if !self.open_inline_terminals.contains(&listener.port) {
                                                             let btn_inline = egui::Button::new(
                                                                 RichText::new(format!("{} Open Console", crate::lucide::TERMINAL))
@@ -22033,24 +22060,14 @@ impl LauncherApp {
                                             });
                                     }
                                 });
-                            });
+                            }));
 
                         ui.add_space(6.0);
                     }
 
                     // Render any stopped external processes
                     for (port, name, cmd, cwd) in &visible_stopped {
-                        let is_expanded = self.expanded_listeners.contains(port);
-                        let card_height = if is_expanded { 120.0 } else { 50.0 };
-                        let current_pos = ui.cursor().min;
-                        let approx_rect = egui::Rect::from_min_size(current_pos, egui::vec2(ui.available_width(), card_height));
-                        if !ui.clip_rect().expand(120.0).intersects(approx_rect) {
-                            ui.allocate_space(egui::vec2(ui.available_width(), card_height));
-                            ui.add_space(6.0);
-                            continue;
-                        }
-
-                        Frame::none()
+                        ui.push_id(("external_process_card", *port), |ui| Frame::none()
                             .fill(p.bg_card)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(12.0))
@@ -22140,12 +22157,7 @@ impl LauncherApp {
                                                     if !cwd.is_empty() {
                                                         ui.horizontal(|ui| {
                                                             ui.label(RichText::new(format!("{} Location:", crate::lucide::FOLDER)).size(11.0).strong().color(p.accent));
-                                                            ui.label(
-                                                                RichText::new(cwd)
-                                                                    .size(10.5)
-                                                                    .monospace()
-                                                                    .color(p.text_primary),
-                                                            );
+                                                            process_detail_value(ui, cwd, p.text_primary);
                                                         });
                                                     }
                                                     if !cmd.is_empty() {
@@ -22154,12 +22166,7 @@ impl LauncherApp {
                                                         }
                                                         ui.horizontal(|ui| {
                                                             ui.label(RichText::new(format!("{} Command:", crate::lucide::SETTINGS)).size(11.0).strong().color(p.accent));
-                                                            ui.label(
-                                                                RichText::new(cmd)
-                                                                    .size(10.5)
-                                                                    .monospace()
-                                                                    .color(p.text_secondary),
-                                                            );
+                                                            process_detail_value(ui, cmd, p.text_secondary);
                                                         });
                                                     }
                                                     if cwd.is_empty() && cmd.is_empty() {
@@ -22172,7 +22179,7 @@ impl LauncherApp {
                                                     }
 
                                                     ui.add_space(8.0);
-                                                    ui.horizontal(|ui| {
+                                                    ui.horizontal_wrapped(|ui| {
                                                         if !self.open_inline_terminals.contains(port) {
                                                             let btn_inline = egui::Button::new(
                                                                 RichText::new(format!("{} Open Console", crate::lucide::TERMINAL))
@@ -22246,7 +22253,7 @@ impl LauncherApp {
                                             });
                                     }
                                 });
-                            });
+                            }));
 
                         ui.add_space(6.0);
                     }

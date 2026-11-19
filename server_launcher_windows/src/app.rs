@@ -20628,9 +20628,9 @@ impl LauncherApp {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         let btn_stop_grp = egui::Button::new(
-                                            RichText::new(format!("{} Stop", crate::lucide::STOP)).size(10.5).strong().color(Color32::from_rgb(0xff, 0xda, 0xd6)),
+                                            RichText::new(format!("{} Stop", crate::lucide::STOP)).size(10.5).strong().color(p.danger),
                                         )
-                                        .fill(Color32::from_rgb(0x99, 0x1b, 0x1b))
+                                        .fill(p.danger_subtle)
                                         .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(999.0))
                                         .min_size(egui::vec2(60.0, 22.0));
@@ -20639,9 +20639,9 @@ impl LauncherApp {
                                         }
 
                                         let btn_start_grp = egui::Button::new(
-                                            RichText::new(format!("{} Start", crate::lucide::PLAY)).size(10.5).strong().color(Color32::WHITE),
+                                            RichText::new(format!("{} Start", crate::lucide::PLAY)).size(10.5).strong().color(p.accent_text),
                                         )
-                                        .fill(Color32::from_rgb(0x05, 0x96, 0x69))
+                                        .fill(p.accent)
                                         .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(999.0))
                                         .min_size(egui::vec2(60.0, 22.0));
@@ -20661,9 +20661,9 @@ impl LauncherApp {
                             let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
                             let is_selected_tab = self.active_tab == key;
                             let card_bg = if is_selected_tab {
-                                Color32::from_rgb(0x22, 0x24, 0x30)
+                                p.bg_card_active
                             } else {
-                                Color32::from_rgb(0x18, 0x19, 0x22)
+                                p.bg_card
                             };
 
                             Frame::none()
@@ -20677,34 +20677,34 @@ impl LauncherApp {
                                     // Row 1: Header (Glowing dot + Server Title on Left, Status chip badge on Right)
                                     let (dot_col, halo_col, chip_bg, chip_text, status_label) = if s.restart_at.is_some() {
                                         (
-                                            Color32::from_rgb(0xfc, 0xd3, 0x4d),
-                                            Color32::from_rgb(0xfc, 0xd3, 0x4d).gamma_multiply(0.25),
-                                            Color32::from_rgb(0x35, 0x22, 0x05),
-                                            Color32::from_rgb(0xfc, 0xd3, 0x4d),
+                                            p.warning,
+                                            p.warning.gamma_multiply(0.25),
+                                            p.warning_subtle,
+                                            p.warning,
                                             "Restarting",
                                         )
                                     } else if is_running {
                                         (
-                                            Color32::from_rgb(0x5e, 0xea, 0xd4),
-                                            Color32::from_rgb(0x5e, 0xea, 0xd4).gamma_multiply(0.28),
-                                            Color32::from_rgb(0x13, 0x27, 0x22),
-                                            Color32::from_rgb(0x5e, 0xea, 0xd4),
+                                            p.success,
+                                            p.success.gamma_multiply(0.28),
+                                            p.success_subtle,
+                                            p.success,
                                             "Running",
                                         )
                                     } else if s.state == ServiceState::Errored {
                                         (
-                                            Color32::from_rgb(0xf8, 0x71, 0x71),
-                                            Color32::from_rgb(0xf8, 0x71, 0x71).gamma_multiply(0.25),
-                                            Color32::from_rgb(0x38, 0x14, 0x18),
-                                            Color32::from_rgb(0xf8, 0x71, 0x71),
+                                            p.danger,
+                                            p.danger.gamma_multiply(0.25),
+                                            p.danger_subtle,
+                                            p.danger,
                                             "Errored",
                                         )
                                     } else {
                                         (
-                                            Color32::from_rgb(0x64, 0x74, 0x8b),
-                                            Color32::from_rgb(0x64, 0x74, 0x8b).gamma_multiply(0.20),
-                                            Color32::from_rgb(0x20, 0x23, 0x2d),
-                                            Color32::from_rgb(0x94, 0xa3, 0xb8),
+                                            p.text_muted,
+                                            p.text_muted.gamma_multiply(0.20),
+                                            p.bg_button,
+                                            p.text_muted,
                                             "Stopped",
                                         )
                                     };
@@ -20723,7 +20723,7 @@ impl LauncherApp {
                                                 RichText::new(&s.config.name)
                                                     .strong()
                                                     .size(14.0)
-                                                    .color(Color32::from_rgb(0xf1, 0xf5, 0xf9)),
+                                                    .color(p.text_primary),
                                             )
                                             .sense(egui::Sense::click()),
                                         )
@@ -20755,7 +20755,7 @@ impl LauncherApp {
 
                                     // Row 2: Recessed Command Box (full width, zero border)
                                     Frame::none()
-                                        .fill(Color32::from_rgb(0x10, 0x11, 0x17))
+                                        .fill(p.bg_input)
                                         .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(8.0))
                                         .inner_margin(egui::Margin::symmetric(10.0, 6.0))
@@ -20766,7 +20766,7 @@ impl LauncherApp {
                                                     RichText::new(&s.config.command)
                                                         .size(11.0)
                                                         .monospace()
-                                                        .color(Color32::from_rgb(0x38, 0xbd, 0xf8)),
+                                                        .color(p.info),
                                                 );
                                                 if s.config.port > 0 {
                                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -20774,7 +20774,7 @@ impl LauncherApp {
                                                             RichText::new(format!(":{}", s.config.port))
                                                                 .size(10.5)
                                                                 .monospace()
-                                                                .color(Color32::from_rgb(0x64, 0x74, 0x8b)),
+                                                                .color(p.text_muted),
                                                         );
                                                     });
                                                 }
@@ -20784,7 +20784,7 @@ impl LauncherApp {
                                     ui.add_space(7.0);
 
                                     // Row 3: Micro Telemetry Pills (PID, CPU%, RAM MB, Uptime)
-                                    let pill_bg = Color32::from_rgb(0x23, 0x25, 0x30);
+                                    let pill_bg = p.bg_button;
                                     let pill_rounding = Rounding::same(6.0);
                                     let pill_margin = egui::Margin::symmetric(8.0, 4.0);
 
@@ -20806,7 +20806,7 @@ impl LauncherApp {
                                                                 RichText::new(format!("{}", pid))
                                                                     .size(11.0)
                                                                     .monospace()
-                                                                    .color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                                                    .color(p.text_muted),
                                                             );
                                                         });
                                                     });
@@ -20820,13 +20820,13 @@ impl LauncherApp {
                                                 .show(ui, |ui| {
                                                     ui.horizontal(|ui| {
                                                         ui.spacing_mut().item_spacing.x = 4.0;
-                                                        ui.label(RichText::new(crate::lucide::CPU).size(10.5).color(Color32::from_rgb(0x38, 0xbd, 0xf8)));
+                                                        ui.label(RichText::new(crate::lucide::CPU).size(10.5).color(p.info));
                                                         ui.label(
                                                             RichText::new(format!("{:.1}%", s.cpu_usage))
                                                                 .size(11.0)
                                                                 .monospace()
                                                                 .strong()
-                                                                .color(Color32::from_rgb(0x38, 0xbd, 0xf8)),
+                                                                .color(p.info),
                                                         );
                                                     });
                                                 });
@@ -20839,13 +20839,13 @@ impl LauncherApp {
                                                 .show(ui, |ui| {
                                                     ui.horizontal(|ui| {
                                                         ui.spacing_mut().item_spacing.x = 4.0;
-                                                        ui.label(RichText::new(crate::lucide::RAM).size(10.0).color(Color32::from_rgb(0x4a, 0xde, 0x80)));
+                                                        ui.label(RichText::new(crate::lucide::RAM).size(10.0).color(p.success));
                                                         ui.label(
                                                             RichText::new(format!("{:.1} MB", s.memory_mb))
                                                                 .size(11.0)
                                                                 .monospace()
                                                                 .strong()
-                                                                .color(Color32::from_rgb(0x4a, 0xde, 0x80)),
+                                                                .color(p.success),
                                                         );
                                                     });
                                                 });
@@ -20860,12 +20860,12 @@ impl LauncherApp {
                                                 .show(ui, |ui| {
                                                     ui.horizontal(|ui| {
                                                         ui.spacing_mut().item_spacing.x = 4.0;
-                                                        ui.label(RichText::new(crate::lucide::CLOCK).size(10.5).color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
+                                                        ui.label(RichText::new(crate::lucide::CLOCK).size(10.5).color(p.text_muted));
                                                         ui.label(
                                                             RichText::new(uptime_str)
                                                                 .size(11.0)
                                                                 .monospace()
-                                                                .color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                                                .color(p.text_muted),
                                                         );
                                                     });
                                                 });
@@ -20879,8 +20879,8 @@ impl LauncherApp {
                                                     .show(ui, |ui| {
                                                         ui.horizontal(|ui| {
                                                             ui.spacing_mut().item_spacing.x = 4.0;
-                                                            ui.label(RichText::new(crate::lucide::NETWORK).size(10.0).color(Color32::from_rgb(0x70, 0xd5, 0xe4)));
-                                                            ui.label(RichText::new(format!(":{}", s.config.port)).size(11.0).monospace().color(Color32::from_rgb(0x70, 0xd5, 0xe4)));
+                                                            ui.label(RichText::new(crate::lucide::NETWORK).size(10.0).color(p.info));
+                                                            ui.label(RichText::new(format!(":{}", s.config.port)).size(11.0).monospace().color(p.info));
                                                         });
                                                     });
                                             }
@@ -20898,7 +20898,7 @@ impl LauncherApp {
                                                     ui.horizontal(|ui| {
                                                         ui.spacing_mut().item_spacing.x = 4.0;
                                                         ui.label(RichText::new(crate::lucide::FOLDER).size(10.0));
-                                                        ui.label(RichText::new(folder_name).size(10.5).monospace().color(Color32::from_rgb(0x94, 0xa3, 0xb8)));
+                                                        ui.label(RichText::new(folder_name).size(10.5).monospace().color(p.text_muted));
                                                     });
                                                 });
                                         }
@@ -20915,9 +20915,9 @@ impl LauncherApp {
                                                 RichText::new(format!("{} Stop", crate::lucide::STOP))
                                                     .size(10.5)
                                                     .strong()
-                                                    .color(Color32::from_rgb(0xfe, 0xf2, 0xf2)),
+                                                    .color(p.danger),
                                             )
-                                            .fill(Color32::from_rgb(0x99, 0x1b, 0x1b))
+                                            .fill(p.danger_subtle)
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(999.0))
                                             .min_size(egui::vec2(56.0, 24.0));
@@ -20929,9 +20929,9 @@ impl LauncherApp {
                                                 RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW))
                                                     .size(10.5)
                                                     .strong()
-                                                    .color(Color32::from_rgb(0xec, 0xfe, 0xff)),
+                                                    .color(p.info),
                                             )
-                                            .fill(Color32::from_rgb(0x0e, 0x74, 0x90))
+                                            .fill(p.info_subtle)
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(999.0))
                                             .min_size(egui::vec2(66.0, 24.0));
@@ -20943,9 +20943,9 @@ impl LauncherApp {
                                                 RichText::new(format!("{} Start", crate::lucide::PLAY))
                                                     .size(10.5)
                                                     .strong()
-                                                    .color(Color32::WHITE),
+                                                    .color(p.accent_text),
                                             )
-                                            .fill(Color32::from_rgb(0x05, 0x96, 0x69))
+                                            .fill(p.accent)
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(999.0))
                                             .min_size(egui::vec2(58.0, 24.0));
@@ -20958,12 +20958,12 @@ impl LauncherApp {
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             ui.spacing_mut().item_spacing.x = 3.0;
 
-                                            let circ_bg = Color32::from_rgb(0x27, 0x29, 0x36);
+                                            let circ_bg = p.bg_button;
                                             let circ_size = egui::vec2(24.0, 24.0);
                                             let circ_rnd = Rounding::same(999.0);
 
                                             let btn_del = egui::Button::new(
-                                                RichText::new(crate::lucide::TRASH).size(10.0).color(Color32::from_rgb(0xf8, 0x71, 0x71)),
+                                                RichText::new(crate::lucide::TRASH).size(10.0).color(p.danger),
                                             )
                                             .fill(circ_bg)
                                             .stroke(Stroke::NONE)
@@ -20974,7 +20974,7 @@ impl LauncherApp {
                                             }
 
                                             let btn_folder = egui::Button::new(
-                                                RichText::new(crate::lucide::FOLDER).size(10.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                                RichText::new(crate::lucide::FOLDER).size(10.0).color(p.text_muted),
                                             )
                                             .fill(circ_bg)
                                             .stroke(Stroke::NONE)
@@ -20985,7 +20985,7 @@ impl LauncherApp {
                                             }
 
                                             let btn_vscode = egui::Button::new(
-                                                RichText::new(crate::lucide::CODE).size(10.0).color(Color32::from_rgb(0x60, 0xa5, 0xfa)),
+                                                RichText::new(crate::lucide::CODE).size(10.0).color(p.accent),
                                             )
                                             .fill(circ_bg)
                                             .stroke(Stroke::NONE)
@@ -20996,7 +20996,7 @@ impl LauncherApp {
                                             }
 
                                             let btn_edit = egui::Button::new(
-                                                RichText::new(crate::lucide::PENCIL).size(10.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                                RichText::new(crate::lucide::PENCIL).size(10.0).color(p.text_muted),
                                             )
                                             .fill(circ_bg)
                                             .stroke(Stroke::NONE)
@@ -21007,7 +21007,7 @@ impl LauncherApp {
                                             }
 
                                             let btn_console = egui::Button::new(
-                                                RichText::new(crate::lucide::TERMINAL).size(10.0).color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
+                                                RichText::new(crate::lucide::TERMINAL).size(10.0).color(p.text_muted),
                                             )
                                             .fill(circ_bg)
                                             .stroke(Stroke::NONE)
@@ -21024,7 +21024,7 @@ impl LauncherApp {
                                                     format!("http://localhost:{}", s.config.port)
                                                 };
                                                 let btn_browser = egui::Button::new(
-                                                    RichText::new(crate::lucide::EXTERNAL_LINK).size(10.5).strong().color(Color32::from_rgb(0x38, 0xbd, 0xf8)),
+                                                    RichText::new(crate::lucide::EXTERNAL_LINK).size(10.5).strong().color(p.info),
                                                 )
                                                 .fill(circ_bg)
                                                 .stroke(Stroke::NONE)
@@ -21041,7 +21041,7 @@ impl LauncherApp {
 
                                     // Row 5: Checkboxes (autostart & run in external terminal on left, auto-restart on right)
                                     ui.horizontal(|ui| {
-                                        let cb_color = Color32::from_rgb(0x94, 0xa3, 0xb8);
+                                        let cb_color = p.text_muted;
                                         if ui.checkbox(
                                             &mut s.config.autostart,
                                             RichText::new("autostart").size(11.0).color(cb_color),

@@ -8703,8 +8703,11 @@ impl LauncherApp {
             }
         }
 
-        // Sub-toolbar: File Selector Pills & Actions
-        ui.horizontal_wrapped(|ui| {
+        // File selector strip: long unit names cannot push the action controls offscreen.
+        ScrollArea::horizontal().id_salt(("unit_file_tabs", host_opt.map(|host| host.id.as_str()), &s.name))
+            .auto_shrink([false, true]).max_height(30.0).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.set_min_height(24.0);
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
             ui.label(RichText::new("Unit Files:").size(11.5).strong().color(p.text_muted));
             if is_files_loading {
@@ -8722,9 +8725,9 @@ impl LauncherApp {
                 )
                 .fill(if is_current { p.accent } else { p.bg_button })
                 .stroke(if is_current { Stroke::NONE } else { Stroke::new(1.0_f32, p.border.gamma_multiply(0.5)) })
-                .rounding(Rounding::same(999.0));
-
-                if ui.add(btn).on_hover_text(format!("Path: {}\nType: {}", path, if *is_dropin { "Drop-In Override" } else { "Primary Unit File" })).clicked() {
+                .rounding(Rounding::same(8.0)).wrap_mode(egui::TextWrapMode::Truncate);
+                let file_width = ui.fonts(|fonts| fonts.layout_no_wrap(label.clone(), egui::FontId::proportional(11.0), p.text_primary).size().x + 28.0).min(180.0);
+                if ui.add_sized([file_width, 24.0], btn).on_hover_text(format!("Path: {}\nType: {}", path, if *is_dropin { "Drop-In Override" } else { "Primary Unit File" })).clicked() {
                     switch_to_path = Some(path.clone());
                 }
             }
@@ -8749,9 +8752,13 @@ impl LauncherApp {
                 }
             }
 
+        });
+        });
+        ui.horizontal(|ui| {
+            ui.set_min_height(24.0);
             // + New Drop-In Button
             let btn_new_dropin = egui::Button::new(
-                RichText::new(format!("{} New Drop-In", crate::lucide::PLUS)).size(11.0).strong().color(Color32::WHITE),
+                RichText::new(format!("{} New Drop-In", crate::lucide::PLUS)).size(11.0).strong().color(p.accent_text),
             )
             .fill(p.accent)
             .rounding(Rounding::same(999.0));
@@ -8923,17 +8930,15 @@ impl LauncherApp {
             .inner_margin(egui::Margin::symmetric(10.0, 6.0))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(format!("{} {}", if is_dropin { crate::lucide::PACKAGE } else { crate::lucide::FILE_TEXT }, &cur_path)).size(11.5).monospace().color(p.accent_light));
-                    if is_dropin {
-                        ui.label(RichText::new("Drop-In Override").size(10.0).color(Color32::from_rgb(203, 213, 225)));
-                    } else {
-                        ui.label(RichText::new("Primary Unit").size(10.0).color(p.text_muted));
-                    }
-                    if is_modified {
-                        ui.label(RichText::new("● Unsaved Changes").size(10.5).strong().color(Color32::from_rgb(250, 204, 21)));
-                    }
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let path_width = (ui.available_width() - 108.0 - if is_modified { 100.0 } else { 0.0 }).max(0.0);
+                    ui.add_sized([path_width, 20.0], egui::Label::new(RichText::new(format!("{} {}", if is_dropin { crate::lucide::PACKAGE } else { crate::lucide::FILE_TEXT }, &cur_path))
+                        .size(11.0).monospace().color(p.info)).truncate().halign(egui::Align::Min)).on_hover_text(&cur_path);
+                    ui.label(RichText::new(if is_dropin { "Drop-in override" } else { "Primary unit" }).size(10.0).color(p.text_muted));
+                    if is_modified { ui.label(RichText::new("● Unsaved").size(10.5).color(p.warning)); }
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true), |ui| {
+                    ui.set_min_height(24.0);
+                    ui.spacing_mut().button_padding = egui::vec2(6.0, 3.0);
                         ui.spacing_mut().item_spacing.x = 6.0;
 
                         // Quick restart service button
@@ -9055,7 +9060,6 @@ impl LauncherApp {
                                 }
                             }
                         }
-                    });
                 });
             });
 
@@ -9075,21 +9079,23 @@ impl LauncherApp {
         ui.add_space(4.0);
 
         // Code Editor Viewport
-        let edit_h = (ui.available_height() - 16.0).max(180.0);
+        let edit_h = (ui.available_height() - 16.0).max(0.0);
         Frame::none()
-            .fill(Color32::from_rgb(12, 14, 20))
+            .fill(p.terminal_bg)
             .stroke(Stroke::new(1.0_f32, p.border.gamma_multiply(0.6)))
             .rounding(Rounding::same(8.0))
             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
             .show(ui, |ui| {
                 ui.set_height(edit_h);
                 ScrollArea::both()
-                    .id_salt("systemd_file_editor_scroll")
+                    .id_salt(("systemd_file_editor_scroll", &cur_path))
+                    .max_height(edit_h).drag_to_scroll(false)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         ui.add(
                             egui::TextEdit::multiline(&mut self.systemd_file_content)
-                                .font(egui::TextStyle::Monospace)
+                                .id_salt(("systemd_file_editor", &cur_path))
+                                .font(egui::FontId::monospace(11.5)).text_color(p.log_stdout).frame(false)
                                 .desired_width(f32::INFINITY)
                                 .desired_rows(25)
                                 .code_editor()
@@ -9113,15 +9119,18 @@ impl LauncherApp {
         let mut navigate_to_unit: Option<String> = None;
 
         // Top Toolbar
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.set_min_height(24.0);
+            ui.spacing_mut().interact_size.y = 24.0;
+            ui.spacing_mut().button_padding = egui::vec2(6.0, 3.0);
             // History Back button
             if let Some(prev) = self.systemd_deps_history.last() {
                 let btn_back = egui::Button::new(
-                    RichText::new(format!("{} Back to {}", crate::lucide::ARROW_LEFT, prev)).size(11.0).strong().color(p.accent_text),
+                    RichText::new(format!("{} Back", crate::lucide::ARROW_LEFT)).size(11.0).strong().color(p.accent_text),
                 )
                 .fill(p.accent)
                 .rounding(Rounding::same(999.0));
-                if ui.add(btn_back).on_hover_text("Navigate back to previously viewed unit").clicked() {
+                if ui.add(btn_back).on_hover_text(format!("Back to {}", prev)).clicked() {
                     let prev_unit = self.systemd_deps_history.pop().unwrap();
                     self.select_systemd_unit(&prev_unit, user_mode, host_opt);
                     return;
@@ -9132,13 +9141,19 @@ impl LauncherApp {
                 ui.spinner();
             }
 
-            // Filter box
-            ui.label(RichText::new(crate::lucide::SEARCH).size(12.0).color(p.text_muted));
-            ui.add(
-                egui::TextEdit::singleline(&mut self.systemd_deps_filter)
-                    .hint_text("Filter dependencies...")
-                    .desired_width(180.0),
-            );
+            // Visible filter surface with the same compact sizing as the view controls.
+            Frame::none().fill(p.bg_button).stroke(Stroke::new(1.0_f32, p.border))
+                .rounding(Rounding::same(8.0)).inner_margin(egui::Margin::symmetric(8.0, 4.0)).show(ui, |ui| {
+                    ui.set_width(184.0);
+                    ui.spacing_mut().interact_size.y = 16.0;
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(crate::lucide::SEARCH).size(11.0).color(p.text_muted));
+                        ui.add(egui::TextEdit::singleline(&mut self.systemd_deps_filter)
+                            .font(egui::FontId::proportional(11.5)).text_color(p.text_secondary)
+                            .hint_text(RichText::new("Filter dependencies…").color(p.text_muted))
+                            .frame(false).margin(egui::Vec2::ZERO).clip_text(true).desired_width(ui.available_width()));
+                    });
+                });
 
             // View Mode segmented buttons
             let btn_cat = egui::Button::new(
@@ -9194,14 +9209,14 @@ impl LauncherApp {
                     let filter = self.systemd_deps_filter.trim().to_lowercase();
 
                     let categories = [
-                        ("Requires (Hard Dependencies)", "Units that must be active for this unit to start. If any of them fails or stops, this unit is deactivated.", &deps.requires, Color32::from_rgb(239, 68, 68)),
-                        ("Wants (Soft Dependencies)", "Suggested units that start alongside this unit. A failure does not stop this unit.", &deps.wants, Color32::from_rgb(56, 189, 248)),
-                        ("After (Order After)", "This unit starts after these units have completed initialization.", &deps.after, Color32::from_rgb(168, 85, 247)),
-                        ("Before (Order Before)", "These units only start after this unit has completed initialization.", &deps.before, Color32::from_rgb(147, 197, 253)),
-                        ("Conflicts (Incompatible Units)", "Units that cannot run simultaneously with this unit.", &deps.conflicts, Color32::from_rgb(244, 63, 94)),
-                        ("Required By (Reverse Hard Dependencies)", "Units on the system that strictly require this unit.", &deps.required_by, Color32::from_rgb(245, 158, 11)),
-                        ("Wanted By (Reverse Soft Dependencies)", "Units on the system that declare Wants= on this unit.", &deps.wanted_by, Color32::from_rgb(34, 197, 94)),
-                        ("Part Of & Binds To", "Units sharing life cycle binding with this unit.", &deps.part_of, Color32::from_rgb(192, 132, 252)),
+                        ("Requires (Hard Dependencies)", "Units that must be active for this unit to start. If any of them fails or stops, this unit is deactivated.", &deps.requires, p.danger),
+                        ("Wants (Soft Dependencies)", "Suggested units that start alongside this unit. A failure does not stop this unit.", &deps.wants, p.info),
+                        ("After (Order After)", "This unit starts after these units have completed initialization.", &deps.after, p.accent),
+                        ("Before (Order Before)", "These units only start after this unit has completed initialization.", &deps.before, p.info),
+                        ("Conflicts (Incompatible Units)", "Units that cannot run simultaneously with this unit.", &deps.conflicts, p.danger),
+                        ("Required By (Reverse Hard Dependencies)", "Units on the system that strictly require this unit.", &deps.required_by, p.warning),
+                        ("Wanted By (Reverse Soft Dependencies)", "Units on the system that declare Wants= on this unit.", &deps.wanted_by, p.success),
+                        ("Part Of & Binds To", "Units sharing life cycle binding with this unit.", &deps.part_of, p.accent),
                     ];
 
                     let mut any_shown = false;
@@ -9221,7 +9236,8 @@ impl LauncherApp {
                             .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::symmetric(12.0, 8.0))
                             .show(ui, |ui| {
-                                ui.horizontal(|ui| {
+                                ui.set_width(ui.available_width());
+                                ui.horizontal_wrapped(|ui| {
                                     ui.label(RichText::new(format!("● {}", cat_title)).size(12.0).strong().color(accent_color));
                                     ui.label(RichText::new(format!("({})", filtered_units.len())).size(11.0).color(p.text_muted));
                                 });
@@ -9238,7 +9254,7 @@ impl LauncherApp {
                                             let s_status = services_list.iter().find(|s| s.name == **unit_name);
                                             let (dot, _dot_color) = if let Some(known) = s_status {
                                                 if known.is_active() {
-                                                    (crate::lucide::CHECK, Color32::from_rgb(16, 185, 129))
+                                                    (crate::lucide::CHECK, p.success)
                                                 } else if known.is_failed() {
                                                     (crate::lucide::X, p.danger)
                                                 } else {
@@ -9247,9 +9263,9 @@ impl LauncherApp {
                                             } else if unit_name.ends_with(".target") {
                                                 (crate::lucide::RADIO, Color32::from_rgb(148, 163, 184))
                                             } else if unit_name.ends_with(".socket") {
-                                                (crate::lucide::NETWORK, Color32::from_rgb(56, 189, 248))
+                                                (crate::lucide::NETWORK, p.info)
                                             } else if unit_name.ends_with(".slice") {
-                                                (crate::lucide::LAYERS, Color32::from_rgb(168, 85, 247))
+                                                (crate::lucide::LAYERS, p.accent)
                                             } else {
                                                 (crate::lucide::SETTINGS, p.text_muted)
                                             };
@@ -9262,9 +9278,10 @@ impl LauncherApp {
                                             )
                                             .fill(p.bg_button)
                                             .stroke(Stroke::new(1.0_f32, p.border.gamma_multiply(0.4)))
-                                            .rounding(Rounding::same(999.0));
-
-                                            if ui.add(btn).on_hover_text(format!("Click to view and inspect dependencies for {}", unit_name)).clicked() {
+                                            .rounding(Rounding::same(8.0)).wrap_mode(egui::TextWrapMode::Truncate);
+                                            let width = ui.fonts(|fonts| fonts.layout_no_wrap(unit_name.to_string(), egui::FontId::monospace(11.0), p.text_primary).size().x + 28.0)
+                                                .min(ui.max_rect().width()).min(280.0);
+                                            if ui.add_sized([width, 24.0], btn).on_hover_text(format!("Click to view and inspect dependencies for {}", unit_name)).clicked() {
                                                 navigate_to_unit = Some((*unit_name).clone());
                                             }
                                         }
@@ -9281,27 +9298,24 @@ impl LauncherApp {
                 });
         } else {
             // Dependency Tree View
-            let tree_h = (ui.available_height() - 16.0).max(180.0);
+            let tree_h = (ui.available_height() - 16.0).max(0.0);
             Frame::none()
-                .fill(Color32::from_rgb(12, 14, 20))
+                .fill(p.terminal_bg)
                 .stroke(Stroke::new(1.0_f32, p.border.gamma_multiply(0.6)))
                 .rounding(Rounding::same(8.0))
                 .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                 .show(ui, |ui| {
                     ui.set_height(tree_h);
                     ScrollArea::both()
-                        .id_salt("systemd_deps_tree_scroll")
+                        .id_salt(("systemd_deps_tree_scroll", &s.name))
+                        .max_height(tree_h).drag_to_scroll(false)
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             if deps.tree_output.trim().is_empty() {
                                 ui.label(RichText::new("No dependency tree output returned from systemctl list-dependencies.").size(11.0).color(p.text_muted));
                             } else {
-                                ui.label(
-                                    RichText::new(&deps.tree_output)
-                                        .size(11.0)
-                                        .monospace()
-                                        .color(Color32::from_rgb(220, 225, 235)),
-                                );
+                                ui.add(egui::Label::new(RichText::new(&deps.tree_output)
+                                    .size(11.5).monospace().color(p.log_stdout)).extend().selectable(true));
                             }
                         });
                 });

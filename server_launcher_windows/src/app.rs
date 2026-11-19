@@ -7913,16 +7913,19 @@ impl LauncherApp {
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
             ui.set_max_width(ui.available_width());
+            ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new(if cfg!(windows) && host_id.is_none() { "WINDOWS SERVICES" } else { "SYSTEMD SERVICES" }).size(12.0).strong().color(p.text_muted));
+                ui.set_min_height(26.0);
+                ui.label(RichText::new(if cfg!(windows) && host_id.is_none() { "Windows services" } else { "Systemd services" }).size(12.0).strong().color(p.text_primary));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_new = egui::Button::new(
-                        RichText::new(format!("{} New Service", crate::lucide::PLUS)).size(11.0).strong().color(Color32::WHITE),
+                        RichText::new(format!("{} New service", crate::lucide::PLUS)).size(11.0).color(p.accent_text),
                     )
                     .fill(p.accent)
-                    .rounding(Rounding::same(4.0));
+                    .stroke(Stroke::NONE).rounding(Rounding::same(8.0)).min_size(egui::vec2(0.0, 24.0));
                     if ui.add_enabled(!cfg!(windows) || host_id.is_some(), btn_new).clicked() {
                         self.systemd_modal.open();
+                        self.systemd_modal.def.is_user = user_mode;
                     }
                 });
             });
@@ -7931,13 +7934,14 @@ impl LauncherApp {
 
             // Scope & Refresh Row
             ui.horizontal(|ui| {
+                ui.set_min_height(26.0);
                 let user_btn = egui::Button::new(
                     RichText::new("User (--user)")
                         .size(10.5)
-                        .color(if user_mode { p.accent_text } else { p.text_secondary }),
+                        .color(if user_mode { p.accent } else { p.text_secondary }),
                 )
-                .fill(if user_mode { p.accent } else { p.bg_button })
-                .rounding(Rounding::same(4.0));
+                .fill(if user_mode { p.accent_subtle } else { p.bg_button })
+                .stroke(Stroke::NONE).rounding(Rounding::same(8.0)).min_size(egui::vec2(0.0, 24.0));
                 if ui.add_enabled(!cfg!(windows) || host_id.is_some(), user_btn).clicked() {
                     if let Some(hid) = host_id {
                         self.remote_services_user.insert(hid.to_string(), true);
@@ -7953,10 +7957,10 @@ impl LauncherApp {
                 let sys_btn = egui::Button::new(
                     RichText::new("System")
                         .size(10.5)
-                        .color(if !user_mode { p.accent_text } else { p.text_secondary }),
+                        .color(if !user_mode { p.accent } else { p.text_secondary }),
                 )
-                .fill(if !user_mode { p.accent } else { p.bg_button })
-                .rounding(Rounding::same(4.0));
+                .fill(if !user_mode { p.accent_subtle } else { p.bg_button })
+                .stroke(Stroke::NONE).rounding(Rounding::same(8.0)).min_size(egui::vec2(0.0, 24.0));
                 if ui.add(sys_btn).clicked() {
                     if let Some(hid) = host_id {
                         self.remote_services_user.insert(hid.to_string(), false);
@@ -7971,7 +7975,7 @@ impl LauncherApp {
 
                 if host_id.is_none() && !self.local_sudo_password.is_empty() {
                     ui.add_space(4.0);
-                    if ui.button(RichText::new(format!("{} Sudo [{}]", crate::lucide::KEY, crate::lucide::X)).size(10.0).color(Color32::from_rgb(16, 185, 129)))
+                    if ui.button(RichText::new(format!("{} Sudo [{}]", crate::lucide::KEY, crate::lucide::X)).size(10.0).color(p.success))
                         .on_hover_text("Sudo password cached for this session. Click to clear/forget.")
                         .clicked()
                     {
@@ -7981,8 +7985,8 @@ impl LauncherApp {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_ref = egui::Button::new(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(p.text_secondary))
-                        .fill(p.bg_button);
-                    if ui.add(btn_ref).on_hover_text("Refresh services list").clicked() {
+                        .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0));
+                    if ui.add_sized([24.0, 24.0], btn_ref).on_hover_text("Refresh services list").clicked() {
                         if host_id.is_some() {
                             if let Some(host) = &host_opt {
                                 self.trigger_remote_services_list(host, user_mode);
@@ -8017,12 +8021,17 @@ impl LauncherApp {
                 }
             }
 
-            // Search filter
-            ui.add(
-                egui::TextEdit::singleline(&mut self.service_search_query)
-                    .hint_text(format!("{} Filter services...", crate::lucide::SEARCH))
-                    .desired_width(ui.available_width()),
-            );
+            // A visible search surface with muted hint text.
+            Frame::none().fill(p.bg_button).stroke(Stroke::new(1.0_f32, p.border))
+                .rounding(Rounding::same(8.0)).inner_margin(egui::Margin::symmetric(8.0, 4.0)).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(crate::lucide::SEARCH).size(11.0).color(p.text_muted));
+                        ui.add(egui::TextEdit::singleline(&mut self.service_search_query)
+                            .font(egui::FontId::proportional(11.5)).text_color(p.text_secondary)
+                            .hint_text(RichText::new("Filter services…").color(p.text_muted))
+                            .frame(false).margin(egui::Vec2::ZERO).clip_text(true).desired_width(ui.available_width()));
+                    });
+                });
 
             ui.add_space(8.0);
 
@@ -8080,8 +8089,9 @@ impl LauncherApp {
                 return;
             }
 
+            ui.spacing_mut().item_spacing.y = 8.0;
             ScrollArea::vertical()
-                .id_salt("systemd_services_scroll")
+                .id_salt(("systemd_services_scroll", host_id, user_mode))
                 .auto_shrink([false, false])
                 .show_rows(ui, 54.0, filtered_services.len(), |ui, row_range| {
                     ui.set_width(ui.available_width());
@@ -8094,75 +8104,35 @@ impl LauncherApp {
                         let is_failed = s.is_failed();
                         let is_selected = self.selected_service.as_deref() == Some(&s.name);
 
-                        let card_resp = Frame::none()
-                            .fill(if is_selected { p.bg_card } else { p.bg_sidebar })
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(12.0))
-                            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                            .show(ui, |ui| {
+                        let card_resp = ui.push_id(("service_card", host_id, user_mode, &s.name), |ui| Frame::none()
+                            .fill(if is_selected { p.bg_card_active } else { p.bg_card })
+                            .stroke(Stroke::NONE).rounding(Rounding::same(10.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 8.0)).show(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.set_max_width(ui.available_width());
+                                ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+                                ui.spacing_mut().interact_size.y = 18.0;
+                                ui.set_min_height(38.0);
                                 ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 6.0;
-                                    let status_dot = if is_active {
-                                        RichText::new(crate::lucide::CIRCLE_DOT).size(11.0).color(Color32::from_rgb(16, 185, 129))
-                                    } else if is_failed {
-                                        RichText::new(crate::lucide::X).size(11.0).color(p.danger)
-                                    } else {
-                                        RichText::new(crate::lucide::CIRCLE).size(11.0).color(p.text_muted)
-                                    };
-                                    ui.label(status_dot);
-
-                                    let status_w = 68.0;
-                                    let name_w = (ui.available_width() - status_w - 6.0).max(40.0);
-
-                                    let title = RichText::new(&s.name).size(12.0).strong().color(if is_selected { p.accent_light } else { p.text_primary });
-                                    ui.allocate_ui_with_layout(
-                                        egui::vec2(name_w, 16.0),
-                                        egui::Layout::left_to_right(egui::Align::Center),
-                                        |ui| {
-                                            ui.set_max_width(name_w);
-                                            ui.add(
-                                                egui::Label::new(title)
-                                                    .truncate(),
-                                            )
-                                            .on_hover_text(&s.name);
-                                        },
-                                    );
-
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let sub_color = if is_active {
-                                            Color32::from_rgb(16, 185, 129)
-                                        } else if is_failed {
-                                            p.danger
-                                        } else {
-                                            p.text_muted
-                                        };
-                                        ui.label(RichText::new(&s.sub_state).size(10.5).color(sub_color));
-                                    });
+                                    ui.set_min_height(20.0);
+                                    let colour = if is_active { p.success } else if is_failed { p.danger } else { p.text_muted };
+                                    let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                                    ui.painter().circle_filled(dot.center(), 3.0, colour);
+                                    let name_width = (ui.available_width() - 74.0).max(0.0);
+                                    ui.add_sized([name_width, 20.0], egui::Label::new(
+                                        RichText::new(&s.name).size(11.5).strong().color(if is_selected { p.accent } else { p.text_primary }))
+                                        .truncate().halign(egui::Align::Min)).on_hover_text(&s.name);
+                                    ui.add_sized([68.0, 20.0], egui::Label::new(
+                                        RichText::new(&s.sub_state).size(10.0).color(colour))
+                                        .truncate().halign(egui::Align::Max)).on_hover_text(&s.sub_state);
                                 });
-
-                                if !s.description.is_empty() {
-                                    ui.add_space(2.0);
-                                    let desc_w = ui.available_width().max(40.0);
-                                    ui.allocate_ui_with_layout(
-                                        egui::vec2(desc_w, 14.0),
-                                        egui::Layout::left_to_right(egui::Align::Center),
-                                        |ui| {
-                                            ui.set_max_width(desc_w);
-                                            ui.add(
-                                                egui::Label::new(
-                                                    RichText::new(&s.description)
-                                                        .size(10.5)
-                                                        .color(p.text_muted),
-                                                )
-                                                .truncate(),
-                                            )
-                                            .on_hover_text(&s.description);
-                                        },
-                                    );
-                                }
-                            });
+                                let description = if s.description.is_empty() || s.description == s.name {
+                                    format!("{} service · {}", if user_mode { "User" } else { "System" }, s.load_state)
+                                } else { s.description.clone() };
+                                ui.add_sized([ui.available_width(), 14.0], egui::Label::new(
+                                    RichText::new(&description).size(10.5).color(p.text_muted))
+                                    .truncate().halign(egui::Align::Min)).on_hover_text(&description);
+                            })).inner;
 
                         let whole_card_click = ui.interact(
                             card_resp.response.rect,
@@ -8176,7 +8146,6 @@ impl LauncherApp {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                         }
 
-                        ui.add_space(5.0);
                     }
 
                     if let Some(unit) = selected {
@@ -8265,12 +8234,14 @@ impl LauncherApp {
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(crate::lucide::SYSTEMD).size(20.0).color(p.accent));
+                                ui.label(RichText::new(crate::lucide::SYSTEMD).size(14.0).color(p.accent));
                                 ui.vertical(|ui| {
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new(&s.name).size(15.0).strong().color(p.text_primary));
+                                        let name_width = (ui.available_width() - 128.0).max(0.0);
+                                        ui.add_sized([name_width, 20.0], egui::Label::new(RichText::new(&s.name).size(13.0).strong().color(p.text_primary))
+                                            .truncate().halign(egui::Align::Min)).on_hover_text(&s.name);
                                         let status_tag = if is_active {
-                                            RichText::new(format!("{} Active (Running)", crate::lucide::CHECK)).size(11.0).strong().color(Color32::from_rgb(16, 185, 129))
+                                            RichText::new(format!("{} Active (Running)", crate::lucide::CHECK)).size(11.0).strong().color(p.success)
                                         } else if is_failed {
                                             RichText::new(format!("{} Failed", crate::lucide::X)).size(11.0).strong().color(p.danger)
                                         } else {
@@ -8297,8 +8268,6 @@ impl LauncherApp {
                             });
 
                             ui.add_space(8.0);
-                            ui.separator();
-                            ui.add_space(6.0);
 
                             // Control buttons row:
                             // - if running: only show stop; if stopped: only show start
@@ -8313,8 +8282,8 @@ impl LauncherApp {
                                     ui.label(RichText::new("Executing remote action...").size(11.0).color(p.accent));
                                 } else {
                                     if is_active {
-                                        let btn_stop = egui::Button::new(RichText::new(format!("{} Stop", crate::lucide::STOP)).size(11.0).strong().color(Color32::WHITE))
-                                            .fill(p.danger)
+                                        let btn_stop = egui::Button::new(RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED)).size(11.0).color(p.danger))
+                                            .fill(p.danger_subtle)
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(999.0))
                                             .min_size(egui::vec2(76.0, 26.0));
@@ -8322,8 +8291,8 @@ impl LauncherApp {
                                             action_to_run = Some("stop");
                                         }
                                     } else {
-                                        let btn_start = egui::Button::new(RichText::new(format!("{} Start", crate::lucide::PLAY)).size(11.0).strong().color(Color32::WHITE))
-                                            .fill(Color32::from_rgb(16, 185, 129))
+                                        let btn_start = egui::Button::new(RichText::new(format!("{} Start", crate::lucide::PLAY_FILLED)).size(11.0).color(p.accent_text))
+                                            .fill(p.accent)
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(999.0))
                                             .min_size(egui::vec2(76.0, 26.0));
@@ -8457,7 +8426,7 @@ impl LauncherApp {
                     // ═════════════════════════════════════════════════════════
                     // SystemMD Tabs: [ Status ] [ Files & Drop-ins ] [ Dependencies ]
                     // ═════════════════════════════════════════════════════════
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
                         let tabs = [
                             (SystemdTab::Status, format!("{} Status", crate::lucide::ACTIVITY)),
@@ -8617,14 +8586,17 @@ impl LauncherApp {
             }
             None => {
                 ui.vertical_centered(|ui| {
-                    ui.add_space(40.0);
-                    ui.label(RichText::new(format!("{} SystemMD Services", crate::lucide::SYSTEMD)).size(16.0).strong().color(p.text_primary));
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new("Select a systemd unit from the left panel to control, edit unit files & drop-ins, and inspect dependencies,\nor click '+ New Service' to create and enable a new systemd unit.")
-                            .size(12.0)
-                            .color(p.text_muted),
-                    );
+                    ui.add_space((ui.available_height() * 0.22).min(100.0));
+                    Frame::none().fill(p.bg_card).stroke(Stroke::NONE).rounding(Rounding::same(14.0))
+                        .inner_margin(egui::Margin::same(20.0)).show(ui, |ui| {
+                            ui.set_width(ui.available_width().min(380.0));
+                            ui.vertical_centered(|ui| {
+                                ui.label(RichText::new(crate::lucide::SYSTEMD).size(24.0).color(p.accent));
+                                ui.label(RichText::new("Select a service").size(14.0).strong().color(p.text_primary));
+                                ui.label(RichText::new("Choose a service from the list to view its status, logs and controls.")
+                                    .size(11.5).color(p.text_muted));
+                            });
+                        });
                 });
             }
         }

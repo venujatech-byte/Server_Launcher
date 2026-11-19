@@ -21883,127 +21883,64 @@ impl LauncherApp {
                         let cmd_str = cmd_opt.unwrap_or_default();
                         let cwd_str = cwd_opt.unwrap_or_default();
 
-                        ui.push_id(("external_process_card", listener.port), |ui| Frame::none()
+                        ui.push_id(("external_process_card", &listener.proto, listener.port, listener.pid), |ui| Frame::none()
                             .fill(p.bg_card)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(12.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                            .inner_margin(egui::Margin::symmetric(12.0, 8.0))
                             .show(ui, |ui| {
                                 ui.vertical(|ui| {
                                     let is_expanded = self.expanded_listeners.contains(&listener.port);
-                                    ui.horizontal(|ui| {
-                                        draw_status_dot(ui, p.success);
-
-                                        let toggle_label = if is_expanded { "v" } else { ">" };
-                                        let btn_toggle = egui::Button::new(
-                                            RichText::new(toggle_label)
-                                                .size(11.0)
-                                                .strong()
-                                                .color(if is_expanded { p.accent } else { p.text_muted }),
-                                        )
-                                        .fill(p.bg_button)
-                                        .rounding(Rounding::same(4.0))
-                                        .min_size(egui::vec2(22.0, 20.0));
-                                        if ui.add(btn_toggle).on_hover_text(if is_expanded { "Collapse server location & command" } else { "View server location in expanded view" }).clicked() {
-                                            if is_expanded {
-                                                self.expanded_listeners.remove(&listener.port);
-                                            } else {
-                                                self.expanded_listeners.insert(listener.port);
+                                    ui.horizontal_top(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 6.0;
+                                        let actions_width = 76.0 + 60.0 + 2.0 * ui.spacing().item_spacing.x;
+                                        let identity_width = (ui.available_width() - actions_width).max(0.0);
+                                        ui.allocate_ui_with_layout(egui::vec2(identity_width, 24.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                                            ui.set_width(identity_width);
+                                            ui.spacing_mut().item_spacing.y = 4.0;
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 6.0;
+                                                draw_status_dot(ui, p.success);
+                                                let icon = if is_expanded { crate::lucide::CHEVRON_DOWN } else { crate::lucide::CHEVRON_RIGHT };
+                                                let toggle = egui::Button::new(RichText::new(icon).size(11.0).color(p.text_secondary))
+                                                    .fill(p.bg_button).rounding(Rounding::same(6.0)).min_size(egui::vec2(22.0, 24.0));
+                                                if ui.add(toggle).on_hover_text(if is_expanded { "Collapse process details" } else { "Expand process details" }).clicked() {
+                                                    if is_expanded { self.expanded_listeners.remove(&listener.port); }
+                                                    else { self.expanded_listeners.insert(listener.port); }
+                                                }
+                                                ui.add(egui::Label::new(RichText::new(&listener.name).size(12.5).strong().color(p.text_primary)).truncate())
+                                                    .on_hover_text(&listener.name);
+                                            });
+                                            ui.horizontal_wrapped(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 8.0;
+                                                ui.label(RichText::new(&listener.proto).size(10.5).color(p.text_muted));
+                                                if let Some(pid) = listener.pid {
+                                                    ui.label(RichText::new(format!("PID {}", pid)).size(10.5).monospace().color(p.text_muted));
+                                                }
+                                                ui.label(RichText::new(format!(":{}", listener.port)).size(10.5).monospace().color(p.info));
+                                                ui.label(RichText::new("Running").size(10.5).color(p.success));
+                                                if self.show_other_process_metrics {
+                                                    if let Some(pid) = listener.pid {
+                                                        let (cpu, mem) = self.other_metrics.get(&pid).copied().unwrap_or((0.0, 0.0));
+                                                        ui.label(RichText::new(format!("{} {:.1}%", crate::lucide::CPU, cpu)).size(10.5).monospace().color(p.info));
+                                                        ui.label(RichText::new(format!("{} {:.1} MB", crate::lucide::RAM, mem)).size(10.5).monospace().color(p.text_secondary));
+                                                    }
+                                                }
+                                            });
+                                        });
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                                            let stop = egui::Button::new(RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED)).size(10.5).color(p.danger))
+                                                .fill(p.danger_subtle).rounding(Rounding::same(6.0)).min_size(egui::vec2(60.0, 24.0));
+                                            if ui.add(stop).on_hover_text("Stop this process").clicked() {
+                                                to_kill_pid = Some((listener.pid, listener.port, listener.name.clone(), cmd_str.clone(), cwd_str.clone()));
                                             }
-                                        }
-
-                                        ui.label(
-                                            RichText::new(&listener.name)
-                                                .size(13.5)
-                                                .strong()
-                                                .color(p.text_primary),
-                                        );
-                                        ui.label(
-                                            RichText::new(format!("({})", listener.proto))
-                                                .size(11.0)
-                                                .color(p.text_muted),
-                                        );
-
-                                        ui.add_space(4.0);
-                                        if let Some(pid) = listener.pid {
-                                            render_metric_pill(
-                                                ui,
-                                                crate::lucide::HASH,
-                                                &format!("PID {}", pid),
-                                                p.text_muted,
-                                            );
-                                        }
-                                        render_metric_pill(
-                                            ui,
-                                            crate::lucide::PLUG,
-                                            &format!(":{}", listener.port),
-                                            p.info,
-                                        );
-                                        render_metric_pill(
-                                            ui,
-                                            "●",
-                                            "Running",
-                                            p.success,
-                                        );
-
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            // Stop button
-                                            let btn_stop = egui::Button::new(
-                                                RichText::new("Stop").size(11.5).strong().color(Color32::WHITE),
-                                            )
-                                            .fill(p.danger)
-                                            .rounding(Rounding::same(5.0))
-                                            .min_size(egui::vec2(50.0, 24.0));
-                                            if ui.add(btn_stop).clicked() {
-                                                to_kill_pid = Some((
-                                                    listener.pid,
-                                                    listener.port,
-                                                    listener.name.clone(),
-                                                    cmd_str.clone(),
-                                                    cwd_str.clone(),
-                                                ));
-                                            }
-
-                                            // Restart button
-                                            let btn_restart = egui::Button::new(
-                                                RichText::new("Restart").size(11.5).strong().color(Color32::WHITE),
-                                            )
-                                            .fill(p.warning)
-                                            .rounding(Rounding::same(5.0))
-                                            .min_size(egui::vec2(58.0, 24.0));
-                                            if ui.add(btn_restart).clicked() {
-                                                to_restart_pid = Some((
-                                                    listener.pid,
-                                                    listener.port,
-                                                    cmd_str.clone(),
-                                                    cwd_str.clone(),
-                                                ));
+                                            let restart = egui::Button::new(RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW)).size(10.5).color(p.accent))
+                                                .fill(p.accent_subtle).rounding(Rounding::same(6.0)).min_size(egui::vec2(76.0, 24.0));
+                                            if ui.add(restart).on_hover_text("Restart this process").clicked() {
+                                                to_restart_pid = Some((listener.pid, listener.port, cmd_str.clone(), cwd_str.clone()));
                                             }
                                         });
                                     });
-
-                                    // Row 2: CPU & RAM metrics when enabled, rendered on the line below
-                                    if self.show_other_process_metrics {
-                                        if let Some(pid) = listener.pid {
-                                            let (cpu, mem) = self.other_metrics.get(&pid).copied().unwrap_or((0.0, 0.0));
-                                            ui.add_space(4.0);
-                                            ui.horizontal(|ui| {
-                                                ui.add_space(36.0);
-                                                render_metric_pill(
-                                                    ui,
-                                                    crate::lucide::CPU,
-                                                    &format!("{:.1}%", cpu),
-                                                    p.info,
-                                                );
-                                                render_metric_pill(
-                                                    ui,
-                                                    crate::lucide::RAM,
-                                                    &format!("{:.1} MB", mem),
-                                                    p.success,
-                                                );
-                                            });
-                                        }
-                                    }
 
                                     // Expandable location & command details
                                     if is_expanded {
@@ -22120,80 +22057,46 @@ impl LauncherApp {
 
                     // Render any stopped external processes
                     for (port, name, cmd, cwd) in &visible_stopped {
-                        ui.push_id(("external_process_card", *port), |ui| Frame::none()
+                        ui.push_id(("stopped_process_card", *port), |ui| Frame::none()
                             .fill(p.bg_card)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(12.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                            .inner_margin(egui::Margin::symmetric(12.0, 8.0))
                             .show(ui, |ui| {
                                 ui.vertical(|ui| {
                                     let is_expanded = self.expanded_listeners.contains(port);
-                                    ui.horizontal(|ui| {
-                                        draw_status_dot(ui, p.text_muted);
-
-                                        let toggle_label = if is_expanded { "v" } else { ">" };
-                                        let btn_toggle = egui::Button::new(
-                                            RichText::new(toggle_label)
-                                                .size(11.0)
-                                                .strong()
-                                                .color(if is_expanded { p.accent } else { p.text_muted }),
-                                        )
-                                        .fill(p.bg_button)
-                                        .rounding(Rounding::same(4.0))
-                                        .min_size(egui::vec2(22.0, 20.0));
-                                        if ui.add(btn_toggle).on_hover_text(if is_expanded { "Collapse server location & command" } else { "View server location in expanded view" }).clicked() {
-                                            if is_expanded {
-                                                self.expanded_listeners.remove(port);
-                                            } else {
-                                                self.expanded_listeners.insert(*port);
-                                            }
-                                        }
-
-                                        ui.label(
-                                            RichText::new(name)
-                                                .size(13.5)
-                                                .strong()
-                                                .color(p.text_primary),
-                                        );
-                                        ui.label(
-                                            RichText::new(format!(":{}", port))
-                                                .size(11.5)
-                                                .color(p.text_muted),
-                                        );
-
-                                        ui.add_space(4.0);
-                                        render_metric_pill(
-                                            ui,
-                                            crate::lucide::PLUG,
-                                            &format!(":{}", port),
-                                            p.text_muted,
-                                        );
-                                        render_metric_pill(
-                                            ui,
-                                            "○",
-                                            "Stopped",
-                                            p.text_muted,
-                                        );
-
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            let btn_del = egui::Button::new(
-                                                RichText::new(crate::lucide::X).size(11.0).color(p.text_muted),
-                                            )
-                                            .fill(p.bg_button)
-                                            .rounding(Rounding::same(4.0));
-                                            if ui.add(btn_del).clicked() {
-                                                to_remove_stopped = Some(*port);
-                                            }
-
-                                            let btn_start = egui::Button::new(
-                                                RichText::new("Start").size(11.5).strong().color(Color32::WHITE),
-                                            )
-                                            .fill(p.success)
-                                            .rounding(Rounding::same(5.0))
-                                            .min_size(egui::vec2(54.0, 24.0));
-                                            if ui.add(btn_start).clicked() {
-                                                to_start_stopped = Some((*port, cmd.clone(), cwd.clone()));
-                                            }
+                                    ui.horizontal_top(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 6.0;
+                                        let actions_width = 76.0 + 24.0 + 2.0 * ui.spacing().item_spacing.x;
+                                        let identity_width = (ui.available_width() - actions_width).max(0.0);
+                                        ui.allocate_ui_with_layout(egui::vec2(identity_width, 24.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                                            ui.set_width(identity_width);
+                                            ui.spacing_mut().item_spacing.y = 4.0;
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 6.0;
+                                                draw_status_dot(ui, p.text_muted);
+                                                let icon = if is_expanded { crate::lucide::CHEVRON_DOWN } else { crate::lucide::CHEVRON_RIGHT };
+                                                let toggle = egui::Button::new(RichText::new(icon).size(11.0).color(p.text_secondary))
+                                                    .fill(p.bg_button).rounding(Rounding::same(6.0)).min_size(egui::vec2(22.0, 24.0));
+                                                if ui.add(toggle).on_hover_text(if is_expanded { "Collapse process details" } else { "Expand process details" }).clicked() {
+                                                    if is_expanded { self.expanded_listeners.remove(port); }
+                                                    else { self.expanded_listeners.insert(*port); }
+                                                }
+                                                ui.add(egui::Label::new(RichText::new(name).size(12.5).strong().color(p.text_primary)).truncate()).on_hover_text(name);
+                                            });
+                                            ui.horizontal_wrapped(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 8.0;
+                                                ui.label(RichText::new(format!(":{}", port)).size(10.5).monospace().color(p.info));
+                                                ui.label(RichText::new("Stopped").size(10.5).color(p.text_muted));
+                                            });
+                                        });
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                                            let remove = egui::Button::new(RichText::new(crate::lucide::X).size(11.0).color(p.text_secondary))
+                                                .fill(p.bg_button).rounding(Rounding::same(6.0)).min_size(egui::vec2(24.0, 24.0));
+                                            if ui.add(remove).on_hover_text("Remove stopped process from this list").clicked() { to_remove_stopped = Some(*port); }
+                                            let start = egui::Button::new(RichText::new(format!("{} Start", crate::lucide::PLAY_FILLED)).size(10.5).color(p.accent_text))
+                                                .fill(p.accent).rounding(Rounding::same(6.0)).min_size(egui::vec2(76.0, 24.0));
+                                            if ui.add(start).on_hover_text("Start this process").clicked() { to_start_stopped = Some((*port, cmd.clone(), cwd.clone())); }
                                         });
                                     });
 

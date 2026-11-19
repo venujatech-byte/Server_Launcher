@@ -99,7 +99,31 @@ fn write_identity(config: &ServerConfig, identity: &ProcessIdentity) -> std::io:
     std::fs::write(pid_file(config), serde_json::to_vec(identity)?)
 }
 
-fn refresh_process_alive(sys: &mut System, pid: u32) -> bool {
+// sysinfo 0.31 computes Linux CPU percentages only during an All refresh.
+// Keep this scheduled: extra refreshes reset the per-process CPU time baselines.
+pub fn refresh_process_metrics(sys: &mut System) {
+    let refresh = sysinfo::ProcessRefreshKind::new().with_cpu();
+    #[cfg(not(target_os = "linux"))]
+    let refresh = refresh.with_memory();
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, refresh);
+}
+
+fn process_tree_pids(root: Pid, parents: impl IntoIterator<Item = (Pid, Option<Pid>)>) -> Vec<Pid> {
+    let parents: Vec<_> = parents.into_iter().collect();
+    let mut tree = vec![root];
+    let mut index = 0;
+    while index < tree.len() {
+        for &(pid, parent) in &parents {
+            if parent == Some(tree[index]) && !tree.contains(&pid) { tree.push(pid); }
+        }
+        index += 1;
+    }
+    tree
+}
+
+fn refresh_process_alive(pid: u32) -> bool {
+    // Keep liveness probes separate so they cannot overwrite the CPU sampling baseline.
+    let mut sys = System::new();
     // Targeted sysinfo refreshes retain dead entries, so presence in the cache is not enough.
     let updated = sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[Pid::from_u32(pid)]), sysinfo::ProcessRefreshKind::new());
     updated > 0 && sys.process(Pid::from_u32(pid)).is_some_and(|p| p.status() != sysinfo::ProcessStatus::Zombie)
@@ -676,7 +700,7 @@ impl Service {
         });
     }
 
-    pub fn poll_status(&mut self, sys: &mut System) {
+    pub fn poll_status(&mut self, sys: &System) {
         // Fast path: if service is completely stopped and no restart scheduled, do nothing
         if self.state == ServiceState::Stopped && self.child_handle.is_none() && self.pid.is_none() && self.restart_at.is_none() {
             self.port_open = false;
@@ -713,7 +737,7 @@ impl Service {
 
             if let Some(pid) = self.pid {
                 {
-                    let alive = refresh_process_alive(sys, pid);
+                    let alive = refresh_process_alive(pid);
                     if !alive {
                         self.state = ServiceState::Stopped;
                         self.pid = None;
@@ -809,7 +833,7 @@ impl Service {
                 Err(_) => {}
             }
         } else if let Some(pid) = self.pid {
-            let alive = refresh_process_alive(sys, pid);
+            let alive = refresh_process_alive(pid);
 
             if !alive {
                 self.state = ServiceState::Stopped;
@@ -855,43 +879,18 @@ impl Service {
 
         // Poll stats across main pid and child processes (ONLY when active)
         if let Some(pid) = self.pid {
+            let pids = process_tree_pids(Pid::from_u32(pid), sys.processes().iter()
+                .filter(|(_, process)| process.thread_kind().is_none())
+                .map(|(&pid, process)| (pid, process.parent())));
+            self.cpu_usage = pids.iter().filter_map(|pid| sys.process(*pid)).map(|process| process.cpu_usage()).sum();
             #[cfg(target_os = "linux")]
             {
-                let mut all_pids = vec![pid];
-                all_pids.extend(get_child_pids_linux(pid));
-                all_pids.sort_unstable();
-                all_pids.dedup();
-
-                let total_rss_kb: u64 = all_pids.iter().map(|&p| get_proc_rss_kb_linux(p)).sum();
+                let total_rss_kb: u64 = pids.iter().map(|pid| get_proc_rss_kb_linux(pid.as_u32())).sum();
                 self.memory_mb = (total_rss_kb as f32) / 1024.0;
-
-                // Refresh ONLY our specific PIDs in sysinfo (not the entire OS!)
-                let s_pids: Vec<Pid> = all_pids.iter().map(|&p| Pid::from_u32(p)).collect();
-                sys.refresh_processes(ProcessesToUpdate::Some(&s_pids));
-
-                let mut total_cpu = 0.0;
-                for &s_pid in &s_pids {
-                    if let Some(process) = sys.process(s_pid) {
-                        total_cpu += process.cpu_usage();
-                    }
-                }
-                self.cpu_usage = total_cpu;
             }
-
             #[cfg(not(target_os = "linux"))]
             {
-                let s_pid = Pid::from_u32(pid);
-                sys.refresh_processes(ProcessesToUpdate::Some(&[s_pid]));
-                let mut total_cpu = 0.0;
-                let mut total_mem_bytes = 0;
-
-                for (p_pid, process) in sys.processes() {
-                    if *p_pid == s_pid || process.parent() == Some(s_pid) {
-                        total_cpu += process.cpu_usage();
-                        total_mem_bytes += process.memory();
-                    }
-                }
-                self.cpu_usage = total_cpu;
+                let total_mem_bytes: u64 = pids.iter().filter_map(|pid| sys.process(*pid)).map(|process| process.memory()).sum();
                 self.memory_mb = (total_mem_bytes as f32) / (1024.0 * 1024.0);
             }
 
@@ -907,28 +906,6 @@ impl Service {
             self.port_open = false;
         }
     }
-}
-
-#[cfg(target_os = "linux")]
-fn get_child_pids_linux(pid: u32) -> Vec<u32> {
-    let mut children = Vec::new();
-    let task_path = format!("/proc/{}/task", pid);
-    if let Ok(entries) = std::fs::read_dir(&task_path) {
-        for entry in entries.flatten() {
-            let child_file = entry.path().join("children");
-            if let Ok(content) = std::fs::read_to_string(&child_file) {
-                for token in content.split_whitespace() {
-                    if let Ok(cid) = token.parse::<u32>() {
-                        if !children.contains(&cid) {
-                            children.push(cid);
-                            children.extend(get_child_pids_linux(cid));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    children
 }
 
 #[cfg(target_os = "linux")]
@@ -1618,17 +1595,51 @@ mod tests {
         }
     }
 
+    #[test]
+    fn process_tree_includes_nested_children_once_and_ignores_other_roots() {
+        let pid = Pid::from_u32;
+        let parents = [
+            (pid(3), Some(pid(2))), (pid(2), Some(pid(1))),
+            (pid(4), Some(pid(3))), (pid(2), Some(pid(1))),
+            (pid(9), None), (pid(10), Some(pid(9))),
+            (pid(1), Some(pid(4))),
+        ];
+        let mut tree = process_tree_pids(pid(1), parents);
+        tree.sort_unstable();
+        assert_eq!(tree, vec![pid(1), pid(2), pid(3), pid(4)]);
+        assert_eq!(process_tree_pids(pid(7), parents), vec![pid(7)]);
+    }
+
+    #[test]
+    fn scheduled_process_refresh_measures_busy_cpu_without_liveness_interference() {
+        let pid = Pid::from_u32(std::process::id());
+        let mut sys = System::new();
+        refresh_process_metrics(&mut sys);
+        // The first interval can still be warmup for a process whose initial CPU ticks were zero.
+        for _ in 0..2 {
+            let until = std::time::Instant::now() + sysinfo::MINIMUM_CPU_UPDATE_INTERVAL + Duration::from_millis(100);
+            let mut value = 1_u64;
+            while std::time::Instant::now() < until {
+                value = std::hint::black_box(value.wrapping_mul(3).wrapping_add(1));
+            }
+            assert!(refresh_process_alive(pid.as_u32()));
+            refresh_process_metrics(&mut sys);
+        }
+        assert!(sys.process(pid).unwrap().cpu_usage() > 0.0);
+    }
+
     #[cfg(unix)]
     #[test]
     fn dead_processes_are_not_reported_alive_from_stale_sysinfo_entries() {
         let mut child = Command::new("sleep").arg("60").spawn().unwrap();
         let pid = child.id();
         let mut sys = System::new();
-        assert!(refresh_process_alive(&mut sys, pid));
+        refresh_process_metrics(&mut sys);
+        assert!(refresh_process_alive(pid));
         child.kill().unwrap();
         child.wait().unwrap();
         assert!(sys.process(Pid::from_u32(pid)).is_some());
-        assert!(!refresh_process_alive(&mut sys, pid));
+        assert!(!refresh_process_alive(pid));
     }
 
     #[test]

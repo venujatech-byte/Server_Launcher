@@ -848,7 +848,7 @@ impl LauncherApp {
             lan_ip: get_lan_ip(),
             sys: System::new(),
             scanner,
-            last_poll: Instant::now(),
+            last_poll: Instant::now() - std::time::Duration::from_secs(2),
             add_edit_modal: AddEditModalState::default(),
             palette_modal: CommandPaletteState::default(),
             search_queries: HashMap::new(),
@@ -3878,23 +3878,23 @@ impl eframe::App for LauncherApp {
             }
         }
 
-        // Periodic poll only if any services are active (every 2s)
-        if any_running && self.last_poll.elapsed() >= std::time::Duration::from_millis(2000) {
+        // Sample all process CPU counters once per interval; every consumer reads this snapshot.
+        let show_other_metrics = self.show_other_process_metrics && self.active_tab == "overview";
+        if (any_running || show_other_metrics) && self.last_poll.elapsed() >= std::time::Duration::from_millis(2000) {
+            crate::service::refresh_process_metrics(&mut self.sys);
             for s in &mut self.services {
-                s.poll_status(&mut self.sys);
+                s.poll_status(&self.sys);
             }
             self.last_poll = Instant::now();
         }
 
-        // Periodic poll for other listening processes if user ticked the checkbox (every 3s)
-        if self.show_other_process_metrics && self.active_tab == "overview" {
-            ctx.request_repaint_after(std::time::Duration::from_millis(3000));
-            if self.other_metrics.is_empty() || self.last_other_poll.elapsed() >= std::time::Duration::from_millis(3000) {
+        // Read the shared sample for other listening processes when metrics are enabled (every 2s)
+        if show_other_metrics {
+            ctx.request_repaint_after(std::time::Duration::from_millis(2000));
+            if self.other_metrics.is_empty() || self.last_other_poll.elapsed() >= std::time::Duration::from_millis(2000) {
                 let listeners = self.scanner.get_listeners();
                 let pids: Vec<u32> = listeners.iter().filter_map(|l| l.pid).collect();
                 if !pids.is_empty() {
-                    let s_pids: Vec<sysinfo::Pid> = pids.iter().map(|&p| sysinfo::Pid::from_u32(p)).collect();
-                    self.sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&s_pids));
                     for &pid in &pids {
                         let s_pid = sysinfo::Pid::from_u32(pid);
                         let cpu = self.sys.process(s_pid).map(|p| p.cpu_usage()).unwrap_or(0.0);
@@ -6674,9 +6674,8 @@ impl LauncherApp {
         self.scanner.trigger_scan();
         crate::service::reconnect_services(&mut self.services);
         for service in &mut self.services {
-            service.poll_status(&mut self.sys);
+            service.poll_status(&self.sys);
         }
-        self.last_poll = Instant::now();
     }
 
     fn get_proc_cmd_and_cwd(&mut self, pid: u32) -> (Option<String>, Option<String>) {

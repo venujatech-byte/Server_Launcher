@@ -2409,168 +2409,123 @@ pub fn render_new_service_modal(
     state: &mut NewServiceModalState,
     palette: &ThemePalette,
 ) -> Option<NewServiceDefinition> {
-    if !state.open {
-        return None;
-    }
-
-    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+    if !state.open { return None; }
+    if ctx.input(|input| input.key_pressed(Key::Escape)) {
         state.open = false;
         return None;
     }
-
     let mut result = None;
     let screen = ctx.screen_rect();
-    let modal_w = 540.0_f32.min(screen.width() - 40.0).max(360.0);
-    let max_h = (screen.height() - 40.0).max(400.0);
+    let modal_w = 560.0_f32.min((screen.width() - 64.0).max(200.0));
+    let max_h = 560.0_f32.min((screen.height() - 96.0).max(200.0));
+    let mut window_open = state.open;
     let mut is_open = state.open;
-
-    let window_id = egui::Id::new("new_systemd_service_modal_dialog");
-    let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
-    Window::new("Create New SystemMD Service")
-        .id(window_id)
-        .title_bar(false)
-        .collapsible(false)
-        .resizable(false)
-        .movable(false)
-        .current_pos(screen.center() + drag_offset)
-        .pivot(egui::Align2::CENTER_CENTER)
-        .min_width(modal_w)
-        .max_width(modal_w)
-        .default_height(480.0)
-        .max_height(max_h)
-        .frame(
-            egui::Frame::none()
-                .fill(Color32::from_rgb(17, 19, 27))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
-                .rounding(Rounding::same(16.0))
-                .shadow(egui::epaint::Shadow {
-                    offset: egui::vec2(0.0, 8.0),
-                    blur: 24.0,
-                    spread: 0.0,
-                    color: Color32::from_black_alpha(160),
-                })
-                .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
-        )
+    Window::new(RichText::new("New systemd service").size(17.0).strong())
+        .id(egui::Id::new("new_systemd_service_modal_dialog"))
+        .open(&mut window_open)
+        .collapsible(false).resizable(false).movable(true)
+        .default_pos(screen.center()).pivot(egui::Align2::CENTER_CENTER)
+        .min_width(modal_w).max_width(modal_w)
+        .fixed_size(egui::vec2(modal_w, max_h))
+        .frame(egui::Frame::none().fill(palette.bg_card).stroke(Stroke::NONE)
+            .rounding(Rounding::same(14.0))
+            .shadow(egui::epaint::Shadow { offset: egui::vec2(0.0, 4.0), blur: 16.0, spread: 0.0, color: Color32::from_black_alpha(120) })
+            .inner_margin(egui::Margin::same(18.0)))
         .show(ctx, |ui| {
-            render_modal_titlebar(ui, "Create New SystemMD Service", &mut is_open);
-            ui.add_space(8.0);
-            ui.add_space(4.0);
-
-            if let Some(err) = &state.error {
-                ui.label(RichText::new(err).size(11.5).color(palette.danger));
-                ui.add_space(4.0);
+            *ui.visuals_mut() = palette.egui_visuals();
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+            ui.spacing_mut().interact_size.y = 26.0;
+            ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
+            ui.style_mut().text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
+            ui.style_mut().text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(11.5));
+            ui.style_mut().text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.5));
+            ui.visuals_mut().widgets.inactive.weak_bg_fill = palette.bg_button;
+            ui.label(RichText::new("Configure a service, then create and enable its unit.").size(11.5).color(palette.text_muted));
+            if let Some(error) = &state.error {
+                ui.label(RichText::new(error).size(11.5).color(palette.danger));
             }
-
-            // Unit Name & Scope
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new("Service Unit Name:").size(12.0).strong().color(palette.text_primary));
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.def.name)
-                            .hint_text("e.g. my-app.service")
-                            .desired_width(280.0),
-                    );
-                });
-
-                ui.add_space(10.0);
-
-                ui.vertical(|ui| {
-                    ui.label(RichText::new("Scope:").size(12.0).strong().color(palette.text_primary));
-                    ui.checkbox(&mut state.def.is_user, "User Service (--user)");
-                });
-            });
             ui.add_space(8.0);
-
-            // Description
-            ui.label(RichText::new("Description:").size(12.0).strong().color(palette.text_primary));
-            ui.add(
-                egui::TextEdit::singleline(&mut state.def.description)
-                    .hint_text("e.g. My Background Web Service")
-                    .desired_width(ui.available_width()),
-            );
-            ui.add_space(8.0);
-
-            // ExecStart
-            ui.label(RichText::new("ExecStart (Executable & Arguments):").size(12.0).strong().color(palette.text_primary));
-            ui.add(
-                egui::TextEdit::singleline(&mut state.def.exec_start)
-                    .hint_text("e.g. /usr/bin/python3 /home/user/app/server.py")
-                    .desired_width(ui.available_width()),
-            );
-            ui.add_space(8.0);
-
-            // Working Directory & Restart
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new("Working Directory:").size(12.0).strong().color(palette.text_primary));
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.def.working_dir)
-                            .hint_text("e.g. /home/user/app")
-                            .desired_width(ui.available_width() - 140.0),
-                    );
-                });
-
-                ui.add_space(10.0);
-
-                ui.vertical(|ui| {
-                    ui.label(RichText::new("Restart Policy:").size(12.0).strong().color(palette.text_primary));
-                    egui::ComboBox::from_id_salt("service_restart_combo")
-                        .selected_text(&state.def.restart)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut state.def.restart, "always".to_string(), "always");
-                            ui.selectable_value(&mut state.def.restart, "on-failure".to_string(), "on-failure");
-                            ui.selectable_value(&mut state.def.restart, "no".to_string(), "no");
+            let body_height = (ui.available_height() - 40.0 - 2.0 * ui.spacing().item_spacing.y).max(0.0);
+            egui::ScrollArea::vertical().id_salt("new_service_form")
+                .max_height(body_height).auto_shrink([false, false]).drag_to_scroll(false)
+                .show(ui, |ui| {
+                    // Unit name
+                    ui.label(RichText::new("Service unit name *").size(12.0).strong());
+                    ui.add(egui::TextEdit::singleline(&mut state.def.name).text_color(palette.text_secondary)
+                        .margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).clip_text(true)
+                        .desired_width(ui.available_width()).hint_text(RichText::new("my-app.service").color(palette.text_muted)));
+                    ui.add_space(8.0);
+                    // Scope and restart policy stack on narrower displays.
+                    let columns = if ui.available_width() >= 420.0 { 2 } else { 1 };
+                    ui.columns(columns, |cols| {
+                        cols[0].vertical(|ui| {
+                            ui.label(RichText::new("Scope").size(12.0).strong());
+                            egui::ComboBox::from_id_salt("service_scope_combo")
+                                .selected_text(RichText::new(if state.def.is_user { "User (--user)" } else { "System" }).size(11.5).color(palette.text_secondary))
+                                .width(ui.available_width()).show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut state.def.is_user, true, "User (--user)");
+                                    ui.selectable_value(&mut state.def.is_user, false, "System");
+                                });
+                        });
+                        cols[columns - 1].vertical(|ui| {
+                            ui.label(RichText::new("Restart policy").size(12.0).strong());
+                            egui::ComboBox::from_id_salt("service_restart_combo")
+                                .selected_text(RichText::new(&state.def.restart).size(11.5).color(palette.text_secondary))
+                                .width(ui.available_width()).show_ui(ui, |ui| {
+                                    for policy in ["always", "on-failure", "no"] {
+                                        ui.selectable_value(&mut state.def.restart, policy.to_string(), policy);
+                                    }
+                                });
+                        });
+                    });
+                    ui.add_space(8.0);
+                    // Description
+                    ui.label(RichText::new("Description").size(12.0).strong());
+                    ui.add(egui::TextEdit::singleline(&mut state.def.description).text_color(palette.text_secondary)
+                        .margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).clip_text(true)
+                        .desired_width(ui.available_width()).hint_text(RichText::new("My background service").color(palette.text_muted)));
+                    ui.add_space(8.0);
+                    // ExecStart: executable and arguments
+                    ui.label(RichText::new("ExecStart *").size(12.0).strong());
+                    ui.add(egui::TextEdit::singleline(&mut state.def.exec_start).font(egui::TextStyle::Monospace)
+                        .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0))
+                        .clip_text(true).desired_width(ui.available_width())
+                        .hint_text(RichText::new("/usr/bin/python3 /home/user/app/server.py").color(palette.text_muted)));
+                    ui.add_space(8.0);
+                    // Working directory
+                    ui.label(RichText::new("Working directory (optional)").size(12.0).strong());
+                    ui.add(egui::TextEdit::singleline(&mut state.def.working_dir).font(egui::TextStyle::Monospace)
+                        .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0))
+                        .clip_text(true).desired_width(ui.available_width())
+                        .hint_text(RichText::new("/home/user/app").color(palette.text_muted)));
+                    ui.add_space(8.0);
+                    // Environment
+                    ui.label(RichText::new("Environment (optional)").size(12.0).strong());
+                    ui.add(egui::TextEdit::singleline(&mut state.def.environment).font(egui::TextStyle::Monospace)
+                        .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0))
+                        .clip_text(true).desired_width(ui.available_width())
+                        .hint_text(RichText::new("PORT=8080 NODE_ENV=production").color(palette.text_muted)));
+                    ui.add_space(8.0);
+                    // Generated preview remains read-only and selectable.
+                    egui::CollapsingHeader::new(RichText::new("Preview unit file").size(11.5))
+                        .id_salt("new_service_preview").show(ui, |ui| {
+                            let preview = state.def.generate_service_content();
+                            egui::ScrollArea::vertical().id_salt("new_service_preview_scroll").max_height(160.0)
+                                .drag_to_scroll(false).show(ui, |ui| {
+                                    ui.add(egui::TextEdit::multiline(&mut preview.as_str()).font(egui::TextStyle::Monospace)
+                                        .text_color(palette.text_secondary).desired_rows(6).desired_width(ui.available_width()));
+                                });
                         });
                 });
-            });
-            ui.add_space(8.0);
-
-            // Environment
-            ui.label(RichText::new("Environment Variables (e.g. PORT=8080 NODE_ENV=production):").size(12.0).color(palette.text_muted));
-            ui.add(
-                egui::TextEdit::singleline(&mut state.def.environment)
-                    .hint_text("PORT=8080")
-                    .desired_width(ui.available_width()),
-            );
-
-            ui.add_space(8.0);
-
-            // Generated Preview
-            ui.collapsing(format!("{} Preview Generated Unit File", crate::lucide::SEARCH), |ui| {
-                let preview = state.def.generate_service_content();
-                ui.add(
-                    egui::TextEdit::multiline(&mut preview.as_str())
-                        .font(egui::TextStyle::Monospace)
-                        .desired_rows(6)
-                        .desired_width(ui.available_width()),
-                );
-            });
-
-            ui.add_space(12.0);
-            ui.separator();
-            ui.add_space(6.0);
-
-            // Action Buttons
+            ui.add_space(10.0);
+            // Action buttons stay visible outside the scrolling form.
             ui.horizontal(|ui| {
-                let btn_cancel = egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
-                    .fill(Color32::from_rgb(26, 29, 40))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
-                    .rounding(Rounding::same(6.0))
-                    .min_size(egui::vec2(75.0, 28.0));
-                if ui.add(btn_cancel).clicked() {
-                    state.open = false;
-                    is_open = false;
-                }
-
+                ui.set_min_height(30.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let btn_create = egui::Button::new(
-                        RichText::new(format!("{} Create & Enable Service", crate::lucide::PLAY)).size(12.0).strong().color(Color32::WHITE),
-                    )
-                    .fill(palette.accent)
-                    .rounding(Rounding::same(5.0))
-                    .min_size(egui::vec2(150.0, 28.0));
-
-                    if ui.add(btn_create).clicked() {
+                    let create = egui::Button::new(RichText::new(format!("{} Create & enable", crate::lucide::PLAY_FILLED)).size(11.5).color(palette.accent_text))
+                        .fill(palette.accent).stroke(Stroke::NONE).rounding(Rounding::same(8.0))
+                        .min_size(egui::vec2(140.0, 30.0));
+                    if ui.add(create).clicked() {
                         if state.def.name.trim().is_empty() {
                             state.error = Some("Service name cannot be empty".to_string());
                         } else if state.def.exec_start.trim().is_empty() {
@@ -2581,14 +2536,14 @@ pub fn render_new_service_modal(
                             is_open = false;
                         }
                     }
+                    let cancel = egui::Button::new(RichText::new("Cancel").size(11.5).color(palette.text_secondary))
+                        .fill(palette.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(8.0))
+                        .min_size(egui::vec2(76.0, 30.0));
+                    if ui.add(cancel).clicked() { is_open = false; }
                 });
             });
         });
-
-    if !is_open {
-        state.open = false;
-    }
-
+    if !window_open || !is_open { state.open = false; }
     result
 }
 

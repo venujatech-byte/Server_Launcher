@@ -4264,50 +4264,6 @@ impl eframe::App for LauncherApp {
                                 self.palette_modal.query.clear();
                             }
 
-                            let available = ui.available_rect_before_wrap();
-                            // Use the same geometry as the workspace, including on the first frame.
-                            let content_left = ui.ctx().screen_rect().left() + MACHINE_RAIL_WIDTH
-                                + self.workspace_sidebar_width() + WORKSPACE_SIDEBAR_MARGIN.sum().x + WORKSPACE_GAP;
-                            let slot_width = (available.right() - content_left.max(available.left()))
-                                .clamp(48.0, available.width().max(48.0));
-                            ui.allocate_ui_with_layout(egui::vec2(slot_width, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                let search_width = slot_width.min(280.0);
-                                Frame::none().fill(p.bg_button).stroke(Stroke::new(1.0_f32, p.border))
-                                    .rounding(Rounding::same(6.0)).inner_margin(egui::Margin::symmetric(8.0, 3.0))
-                                    .show(ui, |ui| {
-                                        ui.set_width((search_width - 16.0).max(32.0));
-                                        // The parent toolbar flows right-to-left; text entry must not inherit it.
-                                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                            ui.spacing_mut().item_spacing.x = 6.0;
-                                            ui.label(RichText::new(crate::lucide::SEARCH).size(11.0).color(p.text_muted));
-                                            let show_shortcut = search_width >= 250.0 && self.active_tab == "overview";
-                                            let shortcut_width = if show_shortcut { 40.0 } else { 0.0 };
-                                            let clear_width = if self.overview_search_query.is_empty() { 0.0 } else { 24.0 };
-                                            let input_width = (ui.available_width() - shortcut_width - clear_width).max(24.0);
-                                            let response = ui.add_sized([input_width, 16.0],
-                                                egui::TextEdit::singleline(&mut self.overview_search_query)
-                                                    .font(egui::FontId::proportional(11.5))
-                                                    .margin(egui::Vec2::ZERO)
-                                                    .hint_text(RichText::new(if search_width < 180.0 { "Search…" } else { "Search servers or ports" }).color(p.text_muted))
-                                                    .desired_width(input_width).frame(false))
-                                                .on_hover_text("Filter servers by name, port or command · Ctrl+F in Overview");
-                                            if self.focus_overview_search {
-                                                response.request_focus();
-                                                self.focus_overview_search = false;
-                                            }
-                                            if response.changed() { self.refresh_server_list(); }
-                                            if !self.overview_search_query.is_empty() && ui.add_sized([18.0, 16.0],
-                                                egui::Button::new(RichText::new(crate::lucide::X).size(11.0)).frame(false))
-                                                .on_hover_text("Clear search").clicked() {
-                                                self.overview_search_query.clear();
-                                                self.refresh_server_list();
-                                            }
-                                            if show_shortcut {
-                                                ui.label(RichText::new("Ctrl+F").size(9.5).color(p.text_muted));
-                                            }
-                                        });
-                                    });
-                            });
 
                         }
 

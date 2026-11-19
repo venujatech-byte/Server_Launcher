@@ -7238,14 +7238,16 @@ impl LauncherApp {
         ui.set_width(ui.available_width());
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
+            ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("SAVED COMMANDS").size(12.0).strong().color(p.text_muted));
+                ui.set_min_height(26.0);
+                ui.label(RichText::new("Saved commands").size(12.0).strong().color(p.text_primary));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_new = egui::Button::new(
-                        RichText::new("+ Save Command").size(11.0).strong().color(Color32::WHITE),
+                        RichText::new("+ Save").size(11.0).color(p.accent_text),
                     )
                     .fill(p.accent)
-                    .rounding(Rounding::same(4.0));
+                    .stroke(Stroke::NONE).rounding(Rounding::same(8.0)).min_size(egui::vec2(0.0, 24.0));
                     if ui.add(btn_new).on_hover_text("Save a new custom command snippet").clicked() {
                         self.command_modal.open_create(host_id.map(|s| s.to_string()));
                     }
@@ -7257,7 +7259,7 @@ impl LauncherApp {
                             .color(p.text_secondary),
                     )
                     .fill(p.bg_button)
-                    .rounding(Rounding::same(4.0));
+                    .stroke(Stroke::NONE).rounding(Rounding::same(8.0)).min_size(egui::vec2(0.0, 24.0));
                     if ui.add(btn_export).on_hover_text("Export saved commands as a JSON file").clicked() {
                         self.export_commands_to_file_dialog(host_id);
                     }
@@ -7269,7 +7271,7 @@ impl LauncherApp {
                             .color(p.text_secondary),
                     )
                     .fill(p.bg_button)
-                    .rounding(Rounding::same(4.0));
+                    .stroke(Stroke::NONE).rounding(Rounding::same(8.0)).min_size(egui::vec2(0.0, 24.0));
                     if ui.add(btn_import).on_hover_text("Import commands from a JSON file").clicked() {
                         self.import_commands_from_file_dialog(host_id);
                     }
@@ -7293,12 +7295,17 @@ impl LauncherApp {
 
             ui.add_space(6.0);
 
-            // Search filter
-            ui.add(
-                egui::TextEdit::singleline(&mut self.saved_command_search)
-                    .hint_text(format!("{} Filter commands...", crate::lucide::SEARCH))
-                    .desired_width(ui.available_width()),
-            );
+            // Match the filter surface used by the scripts sidebar.
+            Frame::none().fill(p.bg_button).stroke(Stroke::new(1.0_f32, p.border))
+                .rounding(Rounding::same(8.0)).inner_margin(egui::Margin::symmetric(8.0, 4.0)).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(crate::lucide::SEARCH).size(11.0).color(p.text_muted));
+                        ui.add(egui::TextEdit::singleline(&mut self.saved_command_search)
+                            .font(egui::FontId::proportional(11.5)).text_color(p.text_secondary)
+                            .hint_text(RichText::new("Filter commands…").color(p.text_muted))
+                            .frame(false).margin(egui::Vec2::ZERO).clip_text(true).desired_width(ui.available_width()));
+                    });
+                });
 
             ui.add_space(6.0);
 
@@ -7324,7 +7331,8 @@ impl LauncherApp {
 
             // ComboBox selector for quick direct access to any category
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Category:").size(11.0).color(p.text_muted));
+                ui.set_min_height(26.0);
+                ui.label(RichText::new("Category").size(11.0).color(p.text_muted));
                 let cur_cat = &self.saved_command_category;
                 let count = categories
                     .iter()
@@ -7334,7 +7342,7 @@ impl LauncherApp {
                 let combo_label = format!("{} ({})", cur_cat, count);
 
                 egui::ComboBox::from_id_salt("cmd_cat_combo")
-                    .selected_text(RichText::new(combo_label).size(11.0).strong().color(p.accent_light))
+                    .selected_text(RichText::new(combo_label).size(11.0).color(p.text_secondary))
                     .width((ui.available_width() - 4.0).max(40.0))
                     .show_ui(ui, |ui| {
                         for (cat, cat_count) in &categories {
@@ -7356,11 +7364,11 @@ impl LauncherApp {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         for (cat, _) in &categories {
                             let is_active = self.saved_command_category == *cat;
-                            let bg = if is_active { p.accent } else { p.bg_button };
-                            let fg = if is_active { p.accent_text } else { p.text_secondary };
+                            let bg = if is_active { p.accent_subtle } else { p.bg_subtle };
+                            let fg = if is_active { p.accent } else { p.text_secondary };
                             let btn = egui::Button::new(RichText::new(cat).size(10.5).color(fg))
                                 .fill(bg)
-                                .rounding(Rounding::same(999.0));
+                                .stroke(Stroke::NONE).rounding(Rounding::same(8.0)).min_size(egui::vec2(0.0, 24.0));
                             if ui.add(btn).clicked() {
                                 self.saved_command_category = cat.clone();
                             }
@@ -7407,10 +7415,11 @@ impl LauncherApp {
                 return;
             }
 
+            ui.spacing_mut().item_spacing.y = 10.0;
             ScrollArea::vertical()
                 .id_salt("saved_commands_scroll")
                 .auto_shrink([false, false])
-                .show_rows(ui, 100.0, filtered_indices.len(), |ui, row_range| {
+                .show_rows(ui, 90.0, filtered_indices.len(), |ui, row_range| {
                     ui.set_width(ui.available_width());
                     ui.set_max_width(ui.available_width());
                     let mut to_run_cmd: Option<(String, bool)> = None;
@@ -7421,126 +7430,67 @@ impl LauncherApp {
 
                     for idx in row_range {
                         let c = &self.saved_commands[filtered_indices[idx]];
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(12.0))
-                            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                            .show(ui, |ui| {
+                        ui.push_id(("saved_command_card", host_id, &c.id), |ui| Frame::none()
+                            .fill(p.bg_card).stroke(Stroke::NONE).rounding(Rounding::same(12.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 8.0)).show(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.set_max_width(ui.available_width());
-                                ui.set_min_height(78.0);
+                                // Four compact rows plus padding match the virtualized row height.
+                                ui.spacing_mut().item_spacing = egui::vec2(6.0, 2.0);
+                                ui.spacing_mut().button_padding = egui::vec2(6.0, 2.0);
+                                ui.spacing_mut().interact_size.y = 18.0;
+                                ui.set_min_height(74.0);
                                 ui.horizontal(|ui| {
-                                    let cat_text = format!("[{}]", c.category);
-                                    let cat_w = ui.fonts(|f| {
-                                        f.layout_no_wrap(
-                                            cat_text.clone(),
-                                            egui::FontId::proportional(10.5),
-                                            p.text_muted,
-                                        ).size().x
-                                    }) + 14.0;
-                                    let avail = ui.available_width();
-                                    let cat_w = cat_w.min(avail * 0.4);
-                                    let name_w = (avail - cat_w - ui.spacing().item_spacing.x).max(40.0);
-
-                                    ui.add_sized(
-                                        [name_w, 16.0],
-                                        egui::Label::new(RichText::new(&c.name).size(12.5).strong().color(p.text_primary)).truncate(),
-                                    );
-                                    ui.add_sized(
-                                        [cat_w, 16.0],
-                                        egui::Label::new(RichText::new(&cat_text).size(10.5).color(p.text_muted)).truncate(),
-                                    ).on_hover_text(&cat_text);
+                                    let category_width = (ui.available_width() * 0.32).min(112.0);
+                                    let name_width = (ui.available_width() - category_width - ui.spacing().item_spacing.x).max(0.0);
+                                    ui.add_sized([name_width, 18.0], egui::Label::new(
+                                        RichText::new(&c.name).size(12.0).strong().color(p.text_primary))
+                                        .truncate().halign(egui::Align::Min)).on_hover_text(&c.name);
+                                    ui.add_sized([category_width, 18.0], egui::Label::new(
+                                        RichText::new(&c.category).size(10.0).color(p.text_muted))
+                                        .truncate().halign(egui::Align::Max)).on_hover_text(&c.category);
                                 });
-
-                                ui.add_space(2.0);
-                                let cmd_w = (ui.available_width() - 4.0).max(40.0);
-                                ui.add_sized(
-                                    [cmd_w, 15.0],
-                                    egui::Label::new(
-                                        RichText::new(&c.command)
-                                            .size(11.0)
-                                            .monospace()
-                                            .color(Color32::from_rgb(165, 180, 252)),
-                                    )
-                                    .truncate(),
-                                );
-
-                                {
-                                    ui.add_space(2.0);
-                                    let desc_w = (ui.available_width() - 4.0).max(40.0);
-                                    ui.add_sized(
-                                        [desc_w, 14.0],
-                                        egui::Label::new(
-                                            RichText::new(&c.description)
-                                                .size(10.5)
-                                                .color(p.text_muted),
-                                        )
-                                        .truncate(),
-                                    );
-                                }
-
-                                ui.add_space(5.0);
-
+                                ui.add_sized([ui.available_width(), 16.0], egui::Label::new(
+                                    RichText::new(&c.command).size(11.0).monospace().color(p.info))
+                                    .truncate().halign(egui::Align::Min)).on_hover_text(&c.command);
+                                ui.add_sized([ui.available_width(), 12.0], egui::Label::new(
+                                    RichText::new(&c.description).size(10.0).color(p.text_muted))
+                                    .truncate().halign(egui::Align::Min)).on_hover_text(&c.description);
                                 ui.horizontal(|ui| {
+                                    ui.set_min_height(22.0);
                                     let mut run_in_ext = c.run_in_terminal;
-
-                                    // Button is only "Run"
-                                    let btn_run = egui::Button::new(
-                                        RichText::new(format!("{} Run", crate::lucide::PLAY)).size(10.5).strong().color(Color32::WHITE),
-                                    )
-                                    .fill(Color32::from_rgb(16, 185, 129))
-                                    .rounding(Rounding::same(4.0))
-                                    .min_size(egui::vec2(52.0, 22.0));
-
-                                    let run_hover = if run_in_ext {
-                                        "Execute in external desktop terminal window"
-                                    } else {
-                                        "Execute in terminal"
-                                    };
-
-                                    if ui.add(btn_run).on_hover_text(run_hover).clicked() {
+                                    // Button is only "Run"; the checkbox chooses its destination.
+                                    let run = egui::Button::new(RichText::new(format!("{} Run", crate::lucide::PLAY_FILLED)).size(10.5).color(p.accent_text))
+                                        .fill(p.accent).stroke(Stroke::NONE).rounding(Rounding::same(8.0))
+                                        .min_size(egui::vec2(60.0, 22.0));
+                                    let run_hover = if run_in_ext { "Execute in external desktop terminal window" } else { "Execute in terminal" };
+                                    if ui.add(run).on_hover_text(run_hover).clicked() {
                                         to_run_cmd = Some((c.command.clone(), run_in_ext));
                                     }
-
-                                    ui.add_space(6.0);
-
-                                    // Run in external terminal tick / checkbox inside the container
                                     let label_color = if run_in_ext { p.info } else { p.text_secondary };
-                                    let cb = ui.checkbox(
-                                        &mut run_in_ext,
-                                        RichText::new("External terminal")
-                                            .size(10.5)
-                                            .color(label_color),
-                                    ).on_hover_text("When ticked, this command executes in an external desktop terminal window");
-
-                                    if cb.changed() {
+                                    if ui.checkbox(&mut run_in_ext, RichText::new("External").size(10.5).color(label_color))
+                                        .on_hover_text("Run this command in an external desktop terminal").changed() {
                                         to_toggle_external = Some((c.id.clone(), run_in_ext));
                                     }
-
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let btn_del = egui::Button::new(RichText::new(crate::lucide::TRASH).size(10.5).color(p.text_muted))
-                                            .fill(Color32::TRANSPARENT);
-                                        if ui.add(btn_del).on_hover_text("Delete Command").clicked() {
+                                        let delete = egui::Button::new(RichText::new(crate::lucide::TRASH).size(10.5).color(p.text_muted))
+                                            .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0));
+                                        if ui.add_sized([22.0, 22.0], delete).on_hover_text("Delete command").clicked() {
                                             to_delete = Some(c.id.clone());
                                         }
-
-                                        let btn_edit = egui::Button::new(RichText::new(crate::lucide::PENCIL).size(10.5).color(p.text_muted))
-                                            .fill(Color32::TRANSPARENT);
-                                        if ui.add(btn_edit).on_hover_text("Edit Command").clicked() {
+                                        let edit = egui::Button::new(RichText::new(crate::lucide::PENCIL).size(10.5).color(p.text_secondary))
+                                            .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0));
+                                        if ui.add_sized([22.0, 22.0], edit).on_hover_text("Edit command").clicked() {
                                             to_edit = Some(c.clone());
                                         }
-
-                                        let btn_copy = egui::Button::new(RichText::new(crate::lucide::COPY).size(10.5).color(p.text_muted))
-                                            .fill(Color32::TRANSPARENT);
-                                        if ui.add(btn_copy).on_hover_text("Copy to Clipboard").clicked() {
-                                            ui.output_mut(|o| o.copied_text = c.command.clone());
+                                        let copy = egui::Button::new(RichText::new(crate::lucide::COPY).size(10.5).color(p.text_secondary))
+                                            .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0));
+                                        if ui.add_sized([22.0, 22.0], copy).on_hover_text("Copy command").clicked() {
+                                            ui.ctx().copy_text(c.command.clone());
                                         }
                                     });
                                 });
-                            });
-
-                        ui.add_space(6.0);
+                            }));
                     }
 
                     if let Some((cmd_str, in_external)) = to_run_cmd {
@@ -7605,9 +7555,9 @@ impl LauncherApp {
         }).unwrap_or_default();
 
         let title = if let Some(h) = &host_opt {
-            format!("{} Remote SSH Terminal ({}@{}:{})", crate::lucide::GLOBE, h.user, h.host, h.port)
+            format!("SSH terminal · {}@{}:{}", h.user, h.host, h.port)
         } else {
-            format!("{} Local Interactive Terminal", crate::lucide::MONITOR)
+            "Local terminal".to_string()
         };
 
         let cwd_display = if host_opt.is_none() {
@@ -7645,48 +7595,51 @@ impl LauncherApp {
                     ui.vertical(|ui| {
                         // Row 1: Title and Action Buttons (No overlap possible)
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(crate::lucide::TERMINAL).size(18.0).color(p.accent));
-                            ui.add(
+                            ui.set_min_height(24.0);
+                            let action_width = if is_running { 164.0 } else if host_opt.is_none() { 188.0 } else { 68.0 };
+                            let title_width = (ui.available_width() - action_width - 28.0).max(0.0);
+                            ui.label(RichText::new(crate::lucide::TERMINAL).size(14.0).color(p.accent));
+                            ui.add_sized([title_width, 24.0],
                                 egui::Label::new(
-                                    RichText::new(&title).size(13.5).strong().color(p.text_primary),
+                                    RichText::new(&title).size(12.5).strong().color(p.text_primary),
                                 )
-                                .truncate(),
-                            );
+                                .truncate().halign(egui::Align::Min),
+                            ).on_hover_text(&title);
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 let btn_clear = egui::Button::new(
-                                    RichText::new(format!("{} Clear (Ctrl+L)", crate::lucide::TRASH))
+                                    RichText::new(format!("{} Clear", crate::lucide::TRASH))
                                         .size(11.0)
                                         .color(p.text_secondary),
                                 )
-                                .fill(p.bg_button);
-                                if ui.add(btn_clear).clicked() {
+                                .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0));
+                                if ui.add_sized([60.0, 24.0], btn_clear).on_hover_text("Clear output · Ctrl+L").clicked() {
                                     term.clear();
                                     term.request_focus = true;
                                 }
 
                                 if is_running {
                                     let btn_stop = egui::Button::new(
-                                        RichText::new(format!("{} Interrupt (Ctrl+C)", crate::lucide::STOP))
+                                        RichText::new(format!("{} Interrupt", crate::lucide::STOP_FILLED))
                                             .size(11.0)
                                             .strong()
-                                            .color(Color32::WHITE),
+                                            .color(p.danger),
                                     )
-                                    .fill(p.danger)
-                                    .rounding(Rounding::same(4.0));
-                                    if ui.add(btn_stop).clicked() {
+                                    .fill(p.danger_subtle).stroke(Stroke::NONE)
+                                    .rounding(Rounding::same(6.0));
+                                    if ui.add_sized([88.0, 24.0], btn_stop).on_hover_text("Interrupt command · Ctrl+C").clicked() {
                                         term.interrupt();
                                         term.request_focus = true;
                                     }
                                 } else if host_opt.is_none() {
                                     let btn_ext = egui::Button::new(
-                                        RichText::new(format!("{} Native Terminal", crate::lucide::EXTERNAL_LINK))
+                                        RichText::new(format!("{} Terminal", crate::lucide::EXTERNAL_LINK))
                                             .size(11.0)
                                             .color(p.text_secondary),
                                     )
-                                    .fill(p.bg_button);
+                                    .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0));
                                     if ui
-                                        .add(btn_ext)
+                                        .add_sized([104.0, 24.0], btn_ext)
                                         .on_hover_text("Open native system terminal window in current directory")
                                         .clicked()
                                     {
@@ -7700,22 +7653,25 @@ impl LauncherApp {
 
                         // Row 2: Status & Current Directory Sub-bar (Full width available)
                         ui.horizontal(|ui| {
-                            ui.add_space(26.0); // Align with title text past terminal icon
-                            ui.label(
+                            ui.add_space(22.0); // Align with title text past terminal icon
+                            let status_width = ui.fonts(|fonts| fonts.layout_no_wrap(stat_msg.clone(),
+                                egui::FontId::proportional(11.0), p.text_muted).size().x)
+                                .min((ui.available_width() * 0.4).min(180.0));
+                            ui.add_sized([status_width, 16.0], egui::Label::new(
                                 RichText::new(&stat_msg)
                                     .size(11.0)
                                     .color(if is_running {
-                                        Color32::from_rgb(16, 185, 129)
+                                        p.success
                                     } else {
                                         p.text_muted
-                                    }),
-                            );
+                                    })).truncate().halign(egui::Align::Min),
+                            ).on_hover_text(&stat_msg);
                             ui.label(RichText::new("•").size(11.0).color(p.text_muted));
                             ui.add(
                                 egui::Label::new(
                                     RichText::new(format!("{} {}", crate::lucide::FOLDER, cwd_display))
                                         .size(11.0)
-                                        .color(Color32::from_rgb(147, 197, 253))
+                                        .color(p.info)
                                         .monospace(),
                                 )
                                 .truncate(),
@@ -7746,10 +7702,10 @@ impl LauncherApp {
 
                     // 1. Scrollable Output Log Area
                     let scroll_resp = ScrollArea::vertical()
-                        .id_salt("cmd_terminal_scroll")
+                        .id_salt(("cmd_terminal_scroll", host_id))
                         .stick_to_bottom(true)
                         .auto_shrink([false, false])
-                        .max_height(scroll_h)
+                        .min_scrolled_height(scroll_h).max_height(scroll_h).drag_to_scroll(false)
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             if let Ok(l) = logs_clone.lock() {
@@ -7757,32 +7713,10 @@ impl LauncherApp {
                                     ui.label(
                                         RichText::new("Terminal ready. Type a command below or press Tab for auto-completion.")
                                             .size(11.5)
-                                            .color(Color32::from_rgb(100, 110, 130)),
+                                            .color(p.text_muted),
                                     );
                                 } else {
-                                    for entry in l.iter() {
-                                        let color = match entry.kind {
-                                            LogKind::Stdin => Color32::from_rgb(52, 211, 153),
-                                            LogKind::Launcher => Color32::from_rgb(96, 165, 250),
-                                            LogKind::Stdout => Color32::from_rgb(220, 225, 235),
-                                            LogKind::Stderr | LogKind::Error => Color32::from_rgb(248, 113, 113),
-                                            LogKind::Warning => Color32::from_rgb(250, 204, 21),
-                                        };
-                                        ui.horizontal(|ui| {
-                                            ui.label(
-                                                RichText::new(&entry.timestamp)
-                                                    .size(10.5)
-                                                    .color(Color32::from_rgb(80, 90, 110))
-                                                    .monospace(),
-                                            );
-                                            ui.label(
-                                                RichText::new(&entry.text)
-                                                    .size(11.5)
-                                                    .color(color)
-                                                    .monospace(),
-                                            );
-                                        });
-                                    }
+                                    ui.add(egui::Label::new(cached_inline_console_galley(ui, 0, &l, &p)).selectable(false));
                                 }
                             }
                         });
@@ -7800,6 +7734,9 @@ impl LauncherApp {
 
                     // 2. Integrated Interactive Terminal Prompt Row
                     ui.horizontal(|ui| {
+                        ui.set_min_height(28.0);
+                        ui.visuals_mut().extreme_bg_color = p.bg_button;
+                        let prompt_width = (ui.available_width() * 0.25).min(140.0);
                         let prompt_label = if is_running {
                             format!("{} stdin > ", crate::lucide::CHEVRON_RIGHT)
                         } else {
@@ -7807,33 +7744,34 @@ impl LauncherApp {
                         };
 
                         let prompt_color = if is_running {
-                            Color32::from_rgb(16, 185, 129)
+                            p.success
                         } else {
                             p.accent
                         };
 
-                        ui.label(
+                        ui.add_sized([prompt_width, 28.0], egui::Label::new(
                             RichText::new(&prompt_label)
                                 .size(12.5)
                                 .strong()
                                 .monospace()
-                                .color(prompt_color),
-                        );
+                                .color(prompt_color)).truncate().halign(egui::Align::Min),
+                        ).on_hover_text(&prompt_label);
 
                         let hint = if is_running {
-                            "Send input to running process (or Ctrl+C to interrupt)..."
+                            "Send input… · Ctrl+C to interrupt"
                         } else {
-                            "Type command (Tab to complete, Enter to run)..."
+                            "Enter command… · Tab to complete"
                         };
 
+                        let input_width = (ui.available_width() - 64.0 - ui.spacing().item_spacing.x).max(0.0);
                         let text_edit = egui::TextEdit::singleline(&mut term.input_text)
-                            .frame(false)
-                            .font(egui::TextStyle::Monospace)
-                            .text_color(Color32::from_rgb(230, 235, 245))
-                            .hint_text(hint)
-                            .desired_width((ui.available_width() - 80.0).max(0.0));
+                            .id_salt(("commands_prompt", host_id))
+                            .font(egui::FontId::monospace(11.5)).text_color(p.text_primary)
+                            .margin(egui::vec2(8.0, 5.0)).min_size(egui::vec2(0.0, 28.0))
+                            .hint_text(RichText::new(hint).color(p.text_muted))
+                            .clip_text(true).desired_width(input_width);
 
-                        let resp = ui.add(text_edit);
+                        let resp = ui.add_sized([input_width, 28.0], text_edit);
 
                         if term.request_focus || should_focus {
                             resp.request_focus();
@@ -7911,21 +7849,21 @@ impl LauncherApp {
                         // Inline Action Button
                         if is_running {
                             let btn_stop = egui::Button::new(
-                                RichText::new(format!("{} Stop", crate::lucide::STOP)).size(11.0).strong().color(Color32::WHITE),
+                                RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED)).size(11.0).color(p.danger),
                             )
-                            .fill(p.danger)
-                            .rounding(Rounding::same(4.0));
-                            if ui.add(btn_stop).on_hover_text("Interrupt running process (Ctrl+C)").clicked() {
+                            .fill(p.danger_subtle).stroke(Stroke::NONE)
+                            .rounding(Rounding::same(6.0));
+                            if ui.add_sized([64.0, 28.0], btn_stop).on_hover_text("Interrupt running process (Ctrl+C)").clicked() {
                                 term.interrupt();
                                 resp.request_focus();
                             }
                         } else {
                             let btn_run = egui::Button::new(
-                                RichText::new(format!("{} Run", crate::lucide::PLAY)).size(11.0).strong().color(Color32::WHITE),
+                                RichText::new(format!("{} Run", crate::lucide::PLAY_FILLED)).size(11.0).color(p.accent_text),
                             )
-                            .fill(p.accent)
-                            .rounding(Rounding::same(4.0));
-                            if ui.add(btn_run).on_hover_text("Run command (Enter)").clicked() {
+                            .fill(p.accent).stroke(Stroke::NONE)
+                            .rounding(Rounding::same(6.0));
+                            if ui.add_sized([64.0, 28.0], btn_run).on_hover_text("Run command (Enter)").clicked() {
                                 to_execute = Some(term.input_text.clone());
                                 term.input_text.clear();
                                 resp.request_focus();

@@ -1939,18 +1939,37 @@ impl LauncherApp {
             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("● Live Terminal").size(11.5).strong().color(p.success));
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.spacing_mut().button_padding = egui::vec2(6.0, 3.0);
                     let pid_str = pid.map(|p| p.to_string()).unwrap_or_else(|| "N/A".to_string());
-                    ui.label(RichText::new(format!("Port :{} | PID {}", port, pid_str)).size(10.5).color(p.text_muted));
-
+                    let metadata = format!("Port :{} | PID {}", port, pid_str);
+                    let mut heading = egui::text::LayoutJob::default();
+                    heading.append("● Live Terminal", 0.0, egui::TextFormat {
+                        font_id: egui::FontId::proportional(11.5), color: p.success,
+                        ..Default::default()
+                    });
+                    heading.append(&format!("  {}", metadata), 0.0, egui::TextFormat {
+                        font_id: egui::FontId::proportional(10.5), color: p.text_muted,
+                        ..Default::default()
+                    });
+                    let heading_width = (ui.available_width() - 226.0).max(0.0);
+                    ui.allocate_ui_with_layout(egui::vec2(heading_width, 24.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.set_width(heading_width);
+                        ui.add(egui::Label::new(heading).truncate().halign(egui::Align::Min))
+                            .on_hover_text(format!("Live Terminal · {}", metadata));
+                    });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(format!("{} Close", crate::lucide::X)).clicked() {
+                        let button = |icon: &str, label: &str, width: f32| {
+                            egui::Button::new(RichText::new(format!("{} {}", icon, label)).size(10.5))
+                                .rounding(Rounding::same(6.0)).min_size(egui::vec2(width, 24.0))
+                        };
+                        if ui.add(button(crate::lucide::X, "Close", 58.0)).on_hover_text("Close inline terminal").clicked() {
                             self.open_inline_terminals.remove(&port);
                         }
-                        if ui.button(format!("{} Refresh Logs", crate::lucide::REFRESH_CW)).on_hover_text("Fetch latest systemd/journald process output").clicked() {
+                        if ui.add(button(crate::lucide::REFRESH_CW, "Refresh Logs", 92.0)).on_hover_text("Fetch latest systemd/journald process output").clicked() {
                             self.refresh_inline_logs(port, pid, cwd);
                         }
-                        if ui.button(format!("{} Clear", crate::lucide::TRASH)).clicked() {
+                        if ui.add(button(crate::lucide::TRASH, "Clear", 58.0)).on_hover_text("Clear terminal output").clicked() {
                             self.clear_inline_logs(port);
                         }
                     });

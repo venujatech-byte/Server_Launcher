@@ -20925,8 +20925,9 @@ impl LauncherApp {
                 .id_salt("left_cards_scroll")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.set_max_width(ui.available_width());
+                    let list_width = ui.available_width().min(340.0);
+                    ui.set_width(list_width);
+                    ui.set_max_width(list_width);
                     ui.spacing_mut().item_spacing.y = 4.0;
                     let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
                     for (idx, s) in self.services.iter().enumerate() {
@@ -21289,12 +21290,13 @@ impl LauncherApp {
 
                                         ui.add_space(4.0);
 
-                                        // Row 3: Telemetry Grid (4 micro-cards, never overflowing)
+                                        // Row 3: Telemetry Grid (memory is shown only while running)
                                         let grid_bg = p.bg_subtle;
                                         let grid_rounding = Rounding::same(8.0);
                                         let grid_margin = egui::Margin::symmetric(4.0, 3.0);
                                         let total_w = ui.available_width();
-                                        let card_w = (((total_w - 3.0 * 5.0) / 4.0) - grid_margin.sum().x).floor().max(0.0);
+                                        let columns = if is_running { 4.0 } else { 3.0 };
+                                        let card_w = (((total_w - (columns - 1.0) * 5.0) / columns) - grid_margin.sum().x).floor().max(0.0);
 
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 5.0;
@@ -21343,37 +21345,26 @@ impl LauncherApp {
                                                     });
                                                 });
 
-                                            // Card 3: Memory / Folder
-                                            Frame::none()
-                                                .fill(grid_bg)
-                                                .rounding(grid_rounding)
-                                                .inner_margin(grid_margin)
-                                                .show(ui, |ui| {
-                                                    ui.set_width(card_w);
-                                                    ui.vertical(|ui| {
-                                                        ui.spacing_mut().item_spacing.y = 2.0;
-                                                        ui.horizontal(|ui| {
-                                                            ui.spacing_mut().item_spacing.x = 3.0;
-                                                            if is_running {
+                                            // Card 3: Memory (running servers)
+                                            if is_running {
+                                                Frame::none()
+                                                    .fill(grid_bg)
+                                                    .rounding(grid_rounding)
+                                                    .inner_margin(grid_margin)
+                                                    .show(ui, |ui| {
+                                                        ui.set_width(card_w);
+                                                        ui.vertical(|ui| {
+                                                            ui.spacing_mut().item_spacing.y = 2.0;
+                                                            ui.horizontal(|ui| {
+                                                                ui.spacing_mut().item_spacing.x = 3.0;
                                                                 ui.label(RichText::new(crate::lucide::RAM).size(9.5).color(p.text_secondary));
                                                                 ui.label(RichText::new("Memory").size(9.5).color(p.text_secondary));
-                                                            } else {
-                                                                ui.label(RichText::new(crate::lucide::FOLDER).size(9.5).color(p.text_secondary));
-                                                                ui.label(RichText::new("Dir").size(9.5).color(p.text_secondary));
-                                                            }
+                                                            });
+                                                            let mem_str = format!("{:.1} MB", s.memory_mb);
+                                                            ui.add(egui::Label::new(RichText::new(mem_str).size(11.0).monospace().strong().color(p.text_primary)).truncate());
                                                         });
-                                                        let mem_str = if is_running {
-                                                            format!("{:.1} MB", s.memory_mb)
-                                                        } else {
-                                                            let folder = std::path::Path::new(&s.config.cwd)
-                                                                .file_name()
-                                                                .map(|n| n.to_string_lossy().to_string())
-                                                                .unwrap_or_else(|| "-".to_string());
-                                                            folder
-                                                        };
-                                                        ui.add(egui::Label::new(RichText::new(mem_str).size(11.0).monospace().strong().color(p.text_primary)).truncate());
                                                     });
-                                                });
+                                            }
 
                                             // Card 4: Uptime
                                             Frame::none()
@@ -21404,9 +21395,6 @@ impl LauncherApp {
 
                                         // Row 4: Primary Action Buttons
                                         if is_running {
-                                            let avail_w = ui.available_width();
-                                            let btn_w = ((avail_w - 8.0) / 2.0).max(80.0);
-
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 8.0;
 
@@ -21418,7 +21406,7 @@ impl LauncherApp {
                                                 )
                                                 .fill(p.danger_subtle)
                                                 .rounding(Rounding::same(999.0))
-                                                .min_size(egui::vec2(btn_w, 24.0));
+                                                .min_size(egui::vec2(80.0, 24.0));
 
                                                 if ui.add(btn_stop).on_hover_text("Stop this server").clicked() {
                                                     to_stop = Some(idx);
@@ -21432,7 +21420,7 @@ impl LauncherApp {
                                                 )
                                                 .fill(p.accent)
                                                 .rounding(Rounding::same(999.0))
-                                                .min_size(egui::vec2(btn_w, 24.0));
+                                                .min_size(egui::vec2(80.0, 24.0));
 
                                                 if ui.add(btn_restart).on_hover_text("Restart this server").clicked() {
                                                     to_restart = Some(idx);
@@ -21447,7 +21435,7 @@ impl LauncherApp {
                                             )
                                             .fill(p.accent)
                                             .rounding(Rounding::same(999.0))
-                                            .min_size(egui::vec2(ui.available_width(), 24.0));
+                                            .min_size(egui::vec2(80.0, 24.0));
 
                                             if ui.add(btn_start).on_hover_text("Start this server").clicked() {
                                                 to_start = Some(idx);
@@ -21604,9 +21592,9 @@ impl LauncherApp {
                                         );
                                     });
                             }
-
+                            ui.add_space(8.0);
                         }
-                        ui.add_space(12.0);
+                        ui.add_space(20.0);
                     }
 
                     if to_save_config {

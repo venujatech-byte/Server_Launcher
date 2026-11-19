@@ -5862,14 +5862,14 @@ fn render_custom_toggle_switch(ui: &mut Ui, on: &mut bool, accent: Color32) -> b
 }
 
 fn render_modern_toggle_switch(ui: &mut Ui, on: &mut bool) -> bool {
-    let desired_size = egui::vec2(38.0, 20.0);
+    let desired_size = egui::vec2(30.0, 16.0);
     let (rect, mut response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
     if response.clicked() {
         *on = !*on;
         response.mark_changed();
     }
     let how_on = ui.ctx().animate_bool(response.id, *on);
-    let rounding = Rounding::same(10.0);
+    let rounding = Rounding::same(8.0);
 
     if *on {
         // Active state: Vibrant teal filled capsule
@@ -5877,15 +5877,15 @@ fn render_modern_toggle_switch(ui: &mut Ui, on: &mut bool) -> bool {
     } else {
         // Inactive state: Dark interior with clear outline stroke
         ui.painter().rect_filled(rect, rounding, Color32::from_rgb(0x18, 0x1f, 0x1d));
-        ui.painter().rect_stroke(rect, rounding, Stroke::new(2.0_f32, Color32::from_rgb(0x6b, 0x77, 0x74)));
+        ui.painter().rect_stroke(rect, rounding, Stroke::new(1.5_f32, Color32::from_rgb(0x6b, 0x77, 0x74)));
     }
 
-    let circle_x = egui::lerp((rect.left() + 10.0)..=(rect.right() - 10.0), how_on);
+    let circle_x = egui::lerp((rect.left() + 8.0)..=(rect.right() - 8.0), how_on);
     let center = egui::pos2(circle_x, rect.center().y);
     if *on {
-        ui.painter().circle_filled(center, 7.0, Color32::from_rgb(0x00, 0x38, 0x30));
+        ui.painter().circle_filled(center, 5.0, Color32::from_rgb(0x00, 0x38, 0x30));
     } else {
-        ui.painter().circle_filled(center, 5.5, Color32::from_rgb(0x6b, 0x77, 0x74));
+        ui.painter().circle_filled(center, 4.5, Color32::from_rgb(0x6b, 0x77, 0x74));
     }
 
     response.changed()
@@ -20466,9 +20466,8 @@ impl LauncherApp {
                 .id_salt("left_cards_scroll")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    let avail_w = (ui.available_width() - 12.0).max(100.0);
-                    ui.set_width(avail_w);
-                    ui.set_max_width(avail_w);
+                    ui.set_width(ui.available_width());
+                    ui.set_max_width(ui.available_width());
                     let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
                     for (idx, s) in self.services.iter().enumerate() {
                         if self.active_group_filter == "All" || self.active_group_filter == s.config.group {
@@ -20553,6 +20552,7 @@ impl LauncherApp {
                             .rounding(Rounding::same(999.0))
                             .inner_margin(egui::Margin::symmetric(12.0, 6.0))
                             .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     let header_text = format!("{}  {} ({})", crate::lucide::TAG, group_name.to_uppercase(), indices.len());
                                     let title_w = (ui.available_width() - 150.0).max(40.0);
@@ -20574,7 +20574,6 @@ impl LauncherApp {
                                     );
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.add_space(2.0);
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         let btn_stop_grp = egui::Button::new(
                                             RichText::new(format!("{} Stop", crate::lucide::STOP)).size(10.5).strong().color(Color32::from_rgb(0xff, 0xda, 0xd6)),
@@ -20652,19 +20651,23 @@ impl LauncherApp {
                                 Frame::none()
                                     .fill(card_bg)
                                     .stroke(Stroke::NONE)
-                                    .rounding(Rounding::same(999.0))
-                                    .inner_margin(egui::Margin::symmetric(16.0, 10.0))
+                                    .rounding(Rounding::same(12.0))
+                                    .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                                     .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.spacing_mut().item_spacing.y = 3.0;
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 8.0;
 
-                                            let title_resp = ui.add(
+                                            let title_width = (ui.available_width() - 120.0).max(0.0);
+                                            let title_resp = ui.add_sized([title_width, 20.0],
                                                 egui::Label::new(
                                                     RichText::new(&s.config.name)
                                                         .strong()
-                                                        .size(15.0)
+                                                        .size(12.5)
                                                         .color(Color32::from_rgb(0xf1, 0xf5, 0xf9)),
                                                 )
+                                                .truncate()
                                                 .sense(egui::Sense::click()),
                                             )
                                             .on_hover_text(&s.config.name);
@@ -20674,17 +20677,16 @@ impl LauncherApp {
                                             }
 
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.add_space(2.0);
-                                                ui.spacing_mut().item_spacing.x = 6.0;
+                                                ui.spacing_mut().item_spacing.x = 8.0;
 
                                                 let btn_chevron = egui::Button::new(
                                                     RichText::new(crate::lucide::CHEVRON_DOWN)
-                                                        .size(13.0)
+                                                        .size(11.0)
                                                         .color(Color32::from_rgb(0xcb, 0xd5, 0xe1)),
                                                 )
                                                 .fill(Color32::TRANSPARENT)
                                                 .stroke(Stroke::NONE)
-                                                .min_size(egui::vec2(20.0, 20.0));
+                                                .min_size(egui::vec2(22.0, 22.0));
 
                                                 if ui.add(btn_chevron).on_hover_text("Expand card").clicked() {
                                                     to_toggle_collapse = Some(key.clone());
@@ -20695,19 +20697,23 @@ impl LauncherApp {
                                                     .fill(chip_bg)
                                                     .stroke(Stroke::NONE)
                                                     .rounding(Rounding::same(999.0))
-                                                    .inner_margin(egui::Margin::symmetric(9.0, 3.5))
+                                                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                                     .show(ui, |ui| {
-                                                        ui.horizontal(|ui| {
-                                                            ui.spacing_mut().item_spacing.x = 5.0;
-                                                            let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(7.0, 7.0), egui::Sense::hover());
-                                                            ui.painter().circle_filled(dot_rect.center(), 3.5, chip_dot);
-                                                            ui.label(
-                                                                RichText::new(status_label)
-                                                                    .size(11.0)
-                                                                    .strong()
-                                                                    .color(chip_text),
-                                                            );
-                                                        });
+                                                        ui.allocate_ui_with_layout(
+                                                            egui::vec2(64.0, 14.0),
+                                                            egui::Layout::left_to_right(egui::Align::Center),
+                                                            |ui| {
+                                                                ui.spacing_mut().item_spacing.x = 6.0;
+                                                                let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                                                ui.painter().circle_filled(dot_rect.center(), 2.5, chip_dot);
+                                                                ui.label(
+                                                                    RichText::new(status_label)
+                                                                        .size(10.5)
+                                                                        .strong()
+                                                                        .color(chip_text),
+                                                                );
+                                                            },
+                                                        );
                                                     });
                                             });
                                         });
@@ -20717,20 +20723,25 @@ impl LauncherApp {
                                 Frame::none()
                                     .fill(card_bg)
                                     .stroke(Stroke::NONE)
-                                    .rounding(Rounding::same(20.0))
-                                    .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+                                    .rounding(Rounding::same(12.0))
+                                    .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                                     .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.spacing_mut().item_spacing.y = 3.0;
+
                                         // Row 1: Header (Title on left, Chevron Up + Status Chip on right)
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 8.0;
 
-                                            let title_resp = ui.add(
+                                            let title_width = (ui.available_width() - 120.0).max(0.0);
+                                            let title_resp = ui.add_sized([title_width, 20.0],
                                                 egui::Label::new(
                                                     RichText::new(&s.config.name)
                                                         .strong()
-                                                        .size(16.0)
+                                                        .size(12.5)
                                                         .color(Color32::from_rgb(0xf1, 0xf5, 0xf9)),
                                                 )
+                                                .truncate()
                                                 .sense(egui::Sense::click()),
                                             )
                                             .on_hover_text(&s.config.name);
@@ -20740,17 +20751,16 @@ impl LauncherApp {
                                             }
 
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.add_space(2.0);
-                                                ui.spacing_mut().item_spacing.x = 6.0;
+                                                ui.spacing_mut().item_spacing.x = 8.0;
 
                                                 let btn_chevron = egui::Button::new(
                                                     RichText::new(crate::lucide::CHEVRON_UP)
-                                                        .size(13.0)
+                                                        .size(11.0)
                                                         .color(Color32::from_rgb(0xcb, 0xd5, 0xe1)),
                                                 )
                                                 .fill(Color32::TRANSPARENT)
                                                 .stroke(Stroke::NONE)
-                                                .min_size(egui::vec2(20.0, 20.0));
+                                                .min_size(egui::vec2(22.0, 22.0));
 
                                                 if ui.add(btn_chevron).on_hover_text("Minimize card").clicked() {
                                                     to_toggle_collapse = Some(key.clone());
@@ -20761,53 +20771,60 @@ impl LauncherApp {
                                                     .fill(chip_bg)
                                                     .stroke(Stroke::NONE)
                                                     .rounding(Rounding::same(999.0))
-                                                    .inner_margin(egui::Margin::symmetric(9.0, 3.5))
+                                                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                                     .show(ui, |ui| {
-                                                        ui.horizontal(|ui| {
-                                                            ui.spacing_mut().item_spacing.x = 5.0;
-                                                            let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(7.0, 7.0), egui::Sense::hover());
-                                                            ui.painter().circle_filled(dot_rect.center(), 3.5, chip_dot);
-                                                            ui.label(
-                                                                RichText::new(status_label)
-                                                                    .size(11.0)
-                                                                    .strong()
-                                                                    .color(chip_text),
-                                                            );
-                                                        });
+                                                        ui.allocate_ui_with_layout(
+                                                            egui::vec2(64.0, 14.0),
+                                                            egui::Layout::left_to_right(egui::Align::Center),
+                                                            |ui| {
+                                                                ui.spacing_mut().item_spacing.x = 6.0;
+                                                                let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                                                ui.painter().circle_filled(dot_rect.center(), 2.5, chip_dot);
+                                                                ui.label(
+                                                                    RichText::new(status_label)
+                                                                        .size(10.5)
+                                                                        .strong()
+                                                                        .color(chip_text),
+                                                                );
+                                                            },
+                                                        );
                                                     });
                                             });
                                         });
 
-                                        ui.add_space(10.0);
+                                        ui.add_space(6.0);
 
                                         // Row 2: Recessed Command Box
                                         Frame::none()
                                             .fill(Color32::from_rgb(0x20, 0x27, 0x25))
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(10.0))
-                                            .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                                            .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                             .show(ui, |ui| {
+                                                ui.set_width(ui.available_width());
+                                                ui.spacing_mut().item_spacing.y = 3.0;
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 6.0;
                                                     ui.label(
                                                         RichText::new(">_")
                                                             .strong()
-                                                            .size(12.0)
+                                                            .size(10.5)
                                                             .monospace()
                                                             .color(Color32::from_rgb(0x53, 0xdb, 0xc9)),
                                                     );
                                                     ui.add_space(4.0);
-                                                    ui.label(
+                                                    let command_width = (ui.available_width() - if s.config.port > 0 { 92.0 } else { 30.0 }).max(0.0);
+                                                    ui.add_sized([command_width, 18.0], egui::Label::new(
                                                         RichText::new(&s.config.command)
-                                                            .size(11.5)
+                                                            .size(10.5)
                                                             .monospace()
                                                             .color(Color32::from_rgb(0xe2, 0xe8, 0xf0)),
-                                                    );
+                                                    ).truncate()).on_hover_text(&s.config.command);
 
                                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                         let btn_copy = egui::Button::new(
                                                             RichText::new(crate::lucide::COPY)
-                                                                .size(12.0)
+                                                                .size(10.5)
                                                                 .color(Color32::from_rgb(0x94, 0xa3, 0xb8)),
                                                         )
                                                         .fill(Color32::TRANSPARENT)
@@ -20830,14 +20847,14 @@ impl LauncherApp {
                                                 });
                                             });
 
-                                        ui.add_space(8.0);
+                                        ui.add_space(4.0);
 
                                         // Row 3: Telemetry Grid (4 micro-cards, never overflowing)
                                         let grid_bg = Color32::from_rgb(0x20, 0x27, 0x25);
                                         let grid_rounding = Rounding::same(8.0);
-                                        let grid_margin = egui::Margin::symmetric(4.0, 5.0);
+                                        let grid_margin = egui::Margin::symmetric(4.0, 3.0);
                                         let total_w = ui.available_width();
-                                        let card_w = ((total_w - 3.0 * 5.0) / 4.0).floor().max(45.0);
+                                        let card_w = (((total_w - 3.0 * 5.0) / 4.0) - grid_margin.sum().x).floor().max(0.0);
 
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 5.0;
@@ -20864,7 +20881,7 @@ impl LauncherApp {
                                                         } else {
                                                             "-".to_string()
                                                         };
-                                                        ui.add(egui::Label::new(RichText::new(pid_str).size(11.5).monospace().strong().color(Color32::from_rgb(0xf1, 0xf5, 0xf9))).truncate());
+                                                        ui.add(egui::Label::new(RichText::new(pid_str).size(10.5).monospace().strong().color(Color32::from_rgb(0xf1, 0xf5, 0xf9))).truncate());
                                                     });
                                                 });
 
@@ -20884,7 +20901,7 @@ impl LauncherApp {
                                                             ui.label(RichText::new("CPU").size(9.5).color(Color32::from_rgb(0x8f, 0x9b, 0xa8)));
                                                         });
                                                         let cpu_str = if is_running { format!("{:.1}%", s.cpu_usage) } else { "0.0%".to_string() };
-                                                        ui.add(egui::Label::new(RichText::new(cpu_str).size(11.5).monospace().strong().color(Color32::from_rgb(0xf1, 0xf5, 0xf9))).truncate());
+                                                        ui.add(egui::Label::new(RichText::new(cpu_str).size(10.5).monospace().strong().color(Color32::from_rgb(0xf1, 0xf5, 0xf9))).truncate());
                                                     });
                                                 });
 
@@ -20942,12 +20959,12 @@ impl LauncherApp {
                                                         } else {
                                                             "0s".to_string()
                                                         };
-                                                        ui.add(egui::Label::new(RichText::new(uptime_str).size(11.5).monospace().strong().color(Color32::from_rgb(0xf1, 0xf5, 0xf9))).truncate());
+                                                        ui.add(egui::Label::new(RichText::new(uptime_str).size(10.5).monospace().strong().color(Color32::from_rgb(0xf1, 0xf5, 0xf9))).truncate());
                                                     });
                                                 });
                                         });
 
-                                        ui.add_space(10.0);
+                                        ui.add_space(6.0);
 
                                         // Row 4: Primary Action Buttons
                                         if is_running {
@@ -20959,14 +20976,14 @@ impl LauncherApp {
 
                                                 let btn_stop = egui::Button::new(
                                                     RichText::new(format!("{} Stop", crate::lucide::STOP))
-                                                        .size(12.0)
+                                                        .size(10.5)
                                                         .strong()
                                                         .color(Color32::WHITE),
                                                 )
                                                 .fill(Color32::from_rgb(0x93, 0x00, 0x0a))
                                                 .stroke(Stroke::NONE)
                                                 .rounding(Rounding::same(999.0))
-                                                .min_size(egui::vec2(btn_w, 34.0));
+                                                .min_size(egui::vec2(btn_w, 24.0));
 
                                                 if ui.add(btn_stop).on_hover_text("Stop this server").clicked() {
                                                     to_stop = Some(idx);
@@ -20974,14 +20991,14 @@ impl LauncherApp {
 
                                                 let btn_restart = egui::Button::new(
                                                     RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW))
-                                                        .size(12.0)
+                                                        .size(10.5)
                                                         .strong()
                                                         .color(Color32::from_rgb(0x00, 0x38, 0x30)),
                                                 )
                                                 .fill(Color32::from_rgb(0x53, 0xdb, 0xc9))
                                                 .stroke(Stroke::NONE)
                                                 .rounding(Rounding::same(999.0))
-                                                .min_size(egui::vec2(btn_w, 34.0));
+                                                .min_size(egui::vec2(btn_w, 24.0));
 
                                                 if ui.add(btn_restart).on_hover_text("Restart this server").clicked() {
                                                     to_restart = Some(idx);
@@ -20990,111 +21007,114 @@ impl LauncherApp {
                                         } else {
                                             let btn_start = egui::Button::new(
                                                 RichText::new(format!("{} Start", crate::lucide::PLAY))
-                                                    .size(12.0)
+                                                    .size(10.5)
                                                     .strong()
                                                     .color(Color32::from_rgb(0x00, 0x38, 0x30)),
                                             )
                                             .fill(Color32::from_rgb(0x53, 0xdb, 0xc9))
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(999.0))
-                                            .min_size(egui::vec2(ui.available_width(), 34.0));
+                                            .min_size(egui::vec2(ui.available_width(), 24.0));
 
                                             if ui.add(btn_start).on_hover_text("Start this server").clicked() {
                                                 to_start = Some(idx);
                                             }
                                         }
 
-                                        ui.add_space(8.0);
+                                        ui.add_space(4.0);
 
                                         // Row 5: Tool action row (circular buttons on left, red/pink stroke trash on right)
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 6.0;
+                                        ui.allocate_ui_with_layout(
+                                            egui::vec2(ui.available_width(), 20.0),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.spacing_mut().item_spacing.x = 6.0;
 
-                                            let circ_bg = Color32::from_rgb(0x28, 0x31, 0x2f);
-                                            let circ_size = egui::vec2(30.0, 30.0);
-                                            let circ_rnd = Rounding::same(999.0);
-                                            let tool_icon_col = Color32::from_rgb(0xd1, 0xd5, 0xdb);
+                                                let circ_bg = Color32::from_rgb(0x28, 0x31, 0x2f);
+                                                let circ_size = egui::vec2(24.0, 24.0);
+                                                let circ_rnd = Rounding::same(999.0);
+                                                let tool_icon_col = Color32::from_rgb(0xd1, 0xd5, 0xdb);
 
-                                            let btn_console = egui::Button::new(
-                                                RichText::new(crate::lucide::TERMINAL).size(11.0).color(tool_icon_col),
-                                            )
-                                            .fill(circ_bg)
-                                            .stroke(Stroke::NONE)
-                                            .rounding(circ_rnd)
-                                            .min_size(circ_size);
-                                            if ui.add(btn_console).on_hover_text("Open in console / terminal window").clicked() {
-                                                s.open_console();
-                                            }
-
-                                            let btn_edit = egui::Button::new(
-                                                RichText::new(crate::lucide::PENCIL).size(11.0).color(tool_icon_col),
-                                            )
-                                            .fill(circ_bg)
-                                            .stroke(Stroke::NONE)
-                                            .rounding(circ_rnd)
-                                            .min_size(circ_size);
-                                            if ui.add(btn_edit).on_hover_text("Edit server configuration").clicked() {
-                                                to_edit = Some(s.config.clone());
-                                            }
-
-                                            let btn_vscode = egui::Button::new(
-                                                RichText::new(crate::lucide::CODE).size(11.0).color(tool_icon_col),
-                                            )
-                                            .fill(circ_bg)
-                                            .stroke(Stroke::NONE)
-                                            .rounding(circ_rnd)
-                                            .min_size(circ_size);
-                                            if ui.add(btn_vscode).on_hover_text("Open working directory in VS Code (code .)").clicked() {
-                                                crate::service::open_in_vscode(&s.config.cwd);
-                                            }
-
-                                            let btn_folder = egui::Button::new(
-                                                RichText::new(crate::lucide::FOLDER).size(11.0).color(tool_icon_col),
-                                            )
-                                            .fill(circ_bg)
-                                            .stroke(Stroke::NONE)
-                                            .rounding(circ_rnd)
-                                            .min_size(circ_size);
-                                            if ui.add(btn_folder).on_hover_text("Open working directory in file manager").clicked() {
-                                                crate::service::open_folder(&s.config.cwd);
-                                            }
-
-                                            if (is_running && s.config.port > 0) || s.config.url.is_some() {
-                                                let target_url = if let Some(u) = &s.config.url {
-                                                    u.clone()
-                                                } else {
-                                                    format!("http://localhost:{}", s.config.port)
-                                                };
-                                                let btn_browser = egui::Button::new(
-                                                    RichText::new(crate::lucide::EXTERNAL_LINK).size(11.0).strong().color(Color32::from_rgb(0x53, 0xdb, 0xc9)),
+                                                let btn_console = egui::Button::new(
+                                                    RichText::new(crate::lucide::TERMINAL).size(11.0).color(tool_icon_col),
                                                 )
                                                 .fill(circ_bg)
                                                 .stroke(Stroke::NONE)
                                                 .rounding(circ_rnd)
                                                 .min_size(circ_size);
-                                                if ui.add(btn_browser).on_hover_text(format!("Open {} in browser", target_url)).clicked() {
-                                                    ui.ctx().open_url(egui::OpenUrl::new_tab(target_url));
+                                                if ui.add(btn_console).on_hover_text("Open in console / terminal window").clicked() {
+                                                    s.open_console();
                                                 }
-                                            }
 
-                                            // Dedicated circular Delete button with pink/red stroke pinned to right
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.add_space(2.0);
-                                                let btn_del = egui::Button::new(
-                                                    RichText::new(crate::lucide::TRASH).size(11.5).color(Color32::from_rgb(0xff, 0xb4, 0xab)),
+                                                let btn_edit = egui::Button::new(
+                                                    RichText::new(crate::lucide::PENCIL).size(11.0).color(tool_icon_col),
                                                 )
-                                                .fill(Color32::from_rgb(0x22, 0x1b, 0x1d))
-                                                .stroke(Stroke::new(1.5_f32, Color32::from_rgb(0xff, 0xb4, 0xab)))
+                                                .fill(circ_bg)
+                                                .stroke(Stroke::NONE)
                                                 .rounding(circ_rnd)
                                                 .min_size(circ_size);
-
-                                                if ui.add(btn_del).on_hover_text("Delete server").clicked() {
-                                                    to_delete = Some(key.clone());
+                                                if ui.add(btn_edit).on_hover_text("Edit server configuration").clicked() {
+                                                    to_edit = Some(s.config.clone());
                                                 }
-                                            });
-                                        });
 
-                                        ui.add_space(8.0);
+                                                let btn_vscode = egui::Button::new(
+                                                    RichText::new(crate::lucide::CODE).size(11.0).color(tool_icon_col),
+                                                )
+                                                .fill(circ_bg)
+                                                .stroke(Stroke::NONE)
+                                                .rounding(circ_rnd)
+                                                .min_size(circ_size);
+                                                if ui.add(btn_vscode).on_hover_text("Open working directory in VS Code (code .)").clicked() {
+                                                    crate::service::open_in_vscode(&s.config.cwd);
+                                                }
+
+                                                let btn_folder = egui::Button::new(
+                                                    RichText::new(crate::lucide::FOLDER).size(11.0).color(tool_icon_col),
+                                                )
+                                                .fill(circ_bg)
+                                                .stroke(Stroke::NONE)
+                                                .rounding(circ_rnd)
+                                                .min_size(circ_size);
+                                                if ui.add(btn_folder).on_hover_text("Open working directory in file manager").clicked() {
+                                                    crate::service::open_folder(&s.config.cwd);
+                                                }
+
+                                                if (is_running && s.config.port > 0) || s.config.url.is_some() {
+                                                    let target_url = if let Some(u) = &s.config.url {
+                                                        u.clone()
+                                                    } else {
+                                                        format!("http://localhost:{}", s.config.port)
+                                                    };
+                                                    let btn_browser = egui::Button::new(
+                                                        RichText::new(crate::lucide::EXTERNAL_LINK).size(11.0).strong().color(Color32::from_rgb(0x53, 0xdb, 0xc9)),
+                                                    )
+                                                    .fill(circ_bg)
+                                                    .stroke(Stroke::NONE)
+                                                    .rounding(circ_rnd)
+                                                    .min_size(circ_size);
+                                                    if ui.add(btn_browser).on_hover_text(format!("Open {} in browser", target_url)).clicked() {
+                                                        ui.ctx().open_url(egui::OpenUrl::new_tab(target_url));
+                                                    }
+                                                }
+
+                                                // Dedicated circular Delete button with pink/red stroke pinned to right
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    let btn_del = egui::Button::new(
+                                                        RichText::new(crate::lucide::TRASH).size(10.5).color(Color32::from_rgb(0xff, 0xb4, 0xab)),
+                                                    )
+                                                    .fill(Color32::from_rgb(0x22, 0x1b, 0x1d))
+                                                    .stroke(Stroke::new(1.5_f32, Color32::from_rgb(0xff, 0xb4, 0xab)))
+                                                    .rounding(circ_rnd)
+                                                    .min_size(circ_size);
+
+                                                    if ui.add(btn_del).on_hover_text("Delete server").clicked() {
+                                                        to_delete = Some(key.clone());
+                                                    }
+                                                });
+                                            },
+                                        );
+
+                                        ui.add_space(4.0);
 
                                         // Subtle horizontal divider line
                                         let line_color = Color32::from_rgb(0x38, 0x42, 0x40);
@@ -21104,47 +21124,56 @@ impl LauncherApp {
                                             Stroke::new(1.0_f32, line_color),
                                         );
 
-                                        ui.add_space(10.0);
+                                        ui.add_space(6.0);
 
-                                        // Row 6: Modern Toggle Switches (Guaranteed full width rows with safe insets)
+                                        // Row 6: Modern Toggle Switches (Guaranteed full width rows)
                                         let toggle_label_color = Color32::from_rgb(0xdd, 0xe4, 0xe1);
 
                                         // Row 1: autostart
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("autostart").size(12.5).color(toggle_label_color));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.add_space(2.0);
-                                                if render_modern_toggle_switch(ui, &mut s.config.autostart) {
-                                                    to_save_config = true;
-                                                }
-                                            });
-                                        });
+                                        ui.allocate_ui_with_layout(
+                                            egui::vec2(ui.available_width(), 20.0),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(RichText::new("autostart").size(11.0).color(toggle_label_color));
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    if render_modern_toggle_switch(ui, &mut s.config.autostart) {
+                                                        to_save_config = true;
+                                                    }
+                                                });
+                                            },
+                                        );
 
-                                        ui.add_space(8.0);
+                                        ui.add_space(4.0);
 
                                         // Row 2: run in external terminal
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("run in external terminal").size(12.5).color(toggle_label_color));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.add_space(2.0);
-                                                if render_modern_toggle_switch(ui, &mut s.config.own_console) {
-                                                    to_save_config = true;
-                                                }
-                                            });
-                                        });
+                                        ui.allocate_ui_with_layout(
+                                            egui::vec2(ui.available_width(), 20.0),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(RichText::new("run in external terminal").size(11.0).color(toggle_label_color));
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    if render_modern_toggle_switch(ui, &mut s.config.own_console) {
+                                                        to_save_config = true;
+                                                    }
+                                                });
+                                            },
+                                        );
 
-                                        ui.add_space(8.0);
+                                        ui.add_space(4.0);
 
                                         // Row 3: auto-restart
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("auto-restart").size(12.5).color(toggle_label_color));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.add_space(2.0);
-                                                if render_modern_toggle_switch(ui, &mut s.config.auto_restart) {
-                                                    to_save_config = true;
-                                                }
-                                            });
-                                        });
+                                        ui.allocate_ui_with_layout(
+                                            egui::vec2(ui.available_width(), 20.0),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(RichText::new("auto-restart").size(11.0).color(toggle_label_color));
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    if render_modern_toggle_switch(ui, &mut s.config.auto_restart) {
+                                                        to_save_config = true;
+                                                    }
+                                                });
+                                            },
+                                        );
                                     });
                             }
 

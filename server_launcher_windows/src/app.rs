@@ -4272,7 +4272,7 @@ impl eframe::App for LauncherApp {
                                 .clamp(48.0, available.width().max(48.0));
                             ui.allocate_ui_with_layout(egui::vec2(slot_width, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                 let search_width = slot_width.min(280.0);
-                                Frame::none().fill(p.bg_input).stroke(Stroke::new(1.0_f32, p.border_subtle))
+                                Frame::none().fill(p.bg_button).stroke(Stroke::new(1.0_f32, p.border))
                                     .rounding(Rounding::same(6.0)).inner_margin(egui::Margin::symmetric(8.0, 3.0))
                                     .show(ui, |ui| {
                                         ui.set_width((search_width - 16.0).max(32.0));
@@ -4288,7 +4288,7 @@ impl eframe::App for LauncherApp {
                                                 egui::TextEdit::singleline(&mut self.overview_search_query)
                                                     .font(egui::FontId::proportional(11.5))
                                                     .margin(egui::Vec2::ZERO)
-                                                    .hint_text(if search_width < 180.0 { "Search…" } else { "Search servers or ports" })
+                                                    .hint_text(RichText::new(if search_width < 180.0 { "Search…" } else { "Search servers or ports" }).color(p.text_muted))
                                                     .desired_width(input_width).frame(false))
                                                 .on_hover_text("Filter servers by name, port or command · Ctrl+F in Overview");
                                             if self.focus_overview_search {
@@ -21746,7 +21746,7 @@ impl LauncherApp {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             let search_width = (ui.available_width() - 96.0 - ui.spacing().item_spacing.x).max(60.0);
-            Frame::none().fill(p.bg_input).stroke(Stroke::new(1.0_f32, p.border_subtle))
+            Frame::none().fill(p.bg_button).stroke(Stroke::new(1.0_f32, p.border))
                 .rounding(Rounding::same(6.0)).inner_margin(egui::Margin::symmetric(10.0, 4.0))
                 .show(ui, |ui| {
                     ui.set_width((search_width - 20.0).max(40.0));
@@ -21757,7 +21757,7 @@ impl LauncherApp {
                         let response = ui.add_sized([input_width, 20.0],
                             egui::TextEdit::singleline(&mut self.overview_search_query)
                                 .font(egui::FontId::proportional(13.0))
-                                .hint_text("Search servers, ports or commands")
+                                .hint_text(RichText::new("Search servers, ports or commands").color(p.text_muted))
                                 .desired_width(input_width).frame(false))
                             .on_hover_text("Search by server name, port or command · Ctrl+F");
                         if self.focus_overview_search {

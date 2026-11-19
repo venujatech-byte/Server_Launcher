@@ -6842,8 +6842,8 @@ impl LauncherApp {
                 .fill(p.bg_sidebar)
                 .inner_margin(WORKSPACE_SIDEBAR_MARGIN)
                 .show(ui, |ui| {
-                    ui.set_width(WORKSPACE_SIDEBAR_WIDTH);
-                    ui.set_max_width(WORKSPACE_SIDEBAR_WIDTH);
+                    ui.set_width(SERVERS_SIDEBAR_WIDTH);
+                    ui.set_max_width(SERVERS_SIDEBAR_WIDTH);
                     ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
                     self.render_sidebar_tabs_bar(ui);
                 });

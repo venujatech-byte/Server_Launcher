@@ -21898,26 +21898,15 @@ impl LauncherApp {
 
                                                     ui.add_space(8.0);
                                                     ui.horizontal(|ui| {
-                                                        let is_inline_open = self.open_inline_terminals.contains(&listener.port);
-                                                        let inline_btn_text = if is_inline_open {
-                                                             format!("{} Hide Inline Terminal", crate::lucide::TERMINAL)
-                                                        } else {
-                                                             format!("{} View Output (Inline Terminal)", crate::lucide::TERMINAL)
-                                                        };
-                                                        let btn_inline = egui::Button::new(
-                                                            RichText::new(inline_btn_text)
-                                                                .size(11.0)
-                                                                .strong()
-                                                                .color(if is_inline_open { p.warning } else { p.accent }),
-                                                        )
-                                                        .fill(if is_inline_open { p.bg_card } else { p.bg_button })
-                                                        .stroke(Stroke::NONE)
-                                                        .rounding(Rounding::same(999.0));
-
-                                                        if ui.add(btn_inline).on_hover_text("Open inline terminal to view live process output and run shell commands in working directory").clicked() {
-                                                            if is_inline_open {
-                                                                self.open_inline_terminals.remove(&listener.port);
-                                                            } else {
+                                                        if !self.open_inline_terminals.contains(&listener.port) {
+                                                            let btn_inline = egui::Button::new(
+                                                                RichText::new(format!("{} View Output (Inline Terminal)", crate::lucide::TERMINAL))
+                                                                    .size(11.0).strong().color(p.accent),
+                                                            )
+                                                            .fill(p.bg_button)
+                                                            .stroke(Stroke::NONE)
+                                                            .rounding(Rounding::same(999.0));
+                                                            if ui.add(btn_inline).on_hover_text("Open inline terminal to view live process output and run shell commands in working directory").clicked() {
                                                                 self.open_inline_terminals.insert(listener.port);
                                                                 self.ensure_inline_session(listener.port, &listener.name, listener.pid, &cmd_str, &cwd_str);
                                                             }
@@ -22122,26 +22111,15 @@ impl LauncherApp {
 
                                                     ui.add_space(8.0);
                                                     ui.horizontal(|ui| {
-                                                        let is_inline_open = self.open_inline_terminals.contains(port);
-                                                        let inline_btn_text = if is_inline_open {
-                                                             format!("{} Hide Inline Terminal", crate::lucide::TERMINAL)
-                                                        } else {
-                                                             format!("{} View Output (Inline Terminal)", crate::lucide::TERMINAL)
-                                                        };
-                                                        let btn_inline = egui::Button::new(
-                                                            RichText::new(inline_btn_text)
-                                                                .size(11.0)
-                                                                .strong()
-                                                                .color(if is_inline_open { p.warning } else { p.accent }),
-                                                        )
-                                                        .fill(if is_inline_open { p.bg_card } else { p.bg_button })
-                                                        .stroke(Stroke::NONE)
-                                                        .rounding(Rounding::same(999.0));
-
-                                                        if ui.add(btn_inline).on_hover_text("Open inline terminal to run shell commands in working directory").clicked() {
-                                                            if is_inline_open {
-                                                                self.open_inline_terminals.remove(port);
-                                                            } else {
+                                                        if !self.open_inline_terminals.contains(port) {
+                                                            let btn_inline = egui::Button::new(
+                                                                RichText::new(format!("{} View Output (Inline Terminal)", crate::lucide::TERMINAL))
+                                                                    .size(11.0).strong().color(p.accent),
+                                                            )
+                                                            .fill(p.bg_button)
+                                                            .stroke(Stroke::NONE)
+                                                            .rounding(Rounding::same(999.0));
+                                                            if ui.add(btn_inline).on_hover_text("Open inline terminal to run shell commands in working directory").clicked() {
                                                                 self.open_inline_terminals.insert(*port);
                                                                 self.ensure_inline_session(*port, name, None, cmd, cwd);
                                                             }

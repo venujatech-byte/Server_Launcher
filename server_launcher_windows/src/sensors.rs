@@ -131,6 +131,8 @@ pub struct NetInterfaceInfo {
 
 #[derive(Debug, Clone, Default)]
 pub struct GpuSensorInfo {
+    pub device_path: String,
+    pub engine_loads: Vec<(String, f32)>,
     pub name: String,
     pub load_pct: Option<f32>,
     pub temp: Option<f32>,
@@ -267,6 +269,8 @@ pub struct SystemSensorsSnapshot {
     pub socket_udp: usize,
     pub active_sockets: Vec<crate::wifi::WifiActiveSocket>,
 
+    pub hardware_access_unlocked: bool,
+    pub hardware_access_error: Option<String>,
     pub timestamp: Option<Instant>,
 }
 
@@ -287,6 +291,8 @@ pub struct SystemSensorsCollector {
     prev_proc_disk: HashMap<u32, (u64, u64)>,
     prev_proc_net: HashMap<u32, (u64, u64)>,
     prev_proc_net_time: Instant,
+    protected_data: Option<serde_json::Value>,
+    last_protected_poll: Instant,
     #[cfg(windows)]
     windows_hardware: SystemSensorsSnapshot,
 }
@@ -324,6 +330,8 @@ impl SystemSensorsCollector {
             prev_proc_disk: HashMap::new(),
             prev_proc_net: HashMap::new(),
             prev_proc_net_time: now,
+            protected_data: None,
+            last_protected_poll: now,
             #[cfg(windows)]
             windows_hardware: SystemSensorsSnapshot::default(),
         }
@@ -873,6 +881,8 @@ impl SystemSensorsCollector {
             socket_tcp,
             socket_udp,
             active_sockets: Vec::new(),
+            hardware_access_unlocked: false,
+            hardware_access_error: None,
             timestamp: Some(now),
         }
     }
@@ -1720,7 +1730,7 @@ fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
                         let power_watts = parts.get(8).and_then(|s| s.parse::<f32>().ok());
                         let power_limit_watts = parts.get(9).and_then(|s| s.parse::<f32>().ok());
 
-                        gpus.push(GpuSensorInfo {
+                        gpus.push(GpuSensorInfo { device_path: String::new(), engine_loads: Vec::new(),
                             name,
                             load_pct,
                             temp,
@@ -1906,7 +1916,7 @@ fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
                         "Direct Rendering Manager (DRM)".to_string()
                     };
 
-                    gpus.push(GpuSensorInfo {
+                    gpus.push(GpuSensorInfo { device_path: fs::canonicalize(&dev).unwrap_or_else(|_| dev.clone()).to_string_lossy().into_owned(), engine_loads: Vec::new(),
                         name: vendor_name.to_string(),
                         load_pct,
                         temp: card_temp.or(known_temp),
@@ -1949,7 +1959,7 @@ fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
                                     .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
                                     .unwrap_or_else(|| "PCI Display Driver".to_string());
 
-                                gpus.push(GpuSensorInfo {
+                                gpus.push(GpuSensorInfo { device_path: String::new(), engine_loads: Vec::new(),
                                     name: vendor_name.to_string(),
                                     load_pct: None,
                                     temp: known_temp,
@@ -3151,7 +3161,7 @@ print(json.dumps(data))
     let mut gpus = Vec::new();
     if let Some(arr) = parsed["gpus"].as_array() {
         for g in arr {
-            gpus.push(GpuSensorInfo {
+            gpus.push(GpuSensorInfo { device_path: String::new(), engine_loads: Vec::new(),
                 name: g["name"].as_str().unwrap_or("Remote GPU").to_string(),
                 load_pct: g["load"].as_f64().map(|v| v as f32),
                 temp: g["temp"].as_f64().map(|v| v as f32),
@@ -3451,13 +3461,36 @@ print(json.dumps(data))
         socket_tcp,
         socket_udp,
         active_sockets,
-        timestamp: Some(Instant::now()),
+        hardware_access_unlocked: false,
+            hardware_access_error: None,
+            timestamp: Some(Instant::now()),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn protected_readings_match_devices_and_preserve_unknown_fields() {
+        let mut snapshot = SystemSensorsSnapshot::default();
+        snapshot.gpus.push(GpuSensorInfo { device_path: "/pci/intel".into(), ..Default::default() });
+        snapshot.gpus.push(GpuSensorInfo { device_path: "/pci/other".into(), ..Default::default() });
+        apply_protected_hardware(&mut snapshot, &serde_json::json!({
+            "cpu_watts": 3.25,
+            "gpus": [{"device":"/pci/intel", "engines":{"Render/3D":12.5,"Copy":0.0}, "watts":0.4}],
+            "memory":[{"size":"8192 MB","kind":"DDR4","speed":"2400 MT/s","locator":"DIMM A"}]
+        }));
+        assert_eq!(snapshot.cpu_power_watts, Some(3.25));
+        assert_eq!(snapshot.gpus[0].load_pct, Some(12.5));
+        assert_eq!(snapshot.gpus[1].load_pct, None);
+        assert_eq!(snapshot.gpus[0].mem_used_mb, None);
+        let memory = snapshot.memory_hw.unwrap();
+        assert_eq!(memory.slot_summary, "1 populated modules");
+        assert_eq!(memory.memory_type, "DDR4");
+        assert!(memory.topology.contains("unavailable"));
+    }
+
+
     #[test]
     fn unknown_battery_charge_is_distinct_from_empty() {
         let mut battery = BatteryInfo::default();
@@ -3723,7 +3756,7 @@ $temp=@(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor |
 fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
     let mut snap = SystemSensorsSnapshot::default();
     if let Some(gpus) = data["gpu"].as_array() {
-        snap.gpus = gpus.iter().map(|g| GpuSensorInfo {
+        snap.gpus = gpus.iter().map(|g| GpuSensorInfo { device_path: String::new(), engine_loads: Vec::new(),
             name: g["Name"].as_str().unwrap_or_default().into(),
             driver: g["DriverVersion"].as_str().unwrap_or_default().into(),
             ..Default::default()
@@ -3790,5 +3823,164 @@ mod windows_sensor_tests {
         assert_eq!(snap.power.total_battery_pct, Some(72.0));
         assert_eq!(percentage(1, 0), 0.0);
         assert_eq!(percentage(25, 100), 25.0);
+    }
+}
+
+const PROTECTED_HARDWARE_SCRIPT: &str = r##"import glob, json, math, os, subprocess, sys, time
+os.environ['PATH'] = '/usr/sbin:/usr/bin:/sbin:/bin'
+
+def read_number(path):
+    try:
+        value = float(open(path).read().strip())
+        return value if math.isfinite(value) else None
+    except (OSError, ValueError):
+        return None
+
+zones = []
+for path in glob.glob('/sys/class/powercap/intel-rapl:*'):
+    if os.path.basename(path).count(':') != 1:
+        continue
+    energy = read_number(path + '/energy_uj')
+    maximum = read_number(path + '/max_energy_range_uj')
+    if energy is not None:
+        zones.append((path, energy, maximum))
+started = time.monotonic()
+result = {'cpu_watts': None, 'gpus': [], 'memory': None, 'notes': []}
+if len(sys.argv) > 1 and sys.argv[1] == 'inventory':
+    result['memory'] = []
+    try:
+        output = subprocess.run(['dmidecode', '--type', '17'], capture_output=True, text=True, timeout=5)
+        if output.returncode:
+            result['notes'].append('RAM inventory: ' + output.stderr.strip())
+        else:
+            for block in output.stdout.split('Memory Device\n')[1:]:
+                fields = dict(line.strip().split(': ', 1) for line in block.splitlines() if ': ' in line)
+                size = fields.get('Size', '')
+                if not size or size in ('No Module Installed', 'Unknown', 'Not Installed'):
+                    continue
+                values = {key: fields.get(source, '') for key, source in [('size', 'Size'), ('kind', 'Type'), ('speed', 'Configured Memory Speed'), ('form', 'Form Factor'), ('locator', 'Locator')]}
+                values['speed'] = values['speed'] or fields.get('Speed', '')
+                result['memory'].append(values)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        result['notes'].append('RAM inventory: ' + str(error))
+
+for card in sorted(glob.glob('/sys/class/drm/card[0-9]*')):
+    if '-' in os.path.basename(card):
+        continue
+    device = os.path.realpath(card + '/device')
+    driver = os.path.basename(os.path.realpath(card + '/device/driver'))
+    if driver not in ('i915', 'xe'):
+        continue
+    node = '/dev/dri/' + os.path.basename(card)
+    try:
+        output = subprocess.run(['intel_gpu_top', '-J', '-s', '250', '-n', '2', '-m', '-d', 'drm:' + node, '-o', '-'], capture_output=True, text=True, timeout=3)
+        if output.returncode:
+            result['notes'].append(node + ': ' + output.stderr.strip())
+            continue
+        samples = json.loads(output.stdout)
+        sample = next((sample for sample in reversed(samples) if sample.get('engines')), None)
+        if sample is not None:
+            engines = {name: values['busy'] for name, values in sample['engines'].items() if isinstance(values.get('busy'), (float, int)) and math.isfinite(values['busy']) and 0 <= values['busy'] <= 100}
+            gpu_power = sample.get('power', {}).get('GPU')
+            if not isinstance(gpu_power, (float, int)) or not math.isfinite(gpu_power) or gpu_power < 0:
+                gpu_power = None
+            result['gpus'].append({'device': device, 'engines': engines, 'watts': gpu_power})
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        result['notes'].append(node + ': ' + str(error))
+
+if time.monotonic() - started < 0.15:
+    time.sleep(0.15)
+watts = []
+for path, previous, maximum in zones:
+    current = read_number(path + '/energy_uj')
+    if current is None:
+        continue
+    delta = current - previous
+    if delta < 0 and maximum is not None:
+        delta += maximum
+    if delta >= 0:
+        watts.append(delta / 1e6 / (time.monotonic() - started))
+if zones and len(watts) == len(zones):
+    result['cpu_watts'] = sum(watts)
+print(json.dumps(result, allow_nan=False))
+"##;
+
+// This fixed read-only probe runs only after the user unlocks protected sensor access.
+pub fn read_protected_hardware(password: Option<&str>, inventory: bool) -> Result<serde_json::Value, String> {
+    if !cfg!(target_os = "linux") { return Err("Protected Linux sensor access is unavailable on this platform.".into()); }
+    use std::io::Write;
+    let mut command = Command::new("sudo");
+    let password = password.filter(|password| !password.is_empty());
+    if password.is_some() { command.args(["-S", "-p", ""]); } else { command.arg("-n"); }
+    command.args(["--", "python3", "-I", "-c", PROTECTED_HARDWARE_SCRIPT, if inventory { "inventory" } else { "sample" }]);
+    command.env("LC_ALL", "C").stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    command.stdin(if password.is_some() { std::process::Stdio::piped() } else { std::process::Stdio::null() });
+    let mut child = command.spawn().map_err(|error| format!("Could not start hardware probe: {error}"))?;
+    if let Some(password) = password {
+        if let Some(mut stdin) = child.stdin.take() { let _ = writeln!(stdin, "{password}"); }
+    }
+    let output = child.wait_with_output().map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(format!("Hardware probe failed: {}", String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid hardware probe response: {error}"))
+}
+
+fn apply_protected_hardware(snapshot: &mut SystemSensorsSnapshot, data: &serde_json::Value) {
+    let reported = |value: &serde_json::Value| value.as_f64().filter(|value| value.is_finite() && *value >= 0.0).map(|value| value as f32);
+    if let Some(watts) = reported(&data["cpu_watts"]) { snapshot.cpu_power_watts = Some(watts); }
+    if let Some(readings) = data["gpus"].as_array() {
+        for reading in readings {
+            let Some(device) = reading["device"].as_str() else { continue; };
+            if let Some(gpu) = snapshot.gpus.iter_mut().find(|gpu| !gpu.device_path.is_empty() && gpu.device_path == device) {
+                gpu.engine_loads = reading["engines"].as_object().map(|engines| engines.iter().filter_map(|(name, value)|
+                    reported(value).filter(|value| *value <= 100.0).map(|value| (name.clone(), value))).collect()).unwrap_or_default();
+                if let Some(load) = gpu.engine_loads.iter().map(|(_, load)| *load).reduce(f32::max) { gpu.load_pct = Some(load); }
+                if let Some(watts) = reported(&reading["watts"]) { gpu.power_watts = Some(watts); }
+            }
+        }
+    }
+    if let Some(modules) = data["memory"].as_array().filter(|modules| !modules.is_empty()) {
+        let unique = |field: &str| modules.iter().filter_map(|module| module[field].as_str())
+            .filter(|value| !value.is_empty() && *value != "Unknown").collect::<std::collections::BTreeSet<_>>().into_iter().collect::<Vec<_>>().join(" / ");
+        snapshot.memory_hw = Some(MemoryHardwareInfo {
+            slot_summary: format!("{} populated modules", modules.len()),
+            topology: "Channel topology unavailable".into(),
+            memory_type: unique("kind"), form_factor: unique("form"),
+            module_spec: modules.iter().map(|module| ["size", "kind", "speed", "locator"].iter()
+                .filter_map(|field| module[*field].as_str()).filter(|value| !value.is_empty()).collect::<Vec<_>>().join(" · ")).collect::<Vec<_>>().join("; "),
+        });
+    }
+}
+
+impl SystemSensorsCollector {
+    pub fn unlock_hardware_access(&mut self, password: Option<&str>) -> Result<String, String> {
+        self.protected_data = Some(read_protected_hardware(password, true)?);
+        self.last_protected_poll = Instant::now();
+        Ok("Read-only hardware sensor access enabled. Some metrics may still depend on driver support.".into())
+    }
+
+    pub fn refresh_protected_hardware(&mut self, snapshot: &mut SystemSensorsSnapshot, password: Option<&str>) {
+        if self.protected_data.is_none() { return; }
+        if self.last_protected_poll.elapsed() >= Duration::from_secs(2) {
+            self.last_protected_poll = Instant::now();
+            match read_protected_hardware(password, false) {
+                Ok(mut data) => {
+                    data["memory"] = self.protected_data.as_ref().unwrap()["memory"].clone();
+                    self.protected_data = Some(data);
+                }
+                Err(error) => {
+                    // A failed refresh must not keep an old power/GPU sample looking live.
+                    let data = self.protected_data.as_mut().unwrap();
+                    data["cpu_watts"] = serde_json::Value::Null;
+                    data["gpus"] = serde_json::json!([]);
+                    data["notes"] = serde_json::json!([error]);
+                }
+            }
+        }
+        let data = self.protected_data.as_ref().unwrap();
+        snapshot.hardware_access_unlocked = true;
+        snapshot.hardware_access_error = data["notes"].as_array().filter(|notes| !notes.is_empty()).map(|notes| notes.iter().filter_map(|note| note.as_str()).collect::<Vec<_>>().join("; "));
+        apply_protected_hardware(snapshot, data);
     }
 }

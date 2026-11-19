@@ -168,6 +168,7 @@ pub struct WifiAppNetItem {
 /// A service operation retained for an authenticated retry on its original host.
 #[derive(Clone, Debug)]
 pub enum PendingSudoAction {
+    UnlockSensorAccess,
     ServiceAction { unit: String, action: &'static str, user_mode: bool },
     CreateService { def: crate::systemd::NewServiceDefinition },
     SaveUnitFile { path: String, content: String, user_mode: bool },
@@ -198,6 +199,7 @@ impl PendingSudoAction {
 
     fn key(&self, host_id: Option<&str>) -> String {
         let (kind, target, user_mode) = match self {
+            Self::UnlockSensorAccess => ("hardware", "local", false),
             Self::ServiceAction { unit, user_mode, .. } => ("control", unit.as_str(), *user_mode),
             Self::CreateService { def } => ("create", def.name.as_str(), def.is_user),
             Self::SaveUnitFile { path, user_mode, .. } => ("save", path.as_str(), *user_mode),
@@ -1258,12 +1260,15 @@ impl LauncherApp {
         }
 
         let collector_arc = Arc::clone(&self.sensors_collector);
+        let sensor_password = self.local_sudo_password.clone();
         let in_flight_arc = Arc::clone(&self.sensors_in_flight);
         let shared_snap_arc = Arc::clone(&self.sensors_shared_snapshot);
 
         std::thread::spawn(move || {
             let snap = if let Ok(mut coll) = collector_arc.lock() {
-                coll.collect_with_top_apps(include_top)
+                let mut snapshot = coll.collect_with_top_apps(include_top);
+                coll.refresh_protected_hardware(&mut snapshot, Some(&sensor_password));
+                snapshot
             } else {
                 crate::sensors::SystemSensorsSnapshot::default()
             };
@@ -5133,6 +5138,118 @@ fn draw_dotted_hline(
     }
 }
 
+fn draw_estimated_power_waveform(ui: &mut Ui, height: f32, watts: f32, accent: Color32) {
+    let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
+    let rect = response.rect;
+    if !ui.is_rect_visible(rect) { return; }
+    ui.ctx().request_repaint_after(Duration::from_millis(100));
+
+    painter.rect_filled(rect, Rounding::same(6.0), ui.visuals().extreme_bg_color);
+
+    let y_bot = rect.bottom() - 12.0;
+    let y_top = rect.top() + 12.0;
+    let plot_h = y_bot - y_top;
+
+    // Dotted guide grid lines at 25%, 50%, 75%
+    for ratio in [0.25_f32, 0.50_f32, 0.75_f32] {
+        let y = y_bot - ratio * plot_h;
+        draw_dotted_hline(&painter, y, rect.left() + 10.0, rect.right() - 10.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 12)), 4.0, 4.0);
+    }
+
+    let n = 48;
+    let step_x = (rect.width() - 20.0) / (n - 1) as f32;
+    let time_sec = ui.input(|i| i.time as f32);
+
+    let max_watts = if watts > 60.0 { 150.0_f32 } else if watts > 30.0 { 65.0_f32 } else { 35.0_f32 };
+    let to_y = |w: f32| -> f32 {
+        let norm = (w / max_watts).clamp(0.08, 0.92);
+        y_bot - norm * plot_h
+    };
+
+    let pts: Vec<egui::Pos2> = (0..n).map(|i| {
+        let x = rect.left() + 10.0 + i as f32 * step_x;
+        let progress = i as f32 / (n - 1) as f32;
+        // Animated smooth ripple
+        let a = progress * std::f32::consts::TAU * 1.5 - time_sec * 1.8;
+        let ripple = (a.sin() * 0.12 + (a * 2.3).cos() * 0.05) * watts;
+        // Center bump / natural telemetry crest
+        let bell = (-(progress - 0.65).powi(2) / 0.08).exp() * (watts * 0.28);
+        let current_w = (watts * 0.85 + bell + ripple).max(1.0);
+        egui::pos2(x, to_y(current_w))
+    }).collect();
+
+    // Gradient Mesh Fill under curve
+    let mut mesh = egui::Mesh::default();
+    let c_top = accent_with_alpha(accent, 38);
+    let c_bot = accent_with_alpha(accent, 2);
+    for i in 0..(pts.len() - 1) {
+        let p1 = pts[i];
+        let p2 = pts[i + 1];
+        let b1 = egui::pos2(p1.x, y_bot);
+        let b2 = egui::pos2(p2.x, y_bot);
+        let idx = mesh.vertices.len() as u32;
+        mesh.vertices.push(egui::epaint::Vertex { pos: p1, uv: egui::epaint::WHITE_UV, color: c_top });
+        mesh.vertices.push(egui::epaint::Vertex { pos: p2, uv: egui::epaint::WHITE_UV, color: c_top });
+        mesh.vertices.push(egui::epaint::Vertex { pos: b2, uv: egui::epaint::WHITE_UV, color: c_bot });
+        mesh.vertices.push(egui::epaint::Vertex { pos: b1, uv: egui::epaint::WHITE_UV, color: c_bot });
+        mesh.indices.extend_from_slice(&[idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+
+    // Outer glow line segment
+    for i in 0..(pts.len() - 1) {
+        painter.line_segment([pts[i], pts[i + 1]], Stroke::new(2.4_f32, accent));
+    }
+
+    // Glowing telemetry head on the rightmost point
+    if let Some(&last_pt) = pts.last() {
+        painter.circle_filled(last_pt, 6.0, accent_with_alpha(accent, 80));
+        painter.circle_filled(last_pt, 3.0, ui.visuals().text_color());
+
+        // Floating readout chip
+        let tag_w = 72.0_f32;
+        let tag_h = 16.0_f32;
+        let tag_rect = egui::Rect::from_min_size(egui::pos2(last_pt.x - tag_w - 6.0, (last_pt.y - tag_h - 4.0).max(rect.top() + 4.0)), egui::vec2(tag_w, tag_h));
+        painter.rect_filled(tag_rect, Rounding::same(3.0), ui.visuals().widgets.noninteractive.bg_fill);
+        painter.rect_stroke(tag_rect, Rounding::same(3.0), Stroke::new(1.0_f32, accent));
+        let label_str = format!("{:.1} W EST.", watts);
+        painter.text(tag_rect.center(), egui::Align2::CENTER_CENTER, label_str, egui::FontId::monospace(8.5), ui.visuals().text_color());
+    }
+}
+
+
+fn render_animated_power_estimate(ui: &mut Ui, snapshot: &crate::sensors::SystemSensorsSnapshot, accent: Color32) {
+    // This user-requested model is illustrative; it never enters measured sensor histories.
+    let profile = crate::power::tdp_profile_from_nominal_or_cpu(snapshot.cpu_tdp_watts, &snapshot.cpu_brand, snapshot.cpu_cores_physical.max(1));
+    let load = (snapshot.cpu_global_usage / 100.0).clamp(0.0, 1.0);
+    let cpu = snapshot.cpu_power_watts.unwrap_or_else(|| {
+        let idle = (profile.nominal_watts * 0.12).clamp(1.5, 20.0);
+        idle + (profile.nominal_watts - idle) * (0.35 * load + 0.65 * load.powf(1.35))
+    });
+    let gpu: f32 = snapshot.gpus.iter().map(|gpu| gpu.power_watts.unwrap_or_else(|| {
+        let limit = gpu.power_limit_watts.unwrap_or(15.0);
+        limit * (0.08 + 0.92 * (gpu.load_pct.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0))
+    })).sum();
+    let disk_mb = (snapshot.total_disk_read_rate_bps + snapshot.total_disk_write_rate_bps) as f32 / 1_000_000.0;
+    let storage = snapshot.physical_disks.iter().map(|disk| if disk.is_ssd { 0.5 } else { 2.2 }).sum::<f32>() + (disk_mb * 0.04).clamp(0.0, 4.0);
+    let memory_gb = snapshot.mem_total_bytes as f32 / (1024.0 * 1024.0 * 1024.0);
+    let motherboard = 1.0 + memory_gb / 8.0 * (0.35 + snapshot.mem_usage_pct / 100.0 * 0.55);
+    let display = if snapshot.power.batteries.is_empty() { 0.0 } else { 1.0 + snapshot.power.backlight_ratio.unwrap_or(0.4) * 2.8 };
+    let components = [("CPU package", cpu), ("Graphics", gpu), ("Storage", storage), ("Motherboard & RAM", motherboard), ("Display", display), ("USB & peripherals", snapshot.power.usb_power_watts.map(|value| value.0).unwrap_or(0.45)), ("Keyboard & lights", snapshot.power.kbd_lights_watts.unwrap_or(0.25))];
+    let total = components.iter().map(|(_, watts)| watts).sum::<f32>();
+    ui.add_space(12.0);
+    ui.label(RichText::new("Estimated system power").size(12.0).strong());
+    ui.label(RichText::new(format!("{total:.1} W · MODEL")).size(22.0).strong());
+    ui.label(RichText::new("Animated illustration, not measured history. Component values are estimates.").size(11.0).color(ui.visuals().weak_text_color()));
+    draw_estimated_power_waveform(ui, 90.0, total, accent);
+    for (name, watts) in components {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(name).size(11.0));
+            ui.label(RichText::new(format!("{watts:.1} W estimated")).size(11.0).color(ui.visuals().weak_text_color()));
+        });
+    }
+}
+
 fn battery_capacity_retention(battery: &crate::sensors::BatteryInfo) -> Option<f32> {
     battery.health_pct.filter(|value| value.is_finite() && (0.0..=100.0).contains(value)).or_else(|| {
         let full = battery.energy_full_wh?;
@@ -5896,108 +6013,8 @@ fn draw_sockets_chart(
     }
 }
 
-fn draw_gpu_engine_sparkline(
-    ui: &mut Ui,
-    width: f32,
-    height: f32,
-    values: &[f32],
-    stroke_color: Color32,
-    is_dashed: bool,
-) {
-    let (response, painter) = ui.allocate_painter(egui::vec2(width, height), egui::Sense::hover());
-    let rect = response.rect;
 
-    if is_dashed {
-        let y = rect.bottom() - 6.0;
-        let seg_len = 6.0;
-        let gap = 4.0;
-        let mut x = rect.left();
-        while x < rect.right() {
-            let next_x = (x + seg_len).min(rect.right());
-            painter.line_segment([egui::pos2(x, y), egui::pos2(next_x, y)], Stroke::new(1.2_f32, Color32::from_rgb(100, 116, 139)));
-            x += seg_len + gap;
-        }
-        return;
-    }
 
-    if values.len() < 2 {
-        let y = rect.bottom() - 6.0;
-        painter.line_segment([egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)], Stroke::new(1.5_f32, stroke_color));
-        return;
-    }
-
-    let n = values.len();
-    let step_x = rect.width() / (n - 1) as f32;
-
-    let points: Vec<egui::Pos2> = values
-        .iter()
-        .enumerate()
-        .map(|(i, &v)| {
-            let x = rect.left() + i as f32 * step_x;
-            let norm = (v / 25.0).clamp(0.05, 0.95);
-            let y = rect.bottom() - 4.0 - norm * (rect.height() - 8.0);
-            egui::pos2(x, y)
-        })
-        .collect();
-
-    let top_fill = Color32::from_rgba_unmultiplied(stroke_color.r(), stroke_color.g(), stroke_color.b(), 35);
-    let bot_fill = Color32::from_rgba_unmultiplied(stroke_color.r(), stroke_color.g(), stroke_color.b(), 3);
-
-    let mut mesh = egui::Mesh::default();
-    for i in 0..(points.len() - 1) {
-        let p1 = points[i];
-        let p2 = points[i + 1];
-        let b1 = egui::pos2(p1.x, rect.bottom());
-        let b2 = egui::pos2(p2.x, rect.bottom());
-
-        let idx = mesh.vertices.len() as u32;
-        mesh.vertices.push(egui::epaint::Vertex { pos: p1, uv: egui::epaint::WHITE_UV, color: top_fill });
-        mesh.vertices.push(egui::epaint::Vertex { pos: p2, uv: egui::epaint::WHITE_UV, color: top_fill });
-        mesh.vertices.push(egui::epaint::Vertex { pos: b2, uv: egui::epaint::WHITE_UV, color: bot_fill });
-        mesh.vertices.push(egui::epaint::Vertex { pos: b1, uv: egui::epaint::WHITE_UV, color: bot_fill });
-
-        mesh.indices.extend_from_slice(&[idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
-    }
-    painter.add(egui::Shape::mesh(mesh));
-
-    for i in 0..(points.len() - 1) {
-        painter.line_segment([points[i], points[i + 1]], Stroke::new(1.6_f32, stroke_color));
-    }
-
-    if let Some(&last_pt) = points.last() {
-        painter.circle_filled(last_pt, 3.5, stroke_color.gamma_multiply(0.4));
-        painter.circle_filled(last_pt, 2.0, stroke_color);
-    }
-}
-
-#[allow(dead_code)]
-fn render_metric_card(ui: &mut Ui, title: &str, value: &str, sublabel: &str, val_color: Color32, bg_card: Color32, text_muted: Color32) {
-    let width = ui.available_width();
-    Frame::none()
-        .fill(bg_card)
-        .rounding(Rounding::same(8.0))
-        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-        .show(ui, |ui| {
-            ui.set_width(width);
-            ui.set_max_width(width);
-            ui.label(RichText::new(title).size(9.5).monospace().color(text_muted));
-            ui.add_space(2.0);
-            ui.label(RichText::new(value).size(15.0).monospace().strong().color(val_color));
-            ui.add_space(2.0);
-            ui.label(RichText::new(sublabel).size(9.0).color(text_muted));
-        });
-}
-
-#[allow(dead_code)]
-fn render_reg_item(ui: &mut Ui, label: &str, val: &str, text_muted: Color32, val_color: Color32) {
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(label).size(10.0).monospace().color(text_muted));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(RichText::new(val).size(10.0).monospace().strong().color(val_color));
-        });
-    });
-    ui.add_space(2.0);
-}
 
 fn render_custom_toggle_switch(ui: &mut Ui, on: &mut bool, accent: Color32) -> bool {
     let desired_size = egui::vec2(34.0, 18.0);
@@ -9052,10 +9069,15 @@ impl LauncherApp {
             host.as_ref().and_then(|host| self.remote_sudo_passwords.get(&host.id).cloned())
                 .or_else(|| if host.is_none() { Some(self.local_sudo_password.clone()) } else { None })
         });
+        let sensor_collector = self.sensors_collector.clone();
         let results = self.systemd_action_results.clone();
         std::thread::spawn(move || {
             let pass = password.as_deref().filter(|password| !password.is_empty());
             let result = match &action {
+                PendingSudoAction::UnlockSensorAccess => {
+                    if host.is_some() { Err("Protected sensor access applies to the local host only.".into()) }
+                    else { sensor_collector.lock().unwrap().unlock_hardware_access(pass).map(SystemdActionValue::Message) }
+                },
                 PendingSudoAction::ServiceAction { unit, action, user_mode } => {
                     if let Some(host) = &host { control_remote_service(host, unit, action, *user_mode, pass) }
                     else { control_local_service(unit, action, *user_mode, pass) }.map(SystemdActionValue::Message)
@@ -9115,6 +9137,7 @@ impl LauncherApp {
                 continue;
             };
             let action_scope = match &action {
+                PendingSudoAction::UnlockSensorAccess => false,
                 PendingSudoAction::CreateService { def } => def.is_user,
                 PendingSudoAction::ServiceAction { user_mode, .. } | PendingSudoAction::SaveUnitFile { user_mode, .. }
                 | PendingSudoAction::CreateDropIn { user_mode, .. } | PendingSudoAction::DeleteDropIn { user_mode, .. }
@@ -9190,6 +9213,7 @@ impl LauncherApp {
                             else { self.service_action_msg = Some(message.clone()); }
                             let mut refresh = None;
                             match &action {
+                                PendingSudoAction::UnlockSensorAccess => self.trigger_local_sensors_query(false, None),
                                 PendingSudoAction::ServiceAction { unit, user_mode, .. } => { refresh = Some((unit.clone(), *user_mode)); }
                                 PendingSudoAction::CreateService { def } => {
                                     if let Ok(unit) = crate::systemd::service_unit_name(def) { refresh = Some((unit, def.is_user)); }
@@ -9287,6 +9311,7 @@ impl LauncherApp {
 
                 if let Some(pending) = &self.sudo_popup.pending {
                     match pending {
+                        PendingSudoAction::UnlockSensorAccess => { ui.label("Read-only access to CPU energy, Intel GPU counters and RAM inventory on this computer."); }
                         PendingSudoAction::ServiceAction { unit, action, .. } => {
                             let act_color = match *action {
                                 "start" => palette.success,
@@ -11523,6 +11548,28 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     // SENSORS PAGE: CPU Dashboard (Matching media_1792113265094_cd2e3f19.png)
     // ─────────────────────────────────────────────────────────────────────────
+    fn render_sensor_hardware_access(&mut self, ui: &mut Ui, host_id: Option<&str>) {
+        if host_id.is_some() || !cfg!(target_os = "linux") { return; }
+        let p = self.palette();
+        let key = PendingSudoAction::UnlockSensorAccess.key(None);
+        let busy = self.systemd_actions_in_flight.lock().unwrap().contains(&key);
+        ui.horizontal_wrapped(|ui| {
+            if ui.add_enabled(!busy, egui::Button::new(if self.sensors_snapshot.hardware_access_unlocked { "Refresh protected sensors" } else { "Unlock hardware sensors" })).on_hover_text("Read-only sudo probe: CPU energy counters, Intel GPU PMU and installed RAM modules. No hardware settings are changed.").clicked() {
+                self.service_action_msg = None;
+                self.queue_systemd_action(PendingSudoAction::UnlockSensorAccess, None, None);
+            }
+            if busy { ui.spinner(); }
+            ui.label(RichText::new("Protected hardware readings may require your sudo password.").size(11.0).color(p.text_muted));
+        });
+        if let Some(message) = self.service_action_msg.as_ref().filter(|message| message.starts_with("Read-only hardware") || message.starts_with("Error: Hardware probe") || message.starts_with("Error: Could not start hardware")) {
+            ui.label(RichText::new(message).size(11.0).color(p.text_muted));
+        }
+        if let Some(error) = &self.sensors_snapshot.hardware_access_error {
+            ui.add(egui::Label::new(RichText::new(error).size(11.0).color(p.warning)).truncate()).on_hover_text(error);
+        }
+        ui.add_space(6.0);
+    }
+
     fn render_sensors_cpu_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.palette();
         let accent = self.sensors_accent_color(&p);
@@ -11531,6 +11578,7 @@ impl LauncherApp {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
+                self.render_sensor_hardware_access(ui, host_id);
 
                 let brand = if !snap.cpu_brand.is_empty() {
                     &snap.cpu_brand
@@ -11846,6 +11894,7 @@ impl LauncherApp {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
+                self.render_sensor_hardware_access(ui, host_id);
 
                 let total_ram_gb = snap.mem_total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                 let used_ram_gb = snap.mem_used_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
@@ -12357,6 +12406,7 @@ impl LauncherApp {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
+                self.render_sensor_hardware_access(ui, host_id);
 
                 let active_gpu_idx = if snap.gpus.is_empty() { 0 } else { self.selected_gpu_idx.min(snap.gpus.len() - 1) };
                 let gpu = snap.gpus.get(active_gpu_idx).or_else(|| snap.gpus.first());
@@ -12365,10 +12415,9 @@ impl LauncherApp {
                     .filter(|n| !n.trim().is_empty() && *n != "Unknown GPU")
                     .unwrap_or(if is_remote { "GPU information unavailable" } else { "GPU information unavailable" });
 
-                let gpu_name_lower = gpu_name.to_lowercase();
-                let is_intel = gpu_name_lower.contains("intel") || gpu_name_lower.contains("uhd") || gpu_name_lower.contains("iris") || gpu_name_lower.contains("arc") || gpu_name_lower.contains("hd graphics");
-                let is_amd = gpu_name_lower.contains("amd") || gpu_name_lower.contains("radeon");
-                let is_nvidia = gpu_name_lower.contains("nvidia") || gpu_name_lower.contains("geforce") || gpu_name_lower.contains("rtx") || gpu_name_lower.contains("gtx");
+
+
+
 
                 let gpu_spec_label = gpu.map(|g| g.driver.as_str()).filter(|driver| !driver.trim().is_empty()).unwrap_or("Driver unavailable");
 
@@ -12488,12 +12537,11 @@ impl LauncherApp {
                 // 2. Row of 4 Big Metric Cards
                 let clock_val = gpu.and_then(|g| g.clock_mhz).unwrap_or(0);
                 let max_clk = clock_val.max(1);
-                let gpu_slice: Vec<f32> = if gpu.and_then(|g| g.load_pct).is_some() {
-                    self.gpu_load_history.iter().copied().collect()
-                } else { Vec::new() };
-                // Per-engine, clock and VRAM histories are not collected.
-                let gpu_3d_slice: Vec<f32> = Vec::new();
-                let gpu_clock_slice: Vec<f32> = Vec::new();
+                let metric_key = format!("{}:{}", gpu.map(|gpu| gpu.device_path.as_str()).unwrap_or(""), self.selected_gpu_idx);
+                let gpu_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:load"), snap.timestamp, gpu.and_then(|gpu| gpu.load_pct));
+                let render_load = gpu.and_then(|gpu| gpu.engine_loads.iter().filter(|(name, _)| name.to_lowercase().contains("render") || name.contains("3D")).map(|(_, load)| *load).reduce(f32::max));
+                let gpu_3d_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:render"), snap.timestamp, render_load);
+                let gpu_clock_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:clock"), snap.timestamp, gpu.and_then(|gpu| gpu.clock_mhz).map(|value| value as f32));
                 let gpu_vram_slice: Vec<f32> = Vec::new();
                 let (vram_val, vram_sub, vram_peak, vram_pwr, has_dedicated, total_vram_mb, used_vram_mb) =
                     if let Some((used, total)) = gpu.and_then(|g| g.mem_used_mb.zip(g.mem_total_mb)).filter(|(_, total)| *total > 0) {
@@ -12555,9 +12603,9 @@ impl LauncherApp {
                         ui,
                         crate::lucide::BOX,
                         "3D RENDER ENGINE",
-                        "—",
+                        &reported_sensor_value(render_load, 1),
                         "%",
-                        "Per-engine data unavailable",
+                        if render_load.is_some() { "Measured engine utilization" } else { "Per-engine data unavailable" },
                         "",
                         "",
                         &gpu_3d_slice,
@@ -12662,152 +12710,23 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 3. 2x2 Grid: ENGINE UTILIZATION TRACE (60S WINDOW)
-                Frame::none()
-                    .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(accent));
-                            ui.label(RichText::new("ENGINE UTILIZATION TRACE (60S WINDOW)").size(12.5).strong().color(p.text_primary));
-
-
-                        });
-
-                        ui.add_space(8.0);
-
-                        // Row 1 of 2x2
-                        ui.columns(2, |cols| {
-                            // Sub-card 1: 3D Engine / Render
-                            Frame::none()
-                                .fill(Color32::from_rgb(10, 15, 29))
-                                .rounding(Rounding::same(6.0))
-                                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                                .show(&mut cols[0], |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.horizontal(|ui| {
-                                        ui.vertical(|ui| {
-                                            ui.label(RichText::new("3D Engine / Render").size(11.0).strong().color(p.text_primary));
-                                            let engine_api_desc = "Per-engine data unavailable";
-                                            ui.label(RichText::new(engine_api_desc).size(8.5).monospace().color(p.text_muted));
-                                        });
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.vertical(|ui| {
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new("—").size(15.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
-                                                });
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new("Unavailable").size(8.5).monospace().color(p.text_muted));
-                                                });
-                                            });
-                                        });
-                                    });
-                                    ui.add_space(6.0);
-                                    let spark_w = ui.available_width();
-                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, &[], accent, false);
-                                });
-
-                            // Sub-card 2: Copy Engine (Blitter)
-                            Frame::none()
-                                .fill(Color32::from_rgb(10, 15, 29))
-                                .rounding(Rounding::same(6.0))
-                                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                                .show(&mut cols[1], |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.horizontal(|ui| {
-                                        ui.vertical(|ui| {
-                                             ui.label(RichText::new("Copy Engine (Blitter)").size(11.0).strong().color(p.text_primary));
-                                            ui.label(RichText::new("Direct Memory Access Transfer Engine").size(8.5).monospace().color(p.text_muted));
-                                        });
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.vertical(|ui| {
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new("—").size(15.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
-                                                });
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new("Unavailable").size(8.5).monospace().color(p.text_muted));
-                                                });
-                                            });
-                                        });
-                                    });
-                                    ui.add_space(6.0);
-                                    let spark_w = ui.available_width();
-                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, &[], accent, false);
-                                });
-                        });
-
-                        ui.add_space(6.0);
-
-                        // Row 2 of 2x2
-                        ui.columns(2, |cols| {
-                            // Sub-card 3: Video Decode
-                            Frame::none()
-                                .fill(Color32::from_rgb(10, 15, 29))
-                                .rounding(Rounding::same(6.0))
-                                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                                .show(&mut cols[0], |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.horizontal(|ui| {
-                                        ui.vertical(|ui| {
-                                            let vdec_hdr = if is_remote && gpu.is_none() {
-                                                "Video Codec Subsystem"
-                                            } else if is_nvidia {
-                                                "Video Decode (NVIDIA NVDEC)"
-                                            } else if is_amd {
-                                                "Video Decode (AMD VCN)"
-                                            } else if is_intel {
-                                                "Video Decode (Intel QuickSync)"
-                                            } else {
-                                                "Video Decode (VA-API)"
-                                            };
-                                            ui.label(RichText::new(vdec_hdr).size(11.0).strong().color(p.text_primary));
-                                            ui.label(RichText::new("Capabilities unavailable").size(8.5).monospace().color(p.text_muted));
-                                        });
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.vertical(|ui| {
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new("—").size(15.0).monospace().strong().color(p.text_muted));
-                                                });
-
-                                            });
-                                        });
-                                    });
-                                    ui.add_space(6.0);
-                                    let spark_w = ui.available_width();
-                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, &[], Color32::from_rgb(148, 163, 184), true);
-                                });
-
-                            // Sub-card 4: Video Processing
-                            Frame::none()
-                                .fill(Color32::from_rgb(10, 15, 29))
-                                .rounding(Rounding::same(6.0))
-                                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                                .show(&mut cols[1], |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.horizontal(|ui| {
-                                        ui.vertical(|ui| {
-                                            ui.label(RichText::new("Video Processing").size(11.0).strong().color(p.text_primary));
-                                            ui.label(RichText::new("Per-engine data unavailable").size(8.5).monospace().color(p.text_muted));
-                                        });
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.vertical(|ui| {
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    ui.label(RichText::new("—").size(15.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
-                                                });
-
-                                            });
-                                        });
-                                    });
-                                    ui.add_space(6.0);
-                                    let spark_w = ui.available_width();
-                                    let vp_slice: &[f32] = &[];
-                                    draw_gpu_engine_sparkline(ui, spark_w, 48.0, vp_slice, Color32::from_rgb(96, 165, 250), is_remote && gpu.is_none());
-                                });
-                        });
+                // Plot only engines reported by the selected adapter's PMU.
+                Frame::none().fill(p.bg_card).rounding(Rounding::same(8.0))
+                    .inner_margin(egui::Margin::symmetric(14.0, 12.0)).show(ui, |ui| {
+                        ui.label(RichText::new("GPU engine utilization").size(12.5).strong().color(p.text_primary));
+                        let engines = gpu.map(|gpu| gpu.engine_loads.as_slice()).unwrap_or(&[]);
+                        if engines.is_empty() {
+                            ui.label(RichText::new("Per-engine counters are unavailable. On Linux, unlock hardware sensors to read supported Intel PMU counters.").size(11.0).color(p.text_muted));
+                        } else {
+                            sensor_card_columns(ui, engines.len(), |ui, index| {
+                                let (name, load) = &engines[index];
+                                ui.label(RichText::new(name).size(11.0).color(p.text_secondary));
+                                ui.label(RichText::new(format!("{load:.1}%")).size(20.0).strong().color(p.text_primary));
+                                let history = sensor_metric_history(ui, host_id, &format!("{metric_key}:{name}"), snap.timestamp, Some(*load));
+                                draw_card_sparkline(ui, 48.0, &history, 100.0, None, accent);
+                            });
+                        }
                     });
-
                 ui.add_space(8.0);
 
                 // 4. Memory Subsystem Breakdown Card
@@ -16561,7 +16480,8 @@ impl LauncherApp {
                                         ui.label(RichText::new(format!("{} W", reported_sensor_value(gpu.power_watts, 1))).size(11.0).color(p.text_primary));
                                     });
                                 }
-                                ui.label(RichText::new("These readings may cover overlapping domains. Total system consumption and per-component allocation are not estimated.").size(11.0).color(p.text_muted));
+                                ui.label(RichText::new("Reported domains may overlap and are not added into a measured system total.").size(11.0).color(p.text_muted));
+                                render_animated_power_estimate(ui, snap, accent);
                             });
                     });
                 });

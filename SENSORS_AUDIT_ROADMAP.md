@@ -102,3 +102,13 @@ Phase 1 in progress after approval:
 - Battery/power display cleanup: removed fabricated identities, health/cycle-life claims, runtime guesses and component-power allocations; unknown battery charge is optional rather than zero. Removed the generated power animation.
 
 Both crates are checked with `cargo check --locked --offline --tests`. These checks compile tests; they do not execute them or validate Windows hardware. Phase 2 (checked configuration controls) remains outstanding.
+
+## Review follow-up: protected readings and animated estimates
+
+The supplied Linux machine exposes RAPL energy counters and has `intel_gpu_top` and `dmidecode` installed, but normal-user reads are denied. Added an explicit **Unlock hardware sensors** action on CPU/GPU/RAM pages. It uses the existing sudo dialog for a fixed read-only probe; passwords travel over stdin. Python runs in isolated mode with a trusted binary search path. No permissions, perf security settings, power limits or hardware settings are modified.
+
+The probe samples package energy, Intel PMU engines/power, and installed RAM module metadata. Device paths match engine readings to their actual adapter. After unlocking, dynamic readings refresh in the existing background collector; inventory stays cached until another unlock/refresh. Failed reads clear protected dynamic readings rather than presenting old values as fresh. Driver-dependent GPU memory allocation and RAM channel topology can still be unavailable. Optional tools are not automatically installed. The protected probe is local Linux only; native Windows provider work remains in phase 4.
+
+At the user's request, the animated power model is restored and clearly labelled **Estimated system power**, with an explicit statement that the animation is an illustration rather than measured history. Reported measurements stay separate. The animated estimate is also available in the native Windows power view.
+
+Verification: mocked Python probe fixture passed for energy deltas, Intel engines, adapter identity and RAM metadata. Rust regression fixtures cover matching and unknown values. Both crates are checked with `cargo check --locked --offline --tests`; tests are compiled, not run. Real authenticated GPU/RAPL and native Windows runtime validation remain pending.

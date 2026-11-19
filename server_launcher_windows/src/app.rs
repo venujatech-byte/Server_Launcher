@@ -39,6 +39,7 @@ use chrono::Datelike;
 
 const MACHINE_RAIL_WIDTH: f32 = 52.0;
 const WORKSPACE_SIDEBAR_WIDTH: f32 = 380.0;
+const SERVERS_SIDEBAR_WIDTH: f32 = 340.0;
 const SENSORS_SIDEBAR_WIDTH: f32 = 240.0;
 const WORKSPACE_GAP: f32 = 8.0;
 const WORKSPACE_HEADER_HEIGHT: f32 = 38.0;
@@ -746,10 +747,10 @@ fn render_window_button(
 
 impl LauncherApp {
     fn workspace_sidebar_width(&self) -> f32 {
-        if self.active_sidebar_tab == SidebarTab::Sensors {
-            SENSORS_SIDEBAR_WIDTH
-        } else {
-            WORKSPACE_SIDEBAR_WIDTH
+        match self.active_sidebar_tab {
+            SidebarTab::Servers => SERVERS_SIDEBAR_WIDTH,
+            SidebarTab::Sensors => SENSORS_SIDEBAR_WIDTH,
+            _ => WORKSPACE_SIDEBAR_WIDTH,
         }
     }
 
@@ -4308,7 +4309,7 @@ impl eframe::App for LauncherApp {
                             let available = ui.available_rect_before_wrap();
                             // Use the same geometry as the workspace, including on the first frame.
                             let content_left = ui.ctx().screen_rect().left() + MACHINE_RAIL_WIDTH
-                                + WORKSPACE_SIDEBAR_WIDTH + WORKSPACE_SIDEBAR_MARGIN.sum().x + WORKSPACE_GAP;
+                                + self.workspace_sidebar_width() + WORKSPACE_SIDEBAR_MARGIN.sum().x + WORKSPACE_GAP;
                             let slot_width = (available.right() - content_left.max(available.left()))
                                 .clamp(48.0, available.width().max(48.0));
                             ui.allocate_ui_with_layout(egui::vec2(slot_width, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -20978,7 +20979,7 @@ impl LauncherApp {
                 .id_salt("left_cards_scroll")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    let list_width = ui.available_width().min(340.0);
+                    let list_width = ui.available_width().min(SERVERS_SIDEBAR_WIDTH);
                     ui.set_width(list_width);
                     ui.set_max_width(list_width);
                     ui.spacing_mut().item_spacing.y = 4.0;

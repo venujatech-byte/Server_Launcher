@@ -1934,11 +1934,12 @@ impl LauncherApp {
     ) {
         let p = self.palette();
         Frame::none()
-            .fill(p.terminal_bg)
+            .fill(p.bg_card)
             .stroke(Stroke::NONE)
             .rounding(Rounding::same(12.0))
-            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+            .inner_margin(egui::Margin::same(10.0))
             .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     ui.spacing_mut().button_padding = egui::vec2(6.0, 3.0);
@@ -1991,45 +1992,52 @@ impl LauncherApp {
                 ui.add(egui::Label::new(RichText::new(format!("Commands in: {}", directory))
                     .size(10.5).color(p.text_muted)).truncate())
                     .on_hover_text(format!("Working directory: {}\nEach command starts a separate shell; it does not send input to the server process.\nRefresh Logs loads available process logs on demand.", directory));
-                ui.separator();
+                ui.add_space(4.0);
 
-                ScrollArea::both()
-                    .stick_to_bottom(true)
-                    .max_height(200.0)
-                    .auto_shrink([false, false])
+                Frame::none()
+                    .fill(p.terminal_bg)
+                    .rounding(Rounding::same(8.0))
+                    .inner_margin(egui::Margin::same(8.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        if let Some(session) = self.inline_terminal_sessions.get(&port) {
-                            if let Ok(logs) = session.logs.lock() {
-                                if logs.is_empty() {
-                                    ui.label(
-                                        RichText::new("No captured output yet. Run a command below or use Refresh Logs for available process logs.")
-                                            .italics()
-                                            .size(11.0)
-                                            .color(p.text_muted),
-                                    );
-                                } else {
-                                    for entry in logs.iter() {
-                                        let color = match entry.kind {
-                                            crate::service::LogKind::Stderr | crate::service::LogKind::Error => p.log_stderr,
-                                            crate::service::LogKind::Warning => p.log_warning,
-                                            crate::service::LogKind::Launcher => p.log_launcher,
-                                            crate::service::LogKind::Stdin => p.log_stdin,
-                                            crate::service::LogKind::Stdout => p.log_stdout,
-                                        };
-                                        let rt = RichText::new(format!("[{}] {}", entry.timestamp, entry.text))
-                                            .color(color)
-                                            .monospace()
-                                            .size(10.5);
-                                        ui.add(egui::Label::new(rt).wrap());
+                        ScrollArea::both()
+                            .id_salt(("inline_console_output", port))
+                            .stick_to_bottom(true)
+                            .max_height(200.0)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                if let Some(session) = self.inline_terminal_sessions.get(&port) {
+                                    if let Ok(logs) = session.logs.lock() {
+                                        if logs.is_empty() {
+                                            ui.label(
+                                                RichText::new("No captured output yet. Run a command below or use Refresh Logs for available process logs.")
+                                                    .italics()
+                                                    .size(11.0)
+                                                    .color(p.text_muted),
+                                            );
+                                        } else {
+                                            for entry in logs.iter() {
+                                                let color = match entry.kind {
+                                                    crate::service::LogKind::Stderr | crate::service::LogKind::Error => p.log_stderr,
+                                                    crate::service::LogKind::Warning => p.log_warning,
+                                                    crate::service::LogKind::Launcher => p.log_launcher,
+                                                    crate::service::LogKind::Stdin => p.log_stdin,
+                                                    crate::service::LogKind::Stdout => p.log_stdout,
+                                                };
+                                                let rt = RichText::new(format!("[{}] {}", entry.timestamp, entry.text))
+                                                    .color(color)
+                                                    .monospace()
+                                                    .size(10.5);
+                                                ui.add(egui::Label::new(rt).wrap());
+                                            }
+                                        }
                                     }
                                 }
-                            }
-                        }
+                            });
                     });
 
                 ui.add_space(4.0);
-                ui.separator();
 
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;

@@ -167,6 +167,8 @@ pub struct AdbDeviceConfig {
 pub struct ConfigFile {
     pub servers: Vec<ServerConfig>,
     #[serde(default)]
+    pub server_tab_order: Vec<String>,
+    #[serde(default)]
     pub ssh_hosts: Vec<SshRemoteHost>,
     #[serde(default)]
     pub adb_devices: Vec<AdbDeviceConfig>,

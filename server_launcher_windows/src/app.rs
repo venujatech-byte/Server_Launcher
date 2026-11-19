@@ -267,6 +267,7 @@ pub struct LauncherApp {
     config_path: PathBuf,
     services: Vec<Service>,
     active_tab: String, // "overview" or service.key
+    server_tab_order: Vec<String>,
     active_group_filter: String, // "All" or group name
     lan_ip: String,
 
@@ -883,6 +884,7 @@ impl LauncherApp {
             config_path,
             services,
             active_tab: "overview".to_string(),
+            server_tab_order: config_file.server_tab_order,
             active_group_filter: "All".to_string(),
             lan_ip: get_lan_ip(),
             sys: System::new(),
@@ -1310,6 +1312,7 @@ impl LauncherApp {
     fn persist_config(&self) {
         let cfg = ConfigFile {
             servers: self.services.iter().map(|s| s.config.clone()).collect(),
+            server_tab_order: self.server_tab_order.clone(),
             ssh_hosts: self.ssh_hosts.clone(),
             adb_devices: self.adb_devices.clone(),
             scripts: self.scripts.clone(),
@@ -5446,6 +5449,48 @@ mod layout_tests {
     use super::*;
 
     #[test]
+    fn server_tab_order_handles_both_directions_and_no_op_drops() {
+        let keys = || vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
+        let mut order = keys();
+        assert!(move_server_tab(&mut order, "a", "d", true));
+        assert_eq!(order, vec!["b", "c", "d", "a"]);
+        assert!(move_server_tab(&mut order, "a", "b", false));
+        assert_eq!(order, keys());
+        assert!(move_server_tab(&mut order, "d", "b", true));
+        assert_eq!(order, vec!["a", "b", "d", "c"]);
+        let unchanged = order.clone();
+        assert!(!move_server_tab(&mut order, "b", "d", false));
+        assert!(!move_server_tab(&mut order, "b", "a", true));
+        assert!(!move_server_tab(&mut order, "b", "b", true));
+        assert!(!move_server_tab(&mut order, "missing", "a", false));
+        assert!(!move_server_tab(&mut order, "a", "missing", false));
+        assert_eq!(order, unchanged);
+    }
+
+    #[test]
+    fn saved_tab_order_removes_stale_duplicates_and_appends_new_servers() {
+        let mut order = vec!["b".to_string(), "deleted".to_string(), "b".to_string()];
+        let keys = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        sync_server_tab_order(&mut order, &keys);
+        assert_eq!(order, vec!["b", "a", "c"]);
+        sync_server_tab_order(&mut order, &keys);
+        assert_eq!(order, vec!["b", "a", "c"]);
+        sync_server_tab_order(&mut order, &[]);
+        assert!(order.is_empty());
+    }
+
+    #[test]
+    fn tab_order_is_backward_compatible_and_round_trips() {
+        let mut config: ConfigFile = serde_json::from_str(r#"{"servers":[]}"#).unwrap();
+        assert!(config.server_tab_order.is_empty());
+        config.server_tab_order = vec!["b".into(), "a".into()];
+        let loaded: ConfigFile = serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+        assert_eq!(loaded.server_tab_order, vec!["b", "a"]);
+        assert!(loaded.servers.is_empty());
+    }
+
+
+    #[test]
     fn compact_server_name_aligns_left_with_a_full_selection_target() {
         let ctx = Context::default();
         let palette = crate::theme::ThemeMode::Dark.palette();
@@ -5885,6 +5930,54 @@ fn render_custom_toggle_switch(ui: &mut Ui, on: &mut bool, accent: Color32) -> b
         ui.painter().circle_filled(center, 6.0, thumb_color);
     }
     response.changed()
+}
+
+#[derive(Clone)]
+struct ServerTabDrag {
+    key: String,
+}
+
+fn sync_server_tab_order(order: &mut Vec<String>, keys: &[String]) {
+    let mut seen = HashSet::new();
+    order.retain(|key| keys.contains(key) && seen.insert(key.clone()));
+    for key in keys {
+        if !order.contains(key) { order.push(key.clone()); }
+    }
+}
+
+fn move_server_tab(order: &mut Vec<String>, source: &str, target: &str, after: bool) -> bool {
+    let Some(from) = order.iter().position(|key| key == source) else { return false; };
+    let Some(to) = order.iter().position(|key| key == target) else { return false; };
+    if from == to { return false; }
+    let insertion = to + usize::from(after);
+    let insertion = insertion - usize::from(from < insertion);
+    if insertion == from { return false; }
+    let key = order.remove(from);
+    order.insert(insertion, key);
+    true
+}
+
+fn render_notebook_tab(ui: &mut Ui, label: egui::text::LayoutJob, width: f32, active: bool, p: &crate::theme::ThemePalette) -> egui::Response {
+    let response = ui.scope(|ui| {
+        let visuals = ui.visuals_mut();
+        visuals.selection.bg_fill = p.bg_subtle;
+        visuals.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
+        visuals.widgets.hovered.weak_bg_fill = p.bg_button_hover;
+        visuals.widgets.active.weak_bg_fill = p.accent_subtle;
+        ui.add_sized([width, 28.0], egui::Button::new(label).truncate().selected(active)
+            .sense(egui::Sense::click_and_drag()).rounding(Rounding::same(6.0)).stroke(Stroke::NONE))
+    }).inner;
+    if active {
+        ui.painter().rect_filled(egui::Rect::from_min_max(
+            egui::pos2(response.rect.left() + 12.0, response.rect.bottom() - 2.0),
+            egui::pos2(response.rect.right() - 12.0, response.rect.bottom()),
+        ), Rounding::same(1.0), p.accent);
+    }
+    if response.has_focus() {
+        ui.painter().rect_stroke(response.rect, Rounding::same(6.0), Stroke::new(1.0_f32, p.accent));
+    }
+    if response.gained_focus() { response.scroll_to_me(Some(egui::Align::Center)); }
+    response
 }
 
 fn render_server_card_title(ui: &mut Ui, name: &str, width: f32, height: f32, selected: bool, p: &crate::theme::ThemePalette) -> egui::Response {
@@ -21307,88 +21400,141 @@ impl LauncherApp {
     fn render_servers_right_panel(&mut self, ui: &mut Ui) {
         let p = self.palette();
         ui.vertical(|ui| {
-            // Notebook Tabs Strip (Material 3 Dark Cockpit)
             let online_count = self.services.iter().filter(|s| s.state == ServiceState::Running).count();
             let total_count = self.services.len();
-
+            let keys: Vec<_> = self.services.iter().map(|s| s.config.key.clone()).collect();
+            sync_server_tab_order(&mut self.server_tab_order, &keys);
+            let ordered: Vec<_> = self.server_tab_order.iter()
+                .filter_map(|key| self.services.iter().find(|s| s.config.key == *key)).collect();
+            let reveal_selected = ui.ctx().data_mut(|data| {
+                let id = egui::Id::new("notebook_selected_tab");
+                let changed = data.get_temp::<String>(id).as_deref() != Some(self.active_tab.as_str());
+                data.insert_temp(id, self.active_tab.clone());
+                changed
+            });
             let mut to_switch_tab: Option<String> = None;
+            let mut reorder: Option<(String, String, bool)> = None;
 
-            // Native buttons provide consistent hover, focus and keyboard activation.
-            ui.scope(|ui| {
-                ui.visuals_mut().selection.bg_fill = p.bg_card_active;
-                ui.visuals_mut().selection.stroke = Stroke::new(1.0_f32, p.border_subtle);
-                ScrollArea::horizontal()
-                    .id_salt("notebook_tabs_scroll")
-                    .auto_shrink([false, true])
-                    .max_height(36.0)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
-                            let overview_active = self.active_tab == "overview";
-                            let mut label = egui::text::LayoutJob::default();
-                            label.append(&format!("{} Overview", crate::lucide::SERVER), 0.0, egui::TextFormat {
-                                font_id: egui::FontId::proportional(12.0),
-                                color: if overview_active { p.text_primary } else { p.text_secondary },
-                                ..Default::default()
-                            });
-                            label.append(&format!("  {online_count}/{total_count}"), 0.0, egui::TextFormat {
-                                font_id: egui::FontId::proportional(10.5),
-                                color: if online_count > 0 { p.success } else { p.text_muted },
-                                ..Default::default()
-                            });
-                            let response = ui.push_id("tab_overview", |ui| {
-                                ui.add_sized([132.0, 28.0], egui::Button::new(label)
-                                    .selected(overview_active).rounding(Rounding::same(6.0)))
-                            }).inner.on_hover_text(format!("{online_count} of {total_count} configured servers running"));
-                            if overview_active {
-                                ui.painter().rect_filled(egui::Rect::from_min_max(
-                                    egui::pos2(response.rect.left() + 12.0, response.rect.bottom() - 2.0),
-                                    egui::pos2(response.rect.right() - 12.0, response.rect.bottom()),
-                                ), Rounding::same(1.0), p.accent);
-                            }
-                            if response.clicked() { to_switch_tab = Some("overview".to_string()); }
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let overview_active = self.active_tab == "overview";
+                let mut label = egui::text::LayoutJob::default();
+                label.append(&format!("{} Overview", crate::lucide::SERVER), 0.0, egui::TextFormat {
+                    font_id: egui::FontId::proportional(12.0),
+                    color: if overview_active { p.text_primary } else { p.text_secondary },
+                    ..Default::default()
+                });
+                label.append(&format!("  {online_count}/{total_count}"), 0.0, egui::TextFormat {
+                    font_id: egui::FontId::proportional(10.5),
+                    color: if online_count > 0 { p.success } else { p.text_muted },
+                    ..Default::default()
+                });
+                let response = ui.push_id("tab_overview", |ui| render_notebook_tab(ui, label, 132.0, overview_active, &p))
+                    .inner.on_hover_text(format!("{online_count} running · {total_count} configured"));
+                if response.clicked() { to_switch_tab = Some("overview".to_string()); }
 
-                            for server in &self.services {
-                                let active = self.active_tab == server.config.key;
-                                let (dot, color, state) = match server.state {
-                                    ServiceState::Running => ("●", p.success, "Running"),
-                                    ServiceState::Starting => ("●", p.warning, "Starting"),
-                                    ServiceState::Stopping => ("●", p.warning, "Stopping"),
-                                    ServiceState::Errored => ("●", p.danger, "Failed"),
-                                    ServiceState::Stopped => ("○", p.text_muted, "Stopped"),
-                                };
-                                let mut label = egui::text::LayoutJob::default();
-                                label.append(&format!("{dot}  "), 0.0, egui::TextFormat {
-                                    font_id: egui::FontId::proportional(10.5), color,
-                                    ..Default::default()
-                                });
-                                label.append(&server.config.name, 0.0, egui::TextFormat {
-                                    font_id: egui::FontId::proportional(12.0),
-                                    color: if active { p.text_primary } else { p.text_secondary },
-                                    ..Default::default()
-                                });
-                                if server.config.port > 0 {
-                                    label.append(&format!("  :{}", server.config.port), 0.0, egui::TextFormat {
-                                        font_id: egui::FontId::monospace(10.5), color: p.text_muted,
+                let strip_width = (ui.available_width() - 28.0 - ui.spacing().item_spacing.x).max(0.0);
+                ui.allocate_ui_with_layout(egui::vec2(strip_width, 28.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.set_width(strip_width);
+                    ui.set_max_width(strip_width);
+                    ScrollArea::horizontal().id_salt("notebook_server_tabs_scroll")
+                        .auto_shrink([false, true]).max_height(28.0)
+                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                        .drag_to_scroll(false)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 4.0;
+                                for server in &ordered {
+                                    let active = self.active_tab == server.config.key;
+                                    let (dot, color, state) = if server.restart_at.is_some() {
+                                        ("●", p.warning, "Restarting")
+                                    } else {
+                                        match server.state {
+                                            ServiceState::Running => ("●", p.success, "Running"),
+                                            ServiceState::Starting => ("●", p.warning, "Starting"),
+                                            ServiceState::Stopping => ("●", p.warning, "Stopping"),
+                                            ServiceState::Errored => ("●", p.danger, "Errored"),
+                                            ServiceState::Stopped => ("○", p.text_muted, "Stopped"),
+                                        }
+                                    };
+                                    let mut label = egui::text::LayoutJob::default();
+                                    label.append(&format!("{dot}  "), 0.0, egui::TextFormat {
+                                        font_id: egui::FontId::proportional(10.5), color, ..Default::default()
+                                    });
+                                    label.append(&server.config.name, 0.0, egui::TextFormat {
+                                        font_id: egui::FontId::proportional(12.0),
+                                        color: if active { p.text_primary } else { p.text_secondary },
                                         ..Default::default()
                                     });
+                                    let width = ui.fonts(|fonts| fonts.layout_job(label.clone()).size().x + 20.0).clamp(76.0, 200.0);
+                                    let response = ui.push_id(("server_tab", &server.config.key), |ui| render_notebook_tab(ui, label, width, active, &p))
+                                        .inner.on_hover_text(format!("{} · {}\nDrag to reorder", server.config.name, state));
+                                    response.dnd_set_drag_payload(ServerTabDrag { key: server.config.key.clone() });
+                                    if active && reveal_selected { response.scroll_to_me(Some(egui::Align::Center)); }
+                                    if let Some(payload) = response.dnd_hover_payload::<ServerTabDrag>() {
+                                        if payload.key != server.config.key {
+                                            let after = ui.input(|i| i.pointer.interact_pos()).is_some_and(|pos| pos.x >= response.rect.center().x);
+                                            let x = if after { response.rect.right() } else { response.rect.left() };
+                                            ui.painter().line_segment([
+                                                egui::pos2(x, response.rect.top() + 3.0),
+                                                egui::pos2(x, response.rect.bottom() - 3.0),
+                                            ], Stroke::new(2.0_f32, p.accent));
+                                            if let Some(payload) = response.dnd_release_payload::<ServerTabDrag>() {
+                                                reorder = Some((payload.key.clone(), server.config.key.clone(), after));
+                                            }
+                                        }
+                                    }
+                                    if response.clicked() { to_switch_tab = Some(server.config.key.clone()); }
                                 }
-                                let width = ui.fonts(|fonts| fonts.layout_job(label.clone()).size().x + 20.0).clamp(76.0, 200.0);
-                                let response = ui.push_id(("server_tab", &server.config.key), |ui| {
-                                    ui.add_sized([width, 28.0], egui::Button::new(label).truncate()
-                                        .selected(active).rounding(Rounding::same(6.0)))
-                                }).inner.on_hover_text(format!("{} · {}\n{}", server.config.name, state, server.config.command));
-                                if active {
-                                    ui.painter().rect_filled(egui::Rect::from_min_max(
-                                        egui::pos2(response.rect.left() + 12.0, response.rect.bottom() - 2.0),
-                                        egui::pos2(response.rect.right() - 12.0, response.rect.bottom()),
-                                    ), Rounding::same(1.0), p.accent);
+                            });
+                            // Continue scrolling while dragging near an edge to reach hidden tabs.
+                            if egui::DragAndDrop::has_payload_of_type::<ServerTabDrag>(ui.ctx()) {
+                                if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                                    let clip = ui.clip_rect();
+                                    if clip.contains(pos) {
+                                        let step = ui.input(|i| i.stable_dt.clamp(0.001, 0.05)) * 480.0;
+                                        let delta = if pos.x < clip.left() + 20.0 { step }
+                                            else if pos.x > clip.right() - 20.0 { -step } else { 0.0 };
+                                        if delta != 0.0 {
+                                            ui.scroll_with_delta(egui::vec2(delta, 0.0));
+                                            ui.ctx().request_repaint();
+                                        }
+                                    }
                                 }
-                                if response.clicked() { to_switch_tab = Some(server.config.key.clone()); }
+                            }
+                        });
+                });
+                ui.add_enabled_ui(!ordered.is_empty(), |ui| {
+                    let menu = ui.menu_button(RichText::new(crate::lucide::CHEVRON_DOWN).size(12.0), |ui| {
+                        ui.set_width(240.0);
+                        ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                            for server in &ordered {
+                                if ui.add(egui::Button::new(&server.config.name).truncate().selected(self.active_tab == server.config.key)).clicked() {
+                                    to_switch_tab = Some(server.config.key.clone());
+                                    ui.close_menu();
+                                }
                             }
                         });
                     });
+                    menu.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "All server tabs"));
+                    menu.response.on_hover_text("All server tabs");
+                });
             });
+            if let Some(payload) = egui::DragAndDrop::payload::<ServerTabDrag>(ui.ctx()) {
+                if let (Some(pos), Some(server)) = (ui.input(|i| i.pointer.interact_pos()), self.services.iter().find(|s| s.config.key == payload.key)) {
+                    egui::Area::new(egui::Id::new("dragged_server_tab")).order(egui::Order::Tooltip)
+                        .fixed_pos(pos + egui::vec2(10.0, 12.0)).interactable(false).show(ui.ctx(), |ui| {
+                            Frame::none().fill(p.bg_card_active).rounding(Rounding::same(6.0))
+                                .inner_margin(egui::Margin::symmetric(10.0, 6.0)).show(ui, |ui| {
+                                    ui.set_max_width(200.0);
+                                    ui.add(egui::Label::new(RichText::new(&server.config.name).size(12.0).color(p.text_primary)).truncate());
+                                });
+                        });
+                }
+            }
+            if let Some((source, target, after)) = reorder {
+                if move_server_tab(&mut self.server_tab_order, &source, &target, after) { self.persist_config(); }
+            }
 
             if let Some(target) = to_switch_tab { self.active_tab = target; }
 

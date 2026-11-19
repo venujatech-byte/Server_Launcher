@@ -303,6 +303,8 @@ pub struct LauncherApp {
 
     // Expanded view state for external listening processes
     expanded_listeners: BTreeSet<u16>,
+    // Only cards explicitly expanded by the user are kept open.
+    expanded_server_cards: BTreeSet<String>,
 
     // App header icon texture
     #[allow(dead_code)]
@@ -899,6 +901,7 @@ impl LauncherApp {
             focus_overview_search: false,
             autocomplete_selected: 0,
             expanded_listeners: BTreeSet::new(),
+            expanded_server_cards: BTreeSet::new(),
             icon_texture,
             show_other_process_metrics: false,
             other_metrics: HashMap::new(),
@@ -5858,6 +5861,31 @@ fn render_custom_toggle_switch(ui: &mut Ui, on: &mut bool, accent: Color32) -> b
         ui.painter().circle_filled(center, 6.0, thumb_color);
     }
     response.changed()
+}
+
+fn render_modern_toggle_switch(ui: &mut Ui, on: &mut bool, p: &crate::theme::ThemePalette, label: &str) -> bool {
+    let (rect, mut response) = ui.allocate_exact_size(egui::vec2(30.0, 16.0), egui::Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *on, label));
+    let how_on = ui.ctx().animate_bool(response.id, *on);
+    let rounding = Rounding::same(8.0);
+    let fill = if *on { p.accent } else if response.hovered() { p.bg_button_hover } else { p.bg_button };
+    ui.painter().rect_filled(rect, rounding, fill);
+    if !*on {
+        ui.painter().rect_stroke(rect, rounding, Stroke::new(1.0_f32, p.text_muted));
+    }
+    if response.has_focus() {
+        ui.painter().rect_stroke(rect.expand(2.0), rounding, Stroke::new(1.5_f32, p.accent));
+    }
+    let circle_x = egui::lerp((rect.left() + 8.0)..=(rect.right() - 8.0), how_on);
+    let thumb = if *on { p.accent_text } else { p.text_secondary };
+    ui.painter().circle_filled(egui::pos2(circle_x, rect.center().y), 5.0, thumb);
+    let changed = response.changed();
+    response.on_hover_text(label);
+    changed
 }
 
 fn draw_circular_tachometer(ui: &mut Ui, size: f32, pct: f32, accent_color: Color32) {
@@ -20591,6 +20619,7 @@ impl LauncherApp {
                     let mut to_edit = None;
                     let mut to_delete = None;
                     let mut to_switch_tab = None;
+                    let mut to_toggle_collapse = None;
                     let mut start_grp = None;
                     let mut stop_grp = None;
                     let mut to_save_config = false;
@@ -20628,7 +20657,7 @@ impl LauncherApp {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         let btn_stop_grp = egui::Button::new(
-                                            RichText::new(format!("{} Stop", crate::lucide::STOP)).size(10.5).strong().color(p.danger),
+                                            RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED)).size(10.5).strong().color(p.danger),
                                         )
                                         .fill(p.danger_subtle)
                                         .stroke(Stroke::NONE)
@@ -20639,7 +20668,7 @@ impl LauncherApp {
                                         }
 
                                         let btn_start_grp = egui::Button::new(
-                                            RichText::new(format!("{} Start", crate::lucide::PLAY)).size(10.5).strong().color(p.accent_text),
+                                            RichText::new(format!("{} Start", crate::lucide::PLAY_FILLED)).size(10.5).strong().color(p.accent_text),
                                         )
                                         .fill(p.accent)
                                         .stroke(Stroke::NONE)
@@ -20654,421 +20683,567 @@ impl LauncherApp {
 
                         ui.add_space(6.0);
 
-                        // Server Cards for this group (Nocturnal Command exact container view)
+                        // Theme-aware server cards with minimize/expand support.
                         for idx in indices {
                             let s = &mut self.services[idx];
                             let key = s.config.key.clone();
                             let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
                             let is_selected_tab = self.active_tab == key;
+                            let is_collapsed = !self.expanded_server_cards.contains(&key);
+
                             let card_bg = if is_selected_tab {
                                 p.bg_card_active
                             } else {
                                 p.bg_card
                             };
 
-                            Frame::none()
-                                .fill(card_bg)
-                                .stroke(Stroke::NONE)
-                                .rounding(Rounding::same(18.0))
-                                .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                                .show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
+                            let (chip_bg, chip_dot, chip_text, status_label) = if s.restart_at.is_some() {
+                                (p.warning_subtle, p.warning, p.warning, "Restarting")
+                            } else if s.state == ServiceState::Starting {
+                                (p.warning_subtle, p.warning, p.warning, "Starting")
+                            } else if is_running {
+                                (p.success_subtle, p.success, p.success, "Running")
+                            } else if s.state == ServiceState::Errored {
+                                (p.danger_subtle, p.danger, p.danger, "Errored")
+                            } else {
+                                (p.bg_button, p.text_muted, p.text_secondary, "Stopped")
+                            };
 
-                                    // Row 1: Header (Glowing dot + Server Title on Left, Status chip badge on Right)
-                                    let (dot_col, halo_col, chip_bg, chip_text, status_label) = if s.restart_at.is_some() {
-                                        (
-                                            p.warning,
-                                            p.warning.gamma_multiply(0.25),
-                                            p.warning_subtle,
-                                            p.warning,
-                                            "Restarting",
-                                        )
-                                    } else if is_running {
-                                        (
-                                            p.success,
-                                            p.success.gamma_multiply(0.28),
-                                            p.success_subtle,
-                                            p.success,
-                                            "Running",
-                                        )
-                                    } else if s.state == ServiceState::Errored {
-                                        (
-                                            p.danger,
-                                            p.danger.gamma_multiply(0.25),
-                                            p.danger_subtle,
-                                            p.danger,
-                                            "Errored",
-                                        )
-                                    } else {
-                                        (
-                                            p.text_muted,
-                                            p.text_muted.gamma_multiply(0.20),
-                                            p.bg_button,
-                                            p.text_muted,
-                                            "Stopped",
-                                        )
-                                    };
+                            if is_collapsed {
+                                // ─── Collapsed / Minimized Card ───────────────────────
+                                Frame::none()
+                                    .fill(card_bg)
+                                    .stroke(Stroke::NONE)
+                                    .rounding(Rounding::same(12.0))
+                                    .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.spacing_mut().item_spacing.y = 3.0;
+                                        ui.visuals_mut().widgets.hovered.bg_stroke = Stroke::new(1.0_f32, p.text_primary);
+                                        ui.visuals_mut().widgets.active.bg_stroke = Stroke::new(1.0_f32, p.accent);
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 6.0;
 
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 8.0;
-
-                                        // Glowing dot
-                                        let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-                                        ui.painter().circle_filled(dot_rect.center(), 7.0, halo_col);
-                                        ui.painter().circle_filled(dot_rect.center(), 4.0, dot_col);
-
-                                        // Title
-                                        let name_resp = ui.add(
-                                            egui::Label::new(
-                                                RichText::new(&s.config.name)
-                                                    .strong()
-                                                    .size(14.0)
-                                                    .color(p.text_primary),
+                                            let title_width = (ui.available_width() - 144.0).max(0.0);
+                                            let title_resp = ui.add_sized([title_width, 24.0],
+                                                egui::Label::new(
+                                                    RichText::new(&s.config.name)
+                                                        .strong()
+                                                        .size(12.5)
+                                                        .color(p.text_primary),
+                                                )
+                                                .truncate()
+                                                .halign(egui::Align::Min)
+                                                .sense(egui::Sense::click()),
                                             )
-                                            .sense(egui::Sense::click()),
-                                        )
-                                        .on_hover_text(&s.config.name);
+                                            .on_hover_text(&s.config.name);
 
-                                        if name_resp.clicked() {
-                                            to_switch_tab = Some(key.clone());
-                                        }
+                                            if title_resp.clicked() {
+                                                to_switch_tab = Some(key.clone());
+                                            }
 
-                                        // Status Chip (pill badge on the right, zero border)
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            Frame::none()
-                                                .fill(chip_bg)
-                                                .stroke(Stroke::NONE)
-                                                .rounding(Rounding::same(999.0))
-                                                .inner_margin(egui::Margin::symmetric(10.0, 3.5))
-                                                .show(ui, |ui| {
-                                                    ui.label(
-                                                        RichText::new(status_label)
-                                                            .size(11.0)
-                                                            .strong()
-                                                            .color(chip_text),
-                                                    );
-                                                });
-                                        });
-                                    });
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.spacing_mut().item_spacing.x = 6.0;
 
-                                    ui.add_space(8.0);
-
-                                    // Row 2: Recessed Command Box (full width, zero border)
-                                    Frame::none()
-                                        .fill(p.bg_input)
-                                        .stroke(Stroke::NONE)
-                                        .rounding(Rounding::same(8.0))
-                                        .inner_margin(egui::Margin::symmetric(10.0, 6.0))
-                                        .show(ui, |ui| {
-                                            ui.set_width(ui.available_width());
-                                            ui.horizontal(|ui| {
-                                                ui.label(
-                                                    RichText::new(&s.config.command)
+                                                let btn_chevron = egui::Button::new(
+                                                    RichText::new(crate::lucide::CHEVRON_DOWN)
                                                         .size(11.0)
-                                                        .monospace()
-                                                        .color(p.info),
-                                                );
-                                                if s.config.port > 0 {
-                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                        ui.label(
-                                                            RichText::new(format!(":{}", s.config.port))
-                                                                .size(10.5)
-                                                                .monospace()
-                                                                .color(p.text_muted),
+                                                        .color(p.text_secondary),
+                                                )
+                                                .fill(Color32::TRANSPARENT)
+                                                .min_size(egui::vec2(22.0, 22.0));
+
+                                                if ui.add(btn_chevron).on_hover_text("Expand card").clicked() {
+                                                    to_toggle_collapse = Some(key.clone());
+                                                }
+
+                                                let (action_icon, action_fg, action_bg) = if is_running {
+                                                    (crate::lucide::STOP_FILLED, p.danger, p.danger_subtle)
+                                                } else {
+                                                    (crate::lucide::PLAY_FILLED, p.accent_text, p.accent)
+                                                };
+                                                let action = egui::Button::new(RichText::new(action_icon).size(11.0).color(action_fg))
+                                                    .fill(action_bg)
+                                                    .rounding(Rounding::same(8.0))
+                                                    .min_size(egui::vec2(24.0, 24.0));
+                                                let hint = format!("{} {}", if is_running { "Stop" } else { "Start" }, s.config.name);
+                                                let response = ui.add(action).on_hover_text(&hint);
+                                                response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &hint));
+                                                if response.clicked() {
+                                                    if is_running { to_stop = Some(idx); } else { to_start = Some(idx); }
+                                                }
+
+                                                // Status Chip Pill (strictly dot on left, text on right)
+                                                Frame::none()
+                                                    .fill(chip_bg)
+                                                    .rounding(Rounding::same(999.0))
+                                                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                                    .show(ui, |ui| {
+                                                        ui.allocate_ui_with_layout(
+                                                            egui::vec2(64.0, 14.0),
+                                                            egui::Layout::left_to_right(egui::Align::Center),
+                                                            |ui| {
+                                                                ui.spacing_mut().item_spacing.x = 6.0;
+                                                                let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                                                ui.painter().circle_filled(dot_rect.center(), 2.5, chip_dot);
+                                                                ui.label(
+                                                                    RichText::new(status_label)
+                                                                        .size(10.5)
+                                                                        .strong()
+                                                                        .color(chip_text),
+                                                                );
+                                                            },
                                                         );
                                                     });
+                                            });
+                                        });
+                                    });
+                            } else {
+                                // ─── Expanded Card ───────────────────────────────────
+                                Frame::none()
+                                    .fill(card_bg)
+                                    .stroke(Stroke::NONE)
+                                    .rounding(Rounding::same(12.0))
+                                    .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.spacing_mut().item_spacing.y = 3.0;
+                                        ui.visuals_mut().widgets.hovered.bg_stroke = Stroke::new(1.0_f32, p.text_primary);
+                                        ui.visuals_mut().widgets.active.bg_stroke = Stroke::new(1.0_f32, p.accent);
+
+                                        // Row 1: Header (Title on left, Chevron Up + Status Chip on right)
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 8.0;
+
+                                            let title_width = (ui.available_width() - 120.0).max(0.0);
+                                            let title_resp = ui.add_sized([title_width, 20.0],
+                                                egui::Label::new(
+                                                    RichText::new(&s.config.name)
+                                                        .strong()
+                                                        .size(12.5)
+                                                        .color(p.text_primary),
+                                                )
+                                                .truncate()
+                                                .halign(egui::Align::Min)
+                                                .sense(egui::Sense::click()),
+                                            )
+                                            .on_hover_text(&s.config.name);
+
+                                            if title_resp.clicked() {
+                                                to_switch_tab = Some(key.clone());
+                                            }
+
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.spacing_mut().item_spacing.x = 8.0;
+
+                                                let btn_chevron = egui::Button::new(
+                                                    RichText::new(crate::lucide::CHEVRON_UP)
+                                                        .size(11.0)
+                                                        .color(p.text_secondary),
+                                                )
+                                                .fill(Color32::TRANSPARENT)
+                                                .min_size(egui::vec2(22.0, 22.0));
+
+                                                if ui.add(btn_chevron).on_hover_text("Minimize card").clicked() {
+                                                    to_toggle_collapse = Some(key.clone());
                                                 }
+
+                                                // Status Chip Pill (strictly dot on left, text on right)
+                                                Frame::none()
+                                                    .fill(chip_bg)
+                                                    .rounding(Rounding::same(999.0))
+                                                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                                    .show(ui, |ui| {
+                                                        ui.allocate_ui_with_layout(
+                                                            egui::vec2(64.0, 14.0),
+                                                            egui::Layout::left_to_right(egui::Align::Center),
+                                                            |ui| {
+                                                                ui.spacing_mut().item_spacing.x = 6.0;
+                                                                let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                                                ui.painter().circle_filled(dot_rect.center(), 2.5, chip_dot);
+                                                                ui.label(
+                                                                    RichText::new(status_label)
+                                                                        .size(10.5)
+                                                                        .strong()
+                                                                        .color(chip_text),
+                                                                );
+                                                            },
+                                                        );
+                                                    });
                                             });
                                         });
 
-                                    ui.add_space(7.0);
+                                        ui.add_space(6.0);
 
-                                    // Row 3: Micro Telemetry Pills (PID, CPU%, RAM MB, Uptime)
-                                    let pill_bg = p.bg_button;
-                                    let pill_rounding = Rounding::same(6.0);
-                                    let pill_margin = egui::Margin::symmetric(8.0, 4.0);
+                                        // Row 2: Recessed Command Box
+                                        Frame::none()
+                                            .fill(p.bg_input)
+                                            .rounding(Rounding::same(10.0))
+                                            .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                                            .show(ui, |ui| {
+                                                ui.set_width(ui.available_width());
+                                                ui.spacing_mut().item_spacing.y = 3.0;
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                                    ui.label(
+                                                        RichText::new(">_")
+                                                            .strong()
+                                                            .size(10.5)
+                                                            .monospace()
+                                                            .color(p.accent),
+                                                    );
+                                                    ui.add_space(4.0);
+                                                    let command_width = (ui.available_width() - if s.config.port > 0 { 92.0 } else { 30.0 }).max(0.0);
+                                                    ui.add_sized([command_width, 18.0], egui::Label::new(
+                                                        RichText::new(&s.config.command)
+                                                            .size(10.5)
+                                                            .monospace()
+                                                            .color(p.text_primary),
+                                                    ).truncate()).on_hover_text(&s.config.command);
 
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 6.0;
+                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                        let btn_copy = egui::Button::new(
+                                                            RichText::new(crate::lucide::COPY)
+                                                                .size(10.5)
+                                                                .color(p.text_muted),
+                                                        )
+                                                        .fill(Color32::TRANSPARENT)
+                                                        .stroke(Stroke::NONE);
 
-                                        if is_running {
-                                            if let Some(pid) = s.pid {
-                                                Frame::none()
-                                                    .fill(pill_bg)
-                                                    .stroke(Stroke::NONE)
-                                                    .rounding(pill_rounding)
-                                                    .inner_margin(pill_margin)
-                                                    .show(ui, |ui| {
-                                                        ui.horizontal(|ui| {
-                                                            ui.spacing_mut().item_spacing.x = 4.0;
-                                                            ui.label(RichText::new(crate::lucide::HASH).size(10.0));
+                                                        if ui.add(btn_copy).on_hover_text("Copy command").clicked() {
+                                                            ui.ctx().copy_text(s.config.command.clone());
+                                                        }
+
+                                                        if s.config.port > 0 {
+                                                            ui.add_space(6.0);
                                                             ui.label(
-                                                                RichText::new(format!("{}", pid))
+                                                                RichText::new(format!(":{}", s.config.port))
                                                                     .size(11.0)
                                                                     .monospace()
-                                                                    .color(p.text_muted),
+                                                                    .color(p.info),
                                                             );
-                                                        });
-                                                    });
-                                            }
-
-                                            Frame::none()
-                                                .fill(pill_bg)
-                                                .stroke(Stroke::NONE)
-                                                .rounding(pill_rounding)
-                                                .inner_margin(pill_margin)
-                                                .show(ui, |ui| {
-                                                    ui.horizontal(|ui| {
-                                                        ui.spacing_mut().item_spacing.x = 4.0;
-                                                        ui.label(RichText::new(crate::lucide::CPU).size(10.5).color(p.info));
-                                                        ui.label(
-                                                            RichText::new(format!("{:.1}%", s.cpu_usage))
-                                                                .size(11.0)
-                                                                .monospace()
-                                                                .strong()
-                                                                .color(p.info),
-                                                        );
+                                                        }
                                                     });
                                                 });
+                                            });
 
-                                            Frame::none()
-                                                .fill(pill_bg)
-                                                .stroke(Stroke::NONE)
-                                                .rounding(pill_rounding)
-                                                .inner_margin(pill_margin)
-                                                .show(ui, |ui| {
-                                                    ui.horizontal(|ui| {
-                                                        ui.spacing_mut().item_spacing.x = 4.0;
-                                                        ui.label(RichText::new(crate::lucide::RAM).size(10.0).color(p.success));
-                                                        ui.label(
-                                                            RichText::new(format!("{:.1} MB", s.memory_mb))
-                                                                .size(11.0)
-                                                                .monospace()
-                                                                .strong()
-                                                                .color(p.success),
-                                                        );
-                                                    });
-                                                });
+                                        ui.add_space(4.0);
 
-                                            let uptime = s.uptime_formatted();
-                                            let uptime_str = if uptime.is_empty() { "0s".to_string() } else { uptime };
+                                        // Row 3: Telemetry Grid (4 micro-cards, never overflowing)
+                                        let grid_bg = p.bg_subtle;
+                                        let grid_rounding = Rounding::same(8.0);
+                                        let grid_margin = egui::Margin::symmetric(4.0, 3.0);
+                                        let total_w = ui.available_width();
+                                        let card_w = (((total_w - 3.0 * 5.0) / 4.0) - grid_margin.sum().x).floor().max(0.0);
+
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 5.0;
+
+                                            // Card 1: PID
                                             Frame::none()
-                                                .fill(pill_bg)
-                                                .stroke(Stroke::NONE)
-                                                .rounding(pill_rounding)
-                                                .inner_margin(pill_margin)
+                                                .fill(grid_bg)
+                                                .rounding(grid_rounding)
+                                                .inner_margin(grid_margin)
                                                 .show(ui, |ui| {
-                                                    ui.horizontal(|ui| {
-                                                        ui.spacing_mut().item_spacing.x = 4.0;
-                                                        ui.label(RichText::new(crate::lucide::CLOCK).size(10.5).color(p.text_muted));
-                                                        ui.label(
-                                                            RichText::new(uptime_str)
-                                                                .size(11.0)
-                                                                .monospace()
-                                                                .color(p.text_muted),
-                                                        );
-                                                    });
-                                                });
-                                        } else {
-                                            if s.config.port > 0 {
-                                                Frame::none()
-                                                    .fill(pill_bg)
-                                                    .stroke(Stroke::NONE)
-                                                    .rounding(pill_rounding)
-                                                    .inner_margin(pill_margin)
-                                                    .show(ui, |ui| {
+                                                    ui.set_width(card_w);
+                                                    ui.vertical(|ui| {
+                                                        ui.spacing_mut().item_spacing.y = 2.0;
                                                         ui.horizontal(|ui| {
-                                                            ui.spacing_mut().item_spacing.x = 4.0;
-                                                            ui.label(RichText::new(crate::lucide::NETWORK).size(10.0).color(p.info));
-                                                            ui.label(RichText::new(format!(":{}", s.config.port)).size(11.0).monospace().color(p.info));
+                                                            ui.spacing_mut().item_spacing.x = 3.0;
+                                                            ui.label(RichText::new(crate::lucide::HASH).size(9.5).color(p.text_secondary));
+                                                            ui.label(RichText::new("PID").size(9.5).color(p.text_secondary));
                                                         });
-                                                    });
-                                            }
-
-                                            let folder_name = std::path::Path::new(&s.config.cwd)
-                                                .file_name()
-                                                .map(|n| n.to_string_lossy().to_string())
-                                                .unwrap_or_else(|| "dir".to_string());
-                                            Frame::none()
-                                                .fill(pill_bg)
-                                                .stroke(Stroke::NONE)
-                                                .rounding(pill_rounding)
-                                                .inner_margin(pill_margin)
-                                                .show(ui, |ui| {
-                                                    ui.horizontal(|ui| {
-                                                        ui.spacing_mut().item_spacing.x = 4.0;
-                                                        ui.label(RichText::new(crate::lucide::FOLDER).size(10.0));
-                                                        ui.label(RichText::new(folder_name).size(10.5).monospace().color(p.text_muted));
+                                                        let pid_str = if is_running {
+                                                            s.pid.map(|p| format!("{}", p)).unwrap_or_else(|| "-".to_string())
+                                                        } else if s.config.port > 0 {
+                                                            format!(":{}", s.config.port)
+                                                        } else {
+                                                            "-".to_string()
+                                                        };
+                                                        ui.add(egui::Label::new(RichText::new(pid_str).size(10.5).monospace().strong().color(p.text_primary)).truncate());
                                                     });
                                                 });
-                                        }
-                                    });
 
-                                    ui.add_space(8.0);
+                                            // Card 2: CPU
+                                            Frame::none()
+                                                .fill(grid_bg)
+                                                .rounding(grid_rounding)
+                                                .inner_margin(grid_margin)
+                                                .show(ui, |ui| {
+                                                    ui.set_width(card_w);
+                                                    ui.vertical(|ui| {
+                                                        ui.spacing_mut().item_spacing.y = 2.0;
+                                                        ui.horizontal(|ui| {
+                                                            ui.spacing_mut().item_spacing.x = 3.0;
+                                                            ui.label(RichText::new(crate::lucide::CPU).size(9.5).color(p.text_secondary));
+                                                            ui.label(RichText::new("CPU").size(9.5).color(p.text_secondary));
+                                                        });
+                                                        let cpu_str = if is_running { format!("{:.1}%", s.cpu_usage) } else { "0.0%".to_string() };
+                                                        ui.add(egui::Label::new(RichText::new(cpu_str).size(10.5).monospace().strong().color(p.text_primary)).truncate());
+                                                    });
+                                                });
 
-                                    // Row 4: Action Buttons (Start/Stop & Restart on left, circular tools on right)
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                            // Card 3: Memory / Folder
+                                            Frame::none()
+                                                .fill(grid_bg)
+                                                .rounding(grid_rounding)
+                                                .inner_margin(grid_margin)
+                                                .show(ui, |ui| {
+                                                    ui.set_width(card_w);
+                                                    ui.vertical(|ui| {
+                                                        ui.spacing_mut().item_spacing.y = 2.0;
+                                                        ui.horizontal(|ui| {
+                                                            ui.spacing_mut().item_spacing.x = 3.0;
+                                                            if is_running {
+                                                                ui.label(RichText::new(crate::lucide::RAM).size(9.5).color(p.text_secondary));
+                                                                ui.label(RichText::new("Memory").size(9.5).color(p.text_secondary));
+                                                            } else {
+                                                                ui.label(RichText::new(crate::lucide::FOLDER).size(9.5).color(p.text_secondary));
+                                                                ui.label(RichText::new("Dir").size(9.5).color(p.text_secondary));
+                                                            }
+                                                        });
+                                                        let mem_str = if is_running {
+                                                            format!("{:.1} MB", s.memory_mb)
+                                                        } else {
+                                                            let folder = std::path::Path::new(&s.config.cwd)
+                                                                .file_name()
+                                                                .map(|n| n.to_string_lossy().to_string())
+                                                                .unwrap_or_else(|| "-".to_string());
+                                                            folder
+                                                        };
+                                                        ui.add(egui::Label::new(RichText::new(mem_str).size(11.0).monospace().strong().color(p.text_primary)).truncate());
+                                                    });
+                                                });
 
+                                            // Card 4: Uptime
+                                            Frame::none()
+                                                .fill(grid_bg)
+                                                .rounding(grid_rounding)
+                                                .inner_margin(grid_margin)
+                                                .show(ui, |ui| {
+                                                    ui.set_width(card_w);
+                                                    ui.vertical(|ui| {
+                                                        ui.spacing_mut().item_spacing.y = 2.0;
+                                                        ui.horizontal(|ui| {
+                                                            ui.spacing_mut().item_spacing.x = 3.0;
+                                                            ui.label(RichText::new(crate::lucide::CLOCK).size(9.5).color(p.text_secondary));
+                                                            ui.label(RichText::new("Uptime").size(9.5).color(p.text_secondary));
+                                                        });
+                                                        let uptime_str = if is_running {
+                                                            let up = s.uptime_formatted();
+                                                            if up.is_empty() { "0s".to_string() } else { up }
+                                                        } else {
+                                                            "0s".to_string()
+                                                        };
+                                                        ui.add(egui::Label::new(RichText::new(uptime_str).size(10.5).monospace().strong().color(p.text_primary)).truncate());
+                                                    });
+                                                });
+                                        });
+
+                                        ui.add_space(6.0);
+
+                                        // Row 4: Primary Action Buttons
                                         if is_running {
-                                            let btn_stop = egui::Button::new(
-                                                RichText::new(format!("{} Stop", crate::lucide::STOP))
-                                                    .size(10.5)
-                                                    .strong()
-                                                    .color(p.danger),
-                                            )
-                                            .fill(p.danger_subtle)
-                                            .stroke(Stroke::NONE)
-                                            .rounding(Rounding::same(999.0))
-                                            .min_size(egui::vec2(56.0, 24.0));
-                                            if ui.add(btn_stop).on_hover_text("Stop this server").clicked() {
-                                                to_stop = Some(idx);
-                                            }
+                                            let avail_w = ui.available_width();
+                                            let btn_w = ((avail_w - 8.0) / 2.0).max(80.0);
 
-                                            let btn_restart = egui::Button::new(
-                                                RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW))
-                                                    .size(10.5)
-                                                    .strong()
-                                                    .color(p.info),
-                                            )
-                                            .fill(p.info_subtle)
-                                            .stroke(Stroke::NONE)
-                                            .rounding(Rounding::same(999.0))
-                                            .min_size(egui::vec2(66.0, 24.0));
-                                            if ui.add(btn_restart).on_hover_text("Restart this server").clicked() {
-                                                to_restart = Some(idx);
-                                            }
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 8.0;
+
+                                                let btn_stop = egui::Button::new(
+                                                    RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED))
+                                                        .size(10.5)
+                                                        .strong()
+                                                        .color(p.danger),
+                                                )
+                                                .fill(p.danger_subtle)
+                                                .rounding(Rounding::same(999.0))
+                                                .min_size(egui::vec2(btn_w, 24.0));
+
+                                                if ui.add(btn_stop).on_hover_text("Stop this server").clicked() {
+                                                    to_stop = Some(idx);
+                                                }
+
+                                                let btn_restart = egui::Button::new(
+                                                    RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW))
+                                                        .size(10.5)
+                                                        .strong()
+                                                        .color(p.accent_text),
+                                                )
+                                                .fill(p.accent)
+                                                .rounding(Rounding::same(999.0))
+                                                .min_size(egui::vec2(btn_w, 24.0));
+
+                                                if ui.add(btn_restart).on_hover_text("Restart this server").clicked() {
+                                                    to_restart = Some(idx);
+                                                }
+                                            });
                                         } else {
                                             let btn_start = egui::Button::new(
-                                                RichText::new(format!("{} Start", crate::lucide::PLAY))
+                                                RichText::new(format!("{} Start", crate::lucide::PLAY_FILLED))
                                                     .size(10.5)
                                                     .strong()
                                                     .color(p.accent_text),
                                             )
                                             .fill(p.accent)
-                                            .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(999.0))
-                                            .min_size(egui::vec2(58.0, 24.0));
+                                            .min_size(egui::vec2(ui.available_width(), 24.0));
+
                                             if ui.add(btn_start).on_hover_text("Start this server").clicked() {
                                                 to_start = Some(idx);
                                             }
                                         }
 
-                                        // Right side circular action buttons
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.spacing_mut().item_spacing.x = 3.0;
+                                        ui.add_space(4.0);
 
-                                            let circ_bg = p.bg_button;
-                                            let circ_size = egui::vec2(24.0, 24.0);
-                                            let circ_rnd = Rounding::same(999.0);
+                                        // Row 5: Secondary tools with a separate destructive action on the right.
+                                        ui.allocate_ui_with_layout(
+                                            egui::vec2(ui.available_width(), 20.0),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.spacing_mut().item_spacing.x = 6.0;
 
-                                            let btn_del = egui::Button::new(
-                                                RichText::new(crate::lucide::TRASH).size(10.0).color(p.danger),
-                                            )
-                                            .fill(circ_bg)
-                                            .stroke(Stroke::NONE)
-                                            .rounding(circ_rnd)
-                                            .min_size(circ_size);
-                                            if ui.add(btn_del).on_hover_text("Delete server").clicked() {
-                                                to_delete = Some(key.clone());
-                                            }
+                                                let circ_bg = p.bg_button;
+                                                let circ_size = egui::vec2(24.0, 24.0);
+                                                let circ_rnd = Rounding::same(999.0);
+                                                let tool_icon_col = p.text_secondary;
 
-                                            let btn_folder = egui::Button::new(
-                                                RichText::new(crate::lucide::FOLDER).size(10.0).color(p.text_muted),
-                                            )
-                                            .fill(circ_bg)
-                                            .stroke(Stroke::NONE)
-                                            .rounding(circ_rnd)
-                                            .min_size(circ_size);
-                                            if ui.add(btn_folder).on_hover_text("Open working directory in file manager").clicked() {
-                                                crate::service::open_folder(&s.config.cwd);
-                                            }
-
-                                            let btn_vscode = egui::Button::new(
-                                                RichText::new(crate::lucide::CODE).size(10.0).color(p.accent),
-                                            )
-                                            .fill(circ_bg)
-                                            .stroke(Stroke::NONE)
-                                            .rounding(circ_rnd)
-                                            .min_size(circ_size);
-                                            if ui.add(btn_vscode).on_hover_text("Open working directory in VS Code (code .)").clicked() {
-                                                crate::service::open_in_vscode(&s.config.cwd);
-                                            }
-
-                                            let btn_edit = egui::Button::new(
-                                                RichText::new(crate::lucide::PENCIL).size(10.0).color(p.text_muted),
-                                            )
-                                            .fill(circ_bg)
-                                            .stroke(Stroke::NONE)
-                                            .rounding(circ_rnd)
-                                            .min_size(circ_size);
-                                            if ui.add(btn_edit).on_hover_text("Edit server configuration").clicked() {
-                                                to_edit = Some(s.config.clone());
-                                            }
-
-                                            let btn_console = egui::Button::new(
-                                                RichText::new(crate::lucide::TERMINAL).size(10.0).color(p.text_muted),
-                                            )
-                                            .fill(circ_bg)
-                                            .stroke(Stroke::NONE)
-                                            .rounding(circ_rnd)
-                                            .min_size(circ_size);
-                                            if ui.add(btn_console).on_hover_text("Open in console / terminal window").clicked() {
-                                                s.open_console();
-                                            }
-
-                                            if (is_running && s.config.port > 0) || s.config.url.is_some() {
-                                                let target_url = if let Some(u) = &s.config.url {
-                                                    u.clone()
-                                                } else {
-                                                    format!("http://localhost:{}", s.config.port)
-                                                };
-                                                let btn_browser = egui::Button::new(
-                                                    RichText::new(crate::lucide::EXTERNAL_LINK).size(10.5).strong().color(p.info),
+                                                let btn_console = egui::Button::new(
+                                                    RichText::new(crate::lucide::TERMINAL).size(11.0).color(tool_icon_col),
                                                 )
                                                 .fill(circ_bg)
-                                                .stroke(Stroke::NONE)
                                                 .rounding(circ_rnd)
                                                 .min_size(circ_size);
-                                                if ui.add(btn_browser).on_hover_text(format!("Open {} in browser", target_url)).clicked() {
-                                                    ui.ctx().open_url(egui::OpenUrl::new_tab(target_url));
+                                                if ui.add(btn_console).on_hover_text("Open in console / terminal window").clicked() {
+                                                    s.open_console();
                                                 }
-                                            }
-                                        });
+
+                                                let btn_edit = egui::Button::new(
+                                                    RichText::new(crate::lucide::PENCIL).size(11.0).color(tool_icon_col),
+                                                )
+                                                .fill(circ_bg)
+                                                .rounding(circ_rnd)
+                                                .min_size(circ_size);
+                                                if ui.add(btn_edit).on_hover_text("Edit server configuration").clicked() {
+                                                    to_edit = Some(s.config.clone());
+                                                }
+
+                                                let btn_vscode = egui::Button::new(
+                                                    RichText::new(crate::lucide::CODE).size(11.0).color(tool_icon_col),
+                                                )
+                                                .fill(circ_bg)
+                                                .rounding(circ_rnd)
+                                                .min_size(circ_size);
+                                                if ui.add(btn_vscode).on_hover_text("Open working directory in VS Code (code .)").clicked() {
+                                                    crate::service::open_in_vscode(&s.config.cwd);
+                                                }
+
+                                                let btn_folder = egui::Button::new(
+                                                    RichText::new(crate::lucide::FOLDER).size(11.0).color(tool_icon_col),
+                                                )
+                                                .fill(circ_bg)
+                                                .rounding(circ_rnd)
+                                                .min_size(circ_size);
+                                                if ui.add(btn_folder).on_hover_text("Open working directory in file manager").clicked() {
+                                                    crate::service::open_folder(&s.config.cwd);
+                                                }
+
+                                                if (is_running && s.config.port > 0) || s.config.url.is_some() {
+                                                    let target_url = if let Some(u) = &s.config.url {
+                                                        u.clone()
+                                                    } else {
+                                                        format!("http://localhost:{}", s.config.port)
+                                                    };
+                                                    let btn_browser = egui::Button::new(
+                                                        RichText::new(crate::lucide::EXTERNAL_LINK).size(11.0).strong().color(p.accent),
+                                                    )
+                                                    .fill(circ_bg)
+                                                    .rounding(circ_rnd)
+                                                    .min_size(circ_size);
+                                                    if ui.add(btn_browser).on_hover_text(format!("Open {} in browser", target_url)).clicked() {
+                                                        ui.ctx().open_url(egui::OpenUrl::new_tab(target_url));
+                                                    }
+                                                }
+
+                                                // Dedicated Delete action pinned to the right.
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    let btn_del = egui::Button::new(
+                                                        RichText::new(crate::lucide::TRASH).size(10.5).color(p.danger),
+                                                    )
+                                                    .fill(p.danger_subtle)
+                                                    .stroke(Stroke::NONE)
+                                                    .rounding(circ_rnd)
+                                                    .min_size(circ_size);
+
+                                                    if ui.add(btn_del).on_hover_text("Delete server").clicked() {
+                                                        to_delete = Some(key.clone());
+                                                    }
+                                                });
+                                            },
+                                        );
+
+                                        ui.add_space(4.0);
+
+                                        // Subtle horizontal divider line
+                                        let line_color = accent_with_alpha(p.text_muted, 40);
+                                        let (div_rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+                                        ui.painter().line_segment(
+                                            [div_rect.left_top(), div_rect.right_top()],
+                                            Stroke::new(1.0_f32, line_color),
+                                        );
+
+                                        ui.add_space(6.0);
+
+                                        // Row 6: Modern Toggle Switches (Guaranteed full width rows)
+                                        let toggle_label_color = p.text_secondary;
+
+                                        // Row 1: autostart
+                                        ui.allocate_ui_with_layout(
+                                            egui::vec2(ui.available_width(), 20.0),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(RichText::new("autostart").size(11.0).color(toggle_label_color));
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    if render_modern_toggle_switch(ui, &mut s.config.autostart, &p, "Start automatically") {
+                                                        to_save_config = true;
+                                                    }
+                                                });
+                                            },
+                                        );
+
+                                        ui.add_space(4.0);
+
+                                        // Row 2: run in external terminal
+                                        ui.allocate_ui_with_layout(
+                                            egui::vec2(ui.available_width(), 20.0),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(RichText::new("run in external terminal").size(11.0).color(toggle_label_color));
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    if render_modern_toggle_switch(ui, &mut s.config.own_console, &p, "Run in external terminal") {
+                                                        to_save_config = true;
+                                                    }
+                                                });
+                                            },
+                                        );
+
+                                        ui.add_space(4.0);
+
+                                        // Row 3: auto-restart
+                                        ui.allocate_ui_with_layout(
+                                            egui::vec2(ui.available_width(), 20.0),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(RichText::new("auto-restart").size(11.0).color(toggle_label_color));
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    if render_modern_toggle_switch(ui, &mut s.config.auto_restart, &p, "Restart automatically") {
+                                                        to_save_config = true;
+                                                    }
+                                                });
+                                            },
+                                        );
                                     });
-
-                                    ui.add_space(8.0);
-
-                                    // Row 5: Checkboxes (autostart & run in external terminal on left, auto-restart on right)
-                                    ui.horizontal(|ui| {
-                                        let cb_color = p.text_muted;
-                                        if ui.checkbox(
-                                            &mut s.config.autostart,
-                                            RichText::new("autostart").size(11.0).color(cb_color),
-                                        ).on_hover_text("Automatically start this server when Server Launcher opens").changed() {
-                                            to_save_config = true;
-                                        }
-
-                                        ui.add_space(8.0);
-
-                                        let ext_color = if s.config.own_console { p.info } else { cb_color };
-                                        if ui.checkbox(
-                                            &mut s.config.own_console,
-                                            RichText::new("run in external terminal").size(11.0).color(ext_color),
-                                        ).on_hover_text("Launch this server in an external desktop terminal window").changed() {
-                                            to_save_config = true;
-                                        }
-
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            if ui.checkbox(
-                                                &mut s.config.auto_restart,
-                                                RichText::new("auto-restart").size(11.0).color(cb_color),
-                                            ).on_hover_text("Auto-restart this server if it exits unexpectedly or crashes").changed() {
-                                                to_save_config = true;
-                                            }
-                                        });
-                                    });
-                                });
+                            }
 
                             ui.add_space(6.0);
                         }
@@ -21091,6 +21266,13 @@ impl LauncherApp {
                             s.stop();
                             self.persist_config();
                             if self.active_tab == k { self.active_tab = "overview".to_string(); }
+                        }
+                    }
+                    if let Some(k) = to_toggle_collapse {
+                        if self.expanded_server_cards.contains(&k) {
+                            self.expanded_server_cards.remove(&k);
+                        } else {
+                            self.expanded_server_cards.insert(k);
                         }
                     }
                 });

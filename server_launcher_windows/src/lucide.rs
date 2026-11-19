@@ -77,6 +77,9 @@ pub const REFRESH_CW: &str = "\u{e145}"; // refresh-cw
 pub const PLAY: &str = "\u{e13c}"; // play
 pub const SQUARE: &str = "\u{e167}"; // square
 pub const STOP: &str = "\u{e167}"; // square
+// Filled monochrome action symbols supplied by the bundled Inter font.
+pub const PLAY_FILLED: &str = "\u{25b6}";
+pub const STOP_FILLED: &str = "\u{25a0}";
 pub const PAUSE: &str = "\u{e12e}"; // pause
 pub const PLUS: &str = "\u{e13d}"; // plus
 pub const MINUS: &str = "\u{e11c}"; // minus

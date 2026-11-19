@@ -304,8 +304,8 @@ pub struct LauncherApp {
     // Expanded view state for external listening processes
     expanded_listeners: BTreeSet<u16>,
 
-    // Collapsed/minimized view state for server cards (empty = expanded by default)
-    pub collapsed_server_cards: BTreeSet<String>,
+    // Only cards explicitly expanded by the user are kept open.
+    pub expanded_server_cards: BTreeSet<String>,
 
     // App header icon texture
     #[allow(dead_code)]
@@ -902,7 +902,7 @@ impl LauncherApp {
             focus_overview_search: false,
             autocomplete_selected: 0,
             expanded_listeners: BTreeSet::new(),
-            collapsed_server_cards: BTreeSet::new(),
+            expanded_server_cards: BTreeSet::new(),
             icon_texture,
             show_other_process_metrics: false,
             other_metrics: HashMap::new(),
@@ -20604,7 +20604,7 @@ impl LauncherApp {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         let btn_stop_grp = egui::Button::new(
-                                            RichText::new(format!("{} Stop", crate::lucide::STOP)).size(10.5).strong().color(p.danger),
+                                            RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED)).size(10.5).strong().color(p.danger),
                                         )
                                         .fill(p.danger_subtle)
                                         .stroke(Stroke::NONE)
@@ -20615,7 +20615,7 @@ impl LauncherApp {
                                         }
 
                                         let btn_start_grp = egui::Button::new(
-                                            RichText::new(format!("{} Start", crate::lucide::PLAY)).size(10.5).strong().color(p.accent_text),
+                                            RichText::new(format!("{} Start", crate::lucide::PLAY_FILLED)).size(10.5).strong().color(p.accent_text),
                                         )
                                         .fill(p.accent)
                                         .stroke(Stroke::NONE)
@@ -20636,7 +20636,7 @@ impl LauncherApp {
                             let key = s.config.key.clone();
                             let is_running = s.state == ServiceState::Running || s.state == ServiceState::Starting;
                             let is_selected_tab = self.active_tab == key;
-                            let is_collapsed = self.collapsed_server_cards.contains(&key);
+                            let is_collapsed = !self.expanded_server_cards.contains(&key);
 
                             let card_bg = if is_selected_tab {
                                 p.bg_card_active
@@ -20660,7 +20660,7 @@ impl LauncherApp {
                                 // ─── Collapsed / Minimized Card ───────────────────────
                                 Frame::none()
                                     .fill(card_bg)
-                                    .stroke(if is_selected_tab { Stroke::new(1.0_f32, p.accent) } else { Stroke::NONE })
+                                    .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(12.0))
                                     .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                                     .show(ui, |ui| {
@@ -20669,10 +20669,10 @@ impl LauncherApp {
                                         ui.visuals_mut().widgets.hovered.bg_stroke = Stroke::new(1.0_f32, p.text_primary);
                                         ui.visuals_mut().widgets.active.bg_stroke = Stroke::new(1.0_f32, p.accent);
                                         ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 8.0;
+                                            ui.spacing_mut().item_spacing.x = 6.0;
 
-                                            let title_width = (ui.available_width() - 120.0).max(0.0);
-                                            let title_resp = ui.add_sized([title_width, 20.0],
+                                            let title_width = (ui.available_width() - 144.0).max(0.0);
+                                            let title_resp = ui.add_sized([title_width, 24.0],
                                                 egui::Label::new(
                                                     RichText::new(&s.config.name)
                                                         .strong()
@@ -20680,6 +20680,7 @@ impl LauncherApp {
                                                         .color(p.text_primary),
                                                 )
                                                 .truncate()
+                                                .halign(egui::Align::Min)
                                                 .sense(egui::Sense::click()),
                                             )
                                             .on_hover_text(&s.config.name);
@@ -20689,7 +20690,7 @@ impl LauncherApp {
                                             }
 
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.spacing_mut().item_spacing.x = 8.0;
+                                                ui.spacing_mut().item_spacing.x = 6.0;
 
                                                 let btn_chevron = egui::Button::new(
                                                     RichText::new(crate::lucide::CHEVRON_DOWN)
@@ -20701,6 +20702,22 @@ impl LauncherApp {
 
                                                 if ui.add(btn_chevron).on_hover_text("Expand card").clicked() {
                                                     to_toggle_collapse = Some(key.clone());
+                                                }
+
+                                                let (action_icon, action_fg, action_bg) = if is_running {
+                                                    (crate::lucide::STOP_FILLED, p.danger, p.danger_subtle)
+                                                } else {
+                                                    (crate::lucide::PLAY_FILLED, p.accent_text, p.accent)
+                                                };
+                                                let action = egui::Button::new(RichText::new(action_icon).size(11.0).color(action_fg))
+                                                    .fill(action_bg)
+                                                    .rounding(Rounding::same(8.0))
+                                                    .min_size(egui::vec2(24.0, 24.0));
+                                                let hint = format!("{} {}", if is_running { "Stop" } else { "Start" }, s.config.name);
+                                                let response = ui.add(action).on_hover_text(&hint);
+                                                response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &hint));
+                                                if response.clicked() {
+                                                    if is_running { to_stop = Some(idx); } else { to_start = Some(idx); }
                                                 }
 
                                                 // Status Chip Pill (strictly dot on left, text on right)
@@ -20732,7 +20749,7 @@ impl LauncherApp {
                                 // ─── Expanded Card ───────────────────────────────────
                                 Frame::none()
                                     .fill(card_bg)
-                                    .stroke(if is_selected_tab { Stroke::new(1.0_f32, p.accent) } else { Stroke::NONE })
+                                    .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(12.0))
                                     .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                                     .show(ui, |ui| {
@@ -20754,6 +20771,7 @@ impl LauncherApp {
                                                         .color(p.text_primary),
                                                 )
                                                 .truncate()
+                                                .halign(egui::Align::Min)
                                                 .sense(egui::Sense::click()),
                                             )
                                             .on_hover_text(&s.config.name);
@@ -20980,7 +20998,7 @@ impl LauncherApp {
                                                 ui.spacing_mut().item_spacing.x = 8.0;
 
                                                 let btn_stop = egui::Button::new(
-                                                    RichText::new(format!("{} Stop", crate::lucide::STOP))
+                                                    RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED))
                                                         .size(10.5)
                                                         .strong()
                                                         .color(p.danger),
@@ -21009,7 +21027,7 @@ impl LauncherApp {
                                             });
                                         } else {
                                             let btn_start = egui::Button::new(
-                                                RichText::new(format!("{} Start", crate::lucide::PLAY))
+                                                RichText::new(format!("{} Start", crate::lucide::PLAY_FILLED))
                                                     .size(10.5)
                                                     .strong()
                                                     .color(p.accent_text),
@@ -21100,7 +21118,7 @@ impl LauncherApp {
                                                         RichText::new(crate::lucide::TRASH).size(10.5).color(p.danger),
                                                     )
                                                     .fill(p.danger_subtle)
-                                                    .stroke(Stroke::new(1.5_f32, p.danger))
+                                                    .stroke(Stroke::NONE)
                                                     .rounding(circ_rnd)
                                                     .min_size(circ_size);
 
@@ -21198,10 +21216,10 @@ impl LauncherApp {
                         }
                     }
                     if let Some(k) = to_toggle_collapse {
-                        if self.collapsed_server_cards.contains(&k) {
-                            self.collapsed_server_cards.remove(&k);
+                        if self.expanded_server_cards.contains(&k) {
+                            self.expanded_server_cards.remove(&k);
                         } else {
-                            self.collapsed_server_cards.insert(k);
+                            self.expanded_server_cards.insert(k);
                         }
                     }
                 });

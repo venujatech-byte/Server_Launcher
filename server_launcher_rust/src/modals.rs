@@ -2257,181 +2257,132 @@ pub fn render_command_modal(
     state: &mut CommandModalState,
     palette: &ThemePalette,
 ) -> Option<SavedCommand> {
-    if !state.open {
-        return None;
-    }
-
-    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+    if !state.open { return None; }
+    if ctx.input(|input| input.key_pressed(Key::Escape)) {
         state.open = false;
         return None;
     }
-
     let mut result = None;
-    let title = if state.is_edit {
-        format!("{} Edit Saved Command", crate::lucide::PENCIL)
-    } else {
-        format!("{} Save Custom Command", crate::lucide::COMMAND)
-    };
-
+    let title = if state.is_edit { "Edit command" } else { "Save command" };
     let screen = ctx.screen_rect();
-    let modal_w = 480.0_f32.min(screen.width() - 40.0).max(340.0);
-    let max_h = (screen.height() - 40.0).max(340.0);
-
+    let modal_w = 520.0_f32.min((screen.width() - 64.0).max(200.0));
+    let max_h = 480.0_f32.min((screen.height() - 96.0).max(200.0));
+    let mut window_open = state.open;
     let mut is_open = state.open;
-    let window_id = egui::Id::new("command_modal_dialog");
-    let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
-    Window::new(&title)
-        .id(window_id)
-        .title_bar(false)
-        .collapsible(false)
-        .resizable(false)
-        .movable(false)
-        .current_pos(screen.center() + drag_offset)
-        .pivot(egui::Align2::CENTER_CENTER)
-        .min_width(modal_w)
-        .max_width(modal_w)
-        .default_height(320.0)
-        .max_height(max_h)
-        .frame(
-            egui::Frame::none()
-                .fill(Color32::from_rgb(17, 19, 27))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
-                .rounding(Rounding::same(16.0))
-                .shadow(egui::epaint::Shadow {
-                    offset: egui::vec2(0.0, 8.0),
-                    blur: 24.0,
-                    spread: 0.0,
-                    color: Color32::from_black_alpha(160),
-                })
-                .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
-        )
+    Window::new(RichText::new(title).size(17.0).strong())
+        .id(egui::Id::new("command_modal_dialog"))
+        .open(&mut window_open)
+        .collapsible(false).resizable(false).movable(true)
+        .default_pos(screen.center()).pivot(egui::Align2::CENTER_CENTER)
+        .min_width(modal_w).max_width(modal_w)
+        .fixed_size(egui::vec2(modal_w, max_h))
+        .frame(egui::Frame::none().fill(palette.bg_card).stroke(Stroke::NONE)
+            .rounding(Rounding::same(14.0))
+            .shadow(egui::epaint::Shadow { offset: egui::vec2(0.0, 4.0), blur: 16.0, spread: 0.0, color: Color32::from_black_alpha(120) })
+            .inner_margin(egui::Margin::same(18.0)))
         .show(ctx, |ui| {
-            render_modal_titlebar(ui, &title, &mut is_open);
-            ui.add_space(8.0);
-            ui.add_space(4.0);
-
-            if let Some(err) = &state.error {
-                ui.label(RichText::new(err).size(11.5).color(palette.danger));
-                ui.add_space(4.0);
+            *ui.visuals_mut() = palette.egui_visuals();
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+            ui.spacing_mut().interact_size.y = 26.0;
+            ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
+            ui.style_mut().text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
+            ui.style_mut().text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(11.5));
+            ui.style_mut().text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.5));
+            ui.visuals_mut().widgets.inactive.weak_bg_fill = palette.bg_button;
+            ui.label(RichText::new("Keep a command ready to run again.").size(11.5).color(palette.text_muted));
+            if let Some(error) = &state.error {
+                ui.label(RichText::new(error).size(11.5).color(palette.danger));
             }
-
-            // Command Name
-            ui.label(RichText::new("Name / Label:").size(12.0).strong().color(palette.text_primary));
-            ui.add(
-                egui::TextEdit::singleline(&mut state.name)
-                    .hint_text("e.g. Git Status & Log, Prune Docker, Disk Free")
-                    .desired_width(ui.available_width()),
-            );
             ui.add_space(8.0);
-
-            // Category & Host
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new("Category:").size(12.0).strong().color(palette.text_primary));
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.category)
-                            .hint_text("e.g. Git, Docker, System, Deploy")
-                            .desired_width(200.0),
-                    );
+            let body_height = (ui.available_height() - 40.0 - 2.0 * ui.spacing().item_spacing.y).max(0.0);
+            egui::ScrollArea::vertical().id_salt(("command_modal_body", &state.id))
+                .max_height(body_height).auto_shrink([false, false]).drag_to_scroll(false)
+                .show(ui, |ui| {
+                    // Command name
+                    ui.label(RichText::new("Name *").size(12.0).strong());
+                    ui.add(egui::TextEdit::singleline(&mut state.name).text_color(palette.text_secondary)
+                        .margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0))
+                        .clip_text(true).desired_width(ui.available_width())
+                        .hint_text(RichText::new("e.g. Git status or disk usage").color(palette.text_muted)));
+                    ui.add_space(8.0);
+                    // Category and host scope stack when two columns cannot fit.
+                    let columns = if ui.available_width() >= 420.0 { 2 } else { 1 };
+                    ui.columns(columns, |cols| {
+                        cols[0].vertical(|ui| {
+                            ui.label(RichText::new("Category").size(12.0).strong());
+                            ui.add(egui::TextEdit::singleline(&mut state.category).text_color(palette.text_secondary)
+                                .margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0))
+                                .clip_text(true).desired_width(ui.available_width())
+                                .hint_text(RichText::new("General").color(palette.text_muted)));
+                        });
+                        cols[columns - 1].vertical(|ui| {
+                            ui.label(RichText::new("Scope").size(12.0).strong());
+                            let scope = state.host_id.as_ref().map_or_else(|| "Local PC".to_string(), |host| format!("Host: {}", host));
+                            egui::Frame::none().fill(palette.bg_subtle).rounding(Rounding::same(8.0))
+                                .inner_margin(egui::Margin::symmetric(8.0, 6.0)).show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.add(egui::Label::new(RichText::new(&scope).size(12.0).color(palette.text_secondary)).truncate()).on_hover_text(&scope);
+                                });
+                        });
+                    });
+                    ui.add_space(8.0);
+                    // Command string
+                    ui.label(RichText::new("Command *").size(12.0).strong());
+                    ui.add(egui::TextEdit::multiline(&mut state.command).code_editor()
+                        .font(egui::TextStyle::Monospace).text_color(palette.text_secondary)
+                        .margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 64.0))
+                        .desired_rows(3).desired_width(ui.available_width())
+                        .hint_text(RichText::new("e.g. git status").color(palette.text_muted)));
+                    ui.add_space(8.0);
+                    // Description
+                    ui.label(RichText::new("Description (optional)").size(12.0).strong());
+                    ui.add(egui::TextEdit::singleline(&mut state.description).text_color(palette.text_secondary)
+                        .margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0))
+                        .clip_text(true).desired_width(ui.available_width())
+                        .hint_text(RichText::new("What does this command do?").color(palette.text_muted)));
+                    ui.add_space(8.0);
+                    // External terminal option
+                    egui::Frame::none().fill(palette.bg_subtle).rounding(Rounding::same(10.0))
+                        .inner_margin(egui::Margin::same(8.0)).show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.checkbox(&mut state.run_in_terminal,
+                                RichText::new("Run in an external terminal").size(11.5).color(palette.text_primary))
+                                .on_hover_text("Required for full-screen terminal tools such as top, htop and vim.");
+                            ui.label(RichText::new("Use for interactive tools such as htop, vim or nano.").size(10.5).color(palette.text_muted));
+                        });
                 });
-
-                ui.add_space(10.0);
-
-                ui.vertical(|ui| {
-                    ui.label(RichText::new("Scope:").size(12.0).strong().color(palette.text_primary));
-                    let scope_str = if let Some(h) = &state.host_id {
-                        format!("Host: {}", h)
-                    } else {
-                        "Local PC".to_string()
-                    };
-                    ui.label(RichText::new(scope_str).size(12.0).color(palette.text_muted));
-                });
-            });
-            ui.add_space(8.0);
-
-            // Command String
-            ui.label(RichText::new("Command to Execute:").size(12.0).strong().color(palette.text_primary));
-            ui.add(
-                egui::TextEdit::multiline(&mut state.command)
-                    .font(egui::TextStyle::Monospace)
-                    .desired_rows(3)
-                    .desired_width(ui.available_width()),
-            );
-            ui.add_space(8.0);
-
-            // Description
-            ui.label(RichText::new("Description (optional):").size(12.0).color(palette.text_muted));
-            ui.add(
-                egui::TextEdit::singleline(&mut state.description)
-                    .hint_text("Short note on what this command does")
-                    .desired_width(ui.available_width()),
-            );
-
-            // Run with external terminal option
-            ui.add_space(8.0);
-            let is_ext_term = state.run_in_terminal;
-            ui.checkbox(
-                &mut state.run_in_terminal,
-                RichText::new("Run with external terminal (for interactive tools like top, htop, nano)")
-                    .size(11.5)
-                    .color(if is_ext_term { palette.accent } else { palette.text_secondary }),
-            ).on_hover_text("Launch an interactive external desktop terminal window when executing this command (required for full-screen TUI tools like top, htop, vim)");
-
-            ui.add_space(12.0);
-            ui.separator();
-            ui.add_space(6.0);
-
-            // Action Buttons
+            ui.add_space(10.0);
+            // Action buttons stay outside the scrolling form.
             ui.horizontal(|ui| {
-                let btn_cancel = egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
-                    .fill(Color32::from_rgb(26, 29, 40))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
-                    .rounding(Rounding::same(6.0))
-                    .min_size(egui::vec2(75.0, 28.0));
-                if ui.add(btn_cancel).clicked() {
-                    state.open = false;
-                    is_open = false;
-                }
-
+                ui.set_min_height(30.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let btn_save = egui::Button::new(
-                        RichText::new(format!("{} Save Command", crate::lucide::SAVE)).size(12.0).strong().color(Color32::WHITE),
-                    )
-                    .fill(palette.accent)
-                    .rounding(Rounding::same(5.0))
-                    .min_size(egui::vec2(100.0, 28.0));
-
-                    if ui.add(btn_save).clicked() {
+                    let save = egui::Button::new(RichText::new(format!("{} Save command", crate::lucide::SAVE)).size(11.5).color(palette.accent_text))
+                        .fill(palette.accent).stroke(Stroke::NONE).rounding(Rounding::same(8.0))
+                        .min_size(egui::vec2(112.0, 30.0));
+                    if ui.add(save).clicked() {
                         if state.name.trim().is_empty() {
                             state.error = Some("Command name cannot be empty".to_string());
                         } else if state.command.trim().is_empty() {
                             state.error = Some("Command string cannot be empty".to_string());
                         } else {
                             result = Some(SavedCommand {
-                                id: state.id.clone(),
-                                name: state.name.trim().to_string(),
-                                command: state.command.trim().to_string(),
+                                id: state.id.clone(), name: state.name.trim().to_string(), command: state.command.trim().to_string(),
                                 description: state.description.trim().to_string(),
-                                category: if state.category.trim().is_empty() {
-                                    "General".to_string()
-                                } else {
-                                    state.category.trim().to_string()
-                                },
-                                host_id: state.host_id.clone(),
-                                run_in_terminal: state.run_in_terminal,
+                                category: if state.category.trim().is_empty() { "General".to_string() } else { state.category.trim().to_string() },
+                                host_id: state.host_id.clone(), run_in_terminal: state.run_in_terminal,
                             });
                             state.open = false;
                             is_open = false;
                         }
                     }
+                    let cancel = egui::Button::new(RichText::new("Cancel").size(11.5).color(palette.text_secondary))
+                        .fill(palette.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(8.0))
+                        .min_size(egui::vec2(76.0, 30.0));
+                    if ui.add(cancel).clicked() { is_open = false; }
                 });
             });
         });
-
-    if !is_open {
-        state.open = false;
-    }
-
+    if !window_open || !is_open { state.open = false; }
     result
 }
 

@@ -7375,10 +7375,20 @@ impl LauncherApp {
                 egui::ComboBox::from_id_salt("cmd_cat_combo")
                     .selected_text(RichText::new(combo_label).size(11.0).color(p.text_secondary))
                     .width((ui.available_width() - 4.0).max(40.0))
+                    .height(260.0).wrap_mode(egui::TextWrapMode::Truncate)
                     .show_ui(ui, |ui| {
+                        ui.spacing_mut().interact_size.y = 24.0;
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                        ui.visuals_mut().selection.bg_fill = p.accent_subtle;
+                        ui.visuals_mut().selection.stroke = Stroke::new(1.0_f32, p.accent);
+                        ui.visuals_mut().widgets.hovered.weak_bg_fill = p.bg_button_hover;
                         for (cat, cat_count) in &categories {
                             let label = format!("{} ({})", cat, cat_count);
-                            ui.selectable_value(&mut self.saved_command_category, cat.clone(), label);
+                            let selected = self.saved_command_category == *cat;
+                            ui.selectable_value(&mut self.saved_command_category, cat.clone(),
+                                RichText::new(&label).size(11.5).color(if selected { p.accent } else { p.text_secondary })).on_hover_text(&label);
                         }
                     });
             });

@@ -9715,22 +9715,21 @@ impl LauncherApp {
         let mut close_requested = false;
 
         let window_id = egui::Id::new("settings_modal_dialog");
-        let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
         egui::Window::new("Settings & Preferences")
             .id(window_id)
             .title_bar(false)
             .collapsible(false)
             .resizable(false)
-            .movable(false)
-            .current_pos(screen.center() + drag_offset)
+            .movable(true)
+            .default_pos(screen.center())
             .pivot(egui::Align2::CENTER_CENTER)
             .min_width(modal_w)
             .max_width(modal_w)
             .fixed_size(egui::vec2(modal_w, max_h.min(580.0)))
             .frame(
                 egui::Frame::none()
-                    .fill(Color32::from_rgb(16, 17, 24))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                    .fill(palette.bg_card)
+                    .stroke(Stroke::NONE)
                     .rounding(Rounding::same(18.0))
                     .shadow(egui::epaint::Shadow {
                         offset: egui::vec2(0.0, 12.0),
@@ -9741,8 +9740,16 @@ impl LauncherApp {
                     .inner_margin(egui::Margin::symmetric(18.0, 16.0)),
             )
             .show(ctx, |ui| {
+                *ui.visuals_mut() = palette.egui_visuals();
+                ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+                ui.spacing_mut().interact_size.y = 26.0;
+                ui.style_mut().text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
+                ui.style_mut().text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(11.5));
+                ui.visuals_mut().widgets.inactive.weak_bg_fill = palette.bg_button;
                 // Header with Modal Icon Pill, Title & Close Button
                 ui.horizontal(|ui| {
+                    ui.set_height(38.0);
+                    ui.set_min_height(38.0);
                     Frame::none()
                         .fill(palette.accent_subtle)
                         .stroke(Stroke::NONE)
@@ -9752,9 +9759,11 @@ impl LauncherApp {
                             ui.label(RichText::new(crate::lucide::SETTINGS).size(14.0).color(palette.accent));
                         });
                     ui.add_space(4.0);
-                    ui.vertical(|ui| {
-                        ui.label(RichText::new("Settings & Preferences").size(15.0).strong().color(palette.text_primary));
-                        ui.label(RichText::new("Customize themes, accent colors, system autostart, and server backups").size(10.5).color(palette.text_muted));
+                    let title_width = (ui.available_width() - 34.0).max(0.0);
+                    ui.allocate_ui_with_layout(egui::vec2(title_width, 38.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.spacing_mut().item_spacing.y = 3.0;
+                        ui.add(egui::Label::new(RichText::new("Settings & Preferences").size(15.0).strong().color(palette.text_primary)).truncate());
+                        ui.add(egui::Label::new(RichText::new("Appearance, startup and backups").size(10.5).color(palette.text_muted)).truncate());
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let btn_close = egui::Button::new(RichText::new(crate::lucide::X).size(12.0).color(palette.text_muted))
@@ -9772,8 +9781,8 @@ impl LauncherApp {
 
                 // Segmented Tab Navigation Bar
                 Frame::none()
-                    .fill(Color32::from_rgb(12, 13, 19))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 28, 40)))
+                    .fill(palette.bg_input)
+                    .stroke(Stroke::NONE)
                     .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(5.0, 5.0))
                     .show(ui, |ui| {
@@ -9781,7 +9790,7 @@ impl LauncherApp {
                             ui.spacing_mut().item_spacing.x = 4.0;
                             let tabs = SettingsTab::all();
                             let avail_w = ui.available_width() - ((tabs.len() - 1) as f32 * 4.0);
-                            let tab_w = (avail_w / tabs.len() as f32).max(50.0);
+                            let tab_w = (avail_w / tabs.len() as f32).max(0.0);
 
                             for &tab in tabs {
                                 let is_active = self.settings_active_tab == tab;
@@ -9792,7 +9801,9 @@ impl LauncherApp {
                                 };
 
                                 let btn = egui::Button::new(
-                                    RichText::new(format!("{} {}", tab.icon(), tab.label()))
+                                    RichText::new(if tab_w >= 108.0 { format!("{} {}", tab.icon(), tab.label()) }
+                                        else if tab == SettingsTab::Backup { "Backup".to_string() }
+                                        else { tab.label().to_string() })
                                         .size(11.0)
                                         .strong()
                                         .color(fg),
@@ -9800,9 +9811,9 @@ impl LauncherApp {
                                 .fill(bg)
                                 .stroke(Stroke::NONE)
                                 .rounding(Rounding::same(8.0))
-                                .min_size(egui::vec2(tab_w, 28.0));
-
-                                if ui.add(btn).clicked() {
+                                .wrap_mode(egui::TextWrapMode::Truncate);
+                                let (rect, _) = ui.allocate_exact_size(egui::vec2(tab_w, 28.0), egui::Sense::hover());
+                                if ui.put(rect, btn).on_hover_text(tab.label()).clicked() {
                                     self.settings_active_tab = tab;
                                 }
                             }
@@ -9813,42 +9824,60 @@ impl LauncherApp {
 
                 // Tab Content inside ScrollArea
                 ScrollArea::vertical()
-                    .id_salt("settings_tab_content_scroll")
+                    .id_salt(("settings_tab_content_scroll", self.settings_active_tab.label()))
                     .auto_shrink([false, false])
-                    .max_height((ui.available_height() - 50.0).max(0.0))
+                    .max_height((ui.available_height() - 42.0 - 2.0 * ui.spacing().item_spacing.y).max(0.0))
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 12.0;
 
                         match self.settings_active_tab {
                             SettingsTab::Appearance => {
-                                // 1. ACCENT COLOR CARD
+                                // Base theme selection
                                 Frame::none()
-                                    .fill(palette.bg_card)
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(28, 30, 44)))
+                                    .fill(palette.bg_subtle)
+                                    .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(12.0))
                                     .inner_margin(egui::Margin::same(14.0))
                                     .show(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new(format!("{} Accent Color", crate::lucide::SPARKLES)).size(13.0).strong().color(palette.text_primary));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                let current_hex_str = crate::theme::format_hex_color(palette.accent);
-                                                Frame::none()
-                                                    .fill(palette.accent_subtle)
-                                                    .stroke(Stroke::NONE)
-                                                    .rounding(Rounding::same(999.0))
-                                                    .inner_margin(egui::Margin::symmetric(8.0, 3.0))
-                                                    .show(ui, |ui| {
-                                                        ui.horizontal(|ui| {
-                                                            ui.spacing_mut().item_spacing.x = 4.0;
-                                                            ui.label(RichText::new("●").size(8.0).color(palette.accent));
-                                                            ui.label(RichText::new(format!("Active: {}", current_hex_str)).size(10.0).monospace().strong().color(palette.accent));
-                                                        });
-                                                    });
-                                            });
-                                        });
+                                        ui.label(RichText::new(format!("{} Base theme", crate::lucide::PALETTE)).size(13.0).strong().color(palette.text_primary));
 
                                         ui.add_space(2.0);
-                                        ui.label(RichText::new("Choose an accent color applied universally across navigation, telemetry pills, sensors charts, waveforms, and button highlights.").size(10.5).color(palette.text_muted));
+                                        ui.label(RichText::new("Select obsidian dark, catppuccin, dracula, nord, light, or dynamic GTK4 system theme.").size(10.5).color(palette.text_muted));
+                                        ui.add_space(8.0);
+
+                                        // Theme Pills
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                                            for &thm in ThemeMode::all() {
+                                                let is_active = self.theme == thm;
+                                                let (bg, fg) = if is_active {
+                                                    (palette.accent, palette.accent_text)
+                                                } else {
+                                                    (palette.bg_button, palette.text_secondary)
+                                                };
+                                                let btn = egui::Button::new(RichText::new(format!("{} {}", thm.emoji(), thm.name())).size(10.5).strong().color(fg))
+                                                    .fill(bg)
+                                                    .stroke(Stroke::NONE)
+                                                    .rounding(Rounding::same(999.0))
+                                                    .min_size(egui::vec2(0.0, 24.0));
+                                                if ui.add(btn).clicked() {
+                                                    change_theme = Some(thm);
+                                                }
+                                            }
+                                        });
+                                    });
+
+                                // Accent colour selection
+                                Frame::none()
+                                    .fill(palette.bg_subtle)
+                                    .stroke(Stroke::NONE)
+                                    .rounding(Rounding::same(12.0))
+                                    .inner_margin(egui::Margin::same(14.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(format!("{} Accent colour", crate::lucide::SPARKLES)).size(13.0).strong().color(palette.text_primary));
+
+                                        ui.add_space(2.0);
+                                        ui.label(RichText::new("Choose the highlight colour for navigation, buttons and charts.").size(10.5).color(palette.text_muted));
                                         ui.add_space(10.0);
 
                                         // Follow System / GTK4 Accent Button
@@ -9875,7 +9904,7 @@ impl LauncherApp {
                                         }
 
                                         ui.add_space(8.0);
-                                        ui.label(RichText::new("CURATED ACCENT SWATCHES").size(10.0).monospace().strong().color(palette.text_muted));
+                                        ui.label(RichText::new("Accent colours").size(10.0).monospace().strong().color(palette.text_muted));
                                         ui.add_space(6.0);
 
                                         // Keep swatches inside the body and stack them when two columns cannot fit.
@@ -9898,7 +9927,7 @@ impl LauncherApp {
                                                     let bg_card = if is_active {
                                                         palette.accent_subtle
                                                     } else {
-                                                        palette.bg_subtle
+                                                        palette.bg_card
                                                     };
                                                     let border_stroke = if is_active {
                                                         Stroke::new(1.5_f32, p_set.color)
@@ -9906,9 +9935,9 @@ impl LauncherApp {
                                                         Stroke::NONE
                                                     };
 
-                                                    Frame::none()
+                                                    let swatch = Frame::none()
                                                         .fill(bg_card)
-                                                        .stroke(border_stroke)
+                                                        .stroke(Stroke::NONE)
                                                         .rounding(Rounding::same(8.0))
                                                         .inner_margin(egui::Margin::symmetric(10.0, 7.0))
                                                         .show(ui, |ui| {
@@ -9925,7 +9954,7 @@ impl LauncherApp {
 
                                                                 ui.vertical(|ui| {
                                                                     ui.set_width((ui.available_width() - 50.0).max(0.0));
-                                                                    ui.label(RichText::new(p_set.name).size(11.0).strong().color(palette.text_primary));
+                                                                    ui.add(egui::Label::new(RichText::new(p_set.name).size(11.0).strong().color(palette.text_primary)).truncate()).on_hover_text(p_set.name);
                                                                     ui.label(RichText::new(p_set.hex).size(9.5).monospace().color(palette.text_muted));
                                                                 });
 
@@ -9946,6 +9975,9 @@ impl LauncherApp {
                                                             });
                                                         });
 
+                                                    if is_active {
+                                                        ui.painter().rect_stroke(swatch.response.rect.shrink(0.75), Rounding::same(8.0), border_stroke);
+                                                    }
                                                     if (i + 1) % swatch_columns == 0 {
                                                         ui.end_row();
                                                     }
@@ -9955,11 +9987,14 @@ impl LauncherApp {
                                         ui.add_space(8.0);
 
                                         // Custom Hex input row
-                                        ui.horizontal(|ui| {
+                                        ui.horizontal_wrapped(|ui| {
                                             ui.spacing_mut().item_spacing.x = 6.0;
                                             ui.label(RichText::new("Custom Hex:").size(11.0).color(palette.text_secondary));
 
                                             let te = egui::TextEdit::singleline(&mut self.settings_custom_hex_input)
+                                                .text_color(palette.text_secondary)
+                                                .hint_text(RichText::new("#3584e4").color(palette.text_muted))
+                                                .margin(egui::vec2(6.0, 4.0)).min_size(egui::vec2(0.0, 26.0))
                                                 .desired_width(85.0)
                                                 .font(egui::TextStyle::Monospace);
                                             ui.add(te);
@@ -9990,12 +10025,12 @@ impl LauncherApp {
 
                                         // Live Component Preview Box
                                         Frame::none()
-                                            .fill(Color32::from_rgb(12, 13, 19))
-                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(26, 28, 40)))
+                                            .fill(palette.bg_input)
+                                            .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(8.0))
                                             .inner_margin(egui::Margin::symmetric(12.0, 8.0))
                                             .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
+                                                ui.horizontal_wrapped(|ui| {
                                                     ui.label(RichText::new("LIVE PREVIEW:").size(9.5).monospace().strong().color(palette.text_muted));
                                                     ui.add_space(6.0);
 
@@ -10027,70 +10062,19 @@ impl LauncherApp {
                                                 });
                                             });
                                     });
-
-                                // 2. BASE THEME MODE CARD
-                                Frame::none()
-                                    .fill(palette.bg_card)
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(28, 30, 44)))
-                                    .rounding(Rounding::same(12.0))
-                                    .inner_margin(egui::Margin::same(14.0))
-                                    .show(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new(format!("{} Base Theme", crate::lucide::PALETTE)).size(13.0).strong().color(palette.text_primary));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                let mut selected_theme = self.theme;
-                                                egui::ComboBox::from_id_salt("settings_theme_dropdown_v2")
-                                                    .selected_text(RichText::new(format!("{} {}", self.theme.emoji(), self.theme.name())).size(11.5).color(palette.text_primary))
-                                                    .width(180.0)
-                                                    .show_ui(ui, |ui| {
-                                                        for &thm in ThemeMode::all() {
-                                                            let label = format!("{} {}", thm.emoji(), thm.name());
-                                                            if ui.selectable_value(&mut selected_theme, thm, RichText::new(label).size(11.5)).clicked() {
-                                                                change_theme = Some(thm);
-                                                            }
-                                                        }
-                                                    });
-                                            });
-                                        });
-
-                                        ui.add_space(2.0);
-                                        ui.label(RichText::new("Select obsidian dark, catppuccin, dracula, nord, light, or dynamic GTK4 system theme.").size(10.5).color(palette.text_muted));
-                                        ui.add_space(8.0);
-
-                                        // Theme Pills
-                                        ui.horizontal_wrapped(|ui| {
-                                            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                                            for &thm in ThemeMode::all() {
-                                                let is_active = self.theme == thm;
-                                                let (bg, fg) = if is_active {
-                                                    (palette.accent, palette.accent_text)
-                                                } else {
-                                                    (palette.bg_button, palette.text_secondary)
-                                                };
-                                                let btn = egui::Button::new(RichText::new(format!("{} {}", thm.emoji(), thm.name())).size(10.5).strong().color(fg))
-                                                    .fill(bg)
-                                                    .stroke(Stroke::NONE)
-                                                    .rounding(Rounding::same(999.0))
-                                                    .min_size(egui::vec2(0.0, 24.0));
-                                                if ui.add(btn).clicked() {
-                                                    change_theme = Some(thm);
-                                                }
-                                            }
-                                        });
-                                    });
                             }
                             SettingsTab::Autostart => {
                                 // AUTOSTART CARD
                                 Frame::none()
-                                    .fill(palette.bg_card)
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(28, 30, 44)))
+                                    .fill(palette.bg_subtle)
+                                    .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(12.0))
                                     .inner_margin(egui::Margin::same(16.0))
                                     .show(ui, |ui| {
                                         let is_boot = crate::autostart::is_app_autostart_enabled();
 
                                         ui.horizontal(|ui| {
-                                            ui.label(RichText::new(format!("{} Automatic Launch on Boot", crate::lucide::ROCKET)).size(14.0).strong().color(palette.text_primary));
+                                            ui.label(RichText::new(format!("{} Start at login", crate::lucide::ROCKET)).size(14.0).strong().color(palette.text_primary));
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                 let mut boot_toggle = is_boot;
                                                 if render_custom_toggle_switch(ui, &mut boot_toggle, palette.accent) {
@@ -10100,13 +10084,13 @@ impl LauncherApp {
                                         });
 
                                         ui.add_space(4.0);
-                                        ui.label(RichText::new("When enabled, Server Launcher initializes silently upon system startup or desktop login into the background system tray.").size(11.0).color(palette.text_muted));
+                                        ui.label(RichText::new("Open Server Launcher automatically when you sign in.").size(11.0).color(palette.text_muted));
                                         ui.add_space(12.0);
 
                                         let (status_txt, status_bg, status_fg) = if is_boot {
-                                            (format!("{} Active (Desktop Entry Configured)", crate::lucide::CHECK), palette.success_subtle, palette.success)
+                                            (format!("{} Startup launch enabled", crate::lucide::CHECK), palette.success_subtle, palette.success)
                                         } else {
-                                            (format!("{} Inactive (Manual Launch Only)", crate::lucide::CIRCLE), palette.bg_subtle, palette.text_muted)
+                                            (format!("{} Startup launch disabled", crate::lucide::CIRCLE), palette.bg_subtle, palette.text_muted)
                                         };
 
                                         Frame::none()
@@ -10122,8 +10106,8 @@ impl LauncherApp {
                             SettingsTab::Backup => {
                                 // SERVERS IMPORT / EXPORT CARD
                                 Frame::none()
-                                    .fill(palette.bg_card)
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(28, 30, 44)))
+                                    .fill(palette.bg_subtle)
+                                    .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(12.0))
                                     .inner_margin(egui::Margin::same(16.0))
                                     .show(ui, |ui| {
@@ -10132,7 +10116,7 @@ impl LauncherApp {
                                         ui.label(RichText::new("Import external servers.json files, merge configurations, or export portable snapshots of all services.").size(11.0).color(palette.text_muted));
                                         ui.add_space(14.0);
 
-                                        ui.horizontal(|ui| {
+                                        ui.horizontal_wrapped(|ui| {
                                             ui.spacing_mut().item_spacing.x = 10.0;
 
                                             let btn_import = egui::Button::new(RichText::new(format!("{} Import servers.json", crate::lucide::DOWNLOAD)).size(11.5).strong().color(palette.accent_text))
@@ -10171,14 +10155,14 @@ impl LauncherApp {
                             SettingsTab::Shortcuts => {
                                 // KEYBOARD SHORTCUTS MATRIX
                                 Frame::none()
-                                    .fill(palette.bg_card)
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(28, 30, 44)))
+                                    .fill(palette.bg_subtle)
+                                    .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(12.0))
                                     .inner_margin(egui::Margin::same(16.0))
                                     .show(ui, |ui| {
-                                        ui.label(RichText::new(format!("{} Keyboard Shortcuts Cockpit", crate::lucide::KEYBOARD)).size(14.0).strong().color(palette.text_primary));
+                                        ui.label(RichText::new(format!("{} Keyboard shortcuts", crate::lucide::KEYBOARD)).size(14.0).strong().color(palette.text_primary));
                                         ui.add_space(4.0);
-                                        ui.label(RichText::new("Global accelerators and navigation keys for zero-friction orchestrations.").size(11.0).color(palette.text_muted));
+                                        ui.label(RichText::new("Shortcuts for navigation and server controls.").size(11.0).color(palette.text_muted));
                                         ui.add_space(12.0);
 
                                         let shortcuts = [
@@ -10191,17 +10175,18 @@ impl LauncherApp {
                                         ];
 
                                         for (keys, desc) in shortcuts {
-                                            ui.horizontal(|ui| {
+                                            ui.horizontal_top(|ui| {
                                                 Frame::none()
                                                     .fill(palette.bg_subtle)
-                                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(32, 34, 48)))
+                                                    .stroke(Stroke::NONE)
                                                     .rounding(Rounding::same(6.0))
                                                     .inner_margin(egui::Margin::symmetric(8.0, 3.0))
                                                     .show(ui, |ui| {
+                                                        ui.set_width(110.0);
                                                         ui.label(RichText::new(keys).size(10.5).monospace().strong().color(palette.accent));
                                                     });
                                                 ui.add_space(6.0);
-                                                ui.label(RichText::new(desc).size(11.5).color(palette.text_secondary));
+                                                ui.add(egui::Label::new(RichText::new(desc).size(11.5).color(palette.text_secondary)).wrap());
                                             });
                                             ui.add_space(3.0);
                                         }
@@ -10210,15 +10195,15 @@ impl LauncherApp {
                             SettingsTab::About => {
                                 // DIAGNOSTICS & SYSTEM INFO
                                 Frame::none()
-                                    .fill(palette.bg_card)
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(28, 30, 44)))
+                                    .fill(palette.bg_subtle)
+                                    .stroke(Stroke::NONE)
                                     .rounding(Rounding::same(12.0))
                                     .inner_margin(egui::Margin::same(16.0))
                                     .show(ui, |ui| {
                                         ui.label(RichText::new(format!("{} System Diagnostics", crate::lucide::INFO)).size(14.0).strong().color(palette.text_primary));
                                         ui.add_space(10.0);
 
-                                        ui.horizontal(|ui| {
+                                        ui.horizontal_wrapped(|ui| {
                                             ui.label(RichText::new("Host LAN IP:").size(11.0).color(palette.text_muted));
                                             ui.label(RichText::new(&self.lan_ip).size(11.0).monospace().strong().color(palette.text_primary));
                                             ui.add_space(12.0);
@@ -10229,7 +10214,7 @@ impl LauncherApp {
                                         ui.add_space(8.0);
                                         ui.horizontal_wrapped(|ui| {
                                             ui.label(RichText::new("Active Config File:").size(11.0).color(palette.text_muted));
-                                            ui.label(RichText::new(self.config_path.display().to_string()).size(10.5).monospace().color(palette.text_secondary));
+                                            ui.add(egui::Label::new(RichText::new(self.config_path.display().to_string()).size(10.5).monospace().color(palette.text_secondary)).truncate()).on_hover_text(self.config_path.display().to_string());
                                         });
                                     });
                             }
@@ -10240,6 +10225,7 @@ impl LauncherApp {
 
                 // Footer Done Button
                 ui.horizontal(|ui| {
+                    ui.set_min_height(30.0);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let btn_done = egui::Button::new(RichText::new("Done").size(12.0).strong().color(palette.accent_text))
                             .fill(palette.accent)

@@ -1146,7 +1146,7 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
     let max_h = 640.0_f32.min((screen.height() - 60.0).max(200.0));
     let mut window_open = state.open;
     let mut is_open = state.open;
-    Window::new(title)
+    Window::new(RichText::new(title).size(17.0).strong())
         .id(egui::Id::new("add_edit_server_modal_window"))
         .open(&mut window_open)
         .collapsible(false).resizable(false).movable(true)
@@ -1154,14 +1154,22 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
         .min_width(modal_w).max_width(modal_w)
         .default_height(max_h).max_height(max_h)
         .frame(egui::Frame::none().fill(palette.bg_card)
-            .stroke(Stroke::new(1.0_f32, palette.border)).rounding(Rounding::same(10.0))
+            .stroke(Stroke::NONE).rounding(Rounding::same(14.0))
             .shadow(egui::epaint::Shadow { offset: egui::vec2(0.0, 4.0), blur: 16.0, spread: 0.0, color: Color32::from_black_alpha(120) })
-            .inner_margin(egui::Margin::same(14.0)))
+            .inner_margin(egui::Margin::same(18.0)))
         .show(ctx, |ui| {
             *ui.visuals_mut() = palette.egui_visuals();
             ui.spacing_mut().interact_size.y = 26.0;
-            ui.spacing_mut().button_padding = egui::vec2(7.0, 3.0);
-            ui.label(RichText::new(if state.is_edit { "Update this server's command and launch settings." } else { "Set up a server. Required fields are marked *." }).size(11.5).color(palette.text_muted));
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+            ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
+            ui.style_mut().text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
+            ui.style_mut().text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(11.5));
+            ui.style_mut().text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.5));
+            ui.visuals_mut().widgets.inactive.weak_bg_fill = palette.bg_button;
+            ui.visuals_mut().widgets.inactive.bg_fill = palette.bg_button;
+            ui.visuals_mut().widgets.hovered.weak_bg_fill = palette.bg_card_active;
+            ui.visuals_mut().widgets.active.weak_bg_fill = palette.accent_subtle;
+            ui.label(RichText::new(if state.is_edit { "Update this server's command and launch settings." } else { "Choose a project and its start command. Required fields are marked *." }).size(11.5).color(palette.text_muted));
             ui.add_space(8.0);
             egui::ScrollArea::vertical().id_salt(("server_form", state.is_edit))
                 .auto_shrink([false, false]).max_width(ui.available_width())
@@ -1169,10 +1177,12 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     ui.set_max_width(ui.available_width());
                     // Templates prefill the existing fields; nothing runs until the server is started.
                     if !state.is_edit {
-                        egui::Frame::none().fill(palette.bg_subtle).rounding(Rounding::same(6.0))
+                        egui::Frame::none().fill(palette.bg_subtle).rounding(Rounding::same(10.0))
                             .inner_margin(egui::Margin::same(10.0)).show(ui, |ui| {
-                                ui.label(RichText::new("Template (optional)").size(12.0).strong().color(palette.text_primary));
-                                ui.label(RichText::new("Prefill settings for a framework, or enter your own.").size(11.0).color(palette.text_muted));
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("Template").size(11.5).strong().color(palette.text_primary));
+                                    ui.label(RichText::new("Optional").size(10.5).color(palette.text_muted));
+                                });
                                 ui.add_space(4.0);
                                 ui.horizontal_wrapped(|ui| {
                                     let selected = state.selected_template_idx.checked_sub(1)
@@ -1186,7 +1196,9 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                                             }
                                         });
                                     if ui.add_enabled(state.selected_template_idx > 0 && state.selected_template_idx <= SERVER_TEMPLATES.len(),
-                                        egui::Button::new(RichText::new("Use template").size(11.0)).min_size(egui::vec2(96.0, 26.0))).clicked() {
+                                        egui::Button::new(RichText::new("Apply").size(11.5).color(palette.accent))
+                                            .fill(palette.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(8.0))
+                                            .min_size(egui::vec2(96.0, 30.0))).clicked() {
                                         state.apply_template(state.selected_template_idx);
                                     }
                                 });
@@ -1197,118 +1209,127 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                     ui.columns(columns, |cols| {
                         cols[0].vertical(|ui| {
                             ui.label(RichText::new("Server name *").size(12.0).strong());
-                            ui.add(egui::TextEdit::singleline(&mut state.name).hint_text("e.g. Frontend app")
+                            ui.add(egui::TextEdit::singleline(&mut state.name).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text("e.g. Frontend app")
                                 .clip_text(true).desired_width(ui.available_width()));
                         });
                         cols[columns - 1].vertical(|ui| {
                             ui.label(RichText::new("Group").size(12.0).strong());
-                            ui.add(egui::TextEdit::singleline(&mut state.group).hint_text("General")
+                            ui.add(egui::TextEdit::singleline(&mut state.group).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text("General")
                                 .clip_text(true).desired_width(ui.available_width()));
-                            ui.horizontal_wrapped(|ui| {
-                                ui.spacing_mut().item_spacing.x = 4.0;
-                                for preset in ["Frontend", "Backend", "DB", "General"] {
-                                    if ui.selectable_label(state.group == preset, RichText::new(preset).size(10.5)).clicked() {
-                                        state.group = preset.to_string();
-                                    }
-                                }
-                            });
                         });
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new("Quick groups").size(10.5).color(palette.text_muted));
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        for preset in ["Frontend", "Backend", "DB", "General"] {
+                            let selected = state.group == preset;
+                            let button = egui::Button::new(RichText::new(preset).size(10.5)
+                                .color(if selected { palette.accent } else { palette.text_secondary }))
+                                .fill(if selected { palette.accent_subtle } else { Color32::TRANSPARENT })
+                                .stroke(Stroke::NONE).rounding(Rounding::same(8.0));
+                            if ui.add(button).clicked() { state.group = preset.to_string(); }
+                        }
                     });
                     ui.add_space(8.0);
                     ui.label(RichText::new("Working directory *").size(12.0).strong());
                     ui.horizontal(|ui| {
                         let width = (ui.available_width() - 76.0 - ui.spacing().item_spacing.x).max(48.0);
-                        ui.add_sized([width, 26.0], egui::TextEdit::singleline(&mut state.cwd)
+                        ui.add_sized([width, 30.0], egui::TextEdit::singleline(&mut state.cwd).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0))
                             .hint_text(if cfg!(windows) { r"C:\Projects\my-app" } else { "/home/you/my-app" })
                             .font(egui::TextStyle::Monospace).clip_text(true))
                             .on_hover_text("Folder where the command runs. Use . for the current directory.");
-                        if ui.add_sized([76.0, 26.0], egui::Button::new("Browse…")).clicked() {
+                        if ui.add_sized([76.0, 30.0], egui::Button::new(RichText::new("Browse…").size(11.5).color(palette.text_secondary))
+                            .fill(palette.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(8.0))).clicked() {
                             if let Some(folder) = rfd::FileDialog::new().pick_folder() { state.cwd = folder.to_string_lossy().into_owned(); }
                         }
                     });
                     ui.add_space(8.0);
                     ui.label(RichText::new("Start command *").size(12.0).strong());
-                    ui.add(egui::TextEdit::singleline(&mut state.command).hint_text("npm run dev")
+                    ui.add(egui::TextEdit::singleline(&mut state.command).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text("npm run dev")
                         .font(egui::TextStyle::Monospace).clip_text(true).desired_width(ui.available_width()));
                     ui.add_space(8.0);
                     ui.horizontal_wrapped(|ui| {
                         ui.label(RichText::new("Port").size(12.0).strong());
-                        ui.add(egui::TextEdit::singleline(&mut state.port_str).hint_text("0")
+                        ui.add(egui::TextEdit::singleline(&mut state.port_str).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text("0")
                             .clip_text(true).desired_width(80.0));
-                        ui.label(RichText::new("0 = no port monitoring").size(11.0).color(palette.text_muted));
+                        ui.label(RichText::new("Optional · 0 disables port monitoring").size(11.0).color(palette.text_muted));
                     });
                     ui.add_space(10.0);
-                    egui::CollapsingHeader::new("Launch options").id_salt("server_launch_options").show(ui, |ui| {
-                        ui.checkbox(&mut state.own_console, "Use an external terminal")
-                            .on_hover_text("Launch the server in a separate system terminal window.");
-                        ui.checkbox(&mut state.auto_restart, "Restart after a crash")
-                            .on_hover_text("Restart this server if its process exits unexpectedly.");
-                        ui.checkbox(&mut state.autostart, "Start when Server Launcher opens");
-                    });
-                    egui::CollapsingHeader::new("Advanced settings").id_salt("server_advanced_settings").show(ui, |ui| {
-                        // Edit mode keeps the existing identifier immutable.
-                        ui.label(RichText::new("Identifier (optional)").size(12.0).strong());
-                        ui.add_enabled(!state.is_edit, egui::TextEdit::singleline(&mut state.key)
-                            .hint_text("Generated from the name if empty").clip_text(true).desired_width(ui.available_width()))
-                            .on_hover_text("Unique configuration key. Existing server identifiers cannot be changed here.");
-                        ui.add_space(8.0);
-                        ui.label(RichText::new("Stop command (optional)").size(12.0).strong());
-                        ui.add(egui::TextEdit::singleline(&mut state.stop_command).font(egui::TextStyle::Monospace)
-                            .hint_text("Leave empty to stop the process directly").clip_text(true).desired_width(ui.available_width()))
-                            .on_hover_text("Runs before stopping the server.");
-                        ui.add_space(8.0);
-                        ui.label(RichText::new("Environment variables").size(12.0).strong());
-                        ui.add(egui::TextEdit::multiline(&mut state.env_text).font(egui::TextStyle::Monospace)
-                            .hint_text("KEY=VALUE\nOne variable per line").desired_rows(3).clip_text(true).desired_width(ui.available_width()));
-                    });
-                    egui::CollapsingHeader::new(format!("Actions ({})", state.actions.len()))
-                        .id_salt("server_extra_actions").default_open(!state.actions.is_empty()).show(ui, |ui| {
-                            ui.label(RichText::new("Commands run in this server's working directory.").size(11.0).color(palette.text_muted));
-                            let mut remove = None;
-                            for (index, (label, command)) in state.actions.iter_mut().enumerate() {
-                                ui.push_id(index, |ui| {
-                                    ui.horizontal_wrapped(|ui| {
-                                        let command_width = (ui.available_width() - 154.0).max(100.0);
-                                        ui.add(egui::TextEdit::singleline(label).hint_text("Label").clip_text(true).desired_width(110.0));
-                                        ui.add(egui::TextEdit::singleline(command).hint_text("npm run build")
-                                            .font(egui::TextStyle::Monospace).clip_text(true).desired_width(command_width));
-                                        if ui.button(RichText::new(crate::lucide::X).size(11.0).color(palette.danger))
-                                            .on_hover_text("Remove action").clicked() { remove = Some(index); }
-                                    });
-                                });
-                            }
-                            if let Some(index) = remove { state.actions.remove(index); }
-                            if ui.button("+ Add action").clicked() { state.actions.push((String::new(), String::new())); }
+                    egui::Frame::none().fill(palette.bg_subtle).rounding(Rounding::same(10.0))
+                        .inner_margin(egui::Margin::same(10.0)).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        egui::CollapsingHeader::new(RichText::new("Launch options").size(11.5)).id_salt("server_launch_options").show(ui, |ui| {
+                            ui.checkbox(&mut state.own_console, "Use an external terminal")
+                                .on_hover_text("Launch the server in a separate system terminal window.");
+                            ui.checkbox(&mut state.auto_restart, "Restart after a crash")
+                                .on_hover_text("Restart this server if its process exits unexpectedly.");
+                            ui.checkbox(&mut state.autostart, "Start when Server Launcher opens");
                         });
-                    egui::CollapsingHeader::new(format!("Links ({})", state.links.len()))
-                        .id_salt("server_extra_links").default_open(!state.links.is_empty()).show(ui, |ui| {
-                            let mut remove = None;
-                            for (index, (label, url)) in state.links.iter_mut().enumerate() {
-                                ui.push_id(index, |ui| {
-                                    ui.horizontal_wrapped(|ui| {
-                                        let url_width = (ui.available_width() - 154.0).max(100.0);
-                                        ui.add(egui::TextEdit::singleline(label).hint_text("Label").clip_text(true).desired_width(110.0));
-                                        ui.add(egui::TextEdit::singleline(url).hint_text("http://localhost:3000")
-                                            .clip_text(true).desired_width(url_width));
-                                        if ui.button(RichText::new(crate::lucide::X).size(11.0).color(palette.danger))
-                                            .on_hover_text("Remove link").clicked() { remove = Some(index); }
-                                    });
-                                });
-                            }
-                            if let Some(index) = remove { state.links.remove(index); }
-                            if ui.button("+ Add link").clicked() { state.links.push((String::new(), String::new())); }
+                        egui::CollapsingHeader::new(RichText::new("Advanced settings").size(11.5)).id_salt("server_advanced_settings").show(ui, |ui| {
+                            // Edit mode keeps the existing identifier immutable.
+                            ui.label(RichText::new("Identifier (optional)").size(12.0).strong());
+                            ui.add_enabled(!state.is_edit, egui::TextEdit::singleline(&mut state.key).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0))
+                                .hint_text("Generated from the name if empty").clip_text(true).desired_width(ui.available_width()))
+                                .on_hover_text("Unique configuration key. Existing server identifiers cannot be changed here.");
+                            ui.add_space(8.0);
+                            ui.label(RichText::new("Stop command (optional)").size(12.0).strong());
+                            ui.add(egui::TextEdit::singleline(&mut state.stop_command).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).font(egui::TextStyle::Monospace)
+                                .hint_text("Leave empty to stop the process directly").clip_text(true).desired_width(ui.available_width()))
+                                .on_hover_text("Runs before stopping the server.");
+                            ui.add_space(8.0);
+                            ui.label(RichText::new("Environment variables").size(12.0).strong());
+                            ui.add(egui::TextEdit::multiline(&mut state.env_text).font(egui::TextStyle::Monospace)
+                                .hint_text("KEY=VALUE\nOne variable per line").desired_rows(3).clip_text(true).desired_width(ui.available_width()));
                         });
+                        egui::CollapsingHeader::new(RichText::new(format!("Actions ({})", state.actions.len())).size(11.5))
+                            .id_salt("server_extra_actions").default_open(!state.actions.is_empty()).show(ui, |ui| {
+                                ui.label(RichText::new("Commands run in this server's working directory.").size(11.0).color(palette.text_muted));
+                                let mut remove = None;
+                                for (index, (label, command)) in state.actions.iter_mut().enumerate() {
+                                    ui.push_id(index, |ui| {
+                                        ui.horizontal_wrapped(|ui| {
+                                            let command_width = (ui.available_width() - 154.0).max(100.0);
+                                            ui.add(egui::TextEdit::singleline(label).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text("Label").clip_text(true).desired_width(110.0));
+                                            ui.add(egui::TextEdit::singleline(command).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text("npm run build")
+                                                .font(egui::TextStyle::Monospace).clip_text(true).desired_width(command_width));
+                                            if ui.button(RichText::new(crate::lucide::X).size(11.0).color(palette.danger))
+                                                .on_hover_text("Remove action").clicked() { remove = Some(index); }
+                                        });
+                                    });
+                                }
+                                if let Some(index) = remove { state.actions.remove(index); }
+                                if ui.button("+ Add action").clicked() { state.actions.push((String::new(), String::new())); }
+                            });
+                        egui::CollapsingHeader::new(RichText::new(format!("Links ({})", state.links.len())).size(11.5))
+                            .id_salt("server_extra_links").default_open(!state.links.is_empty()).show(ui, |ui| {
+                                let mut remove = None;
+                                for (index, (label, url)) in state.links.iter_mut().enumerate() {
+                                    ui.push_id(index, |ui| {
+                                        ui.horizontal_wrapped(|ui| {
+                                            let url_width = (ui.available_width() - 154.0).max(100.0);
+                                            ui.add(egui::TextEdit::singleline(label).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text("Label").clip_text(true).desired_width(110.0));
+                                            ui.add(egui::TextEdit::singleline(url).margin(egui::vec2(8.0, 6.0)).min_size(egui::vec2(0.0, 30.0)).hint_text("http://localhost:3000")
+                                                .clip_text(true).desired_width(url_width));
+                                            if ui.button(RichText::new(crate::lucide::X).size(11.0).color(palette.danger))
+                                                .on_hover_text("Remove link").clicked() { remove = Some(index); }
+                                        });
+                                    });
+                                }
+                                if let Some(index) = remove { state.links.remove(index); }
+                                if ui.button("+ Add link").clicked() { state.links.push((String::new(), String::new())); }
+                            });
+                    });
                 });
-            ui.add_space(8.0);
-            ui.separator();
+            ui.add_space(10.0);
             if let Some(error) = &state.error_msg {
                 ui.label(RichText::new(error).size(11.5).color(palette.danger));
             }
             ui.horizontal(|ui| {
+                ui.set_min_height(30.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let label = if state.is_edit { "Save changes" } else { "Add server" };
                     if ui.add(egui::Button::new(RichText::new(label).size(12.0).color(palette.accent_text))
-                        .fill(palette.accent).rounding(Rounding::same(6.0)).min_size(egui::vec2(96.0, 28.0))).clicked() {
+                        .fill(palette.accent).stroke(Stroke::NONE).rounding(Rounding::same(8.0)).min_size(egui::vec2(104.0, 30.0))).clicked() {
                         match state.to_server_config() {
                             Ok(config) => {
                                 let old_key = state.is_edit.then(|| state.original_key.clone());
@@ -1319,7 +1340,8 @@ pub fn render_add_edit_modal(ctx: &Context, state: &mut AddEditModalState, palet
                             Err(error) => { state.error_msg = Some(error); }
                         }
                     }
-                    if ui.add(egui::Button::new("Cancel").min_size(egui::vec2(72.0, 28.0))).clicked() {
+                    if ui.add(egui::Button::new(RichText::new("Cancel").size(11.5).color(palette.text_secondary))
+                        .fill(palette.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(8.0)).min_size(egui::vec2(76.0, 30.0))).clicked() {
                         is_open = false;
                     }
                 });

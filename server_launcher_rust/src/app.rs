@@ -1945,8 +1945,12 @@ impl LauncherApp {
                     let pid_str = pid.map(|p| p.to_string()).unwrap_or_else(|| "N/A".to_string());
                     let metadata = format!("Port :{} | PID {}", port, pid_str);
                     let mut heading = egui::text::LayoutJob::default();
-                    heading.append("● Live Terminal", 0.0, egui::TextFormat {
-                        font_id: egui::FontId::proportional(11.5), color: p.success,
+                    heading.append(&format!("{} ", crate::lucide::TERMINAL), 0.0, egui::TextFormat {
+                        font_id: egui::FontId::proportional(11.5), color: p.accent,
+                        ..Default::default()
+                    });
+                    heading.append("Live Terminal", 0.0, egui::TextFormat {
+                        font_id: egui::FontId::proportional(11.5), color: p.text_primary,
                         ..Default::default()
                     });
                     heading.append(&format!("  {}", metadata), 0.0, egui::TextFormat {
@@ -1960,6 +1964,14 @@ impl LauncherApp {
                             .on_hover_text(format!("Live Terminal · {}", metadata));
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Buttons use weak fills; set each state locally to follow the active palette.
+                        let visuals = ui.visuals_mut();
+                        visuals.override_text_color = None;
+                        visuals.widgets.inactive.weak_bg_fill = p.bg_subtle;
+                        visuals.widgets.hovered.weak_bg_fill = p.bg_button_hover;
+                        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, p.accent);
+                        visuals.widgets.active.weak_bg_fill = p.accent_subtle;
+                        visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, p.accent);
                         let button = |icon: &str, label: &str, width: f32| {
                             egui::Button::new(RichText::new(format!("{} {}", icon, label)).size(10.5))
                                 .rounding(Rounding::same(6.0)).min_size(egui::vec2(width, 24.0))

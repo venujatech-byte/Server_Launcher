@@ -165,17 +165,67 @@ pub struct WifiAppNetItem {
     pub socket_port: Option<String>,
 }
 
-/// Represents a local systemd action that requires sudo.
+/// A service operation retained for an authenticated retry on its original host.
 #[derive(Clone, Debug)]
 pub enum PendingSudoAction {
-    /// control_local_service(unit, action, user_mode)
     ServiceAction { unit: String, action: &'static str, user_mode: bool },
-    /// create_local_service(def)
     CreateService { def: crate::systemd::NewServiceDefinition },
-    /// write_local_unit_file(path, content, user_mode)
     SaveUnitFile { path: String, content: String, user_mode: bool },
-    /// delete_local_drop_in(path, user_mode)
+    CreateDropIn { path: String, content: String, user_mode: bool },
     DeleteDropIn { path: String, user_mode: bool },
+    ReadUnitFile { path: String, user_mode: bool },
+    ReadJournal { unit: String, user_mode: bool },
+    QueryEnabled { unit: String, user_mode: bool },
+    InspectUnit { unit: String, user_mode: bool },
+}
+
+impl PendingSudoAction {
+    // A file may already be written when reload asks for sudo. Resume without recreating it.
+    fn authenticated_retry(self, error: &str) -> Self {
+        match &self {
+            Self::CreateService { def } if error.starts_with("Unit file created,") || error.starts_with("Unit file saved,") || error.starts_with("File saved,") => {
+                if let Ok(unit) = crate::systemd::service_unit_name(def) {
+                    return Self::ServiceAction { unit, action: "finish-create", user_mode: def.is_user };
+                }
+            }
+            Self::CreateDropIn { path, content, user_mode } if error.starts_with("Drop-in created,") || error.starts_with("File saved,") => {
+                return Self::SaveUnitFile { path: path.clone(), content: content.clone(), user_mode: *user_mode };
+            }
+            _ => {}
+        }
+        self
+    }
+
+    fn key(&self, host_id: Option<&str>) -> String {
+        let (kind, target, user_mode) = match self {
+            Self::ServiceAction { unit, user_mode, .. } => ("control", unit.as_str(), *user_mode),
+            Self::CreateService { def } => ("create", def.name.as_str(), def.is_user),
+            Self::SaveUnitFile { path, user_mode, .. } => ("save", path.as_str(), *user_mode),
+            Self::CreateDropIn { path, user_mode, .. } => ("create-dropin", path.as_str(), *user_mode),
+            Self::DeleteDropIn { path, user_mode } => ("delete", path.as_str(), *user_mode),
+            Self::ReadUnitFile { path, user_mode } => ("read", path.as_str(), *user_mode),
+            Self::ReadJournal { unit, user_mode } => ("journal", unit.as_str(), *user_mode),
+            Self::QueryEnabled { unit, user_mode } => ("enabled", unit.as_str(), *user_mode),
+            Self::InspectUnit { unit, user_mode } => ("inspect", unit.as_str(), *user_mode),
+        };
+        format!("{}:{}:{}:{}", host_id.unwrap_or("local"), kind, target, user_mode)
+    }
+}
+
+enum SystemdActionValue {
+    Message(String),
+    FileContent(String),
+    Journal(String),
+    Enabled(bool),
+    Status(SystemdService),
+}
+
+struct SystemdActionResult {
+    key: String,
+    action: Option<PendingSudoAction>,
+    host_id: Option<String>,
+    from_popup: bool,
+    result: Result<SystemdActionValue, String>,
 }
 
 /// State for the sudo-password popup dialog.
@@ -183,6 +233,7 @@ pub enum PendingSudoAction {
 pub struct SudoPopupState {
     pub open: bool,
     pub pending: Option<PendingSudoAction>,
+    pub host_id: Option<String>,
     pub password_input: String,
     pub remember_password: bool,
     pub error: Option<String>,
@@ -194,6 +245,7 @@ impl Default for SudoPopupState {
         Self {
             open: false,
             pending: None,
+            host_id: None,
             password_input: String::new(),
             remember_password: true,
             error: None,
@@ -442,12 +494,13 @@ pub struct LauncherApp {
     pub remote_services_errors: Arc<Mutex<HashMap<String, String>>>,
     pub remote_services_user: HashMap<String, bool>,
     pub selected_service: Option<String>,
-    pub service_journal_logs: String,
     pub local_journal_logs: Arc<Mutex<HashMap<String, String>>>,
-    pub local_journal_in_flight: Arc<Mutex<HashSet<String>>>,
     pub remote_journal_logs: Arc<Mutex<HashMap<String, String>>>,
-    pub remote_journal_in_flight: Arc<Mutex<HashSet<String>>>,
-    pub remote_service_action_in_flight: Arc<Mutex<HashSet<String>>>,
+    pub systemd_actions_in_flight: Arc<Mutex<HashSet<String>>>,
+    systemd_action_results: Arc<Mutex<VecDeque<SystemdActionResult>>>,
+    remote_sudo_passwords: HashMap<String, String>,
+    service_details_cache: HashMap<String, (SystemdService, Instant)>,
+    service_query_errors: HashMap<String, Instant>,
     pub remote_service_action_msg: Arc<Mutex<Option<String>>>,
     pub service_search_query: String,
     pub service_action_msg: Option<String>,
@@ -459,15 +512,16 @@ pub struct LauncherApp {
     pub systemd_tab: SystemdTab,
     pub systemd_files_cache: Arc<Mutex<HashMap<String, (crate::systemd::UnitFilesInfo, Instant)>>>,
     pub systemd_files_in_flight: Arc<Mutex<HashSet<String>>>,
-    pub systemd_file_content_cache: Arc<Mutex<HashMap<String, String>>>,
-    pub systemd_file_content_in_flight: Arc<Mutex<HashSet<String>>>,
+    pub systemd_file_content_cache: Arc<Mutex<HashMap<String, Result<String, String>>>>,
     pub systemd_selected_file: Option<String>,
     pub systemd_file_content: String,
     pub systemd_file_original: String,
+    systemd_editor_context: Option<(String, bool)>,
     pub systemd_file_status_msg: Option<(String, bool)>,
     pub systemd_new_dropin_open: bool,
     pub systemd_new_dropin_name: String,
     pub systemd_new_dropin_template: usize,
+    systemd_new_dropin_content: String,
     pub systemd_deps_cache: Arc<Mutex<HashMap<String, (crate::systemd::UnitDependenciesInfo, Instant)>>>,
     pub systemd_deps_in_flight: Arc<Mutex<HashSet<String>>>,
     pub systemd_deps_history: Vec<String>,
@@ -920,12 +974,13 @@ impl LauncherApp {
             remote_services_errors: Arc::new(Mutex::new(HashMap::new())),
             remote_services_user: HashMap::new(),
             selected_service: None,
-            service_journal_logs: String::new(),
             local_journal_logs: Arc::new(Mutex::new(HashMap::new())),
-            local_journal_in_flight: Arc::new(Mutex::new(HashSet::new())),
             remote_journal_logs: Arc::new(Mutex::new(HashMap::new())),
-            remote_journal_in_flight: Arc::new(Mutex::new(HashSet::new())),
-            remote_service_action_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            systemd_actions_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            systemd_action_results: Arc::new(Mutex::new(VecDeque::new())),
+            remote_sudo_passwords: HashMap::new(),
+            service_details_cache: HashMap::new(),
+            service_query_errors: HashMap::new(),
             remote_service_action_msg: Arc::new(Mutex::new(None)),
             service_search_query: String::new(),
             service_action_msg: None,
@@ -937,14 +992,15 @@ impl LauncherApp {
             systemd_files_cache: Arc::new(Mutex::new(HashMap::new())),
             systemd_files_in_flight: Arc::new(Mutex::new(HashSet::new())),
             systemd_file_content_cache: Arc::new(Mutex::new(HashMap::new())),
-            systemd_file_content_in_flight: Arc::new(Mutex::new(HashSet::new())),
             systemd_selected_file: None,
             systemd_file_content: String::new(),
             systemd_file_original: String::new(),
+            systemd_editor_context: None,
             systemd_file_status_msg: None,
             systemd_new_dropin_open: false,
             systemd_new_dropin_name: "override.conf".to_string(),
             systemd_new_dropin_template: 0,
+            systemd_new_dropin_content: "[Service]\n".into(),
             systemd_deps_cache: Arc::new(Mutex::new(HashMap::new())),
             systemd_deps_in_flight: Arc::new(Mutex::new(HashSet::new())),
             systemd_deps_history: Vec::new(),
@@ -2248,31 +2304,8 @@ impl LauncherApp {
         });
     }
 
-    fn trigger_remote_journal_fetch(&self, host: &SshRemoteHost, unit: &str, user_mode: bool) {
-        let key = format!("{}:{}:{}", host.id, unit, if user_mode { "user" } else { "system" });
-        {
-            let mut in_flight = self.remote_journal_in_flight.lock().unwrap();
-            if in_flight.contains(&key) {
-                return;
-            }
-            in_flight.insert(key.clone());
-        }
-
-        let host_clone = host.clone();
-        let unit_clone = unit.to_string();
-        let key_clone = key.clone();
-        let journal_arc = self.remote_journal_logs.clone();
-        let in_flight_arc = self.remote_journal_in_flight.clone();
-
-        std::thread::spawn(move || {
-            let logs = fetch_remote_journal(&host_clone, &unit_clone, user_mode, 100).unwrap_or_default();
-            if let Ok(mut map) = journal_arc.lock() {
-                map.insert(key_clone.clone(), logs);
-            }
-            if let Ok(mut in_flight) = in_flight_arc.lock() {
-                in_flight.remove(&key_clone);
-            }
-        });
+    pub fn trigger_remote_journal_fetch(&self, host: &SshRemoteHost, unit: &str, user_mode: bool) {
+        self.queue_systemd_action(PendingSudoAction::ReadJournal { unit: unit.to_string(), user_mode }, Some(host), None);
     }
 
     pub fn trigger_local_services_list(&self, user_mode: bool) {
@@ -2287,11 +2320,11 @@ impl LauncherApp {
         let cache_arc = self.local_services_cache.clone();
         let in_flight_arc = self.local_services_in_flight.clone();
 
+        let results = self.systemd_action_results.clone();
         std::thread::spawn(move || {
-            if let Ok(s) = list_local_services(user_mode) {
-                if let Ok(mut map) = cache_arc.lock() {
-                    map.insert(user_mode, s);
-                }
+            match list_local_services(user_mode) {
+                Ok(services) => { cache_arc.lock().unwrap().insert(user_mode, services); }
+                Err(error) => { results.lock().unwrap().push_back(SystemdActionResult { key: String::new(), action: None, host_id: None, from_popup: false, result: Err(error) }); }
             }
             if let Ok(mut in_flight) = in_flight_arc.lock() {
                 in_flight.remove(&user_mode);
@@ -2299,31 +2332,8 @@ impl LauncherApp {
         });
     }
 
-    pub fn trigger_local_journal_fetch(&self, unit: &str, user_mode: bool, sudo_password: Option<&str>) {
-        let key = format!("{}:{}", unit, if user_mode { "user" } else { "system" });
-        {
-            let mut in_flight = self.local_journal_in_flight.lock().unwrap();
-            if in_flight.contains(&key) {
-                return;
-            }
-            in_flight.insert(key.clone());
-        }
-
-        let unit_clone = unit.to_string();
-        let key_clone = key.clone();
-        let pass_clone = sudo_password.map(|p| p.to_string());
-        let logs_arc = self.local_journal_logs.clone();
-        let in_flight_arc = self.local_journal_in_flight.clone();
-
-        std::thread::spawn(move || {
-            let logs = fetch_local_journal(&unit_clone, user_mode, 100, pass_clone.as_deref()).unwrap_or_default();
-            if let Ok(mut map) = logs_arc.lock() {
-                map.insert(key_clone.clone(), logs);
-            }
-            if let Ok(mut in_flight) = in_flight_arc.lock() {
-                in_flight.remove(&key_clone);
-            }
-        });
+    pub fn trigger_local_journal_fetch(&self, unit: &str, user_mode: bool) {
+        self.queue_systemd_action(PendingSudoAction::ReadJournal { unit: unit.to_string(), user_mode }, None, None);
     }
 
     pub fn trigger_systemd_unit_files_fetch(&self, unit: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) {
@@ -2342,11 +2352,19 @@ impl LauncherApp {
         let files_arc = self.systemd_files_cache.clone();
         let in_flight_arc = self.systemd_files_in_flight.clone();
 
+        let results = self.systemd_action_results.clone();
         std::thread::spawn(move || {
             let info = if let Some(host) = &host_clone {
-                crate::systemd::get_remote_unit_files(host, &unit_clone, user_mode).unwrap_or_default()
+                crate::systemd::get_remote_unit_files(host, &unit_clone, user_mode)
             } else {
                 crate::systemd::get_local_unit_files(&unit_clone, user_mode)
+            };
+            let info = match info {
+                Ok(value) => value,
+                Err(error) => {
+                    results.lock().unwrap().push_back(SystemdActionResult { key: String::new(), action: None, host_id: host_clone.as_ref().map(|host| host.id.clone()), from_popup: false, result: Err(error) });
+                    Default::default()
+                }
             };
             if let Ok(mut map) = files_arc.lock() {
                 map.insert(cache_key_clone.clone(), (info, Instant::now()));
@@ -2357,36 +2375,8 @@ impl LauncherApp {
         });
     }
 
-    pub fn trigger_systemd_file_read(&self, path: &str, _user_mode: bool, host_opt: Option<&SshRemoteHost>, sudo_pass: Option<&str>) {
-        let cache_key = format!("{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), path);
-        {
-            let mut in_flight = self.systemd_file_content_in_flight.lock().unwrap();
-            if in_flight.contains(&cache_key) {
-                return;
-            }
-            in_flight.insert(cache_key.clone());
-        }
-
-        let path_clone = path.to_string();
-        let host_clone = host_opt.cloned();
-        let pass_clone = sudo_pass.map(|p| p.to_string());
-        let cache_key_clone = cache_key.clone();
-        let content_arc = self.systemd_file_content_cache.clone();
-        let in_flight_arc = self.systemd_file_content_in_flight.clone();
-
-        std::thread::spawn(move || {
-            let content = if let Some(host) = &host_clone {
-                crate::systemd::read_remote_unit_file(host, &path_clone).unwrap_or_default()
-            } else {
-                crate::systemd::read_local_unit_file(&path_clone, pass_clone.as_deref()).unwrap_or_default()
-            };
-            if let Ok(mut map) = content_arc.lock() {
-                map.insert(cache_key_clone.clone(), content);
-            }
-            if let Ok(mut in_flight) = in_flight_arc.lock() {
-                in_flight.remove(&cache_key_clone);
-            }
-        });
+    pub fn trigger_systemd_file_read(&self, path: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) {
+        self.queue_systemd_action(PendingSudoAction::ReadUnitFile { path: path.to_string(), user_mode }, host_opt, None);
     }
 
     pub fn trigger_systemd_unit_dependencies_fetch(&self, unit: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) {
@@ -2405,11 +2395,19 @@ impl LauncherApp {
         let deps_arc = self.systemd_deps_cache.clone();
         let in_flight_arc = self.systemd_deps_in_flight.clone();
 
+        let results = self.systemd_action_results.clone();
         std::thread::spawn(move || {
             let deps = if let Some(host) = &host_clone {
-                crate::systemd::get_remote_unit_dependencies(host, &unit_clone, user_mode).unwrap_or_default()
+                crate::systemd::get_remote_unit_dependencies(host, &unit_clone, user_mode)
             } else {
                 crate::systemd::get_local_unit_dependencies(&unit_clone, user_mode)
+            };
+            let deps = match deps {
+                Ok(value) => value,
+                Err(error) => {
+                    results.lock().unwrap().push_back(SystemdActionResult { key: String::new(), action: None, host_id: host_clone.as_ref().map(|host| host.id.clone()), from_popup: false, result: Err(error) });
+                    Default::default()
+                }
             };
             if let Ok(mut map) = deps_arc.lock() {
                 map.insert(cache_key_clone.clone(), (deps, Instant::now()));
@@ -2421,7 +2419,12 @@ impl LauncherApp {
     }
 
     pub fn select_systemd_unit(&mut self, unit: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) {
+        if self.systemd_file_content != self.systemd_file_original {
+            self.systemd_file_status_msg = Some(("Save or revert the current unit file before selecting another unit.".into(), true));
+            return;
+        }
         self.selected_service = Some(unit.to_string());
+        self.queue_systemd_action(PendingSudoAction::InspectUnit { unit: unit.to_string(), user_mode }, host_opt, None);
         self.service_action_msg = None;
         self.systemd_selected_file = None;
         self.systemd_file_content.clear();
@@ -2433,12 +2436,7 @@ impl LauncherApp {
         if let Some(host) = host_opt {
             self.trigger_remote_journal_fetch(host, unit, user_mode);
         } else {
-            let pass_opt = if !user_mode && !self.local_sudo_password.is_empty() {
-                Some(self.local_sudo_password.as_str())
-            } else {
-                None
-            };
-            self.trigger_local_journal_fetch(unit, user_mode, pass_opt);
+            self.trigger_local_journal_fetch(unit, user_mode);
         }
 
         // 2. Pre-fetch unit files & dependencies in the background for zero-lag tab switches!
@@ -2446,93 +2444,13 @@ impl LauncherApp {
         self.trigger_systemd_unit_dependencies_fetch(unit, user_mode, host_opt);
     }
 
-    fn trigger_remote_service_action(&self, host: &SshRemoteHost, unit: &str, action: &'static str, user_mode: bool) {
-        let action_key = format!("{}:{}", host.id, unit);
-        {
-            let mut in_flight = self.remote_service_action_in_flight.lock().unwrap();
-            if in_flight.contains(&action_key) {
-                return;
-            }
-            in_flight.insert(action_key.clone());
+    fn get_or_query_service_enabled(&mut self, unit: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) -> Option<bool> {
+        let key = format!("{}:{}:{}", host_opt.map(|host| host.id.as_str()).unwrap_or("local"), unit, if user_mode { "user" } else { "system" });
+        let cached = self.service_enabled_cache.get(&key).copied();
+        if cached.is_none_or(|(_, time)| time.elapsed() >= Duration::from_secs(6)) {
+            self.queue_systemd_action(PendingSudoAction::QueryEnabled { unit: unit.to_string(), user_mode }, host_opt, None);
         }
-
-        let host_clone = host.clone();
-        let unit_clone = unit.to_string();
-        let action_key_clone = action_key.clone();
-        let in_flight_arc = self.remote_service_action_in_flight.clone();
-        let services_arc = self.remote_services.clone();
-        let journal_arc = self.remote_journal_logs.clone();
-        let action_msg_arc = self.remote_service_action_msg.clone();
-
-        std::thread::spawn(move || {
-            let res = control_remote_service(&host_clone, &unit_clone, action, user_mode);
-            let action_msg = match res {
-                Ok(msg) => msg,
-                Err(e) => format!("Error: {}", e),
-            };
-            if let Ok(mut m) = action_msg_arc.lock() {
-                *m = Some(action_msg);
-            }
-
-            // Refresh services list for this host & scope
-            let s_key = format!("{}:{}", host_clone.id, if user_mode { "user" } else { "system" });
-            if let Ok(services) = list_remote_services(&host_clone, user_mode) {
-                if let Ok(mut map) = services_arc.lock() {
-                    map.insert(s_key, services);
-                }
-            }
-
-            // Refresh journal logs
-            let j_key = format!("{}:{}:{}", host_clone.id, unit_clone, if user_mode { "user" } else { "system" });
-            let logs = fetch_remote_journal(&host_clone, &unit_clone, user_mode, 100).unwrap_or_default();
-            if let Ok(mut map) = journal_arc.lock() {
-                map.insert(j_key, logs);
-            }
-
-            if let Ok(mut in_flight) = in_flight_arc.lock() {
-                in_flight.remove(&action_key_clone);
-            }
-        });
-    }
-
-    fn get_or_query_service_enabled(&mut self, unit: &str, user_mode: bool, host_opt: Option<&SshRemoteHost>) -> bool {
-        let host_id_str = host_opt.map(|h| h.id.as_str()).unwrap_or("local");
-        let cache_key = format!("{}:{}:{}", host_id_str, unit, if user_mode { "user" } else { "system" });
-        if let Some((is_enabled, time)) = self.service_enabled_cache.get(&cache_key) {
-            if time.elapsed() < Duration::from_secs(6) {
-                return *is_enabled;
-            }
-        }
-
-        let is_enabled = if let Some(host) = host_opt {
-            let cmd_str = if user_mode {
-                format!("uid=$(id -u); export XDG_RUNTIME_DIR=/run/user/$uid; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; systemctl --user is-enabled {} 2>/dev/null", unit)
-            } else {
-                format!("systemctl is-enabled {} 2>/dev/null", unit)
-            };
-            let mut cmd = crate::remote::build_ssh_command(host, &cmd_str);
-            if let Ok(out) = cmd.output() {
-                let s = String::from_utf8_lossy(&out.stdout).trim().to_lowercase();
-                s.contains("enabled")
-            } else {
-                false
-            }
-        } else {
-            let mut cmd = std::process::Command::new("systemctl");
-            if user_mode {
-                cmd.arg("--user");
-            }
-            cmd.arg("is-enabled").arg(unit);
-            if let Ok(out) = cmd.output() {
-                let s = String::from_utf8_lossy(&out.stdout).trim().to_lowercase();
-                s.contains("enabled")
-            } else {
-                false
-            }
-        };
-
-        self.service_enabled_cache.insert(cache_key, (is_enabled, Instant::now()));
-        is_enabled
+        cached.map(|(enabled, _)| enabled)
     }
 
     fn get_remote_logs(&self, host_id: &str) -> Arc<Mutex<VecDeque<crate::service::LogEntry>>> {
@@ -3826,6 +3744,7 @@ fn read_proc_cmd_and_cwd(pid: u32) -> (Option<String>, Option<String>) {
 
 impl eframe::App for LauncherApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        self.apply_systemd_results();
         // Sync background sensors snapshot if newly available
         if let Ok(shared) = self.sensors_shared_snapshot.try_lock() {
             if shared.timestamp != self.sensors_snapshot.timestamp && shared.timestamp.is_some() {
@@ -4527,66 +4446,9 @@ impl eframe::App for LauncherApp {
 
         if let Some(service_def) = render_new_service_modal(ctx, &mut self.systemd_modal, &p) {
             self.systemd_modal.open = false;
-            let is_remote = self.selected_machine != "local";
-            if is_remote {
-                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == self.selected_machine).cloned() {
-                    let action_msg_arc = self.remote_service_action_msg.clone();
-                    let services_arc = self.remote_services.clone();
-                    std::thread::spawn(move || {
-                        match create_remote_service(&host, &service_def) {
-                            Ok(msg) => {
-                                if let Ok(mut m) = action_msg_arc.lock() {
-                                    *m = Some(msg);
-                                }
-                                if let Ok(services) = list_remote_services(&host, service_def.is_user) {
-                                    let key = format!("{}:{}", host.id, if service_def.is_user { "user" } else { "system" });
-                                    if let Ok(mut map) = services_arc.lock() {
-                                        map.insert(key, services);
-                                    }
-                                }
-                            }
-                            Err(err) => {
-                                if let Ok(mut m) = action_msg_arc.lock() {
-                                    *m = Some(format!("Error: {}", err));
-                                }
-                            }
-                        }
-                    });
-                }
-            } else {
-                if !service_def.is_user && self.local_sudo_password.is_empty() {
-                    self.sudo_popup.open = true;
-                    self.sudo_popup.pending = Some(PendingSudoAction::CreateService { def: service_def });
-                    self.sudo_popup.password_input.clear();
-                    self.sudo_popup.error = None;
-                    self.sudo_popup.remember_password = true;
-                    self.sudo_popup.just_opened = true;
-                } else {
-                    let pass_opt = if !service_def.is_user && !self.local_sudo_password.is_empty() {
-                        Some(self.local_sudo_password.as_str())
-                    } else {
-                        None
-                    };
-                    match create_local_service(&service_def, pass_opt) {
-                        Ok(msg) => {
-                            self.service_action_msg = Some(msg);
-                            self.trigger_local_services_list(service_def.is_user);
-                        }
-                        Err(err) => {
-                            if !service_def.is_user && (err.contains("Sudo password needed") || err.contains("authentication") || err.contains("Incorrect sudo password")) {
-                                self.local_sudo_password.clear();
-                                self.sudo_popup.open = true;
-                                self.sudo_popup.pending = Some(PendingSudoAction::CreateService { def: service_def });
-                                self.sudo_popup.password_input.clear();
-                                self.sudo_popup.error = Some(err);
-                                self.sudo_popup.remember_password = true;
-                                self.sudo_popup.just_opened = true;
-                            } else {
-                                self.service_action_msg = Some(format!("Error: {}", err));
-                            }
-                        }
-                    }
-                }
+            let host = self.ssh_hosts.iter().find(|host| host.id == self.selected_machine).cloned();
+            if self.selected_machine == "local" || host.is_some() {
+                self.queue_systemd_action(PendingSudoAction::CreateService { def: service_def }, host.as_ref(), None);
             }
         }
 
@@ -4690,8 +4552,7 @@ impl eframe::App for LauncherApp {
             self.remote_connecting.lock().map(|s| !s.is_empty()).unwrap_or(false)
                 || self.remote_scanning.lock().map(|s| !s.is_empty()).unwrap_or(false)
                 || self.remote_services_in_flight.lock().map(|s| !s.is_empty()).unwrap_or(false)
-                || self.remote_service_action_in_flight.lock().map(|s| !s.is_empty()).unwrap_or(false)
-                || self.remote_journal_in_flight.lock().map(|s| !s.is_empty()).unwrap_or(false)
+                || self.systemd_actions_in_flight.lock().map(|s| !s.is_empty()).unwrap_or(false)
                 || self.remote_sensors_in_flight.lock().map(|s| !s.is_empty()).unwrap_or(false)
         };
         if self.close_confirm_open {
@@ -5373,6 +5234,30 @@ fn sensor_card_columns(ui: &mut Ui, count: usize, mut render: impl FnMut(&mut Ui
 #[cfg(test)]
 mod layout_tests {
     use super::*;
+    #[test]
+    fn sudo_retries_resume_after_writes_instead_of_recreating_files() {
+        let action = PendingSudoAction::CreateService { def: crate::systemd::NewServiceDefinition::default() };
+        assert!(matches!(action.clone().authenticated_retry("Unit file created, but daemon reload failed: sudo: a password is required"), PendingSudoAction::ServiceAction { action: "finish-create", .. }));
+        assert!(matches!(action.authenticated_retry("sudo: a password is required"), PendingSudoAction::CreateService { .. }));
+        let dropin = PendingSudoAction::CreateDropIn { path: "/x.service.d/override.conf".into(), content: "[Service]".into(), user_mode: true };
+        assert!(matches!(dropin.authenticated_retry("Drop-in created, but daemon reload failed: sudo: a password is required"), PendingSudoAction::SaveUnitFile { user_mode: true, .. }));
+    }
+
+
+
+    #[test]
+    fn systemd_work_is_isolated_by_host_scope_and_operation() {
+        let read = PendingSudoAction::ReadUnitFile { path: "/etc/systemd/system/app.service".into(), user_mode: false };
+        let user_read = PendingSudoAction::ReadUnitFile { path: "/etc/systemd/system/app.service".into(), user_mode: true };
+        let save = PendingSudoAction::SaveUnitFile { path: "/etc/systemd/system/app.service".into(), content: "draft".into(), user_mode: false };
+        assert_ne!(read.key(None), read.key(Some("remote")));
+        assert_ne!(read.key(None), user_read.key(None));
+        assert_ne!(read.key(None), save.key(None));
+        let start = PendingSudoAction::ServiceAction { unit: "app.service".into(), action: "start", user_mode: false };
+        let stop = PendingSudoAction::ServiceAction { unit: "app.service".into(), action: "stop", user_mode: false };
+        assert_eq!(start.key(None), stop.key(None)); // Opposing controls cannot run together.
+    }
+
 
     #[test]
     fn other_listeners_are_filtered_by_process_ownership_not_port() {
@@ -8199,44 +8084,30 @@ impl LauncherApp {
         let services_list: Vec<SystemdService> = if let Some(ref key) = s_key {
             self.remote_services.lock().map(|m| m.get(key).cloned().unwrap_or_default()).unwrap_or_default()
         } else {
-            self.local_services.clone()
+            self.local_services_cache.lock().unwrap().get(&user_mode).cloned().unwrap_or_default()
         };
 
         let selected_unit = self.selected_service.clone();
-        let service_opt = selected_unit.as_ref().and_then(|u| {
-            services_list.iter().find(|s| &s.name == u).cloned().or_else(|| {
-                Some(SystemdService {
-                    name: u.clone(),
-                    load_state: "loaded".to_string(),
-                    active_state: "active".to_string(),
-                    sub_state: "".to_string(),
-                    description: String::new(),
-                    is_user: user_mode,
-                })
-            })
-        });
+        let detail_key = selected_unit.as_ref().map(|unit| format!("{}:{}:{}", host_id.unwrap_or("local"), unit, user_mode));
+        if let (Some(unit), Some(key)) = (&selected_unit, &detail_key) {
+            if self.service_details_cache.get(key).is_none_or(|(_, time)| time.elapsed() >= Duration::from_secs(5)) {
+                self.queue_systemd_action(PendingSudoAction::InspectUnit { unit: unit.clone(), user_mode }, host_opt.as_ref(), None);
+            }
+        }
+        let service_opt = detail_key.as_ref().and_then(|key| self.service_details_cache.get(key).map(|(service, _)| service.clone()))
+            .or_else(|| selected_unit.as_ref().and_then(|unit| services_list.iter().find(|service| &service.name == unit).cloned()));
 
         match service_opt {
             Some(s) => {
                 let is_active = s.is_active();
                 let is_failed = s.is_failed();
 
-                let action_key = host_id.map(|hid| format!("{}:{}", hid, s.name));
-                let is_action_in_flight = action_key.as_ref().map(|k| {
-                    self.remote_service_action_in_flight.lock().map(|set| set.contains(k)).unwrap_or(false)
-                }).unwrap_or(false);
-
+                let control_key = PendingSudoAction::ServiceAction { unit: s.name.clone(), action: "start", user_mode }.key(host_id);
+                let is_action_in_flight = self.systemd_actions_in_flight.lock().unwrap().contains(&control_key);
+                let journal_key = PendingSudoAction::ReadJournal { unit: s.name.clone(), user_mode }.key(host_id);
+                let is_journal_in_flight = self.systemd_actions_in_flight.lock().unwrap().contains(&journal_key);
                 let local_j_key = format!("{}:{}", s.name, if user_mode { "user" } else { "system" });
-                let is_local_journal_in_flight = self.local_journal_in_flight.lock().map(|set| set.contains(&local_j_key)).unwrap_or(false);
-
-                let j_key = host_id.map(|hid| format!("{}:{}:{}", hid, s.name, if user_mode { "user" } else { "system" }));
-                let is_journal_in_flight = if host_id.is_some() {
-                    j_key.as_ref().map(|k| {
-                        self.remote_journal_in_flight.lock().map(|set| set.contains(k)).unwrap_or(false)
-                    }).unwrap_or(false)
-                } else {
-                    is_local_journal_in_flight
-                };
+                let j_key = host_id.map(|host| format!("{}:{}:{}", host, s.name, if user_mode { "user" } else { "system" }));
 
                 // Auto-fetch journal logs on first selection if not yet loaded
                 if let (Some(host), Some(ref jk)) = (&host_opt, &j_key) {
@@ -8247,12 +8118,7 @@ impl LauncherApp {
                 } else if host_id.is_none() {
                     let has_logs = self.local_journal_logs.lock().map(|m| m.contains_key(&local_j_key)).unwrap_or(false);
                     if !has_logs && !is_journal_in_flight {
-                        let pass_opt = if !user_mode && !self.local_sudo_password.is_empty() {
-                            Some(self.local_sudo_password.as_str())
-                        } else {
-                            None
-                        };
-                        self.trigger_local_journal_fetch(&s.name, user_mode, pass_opt);
+                        self.trigger_local_journal_fetch(&s.name, user_mode);
                     }
                 }
 
@@ -8310,7 +8176,7 @@ impl LauncherApp {
                                 if is_action_in_flight {
                                     ui.spinner();
                                     ui.add_space(4.0);
-                                    ui.label(RichText::new("Executing remote action...").size(11.0).color(p.accent));
+                                    ui.label(RichText::new("Executing action…").size(11.0).color(p.accent));
                                 } else {
                                     if is_active {
                                         let btn_stop = egui::Button::new(RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED)).size(11.0).color(Color32::WHITE))
@@ -8341,7 +8207,7 @@ impl LauncherApp {
                                         action_to_run = Some("restart");
                                     }
 
-                                    if is_enabled {
+                                    if is_enabled == Some(true) {
                                         let btn_disable = egui::Button::new(RichText::new(format!("{} Disable", crate::lucide::X)).size(11.0).color(p.text_primary))
                                             .fill(p.bg_button)
                                             .stroke(Stroke::NONE)
@@ -8356,7 +8222,7 @@ impl LauncherApp {
                                             .stroke(Stroke::NONE)
                                             .rounding(Rounding::same(999.0))
                                             .min_size(egui::vec2(86.0, 26.0));
-                                        if ui.add(btn_enable).clicked() {
+                                        if ui.add_enabled(is_enabled.is_some(), btn_enable).on_hover_text("Enable at startup; available after querying the unit state").clicked() {
                                             action_to_run = Some("enable");
                                         }
                                     }
@@ -8372,65 +8238,8 @@ impl LauncherApp {
                                 }
                             });
 
-                            if let Some(act) = action_to_run {
-                                let host_id_str = host_opt.as_ref().map(|h| h.id.as_str()).unwrap_or("local");
-                                let cache_key = format!("{}:{}:{}", host_id_str, s.name, if user_mode { "user" } else { "system" });
-                                if act == "enable" {
-                                    self.service_enabled_cache.insert(cache_key, (true, Instant::now()));
-                                } else if act == "disable" {
-                                    self.service_enabled_cache.insert(cache_key, (false, Instant::now()));
-                                }
-
-                                if let Some(host) = &host_opt {
-                                    self.trigger_remote_service_action(host, &s.name, act, user_mode);
-                                } else {
-                                    if !user_mode && self.local_sudo_password.is_empty() {
-                                        self.sudo_popup.open = true;
-                                        self.sudo_popup.pending = Some(PendingSudoAction::ServiceAction {
-                                            unit: s.name.clone(),
-                                            action: act,
-                                            user_mode: false,
-                                        });
-                                        self.sudo_popup.password_input.clear();
-                                        self.sudo_popup.error = None;
-                                        self.sudo_popup.remember_password = true;
-                                        self.sudo_popup.just_opened = true;
-                                    } else {
-                                        let pass_opt = if !user_mode && !self.local_sudo_password.is_empty() {
-                                            Some(self.local_sudo_password.as_str())
-                                        } else {
-                                            None
-                                        };
-                                        let res = control_local_service(&s.name, act, user_mode, pass_opt);
-                                        match res {
-                                            Ok(msg) => self.service_action_msg = Some(msg),
-                                            Err(e) => {
-                                                if !user_mode && (e.contains("Sudo password needed") || e.contains("authentication") || e.contains("Incorrect sudo password")) {
-                                                    self.local_sudo_password.clear();
-                                                    self.sudo_popup.open = true;
-                                                    self.sudo_popup.pending = Some(PendingSudoAction::ServiceAction {
-                                                        unit: s.name.clone(),
-                                                        action: act,
-                                                        user_mode: false,
-                                                    });
-                                                    self.sudo_popup.password_input.clear();
-                                                    self.sudo_popup.error = Some(e);
-                                                    self.sudo_popup.remember_password = true;
-                                                    self.sudo_popup.just_opened = true;
-                                                } else {
-                                                    self.service_action_msg = Some(format!("Error: {}", e));
-                                                }
-                                            }
-                                        }
-                                        self.trigger_local_services_list(user_mode);
-                                        let pass_for_journal = if !user_mode && !self.local_sudo_password.is_empty() {
-                                            Some(self.local_sudo_password.as_str())
-                                        } else {
-                                            None
-                                        };
-                                        self.trigger_local_journal_fetch(&s.name, user_mode, pass_for_journal);
-                                    }
-                                }
+                            if let Some(action) = action_to_run {
+                                self.queue_systemd_action(PendingSudoAction::ServiceAction { unit: s.name.clone(), action, user_mode }, host_opt.as_ref(), None);
                             }
                         });
 
@@ -8509,12 +8318,7 @@ impl LauncherApp {
                                         if let Some(host) = &host_opt {
                                             self.trigger_remote_journal_fetch(host, &s.name, user_mode);
                                         } else {
-                                            let pass_for_journal = if !user_mode && !self.local_sudo_password.is_empty() {
-                                                Some(self.local_sudo_password.as_str())
-                                            } else {
-                                                None
-                                            };
-                                            self.trigger_local_journal_fetch(&s.name, user_mode, pass_for_journal);
+                                            self.trigger_local_journal_fetch(&s.name, user_mode);
                                         }
                                         self.last_journal_refresh = Instant::now();
                                     }
@@ -8551,7 +8355,12 @@ impl LauncherApp {
                             });
 
                             // Auto-refresh timer check
-                            if self.journal_refresh_interval > 0 {
+                            let journal_auth_error = if let Some(key) = &j_key {
+                                self.remote_journal_logs.lock().unwrap().get(key).is_some_and(|logs| crate::systemd::needs_sudo_password(logs))
+                            } else {
+                                self.local_journal_logs.lock().unwrap().get(&local_j_key).is_some_and(|logs| crate::systemd::needs_sudo_password(logs))
+                            };
+                            if self.journal_refresh_interval > 0 && !journal_auth_error {
                                 let next_refresh = Duration::from_secs(self.journal_refresh_interval as u64)
                                     .saturating_sub(self.last_journal_refresh.elapsed());
                                 ui.ctx().request_repaint_after(next_refresh.max(Duration::from_millis(1000)));
@@ -8560,12 +8369,7 @@ impl LauncherApp {
                                     if let Some(host) = &host_opt {
                                         self.trigger_remote_journal_fetch(host, &s.name, user_mode);
                                     } else {
-                                        let pass_for_journal = if !user_mode && !self.local_sudo_password.is_empty() {
-                                            Some(self.local_sudo_password.as_str())
-                                        } else {
-                                            None
-                                        };
-                                        self.trigger_local_journal_fetch(&s.name, user_mode, pass_for_journal);
+                                        self.trigger_local_journal_fetch(&s.name, user_mode);
                                     }
                                 }
                             }
@@ -8585,8 +8389,7 @@ impl LauncherApp {
                                 self.local_journal_logs.lock().map(|m| m.get(&local_key).cloned()).unwrap_or(None).unwrap_or_else(|| {
                                     if is_journal_in_flight {
                                         "Fetching journal logs in background...".to_string()
-                                    } else if !self.service_journal_logs.is_empty() {
-                                        self.service_journal_logs.clone()
+
                                     } else {
                                         format!("No journal logs recorded yet. Click '{} Refresh Logs'.", crate::lucide::REFRESH_CW)
                                     }
@@ -8595,7 +8398,7 @@ impl LauncherApp {
 
                             let log_h = (ui.available_height() - 16.0).max(0.0);
                             Frame::none()
-                                .fill(Color32::from_rgb(12, 14, 20))
+                                .fill(p.terminal_bg)
                                 .stroke(Stroke::NONE)
                                 .rounding(Rounding::same(8.0))
                                 .inner_margin(egui::Margin::symmetric(10.0, 8.0))
@@ -8608,13 +8411,13 @@ impl LauncherApp {
                                         .auto_shrink([false, false])
                                         .show(ui, |ui| {
                                             if display_logs.trim().is_empty() {
-                                                ui.label(RichText::new("No journal logs recorded for this service.").size(11.5).color(Color32::from_rgb(100, 110, 130)));
+                                                ui.label(RichText::new("No journal logs recorded for this service.").size(11.5).color(p.text_muted));
                                             } else {
                                                 ui.label(
                                                     RichText::new(&display_logs)
                                                         .size(11.0)
                                                         .monospace()
-                                                        .color(Color32::from_rgb(220, 225, 235)),
+                                                        .color(p.log_stdout),
                                                 );
                                             }
                                         });
@@ -8637,7 +8440,10 @@ impl LauncherApp {
                             ui.set_width(ui.available_width().min(380.0));
                             ui.vertical_centered(|ui| {
                                 ui.label(RichText::new(crate::lucide::SYSTEMD).size(24.0).color(p.accent));
-                                ui.label(RichText::new("Select a service").size(14.0).strong().color(p.text_primary));
+                                ui.label(RichText::new(if selected_unit.is_some() { "Loading service details…" } else { "Select a service" }).size(14.0).strong().color(p.text_primary));
+                                if let Some(message) = if host_id.is_some() { self.remote_service_action_msg.lock().ok().and_then(|message| message.clone()) } else { self.service_action_msg.clone() } {
+                                    ui.label(RichText::new(message).size(11.5).color(p.warning));
+                                }
                                 ui.label(RichText::new("Choose a service from the list to view its status, logs and controls.")
                                     .size(11.5).color(p.text_muted));
                             });
@@ -8693,6 +8499,18 @@ impl LauncherApp {
         host_opt: Option<&SshRemoteHost>,
     ) {
         let p = self.palette();
+        let context = (host_opt.map(|host| host.id.as_str()).unwrap_or("local").to_string(), user_mode);
+        if self.systemd_editor_context.as_ref() != Some(&context) {
+            if self.systemd_file_content != self.systemd_file_original {
+                ui.label(RichText::new("Unsaved edits belong to another host or scope. Return there to save or revert them before opening this editor.").color(p.warning));
+                return;
+            }
+            self.systemd_editor_context = Some(context);
+            self.systemd_selected_file = None;
+            self.systemd_file_content.clear();
+            self.systemd_file_original.clear();
+            self.systemd_file_status_msg = None;
+        }
         let (files_info, is_files_loading) = self.load_systemd_unit_files(&s.name, user_mode, host_opt);
 
         // Determine available files
@@ -8712,23 +8530,19 @@ impl LauncherApp {
 
         let cur_path = self.systemd_selected_file.clone().unwrap_or_default();
         let file_cache_key = format!("{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), cur_path);
-        let is_content_in_flight = self.systemd_file_content_in_flight.lock().map(|s| s.contains(&file_cache_key)).unwrap_or(false);
+        let read_key = PendingSudoAction::ReadUnitFile { path: cur_path.clone(), user_mode }.key(host_opt.map(|host| host.id.as_str()));
+        let is_content_in_flight = self.systemd_actions_in_flight.lock().unwrap().contains(&read_key);
 
         // Auto-read selected file into editor if cached or trigger async read
         if !cur_path.is_empty() {
             if let Ok(cache) = self.systemd_file_content_cache.lock() {
-                if let Some(content) = cache.get(&file_cache_key) {
+                if let Some(Ok(content)) = cache.get(&file_cache_key) {
                     if self.systemd_file_original.is_empty() && self.systemd_file_content.is_empty() {
                         self.systemd_file_content = content.clone();
                         self.systemd_file_original = content.clone();
                     }
-                } else if !is_content_in_flight {
-                    let pass = if !user_mode && !self.local_sudo_password.is_empty() {
-                        Some(self.local_sudo_password.as_str())
-                    } else {
-                        None
-                    };
-                    self.trigger_systemd_file_read(&cur_path, user_mode, host_opt, pass);
+                } else if !cache.contains_key(&file_cache_key) && !is_content_in_flight {
+                    self.trigger_systemd_file_read(&cur_path, user_mode, host_opt);
                 }
             }
         }
@@ -8763,22 +8577,21 @@ impl LauncherApp {
             }
 
             if let Some(new_p) = switch_to_path {
+                if self.systemd_file_content != self.systemd_file_original {
+                    self.systemd_file_status_msg = Some(("Save or revert changes before switching files.".into(), true));
+                    return;
+                }
                 self.systemd_selected_file = Some(new_p.clone());
                 self.systemd_file_status_msg = None;
                 let target_file_cache_key = format!("{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), new_p);
                 let cached_opt = self.systemd_file_content_cache.lock().ok().and_then(|c| c.get(&target_file_cache_key).cloned());
-                if let Some(content) = cached_opt {
+                if let Some(Ok(content)) = cached_opt {
                     self.systemd_file_content = content.clone();
                     self.systemd_file_original = content;
                 } else {
                     self.systemd_file_content.clear();
                     self.systemd_file_original.clear();
-                    let pass = if !user_mode && !self.local_sudo_password.is_empty() {
-                        Some(self.local_sudo_password.as_str())
-                    } else {
-                        None
-                    };
-                    self.trigger_systemd_file_read(&new_p, user_mode, host_opt, pass);
+                    self.trigger_systemd_file_read(&new_p, user_mode, host_opt);
                 }
             }
 
@@ -8800,7 +8613,7 @@ impl LauncherApp {
             let btn_ref = egui::Button::new(RichText::new(format!("{} Refresh", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_secondary))
                 .fill(p.bg_button)
                 .rounding(Rounding::same(999.0));
-            if ui.add(btn_ref).on_hover_text("Reload files and re-read from disk").clicked() {
+            if ui.add_enabled(self.systemd_file_content == self.systemd_file_original, btn_ref).on_hover_text("Save or revert edits before reloading files from disk").clicked() {
                 let cache_key = format!("{}:{}:{}", host_opt.map(|h| h.id.as_str()).unwrap_or("local"), s.name, user_mode);
                 if let Ok(mut c) = self.systemd_files_cache.lock() {
                     c.remove(&cache_key);
@@ -8863,84 +8676,36 @@ impl LauncherApp {
                                 .rounding(Rounding::same(999.0));
                             if ui.add(btn).clicked() {
                                 self.systemd_new_dropin_template = idx;
-                                self.systemd_file_content = t_body.to_string();
+                                self.systemd_new_dropin_content = t_body.to_string();
                             }
                         }
                     });
 
                     ui.add_space(6.0);
+                    ui.add(egui::TextEdit::multiline(&mut self.systemd_new_dropin_content).code_editor()
+                        .font(egui::FontId::monospace(11.5)).text_color(p.text_secondary).desired_rows(4).desired_width(ui.available_width()));
                     ui.horizontal(|ui| {
                         let btn_create = egui::Button::new(RichText::new(format!("{} Create Drop-In", crate::lucide::CHECK)).size(11.0).strong().color(Color32::WHITE))
                             .fill(Color32::from_rgb(16, 185, 129))
                             .rounding(Rounding::same(999.0));
                         if ui.add(btn_create).clicked() {
-                            let clean_name = if self.systemd_new_dropin_name.trim().ends_with(".conf") {
-                                self.systemd_new_dropin_name.trim().to_string()
-                            } else {
-                                format!("{}.conf", self.systemd_new_dropin_name.trim())
-                            };
-                            let target_path = if user_mode {
-                                let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-                                format!("{}/.config/systemd/user/{}.d/{}", home, s.name, clean_name)
-                            } else {
-                                format!("/etc/systemd/system/{}.d/{}", s.name, clean_name)
-                            };
-
-                            let initial_content = if self.systemd_file_content.trim().is_empty() {
-                                "[Service]\n".to_string()
-                            } else {
-                                self.systemd_file_content.clone()
-                            };
-
-                            if let Some(host) = host_opt {
-                                match crate::systemd::write_remote_unit_file(host, &target_path, &initial_content, user_mode) {
-                                    Ok(msg) => {
-                                        self.systemd_file_status_msg = Some((msg, false));
-                                        self.systemd_selected_file = Some(target_path.clone());
-                                        self.systemd_file_original = initial_content;
-                                        self.systemd_new_dropin_open = false;
-                                        let cache_key = format!("{}:{}:{}", host.id, s.name, user_mode);
-                                        if let Ok(mut c) = self.systemd_files_cache.lock() {
-                                            c.remove(&cache_key);
-                                        }
-                                    }
-                                    Err(e) => self.systemd_file_status_msg = Some((e, true)),
-                                }
-                            } else {
-                                if !user_mode && self.local_sudo_password.is_empty() {
-                                    self.sudo_popup.open = true;
-                                    self.sudo_popup.pending = Some(PendingSudoAction::SaveUnitFile {
-                                        path: target_path.clone(),
-                                        content: initial_content.clone(),
-                                        user_mode,
-                                    });
-                                    self.sudo_popup.password_input.clear();
-                                    self.sudo_popup.error = None;
-                                    self.sudo_popup.remember_password = true;
-                                    self.sudo_popup.just_opened = true;
-                                    self.systemd_selected_file = Some(target_path);
-                                    self.systemd_new_dropin_open = false;
-                                } else {
-                                    let pass = if !user_mode && !self.local_sudo_password.is_empty() {
-                                        Some(self.local_sudo_password.as_str())
-                                    } else {
-                                        None
-                                    };
-                                    match crate::systemd::write_local_unit_file(&target_path, &initial_content, user_mode, pass) {
-                                        Ok(msg) => {
-                                            self.systemd_file_status_msg = Some((msg, false));
-                                            self.systemd_selected_file = Some(target_path.clone());
-                                            self.systemd_file_original = initial_content;
-                                            self.systemd_new_dropin_open = false;
-                                            let cache_key = format!("local:{}:{}", s.name, user_mode);
-                                            if let Ok(mut c) = self.systemd_files_cache.lock() {
-                                                c.remove(&cache_key);
-                                            }
-                                        }
-                                        Err(e) => self.systemd_file_status_msg = Some((e, true)),
-                                    }
-                                }
+                            if self.systemd_file_content != self.systemd_file_original {
+                                self.systemd_file_status_msg = Some(("Save or revert the current file before creating a drop-in.".into(), true));
+                                return;
                             }
+                            let name = self.systemd_new_dropin_name.trim();
+                            let name = if name.ends_with(".conf") { name.to_string() } else { format!("{}.conf", name) };
+                            if let Err(error) = crate::systemd::validate_drop_in_name(&name).and_then(|_| crate::systemd::validate_unit_name(&s.name)) {
+                                self.systemd_file_status_msg = Some((error, true)); return;
+                            }
+                            let path = if user_mode {
+                                if host_opt.is_some() { format!("~/.config/systemd/user/{}.d/{}", s.name, name) }
+                                else { match crate::systemd::user_unit_directory() {
+                                    Ok(directory) => directory.join(format!("{}.d", s.name)).join(&name).to_string_lossy().into_owned(),
+                                    Err(error) => { self.systemd_file_status_msg = Some((error, true)); return; }
+                                }}
+                            } else { format!("/etc/systemd/system/{}.d/{}", s.name, name) };
+                            self.queue_systemd_action(PendingSudoAction::CreateDropIn { path, content: self.systemd_new_dropin_content.clone(), user_mode }, host_opt, None);
                         }
                     });
                 });
@@ -8952,6 +8717,11 @@ impl LauncherApp {
         let cur_path = self.systemd_selected_file.clone().unwrap_or_default();
         let is_dropin = cur_path.contains(".d/");
         let is_modified = self.systemd_file_content != self.systemd_file_original;
+        let file_cache_key = format!("{}:{}", host_opt.map(|host| host.id.as_str()).unwrap_or("local"), cur_path);
+        let save_key = PendingSudoAction::SaveUnitFile { path: cur_path.clone(), content: String::new(), user_mode }.key(host_opt.map(|host| host.id.as_str()));
+        let delete_key = PendingSudoAction::DeleteDropIn { path: cur_path.clone(), user_mode }.key(host_opt.map(|host| host.id.as_str()));
+        let file_busy = { let work = self.systemd_actions_in_flight.lock().unwrap(); work.contains(&save_key) || work.contains(&delete_key) };
+        let file_loaded = self.systemd_file_content_cache.lock().unwrap().get(&file_cache_key).is_some_and(|content| content.is_ok());
 
         Frame::none()
             .fill(p.bg_card)
@@ -8976,16 +8746,7 @@ impl LauncherApp {
                             .fill(p.bg_button)
                             .rounding(Rounding::same(999.0));
                         if ui.add(btn_restart).on_hover_text("Restart service to activate new configuration").clicked() {
-                            if let Some(host) = host_opt {
-                                self.trigger_remote_service_action(host, &s.name, "restart", user_mode);
-                            } else {
-                                let pass = if !user_mode && !self.local_sudo_password.is_empty() {
-                                    Some(self.local_sudo_password.as_str())
-                                } else {
-                                    None
-                                };
-                                let _ = crate::systemd::control_local_service(&s.name, "restart", user_mode, pass);
-                            }
+                            self.queue_systemd_action(PendingSudoAction::ServiceAction { unit: s.name.clone(), action: "restart", user_mode }, host_opt, None);
                         }
 
                         // Delete Drop-In (if dropin)
@@ -8993,47 +8754,8 @@ impl LauncherApp {
                             let btn_del = egui::Button::new(RichText::new(format!("{} Delete Drop-In", crate::lucide::TRASH)).size(10.5).strong().color(Color32::WHITE))
                                 .fill(p.danger)
                                 .rounding(Rounding::same(999.0));
-                            if ui.add(btn_del).on_hover_text("Remove this drop-in override and reload daemon").clicked() {
-                                if let Some(host) = host_opt {
-                                    match crate::systemd::delete_remote_drop_in(host, &cur_path, user_mode) {
-                                        Ok(msg) => {
-                                            self.systemd_file_status_msg = Some((msg, false));
-                                            self.systemd_selected_file = None;
-                                            if let Ok(mut c) = self.systemd_files_cache.lock() {
-                                                c.clear();
-                                            }
-                                        }
-                                        Err(e) => self.systemd_file_status_msg = Some((e, true)),
-                                    }
-                                } else {
-                                    if !user_mode && self.local_sudo_password.is_empty() {
-                                        self.sudo_popup.open = true;
-                                        self.sudo_popup.pending = Some(PendingSudoAction::DeleteDropIn {
-                                            path: cur_path.clone(),
-                                            user_mode,
-                                        });
-                                        self.sudo_popup.password_input.clear();
-                                        self.sudo_popup.error = None;
-                                        self.sudo_popup.remember_password = true;
-                                        self.sudo_popup.just_opened = true;
-                                    } else {
-                                        let pass = if !user_mode && !self.local_sudo_password.is_empty() {
-                                            Some(self.local_sudo_password.as_str())
-                                        } else {
-                                            None
-                                        };
-                                        match crate::systemd::delete_local_drop_in(&cur_path, user_mode, pass) {
-                                            Ok(msg) => {
-                                                self.systemd_file_status_msg = Some((msg, false));
-                                                self.systemd_selected_file = None;
-                                                if let Ok(mut c) = self.systemd_files_cache.lock() {
-                                                    c.clear();
-                                                }
-                                            }
-                                            Err(e) => self.systemd_file_status_msg = Some((e, true)),
-                                        }
-                                    }
-                                }
+                            if ui.add_enabled(!is_modified && !file_busy, btn_del).on_hover_text("Save or revert edits before deleting this drop-in").clicked() {
+                                self.queue_systemd_action(PendingSudoAction::DeleteDropIn { path: cur_path.clone(), user_mode }, host_opt, None);
                             }
                         }
 
@@ -9053,42 +8775,8 @@ impl LauncherApp {
                         )
                         .fill(if is_modified { p.accent } else { p.bg_button })
                         .rounding(Rounding::same(999.0));
-                        if ui.add(btn_save).on_hover_text("Save file to disk and execute systemctl daemon-reload").clicked() {
-                            if let Some(host) = host_opt {
-                                match crate::systemd::write_remote_unit_file(host, &cur_path, &self.systemd_file_content, user_mode) {
-                                    Ok(msg) => {
-                                        self.systemd_file_original = self.systemd_file_content.clone();
-                                        self.systemd_file_status_msg = Some((msg, false));
-                                    }
-                                    Err(e) => self.systemd_file_status_msg = Some((e, true)),
-                                }
-                            } else {
-                                if !user_mode && self.local_sudo_password.is_empty() {
-                                    self.sudo_popup.open = true;
-                                    self.sudo_popup.pending = Some(PendingSudoAction::SaveUnitFile {
-                                        path: cur_path.clone(),
-                                        content: self.systemd_file_content.clone(),
-                                        user_mode,
-                                    });
-                                    self.sudo_popup.password_input.clear();
-                                    self.sudo_popup.error = None;
-                                    self.sudo_popup.remember_password = true;
-                                    self.sudo_popup.just_opened = true;
-                                } else {
-                                    let pass = if !user_mode && !self.local_sudo_password.is_empty() {
-                                        Some(self.local_sudo_password.as_str())
-                                    } else {
-                                        None
-                                    };
-                                    match crate::systemd::write_local_unit_file(&cur_path, &self.systemd_file_content, user_mode, pass) {
-                                        Ok(msg) => {
-                                            self.systemd_file_original = self.systemd_file_content.clone();
-                                            self.systemd_file_status_msg = Some((msg, false));
-                                        }
-                                        Err(e) => self.systemd_file_status_msg = Some((e, true)),
-                                    }
-                                }
-                            }
+                        if ui.add_enabled(file_loaded && is_modified && !file_busy, btn_save).on_hover_text("Save file to disk and execute systemctl daemon-reload").clicked() {
+                            self.queue_systemd_action(PendingSudoAction::SaveUnitFile { path: cur_path.clone(), content: self.systemd_file_content.clone(), user_mode }, host_opt, None);
                         }
                 });
             });
@@ -9124,7 +8812,10 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.add(
                             egui::TextEdit::multiline(&mut self.systemd_file_content)
-                                .id_salt(("systemd_file_editor", &cur_path))
+                                .id_salt(("systemd_file_editor", &cur_path)).interactive(file_loaded && {
+                                    let work = self.systemd_actions_in_flight.lock().unwrap();
+                                    !work.contains(&save_key) && !work.contains(&delete_key)
+                                })
                                 .font(egui::FontId::monospace(11.5)).text_color(p.log_stdout).frame(false)
                                 .desired_width(f32::INFINITY)
                                 .desired_rows(25)
@@ -9178,7 +8869,7 @@ impl LauncherApp {
                     ui.spacing_mut().interact_size.y = 16.0;
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(crate::lucide::SEARCH).size(11.0).color(p.text_muted));
-                        ui.add(egui::TextEdit::singleline(&mut self.systemd_deps_filter)
+                        ui.add_enabled(self.systemd_deps_view_mode == 0, egui::TextEdit::singleline(&mut self.systemd_deps_filter)
                             .font(egui::FontId::proportional(11.5)).text_color(p.text_secondary)
                             .hint_text(RichText::new("Filter dependencies…").color(p.text_muted))
                             .frame(false).margin(egui::Vec2::ZERO).clip_text(true).desired_width(ui.available_width()));
@@ -9239,14 +8930,15 @@ impl LauncherApp {
                     let filter = self.systemd_deps_filter.trim().to_lowercase();
 
                     let categories = [
-                        ("Requires (Hard Dependencies)", "Units that must be active for this unit to start. If any of them fails or stops, this unit is deactivated.", &deps.requires, p.danger),
+                        ("Requires (Hard Dependencies)", "Units pulled in when this unit starts. Ordering is controlled separately by After and Before.", &deps.requires, p.danger),
                         ("Wants (Soft Dependencies)", "Suggested units that start alongside this unit. A failure does not stop this unit.", &deps.wants, p.info),
-                        ("After (Order After)", "This unit starts after these units have completed initialization.", &deps.after, p.accent),
-                        ("Before (Order Before)", "These units only start after this unit has completed initialization.", &deps.before, p.info),
+                        ("After (Order After)", "Orders this unit after these units when both are started; does not pull them in.", &deps.after, p.accent),
+                        ("Before (Order Before)", "Orders this unit before these units when both are started; does not pull them in.", &deps.before, p.info),
                         ("Conflicts (Incompatible Units)", "Units that cannot run simultaneously with this unit.", &deps.conflicts, p.danger),
                         ("Required By (Reverse Hard Dependencies)", "Units on the system that strictly require this unit.", &deps.required_by, p.warning),
                         ("Wanted By (Reverse Soft Dependencies)", "Units on the system that declare Wants= on this unit.", &deps.wanted_by, p.success),
-                        ("Part Of & Binds To", "Units sharing life cycle binding with this unit.", &deps.part_of, p.accent),
+                        ("Part Of", "Stopping or restarting these units propagates to this unit.", &deps.part_of, p.accent),
+                        ("Binds To", "Units whose disappearance also stops this unit.", &deps.binds_to, p.warning),
                     ];
 
                     let mut any_shown = false;
@@ -9357,121 +9049,210 @@ impl LauncherApp {
         }
     }
 
-    fn execute_pending_sudo_action(&mut self, action: PendingSudoAction, from_popup: bool) {
-        let pass = if from_popup {
-            self.sudo_popup.password_input.clone()
-        } else {
-            self.local_sudo_password.clone()
-        };
+    fn queue_systemd_action(&self, action: PendingSudoAction, host: Option<&SshRemoteHost>, password: Option<String>) {
+        let key = action.key(host.map(|host| host.id.as_str()));
+        if password.is_none() && self.sudo_popup.open && self.sudo_popup.pending.as_ref().is_some_and(|pending| pending.key(self.sudo_popup.host_id.as_deref()) == key) { return; }
+        if password.is_none() && matches!(action, PendingSudoAction::InspectUnit { .. } | PendingSudoAction::QueryEnabled { .. })
+            && self.service_query_errors.get(&key).is_some_and(|time| time.elapsed() < Duration::from_secs(5)) { return; }
+        if !self.systemd_actions_in_flight.lock().unwrap().insert(key.clone()) { return; }
+        let from_popup = password.is_some();
+        let host = host.cloned();
+        let password = password.or_else(|| {
+            host.as_ref().and_then(|host| self.remote_sudo_passwords.get(&host.id).cloned())
+                .or_else(|| if host.is_none() { Some(self.local_sudo_password.clone()) } else { None })
+        });
+        let results = self.systemd_action_results.clone();
+        std::thread::spawn(move || {
+            let pass = password.as_deref().filter(|password| !password.is_empty());
+            let result = match &action {
+                PendingSudoAction::ServiceAction { unit, action, user_mode } => {
+                    if let Some(host) = &host { control_remote_service(host, unit, action, *user_mode, pass) }
+                    else { control_local_service(unit, action, *user_mode, pass) }.map(SystemdActionValue::Message)
+                }
+                PendingSudoAction::CreateService { def } => {
+                    if let Some(host) = &host { create_remote_service(host, def, pass) }
+                    else { create_local_service(def, pass) }.map(SystemdActionValue::Message)
+                }
+                PendingSudoAction::SaveUnitFile { path, content, user_mode } => {
+                    if let Some(host) = &host { crate::systemd::write_remote_unit_file(host, path, content, *user_mode, pass) }
+                    else { write_local_unit_file(path, content, *user_mode, pass) }.map(SystemdActionValue::Message)
+                }
+                PendingSudoAction::CreateDropIn { path, content, user_mode } => {
+                    if let Some(host) = &host { crate::systemd::create_remote_drop_in(host, path, content, *user_mode, pass) }
+                    else { crate::systemd::create_local_drop_in(path, content, *user_mode, pass) }.map(SystemdActionValue::Message)
+                }
+                PendingSudoAction::DeleteDropIn { path, user_mode } => {
+                    if let Some(host) = &host { crate::systemd::delete_remote_drop_in(host, path, *user_mode, pass) }
+                    else { delete_local_drop_in(path, *user_mode, pass) }.map(SystemdActionValue::Message)
+                }
+                PendingSudoAction::ReadUnitFile { path, .. } => {
+                    if let Some(host) = &host { crate::systemd::read_remote_unit_file(host, path, pass) }
+                    else { crate::systemd::read_local_unit_file(path, pass) }.map(SystemdActionValue::FileContent)
+                }
+                PendingSudoAction::ReadJournal { unit, user_mode } => {
+                    if let Some(host) = &host { fetch_remote_journal(host, unit, *user_mode, 100, pass) }
+                    else { fetch_local_journal(unit, *user_mode, 100, pass) }.map(SystemdActionValue::Journal)
+                }
+                PendingSudoAction::QueryEnabled { unit, user_mode } => {
+                    if let Some(host) = &host { crate::systemd::is_remote_service_enabled(host, unit, *user_mode) }
+                    else { crate::systemd::is_local_service_enabled(unit, *user_mode) }.map(SystemdActionValue::Enabled)
+                }
+                PendingSudoAction::InspectUnit { unit, user_mode } => {
+                    if let Some(host) = &host { crate::systemd::get_remote_unit_status(host, unit, *user_mode) }
+                    else { crate::systemd::get_local_unit_status(unit, *user_mode) }.map(SystemdActionValue::Status)
+                }
+            };
+            if let Ok(mut results) = results.lock() {
+                results.push_back(SystemdActionResult { key, action: Some(action), host_id: host.map(|host| host.id), from_popup, result });
+            }
+        });
+    }
 
-        match action {
-            PendingSudoAction::ServiceAction { unit, action: act, user_mode } => {
-                let res = control_local_service(&unit, act, user_mode, Some(&pass));
-                match res {
-                    Ok(msg) => {
-                        if from_popup && self.sudo_popup.remember_password {
-                            self.local_sudo_password = pass;
+    fn apply_systemd_results(&mut self) {
+        let results: Vec<_> = self.systemd_action_results.lock().unwrap().drain(..).collect();
+        for result in results {
+            self.systemd_actions_in_flight.lock().unwrap().remove(&result.key);
+            let host = result.host_id.as_ref().and_then(|id| self.ssh_hosts.iter().find(|host| &host.id == id)).cloned();
+            let host_key = result.host_id.as_deref().unwrap_or("local");
+            let current_host = self.selected_machine == host_key;
+            let matching_popup = self.sudo_popup.pending.as_ref().is_some_and(|pending| pending.key(self.sudo_popup.host_id.as_deref()) == result.key);
+            let Some(action) = result.action else {
+                if let Err(error) = result.result {
+                    if result.host_id.is_some() { *self.remote_service_action_msg.lock().unwrap() = Some(error); }
+                    else { self.service_action_msg = Some(error); }
+                }
+                continue;
+            };
+            let action_scope = match &action {
+                PendingSudoAction::CreateService { def } => def.is_user,
+                PendingSudoAction::ServiceAction { user_mode, .. } | PendingSudoAction::SaveUnitFile { user_mode, .. }
+                | PendingSudoAction::CreateDropIn { user_mode, .. } | PendingSudoAction::DeleteDropIn { user_mode, .. }
+                | PendingSudoAction::ReadUnitFile { user_mode, .. } | PendingSudoAction::ReadJournal { user_mode, .. }
+                | PendingSudoAction::QueryEnabled { user_mode, .. } | PendingSudoAction::InspectUnit { user_mode, .. } => *user_mode,
+            };
+            let current_editor = current_host && self.systemd_editor_context.as_ref() == Some(&(host_key.to_string(), action_scope));
+            match result.result {
+                Err(error) => {
+                    if matches!(action, PendingSudoAction::InspectUnit { .. } | PendingSudoAction::QueryEnabled { .. }) { self.service_query_errors.insert(result.key.clone(), Instant::now()); }
+                    if let PendingSudoAction::ReadUnitFile { path, .. } = &action {
+                        self.systemd_file_content_cache.lock().unwrap().insert(format!("{}:{}", host_key, path), Err(error.clone()));
+                    }
+                    if let PendingSudoAction::ReadJournal { unit, user_mode } = &action {
+                        let scope = if *user_mode { "user" } else { "system" };
+                        if result.host_id.is_some() { self.remote_journal_logs.lock().unwrap().insert(format!("{}:{}:{}", host_key, unit, scope), format!("Error: {}", error)); }
+                        else { self.local_journal_logs.lock().unwrap().insert(format!("{}:{}", unit, scope), format!("Error: {}", error)); }
+                    }
+                    if current_host { self.systemd_file_status_msg = Some((error.clone(), true)); }
+                    if result.host_id.is_some() { *self.remote_service_action_msg.lock().unwrap() = Some(format!("Error: {}", error)); }
+                    else { self.service_action_msg = Some(format!("Error: {}", error)); }
+                    if crate::systemd::needs_sudo_password(&error) {
+                        if let Some(id) = &result.host_id { self.remote_sudo_passwords.remove(id); } else { self.local_sudo_password.clear(); }
+                        if (!result.from_popup || matching_popup) && (!self.sudo_popup.open || matching_popup) {
+                            self.sudo_popup.open = true;
+                            self.sudo_popup.pending = Some(action.authenticated_retry(&error));
+                            self.sudo_popup.host_id = result.host_id;
+                            self.sudo_popup.password_input.clear();
+                            self.sudo_popup.error = result.from_popup.then_some(error);
+                            self.sudo_popup.just_opened = true;
                         }
+                    } else if matching_popup {
                         self.sudo_popup.open = false;
                         self.sudo_popup.pending = None;
                         self.sudo_popup.password_input.clear();
-                        self.sudo_popup.error = None;
-                        self.service_action_msg = Some(msg);
-                        self.trigger_local_services_list(user_mode);
-                        let pass_opt = if !self.local_sudo_password.is_empty() {
-                            Some(self.local_sudo_password.as_str())
-                        } else {
-                            None
-                        };
-                        self.trigger_local_journal_fetch(&unit, user_mode, pass_opt);
-                    }
-                    Err(e) => {
-                        self.local_sudo_password.clear();
-                        self.sudo_popup.open = true;
-                        self.sudo_popup.pending = Some(PendingSudoAction::ServiceAction { unit, action: act, user_mode });
-                        self.sudo_popup.error = Some(e);
-                        self.sudo_popup.just_opened = true;
                     }
                 }
-            }
-            PendingSudoAction::CreateService { def } => {
-                let res = create_local_service(&def, Some(&pass));
-                match res {
-                    Ok(msg) => {
-                        if from_popup && self.sudo_popup.remember_password {
-                            self.local_sudo_password = pass;
-                        }
+                Ok(value) => {
+                    self.service_query_errors.remove(&result.key);
+                    if matching_popup {
                         self.sudo_popup.open = false;
                         self.sudo_popup.pending = None;
                         self.sudo_popup.password_input.clear();
                         self.sudo_popup.error = None;
-                        self.service_action_msg = Some(msg);
-                        self.trigger_local_services_list(def.is_user);
                     }
-                    Err(e) => {
-                        self.local_sudo_password.clear();
-                        self.sudo_popup.open = true;
-                        self.sudo_popup.pending = Some(PendingSudoAction::CreateService { def });
-                        self.sudo_popup.error = Some(e);
-                        self.sudo_popup.just_opened = true;
-                    }
-                }
-            }
-            PendingSudoAction::SaveUnitFile { path, content, user_mode } => {
-                let res = write_local_unit_file(&path, &content, user_mode, Some(&pass));
-                match res {
-                    Ok(msg) => {
-                        if from_popup && self.sudo_popup.remember_password {
-                            self.local_sudo_password = pass;
+                    match value {
+                        SystemdActionValue::FileContent(content) => {
+                            if let PendingSudoAction::ReadUnitFile { path, .. } = &action {
+                                self.systemd_file_content_cache.lock().unwrap().insert(format!("{}:{}", host_key, path), Ok(content.clone()));
+                                if current_editor && self.systemd_selected_file.as_deref() == Some(path) && self.systemd_file_content == self.systemd_file_original {
+                                    self.systemd_file_content = content.clone(); self.systemd_file_original = content;
+                                    self.systemd_file_status_msg = None;
+                                }
+                            }
                         }
-                        self.sudo_popup.open = false;
-                        self.sudo_popup.pending = None;
-                        self.sudo_popup.password_input.clear();
-                        self.sudo_popup.error = None;
-                        self.systemd_file_original = content.clone();
-                        self.systemd_file_status_msg = Some((msg, false));
-                        if let Ok(mut c) = self.systemd_files_cache.lock() {
-                            c.clear();
+                        SystemdActionValue::Journal(logs) => {
+                            if let PendingSudoAction::ReadJournal { unit, user_mode } = &action {
+                                let scope = if *user_mode { "user" } else { "system" };
+                                if result.host_id.is_some() { self.remote_journal_logs.lock().unwrap().insert(format!("{}:{}:{}", host_key, unit, scope), logs); }
+                                else { self.local_journal_logs.lock().unwrap().insert(format!("{}:{}", unit, scope), logs); }
+                            }
                         }
-                    }
-                    Err(e) => {
-                        self.local_sudo_password.clear();
-                        self.sudo_popup.open = true;
-                        self.sudo_popup.pending = Some(PendingSudoAction::SaveUnitFile { path, content, user_mode });
-                        self.sudo_popup.error = Some(e);
-                        self.sudo_popup.just_opened = true;
-                    }
-                }
-            }
-            PendingSudoAction::DeleteDropIn { path, user_mode } => {
-                let res = delete_local_drop_in(&path, user_mode, Some(&pass));
-                match res {
-                    Ok(msg) => {
-                        if from_popup && self.sudo_popup.remember_password {
-                            self.local_sudo_password = pass;
+                        SystemdActionValue::Enabled(enabled) => {
+                            if let PendingSudoAction::QueryEnabled { unit, user_mode } = &action {
+                                self.service_enabled_cache.insert(format!("{}:{}:{}", host_key, unit, if *user_mode { "user" } else { "system" }), (enabled, Instant::now()));
+                            }
                         }
-                        self.sudo_popup.open = false;
-                        self.sudo_popup.pending = None;
-                        self.sudo_popup.password_input.clear();
-                        self.sudo_popup.error = None;
-                        self.systemd_selected_file = None;
-                        self.systemd_file_content.clear();
-                        self.systemd_file_original.clear();
-                        self.systemd_file_status_msg = Some((msg, false));
-                        if let Ok(mut c) = self.systemd_files_cache.lock() {
-                            c.clear();
+                        SystemdActionValue::Status(service) => {
+                            self.service_details_cache.insert(format!("{}:{}:{}", host_key, service.name, service.is_user), (service, Instant::now()));
                         }
-                    }
-                    Err(e) => {
-                        self.local_sudo_password.clear();
-                        self.sudo_popup.open = true;
-                        self.sudo_popup.pending = Some(PendingSudoAction::DeleteDropIn { path, user_mode });
-                        self.sudo_popup.error = Some(e);
-                        self.sudo_popup.just_opened = true;
+                        SystemdActionValue::Message(message) => {
+                            if result.host_id.is_some() { *self.remote_service_action_msg.lock().unwrap() = Some(message.clone()); }
+                            else { self.service_action_msg = Some(message.clone()); }
+                            let mut refresh = None;
+                            match &action {
+                                PendingSudoAction::ServiceAction { unit, user_mode, .. } => { refresh = Some((unit.clone(), *user_mode)); }
+                                PendingSudoAction::CreateService { def } => {
+                                    if let Ok(unit) = crate::systemd::service_unit_name(def) { refresh = Some((unit, def.is_user)); }
+                                }
+                                PendingSudoAction::SaveUnitFile { path, content, .. } | PendingSudoAction::CreateDropIn { path, content, .. } => {
+                                    self.systemd_file_content_cache.lock().unwrap().insert(format!("{}:{}", host_key, path), Ok(content.clone()));
+                                    if current_editor {
+                                        if matches!(action, PendingSudoAction::CreateDropIn { .. }) && self.systemd_file_content == self.systemd_file_original
+                                            && self.selected_service.as_ref().is_some_and(|unit| path.contains(&format!("/{}.d/", unit))) {
+                                            self.systemd_selected_file = Some(path.clone()); self.systemd_file_content = content.clone(); self.systemd_new_dropin_open = false;
+                                        }
+                                        if self.systemd_selected_file.as_deref() == Some(path) { self.systemd_file_original = content.clone(); }
+                                        self.systemd_file_status_msg = Some((message.clone(), false));
+                                    }
+                                    self.systemd_files_cache.lock().unwrap().clear();
+                                }
+                                PendingSudoAction::DeleteDropIn { path, .. } => {
+                                    self.systemd_file_content_cache.lock().unwrap().remove(&format!("{}:{}", host_key, path));
+                                    self.systemd_files_cache.lock().unwrap().clear();
+                                    if current_editor && self.systemd_selected_file.as_deref() == Some(path) {
+                                        self.systemd_selected_file = None; self.systemd_file_content.clear(); self.systemd_file_original.clear();
+                                        self.systemd_file_status_msg = Some((message.clone(), false));
+                                    }
+                                }
+                                _ => {}
+                            }
+                            if let Some((unit, user_mode)) = refresh.filter(|_| result.host_id.is_none() || host.is_some()) {
+                                self.service_enabled_cache.remove(&format!("{}:{}:{}", host_key, unit, if user_mode { "user" } else { "system" }));
+                                self.service_details_cache.remove(&format!("{}:{}:{}", host_key, unit, user_mode));
+                                if let Some(host) = &host { self.trigger_remote_services_list(host, user_mode); }
+                                else if result.host_id.is_none() { self.trigger_local_services_list(user_mode); }
+                                self.queue_systemd_action(PendingSudoAction::InspectUnit { unit: unit.clone(), user_mode }, host.as_ref(), None);
+                                self.queue_systemd_action(PendingSudoAction::ReadJournal { unit, user_mode }, host.as_ref(), None);
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+
+    fn execute_pending_sudo_action(&mut self, action: PendingSudoAction) {
+        let host = self.sudo_popup.host_id.as_ref().and_then(|id| self.ssh_hosts.iter().find(|host| &host.id == id)).cloned();
+        if self.sudo_popup.host_id.is_some() && host.is_none() {
+            self.sudo_popup.error = Some("The original remote host is no longer configured.".into());
+            return;
+        }
+        let password = self.sudo_popup.password_input.clone();
+        if password.is_empty() { self.sudo_popup.error = Some("Enter the sudo password for this host.".into()); return; }
+        if self.sudo_popup.remember_password {
+            if let Some(host) = &host { self.remote_sudo_passwords.insert(host.id.clone(), password.clone()); }
+            else { self.local_sudo_password = password.clone(); }
+        }
+        self.queue_systemd_action(action, host.as_ref(), Some(password));
     }
 
     fn render_sudo_popup(&mut self, ctx: &Context, palette: &crate::theme::ThemePalette) {
@@ -9481,7 +9262,8 @@ impl LauncherApp {
 
         let mut is_open = self.sudo_popup.open;
         let mut submit = false;
-        let mut cancel = false;
+        let mut cancel = ctx.input(|input| input.key_pressed(egui::Key::Escape));
+        let busy = self.sudo_popup.pending.as_ref().is_some_and(|action| self.systemd_actions_in_flight.lock().unwrap().contains(&action.key(self.sudo_popup.host_id.as_deref())));
         let screen = ctx.screen_rect();
         let window_id = egui::Id::new("sudo_auth_modal_dialog");
         let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
@@ -9493,11 +9275,11 @@ impl LauncherApp {
             .movable(false)
             .current_pos(screen.center() + drag_offset)
             .pivot(egui::Align2::CENTER_CENTER)
-            .fixed_size([420.0, 240.0])
+            .default_width(420.0_f32.min((screen.width() - 48.0).max(0.0)))
             .frame(
                 egui::Frame::none()
-                    .fill(Color32::from_rgb(17, 19, 27))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
+                    .fill(palette.bg_card)
+                    .stroke(Stroke::new(1.0_f32, palette.border))
                     .rounding(Rounding::same(16.0))
                     .shadow(egui::epaint::Shadow {
                         offset: egui::vec2(0.0, 8.0),
@@ -9516,28 +9298,31 @@ impl LauncherApp {
                     match pending {
                         PendingSudoAction::ServiceAction { unit, action, .. } => {
                             let act_color = match *action {
-                                "start" => Color32::from_rgb(16, 185, 129),
+                                "start" => palette.success,
                                 "stop" => palette.danger,
                                 _ => palette.accent,
                             };
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(RichText::new("Action:").size(12.0).color(palette.text_secondary));
                                 ui.label(RichText::new(action.to_uppercase()).size(12.0).strong().color(act_color));
-                                ui.label(RichText::new("on system service").size(12.0).color(palette.text_secondary));
+                                ui.label(RichText::new("on unit").size(12.0).color(palette.text_secondary));
                                 ui.label(RichText::new(unit).size(12.0).strong().color(palette.text_primary));
                             });
                         }
                         PendingSudoAction::CreateService { def } => {
                             ui.horizontal_wrapped(|ui| {
-                                ui.label(RichText::new("Create system service:").size(12.0).color(palette.text_secondary));
+                                ui.label(RichText::new("Create service:").size(12.0).color(palette.text_secondary));
                                 ui.label(RichText::new(&def.name).size(12.0).strong().color(palette.text_primary));
                             });
                         }
-                        PendingSudoAction::SaveUnitFile { path, .. } => {
+                        PendingSudoAction::SaveUnitFile { path, .. } | PendingSudoAction::CreateDropIn { path, .. } | PendingSudoAction::ReadUnitFile { path, .. } => {
                             ui.horizontal_wrapped(|ui| {
-                                ui.label(RichText::new("Save system unit file:").size(12.0).color(palette.text_secondary));
+                                ui.label(RichText::new("Access unit file:").size(12.0).color(palette.text_secondary));
                                 ui.label(RichText::new(path).size(12.0).strong().color(palette.text_primary));
                             });
+                        }
+                        PendingSudoAction::ReadJournal { unit, .. } | PendingSudoAction::QueryEnabled { unit, .. } | PendingSudoAction::InspectUnit { unit, .. } => {
+                            ui.label(RichText::new(format!("Read protected service data: {}", unit)).size(12.0).color(palette.text_primary));
                         }
                         PendingSudoAction::DeleteDropIn { path, .. } => {
                             ui.horizontal_wrapped(|ui| {
@@ -9550,7 +9335,7 @@ impl LauncherApp {
 
                 ui.add_space(4.0);
                 ui.label(
-                    RichText::new("System-level services require root privileges (sudo). Enter password to proceed:")
+                    RichText::new(format!("Administrator access is required on {}. Enter its sudo password:", self.sudo_popup.host_id.as_ref().and_then(|id| self.ssh_hosts.iter().find(|host| &host.id == id)).map(|host| host.name.as_str()).unwrap_or("this computer")))
                         .size(11.0)
                         .color(palette.text_muted),
                 );
@@ -9600,7 +9385,7 @@ impl LauncherApp {
                     let btn_auth = egui::Button::new(RichText::new(format!("{} Authenticate", crate::lucide::CHECK)).size(11.5).strong().color(Color32::WHITE))
                         .fill(palette.accent)
                         .rounding(Rounding::same(4.0));
-                    if ui.add(btn_auth).clicked() {
+                    if ui.add_enabled(!busy && !self.sudo_popup.password_input.is_empty(), btn_auth).clicked() {
                         submit = true;
                     }
                 });
@@ -9609,11 +9394,12 @@ impl LauncherApp {
         if cancel || !is_open {
             self.sudo_popup.open = false;
             self.sudo_popup.pending = None;
+            self.sudo_popup.host_id = None;
             self.sudo_popup.error = None;
             self.sudo_popup.password_input.clear();
-        } else if submit {
+        } else if submit && !busy {
             if let Some(pending) = self.sudo_popup.pending.clone() {
-                self.execute_pending_sudo_action(pending, true);
+                self.execute_pending_sudo_action(pending);
             }
         }
     }

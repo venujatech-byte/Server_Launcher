@@ -2,10 +2,338 @@ use crate::config::SshRemoteHost;
 use crate::remote::{build_ssh_command, shell_quote};
 #[cfg(not(windows))]
 use std::fs;
-#[cfg(not(windows))]
 use std::path::PathBuf;
-#[cfg(not(windows))]
 use std::process::Command;
+
+pub fn needs_sudo_password(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    [
+        "sudo authentication required",
+        "a password is required",
+        "no password was provided",
+        "incorrect password",
+        "authentication failure",
+        "sorry, try again",
+        "interactive authentication required",
+        "a terminal is required",
+        "no tty present",
+    ]
+    .iter()
+    .any(|pattern| error.contains(pattern))
+}
+
+fn checked_output(output: std::process::Output, context: &str) -> Result<String, String> {
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let detail = if !stderr.trim().is_empty() {
+        stderr.trim()
+    } else {
+        stdout.trim()
+    };
+    let error = if detail.is_empty() {
+        format!("{} failed (exit {:?})", context, output.status.code())
+    } else {
+        format!("{}: {}", context, detail)
+    };
+    if needs_sudo_password(&error) {
+        Err(format!("Sudo authentication required. {}", error))
+    } else {
+        Err(error)
+    }
+}
+
+fn run_command(mut command: Command, password: Option<&str>) -> Result<String, String> {
+    use std::io::Write;
+    command
+        .env("LC_ALL", "C")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    command.stdin(if password.is_some() {
+        std::process::Stdio::piped()
+    } else {
+        std::process::Stdio::null()
+    });
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Could not start service command: {}", error))?;
+    if let Some(password) = password {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = writeln!(stdin, "{}", password);
+        }
+    }
+    checked_output(
+        child
+            .wait_with_output()
+            .map_err(|error| error.to_string())?,
+        "Service command",
+    )
+}
+
+#[cfg(not(windows))]
+fn run_local(
+    program: &str,
+    args: &[&str],
+    privileged: bool,
+    password: Option<&str>,
+) -> Result<String, String> {
+    let password = password.filter(|password| !password.is_empty());
+    #[cfg(unix)]
+    let is_root = unsafe { libc::geteuid() == 0 };
+    #[cfg(not(unix))]
+    let is_root = false;
+    let mut command;
+    if privileged && !is_root {
+        command = Command::new("sudo");
+        if password.is_some() {
+            command.args(["-S", "-p", ""]);
+        } else {
+            command.arg("-n");
+        }
+        command.arg("--").arg(program).args(args);
+    } else {
+        command = Command::new(program);
+        command.args(args);
+    }
+    run_command(
+        command,
+        if privileged && !is_root {
+            password
+        } else {
+            None
+        },
+    )
+}
+
+#[cfg(not(windows))]
+fn local_systemctl(
+    user_mode: bool,
+    args: &[&str],
+    password: Option<&str>,
+) -> Result<String, String> {
+    let mut all_args = vec!["--no-ask-password", "--no-pager"];
+    if user_mode {
+        all_args.push("--user");
+    }
+    all_args.extend_from_slice(args);
+    run_local("systemctl", &all_args, !user_mode, password)
+}
+
+fn remote_script(
+    host: &SshRemoteHost,
+    script: &str,
+    user_mode: bool,
+    privileged: bool,
+    password: Option<&str>,
+) -> Result<String, String> {
+    // SSH does not normally initialize the user's systemd bus environment.
+    let bus = if user_mode {
+        "uid=$(id -u); export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$uid}; export DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}; "
+    } else {
+        ""
+    };
+    let script = format!("export LC_ALL=C; {}{}", bus, script);
+    let password = password.filter(|password| !password.is_empty());
+    let command = if privileged {
+        let sudo = if password.is_some() {
+            "sudo -S -p '' --"
+        } else {
+            "sudo -n --"
+        };
+        format!("export LC_ALL=C; if [ \"$(id -u)\" -eq 0 ]; then sh -c {script}; else {sudo} sh -c {script} sh \"$HOME\" \"${{XDG_CONFIG_HOME:-$HOME/.config}}\"; fi", script = shell_quote(&format!("export HOME=\"${{1:-$HOME}}\"; export XDG_CONFIG_HOME=\"${{2:-${{XDG_CONFIG_HOME:-$HOME/.config}}}}\"; {}", script)))
+    } else {
+        script
+    };
+    // Sudo credentials travel over stdin, never in SSH arguments or the SSH credential field.
+    run_command(
+        build_ssh_command(host, &command),
+        if privileged { password } else { None },
+    )
+}
+
+fn remote_systemctl(
+    host: &SshRemoteHost,
+    user_mode: bool,
+    args: &[&str],
+    password: Option<&str>,
+) -> Result<String, String> {
+    let args = args
+        .iter()
+        .map(|arg| shell_quote(arg))
+        .collect::<Vec<_>>()
+        .join(" ");
+    remote_script(
+        host,
+        &format!(
+            "systemctl --no-ask-password --no-pager {} {}",
+            if user_mode { "--user" } else { "" },
+            args
+        ),
+        user_mode,
+        !user_mode,
+        password,
+    )
+}
+
+pub fn user_unit_directory() -> Result<PathBuf, String> {
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .filter(|home| !home.is_empty())
+                .map(|home| PathBuf::from(home).join(".config"))
+        })
+        .ok_or_else(|| "Cannot determine the user's configuration directory".to_string())?;
+    Ok(config.join("systemd").join("user"))
+}
+
+pub fn validate_unit_name(name: &str) -> Result<(), String> {
+    if name.is_empty()
+        || name.len() > 255
+        || name.starts_with('-')
+        || name == "."
+        || name == ".."
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b":_-.@\\".contains(&byte))
+    {
+        return Err(
+            "Invalid unit name. Use a unit filename, without paths, whitespace or shell syntax."
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+pub fn service_unit_name(def: &NewServiceDefinition) -> Result<String, String> {
+    let name = def.name.trim();
+    validate_unit_name(name)?;
+    for value in [
+        &def.description,
+        &def.exec_start,
+        &def.working_dir,
+        &def.environment,
+        &def.restart,
+    ] {
+        if value.contains(['\n', '\r', '\0']) {
+            return Err("Service fields must contain a single line.".into());
+        }
+    }
+    if def.exec_start.trim().is_empty() {
+        return Err("ExecStart cannot be empty".into());
+    }
+    if ![
+        "no",
+        "always",
+        "on-success",
+        "on-failure",
+        "on-abnormal",
+        "on-watchdog",
+        "on-abort",
+    ]
+    .contains(&def.restart.as_str())
+    {
+        return Err("Unsupported restart policy".into());
+    }
+    let name = if name.ends_with(".service") { name.to_string() } else { format!("{}.service", name) };
+    validate_unit_name(&name)?;
+    Ok(name)
+}
+
+fn validate_action(unit: &str, action: &str) -> Result<(), String> {
+    if ![
+        "start",
+        "stop",
+        "restart",
+        "reload",
+        "enable",
+        "disable",
+        "mask",
+        "unmask",
+        "daemon-reload",
+        "finish-create",
+    ]
+    .contains(&action)
+    {
+        return Err("Unsupported systemd action".into());
+    }
+    if action != "daemon-reload" {
+        validate_unit_name(unit)?;
+    }
+    Ok(())
+}
+
+fn remote_path(path: &str) -> Result<String, String> {
+    if path.contains(['\n', '\r', '\0']) {
+        return Err("Invalid unit file path".into());
+    }
+    if let Some(rest) = path.strip_prefix("~/.config/systemd/user/") {
+        Ok(format!(
+            "\"${{XDG_CONFIG_HOME:-$HOME/.config}}/systemd/user\"/{}",
+            shell_quote(rest)
+        ))
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        Ok(format!("\"$HOME\"/{}", shell_quote(rest)))
+    } else if path.starts_with('/') {
+        Ok(shell_quote(path))
+    } else {
+        Err("A unit file path must be absolute or start with ~/".into())
+    }
+}
+
+fn validate_drop_in(path: &str) -> Result<(), String> {
+    let Some((parent, name)) = path.rsplit_once('/') else {
+        return Err("Invalid drop-in path".into());
+    };
+    if path.contains(['\n', '\r', '\0'])
+        || !(path.starts_with('/') || path.starts_with("~/"))
+        || !parent.ends_with(".d")
+        || !name.ends_with(".conf")
+        || name.is_empty()
+        || path.split('/').any(|part| part == "..")
+    {
+        return Err("Only .conf files inside a unit's .d directory can be deleted.".into());
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn write_privileged_unit_content(path: &str, content: &str, password: Option<&str>) -> Result<(), String> {
+    use std::io::Write;
+    let temporary = std::env::temp_dir().join(format!(
+        "sl_unit_{}_{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&temporary)
+        .map_err(|error| error.to_string())?;
+    let result = file
+        .write_all(content.as_bytes())
+        .map_err(|error| error.to_string())
+        .and_then(|_| {
+            run_local(
+                "sh",
+                &["-c", "umask 022; cat -- \"$1\" > \"$2\"", "sh", &temporary.to_string_lossy(), path],
+                true,
+                password,
+            )
+            .map(|_| ())
+        });
+    drop(file);
+    let _ = fs::remove_file(&temporary);
+    result
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemdService {
@@ -34,7 +362,10 @@ pub fn parse_systemctl_output(output: &str, is_user: bool) -> Vec<SystemdService
         if trimmed.is_empty() {
             continue;
         }
-        let clean = trimmed.trim_start_matches("●").trim_start_matches('*').trim();
+        let clean = trimmed
+            .trim_start_matches("●")
+            .trim_start_matches('*')
+            .trim();
         let parts: Vec<&str> = clean.split_whitespace().collect();
         if parts.len() >= 4 {
             let unit_name = parts[0];
@@ -69,7 +400,14 @@ pub fn list_local_services(user_mode: bool) -> Result<Vec<SystemdService>, Strin
     if user_mode {
         cmd.arg("--user");
     }
-    cmd.args(["list-units", "--type=service", "--all", "--no-pager", "--plain", "--no-legend"]);
+    cmd.args([
+        "list-units",
+        "--type=service",
+        "--all",
+        "--no-pager",
+        "--plain",
+        "--no-legend",
+    ]);
 
     match cmd.output() {
         Ok(out) => {
@@ -85,324 +423,123 @@ pub fn list_local_services(user_mode: bool) -> Result<Vec<SystemdService>, Strin
     }
 }
 
-pub fn list_remote_services(host: &SshRemoteHost, user_mode: bool) -> Result<Vec<SystemdService>, String> {
-    let pass = host.password.trim();
-    let cmd_str = if user_mode {
-        // Non-interactive SSH sessions lack XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS.
-        // We must set them explicitly so `systemctl --user` can connect to the user's bus.
-        // Also try with --no-legend first, fall back without it for older systemd versions.
-        concat!(
-            "uid=$(id -u); ",
-            "export XDG_RUNTIME_DIR=/run/user/$uid; ",
-            "export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; ",
-            "systemctl --user list-units --type=service --all --no-pager --plain --no-legend 2>/dev/null ",
-            "|| systemctl --user list-units --type=service --all --no-pager --plain 2>/dev/null"
-        ).to_string()
-    } else {
-        // System scope: try plain first (works if user has read access),
-        // then sudo -n (passwordless sudo), then password sudo, then --no-legend fallback.
-        if !pass.is_empty() {
-            format!(
-                "printf '%s\\n' {pass} | sudo -S systemctl list-units --type=service --all --no-pager --plain --no-legend 2>/dev/null \
-                 || sudo -n systemctl list-units --type=service --all --no-pager --plain --no-legend 2>/dev/null \
-                 || systemctl list-units --type=service --all --no-pager --plain --no-legend 2>/dev/null \
-                 || systemctl list-units --type=service --all --no-pager --plain 2>/dev/null",
-                pass = shell_quote(pass)
-            )
-        } else {
-            "sudo -n systemctl list-units --type=service --all --no-pager --plain --no-legend 2>/dev/null \
-             || systemctl list-units --type=service --all --no-pager --plain --no-legend 2>/dev/null \
-             || systemctl list-units --type=service --all --no-pager --plain 2>/dev/null".to_string()
-        }
-    };
-
-    let mut cmd = build_ssh_command(host, &cmd_str);
-
-    match cmd.output() {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let parsed = parse_systemctl_output(&stdout, user_mode);
-            if parsed.is_empty() && !out.status.success() {
-                // Command failed with no output — try to get a useful error from stderr
-                let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                if err.is_empty() {
-                    Err("systemctl failed. Check SSH connectivity and that systemd is running on the remote host.".to_string())
-                } else {
-                    Err(err)
-                }
-            } else {
-                Ok(parsed)
-            }
-        }
-        Err(e) => Err(format!("SSH error: {}", e)),
-    }
+pub fn list_remote_services(
+    host: &SshRemoteHost,
+    user_mode: bool,
+) -> Result<Vec<SystemdService>, String> {
+    // Listing does not require root; do not use an SSH password as a sudo password.
+    let output = remote_script(
+        host,
+        &format!(
+            "systemctl {} list-units --type=service --all --no-pager --plain --no-legend",
+            if user_mode { "--user" } else { "" }
+        ),
+        user_mode,
+        false,
+        None,
+    )?;
+    Ok(parse_systemctl_output(&output, user_mode))
 }
 
 #[cfg(not(windows))]
-pub fn control_local_service(unit: &str, action: &str, user_mode: bool, sudo_password: Option<&str>) -> Result<String, String> {
-    if user_mode {
-        let mut cmd = Command::new("systemctl");
-        cmd.arg("--user").arg(action);
-        if action != "daemon-reload" && !unit.is_empty() {
-            cmd.arg(unit);
-        }
-        match cmd.output() {
-            Ok(out) => {
-                if out.status.success() {
-                    Ok(format!("Successfully ran {} on {}", action, unit))
-                } else {
-                    let err = String::from_utf8_lossy(&out.stderr);
-                    Err(err.trim().to_string())
-                }
-            }
-            Err(e) => Err(format!("Failed to execute systemctl {}: {}", action, e)),
-        }
-    } else {
-        // System-level services require root privileges.
-        let pass = sudo_password.unwrap_or("").trim();
-        if !pass.is_empty() {
-            let mut cmd = Command::new("sudo");
-            cmd.arg("-S").arg("-p").arg("").arg("systemctl").arg(action);
-            if action != "daemon-reload" && !unit.is_empty() {
-                cmd.arg(unit);
-            }
-            cmd.stdin(std::process::Stdio::piped())
-               .stdout(std::process::Stdio::piped())
-               .stderr(std::process::Stdio::piped());
-
-            match cmd.spawn() {
-                Ok(mut child) => {
-                    if let Some(mut stdin) = child.stdin.take() {
-                        use std::io::Write;
-                        let _ = writeln!(stdin, "{}", pass);
-                    }
-                    match child.wait_with_output() {
-                        Ok(out) => {
-                            if out.status.success() {
-                                Ok(format!("Successfully ran {} on {}", action, unit))
-                            } else {
-                                let err = String::from_utf8_lossy(&out.stderr);
-                                let trimmed = err.trim();
-                                if trimmed.to_lowercase().contains("incorrect password")
-                                    || trimmed.to_lowercase().contains("authentication failure")
-                                    || trimmed.to_lowercase().contains("try again")
-                                {
-                                    Err("Incorrect sudo password. Please try again.".to_string())
-                                } else if !trimmed.is_empty() {
-                                    Err(trimmed.to_string())
-                                } else {
-                                    Err(format!("systemctl {} failed with exit code {}", action, out.status.code().unwrap_or(-1)))
-                                }
-                            }
-                        }
-                        Err(e) => Err(format!("Failed to wait for sudo: {}", e)),
-                    }
-                }
-                Err(e) => Err(format!("Failed to spawn sudo: {}", e)),
-            }
-        } else {
-            // Password not provided: try sudo -n first, then pkexec, then systemctl directly
-            let mut sudo_n = Command::new("sudo");
-            sudo_n.arg("-n").arg("systemctl").arg(action);
-            if action != "daemon-reload" && !unit.is_empty() {
-                sudo_n.arg(unit);
-            }
-            if let Ok(o) = sudo_n.output() {
-                if o.status.success() {
-                    return Ok(format!("Successfully ran {} on {}", action, unit));
-                }
-            }
-
-            let mut pk = Command::new("pkexec");
-            pk.arg("systemctl").arg(action);
-            if action != "daemon-reload" && !unit.is_empty() {
-                pk.arg(unit);
-            }
-            if let Ok(o) = pk.output() {
-                if o.status.success() {
-                    return Ok(format!("Successfully ran {} on {}", action, unit));
-                }
-            }
-
-            let mut plain = Command::new("systemctl");
-            plain.arg(action);
-            if action != "daemon-reload" && !unit.is_empty() {
-                plain.arg(unit);
-            }
-            match plain.output() {
-                Ok(o) if o.status.success() => Ok(format!("Successfully ran {} on {}", action, unit)),
-                Ok(o) => {
-                    let err = String::from_utf8_lossy(&o.stderr);
-                    let msg = err.trim().to_string();
-                    if msg.contains("Interactive authentication required") {
-                        Err("Interactive authentication required. Sudo password needed.".to_string())
-                    } else if !msg.is_empty() {
-                        Err(msg)
-                    } else {
-                        Err("Sudo password needed.".to_string())
-                    }
-                }
-                Err(e) => Err(format!("Failed to execute systemctl {}: {}", action, e)),
-            }
-        }
+pub fn control_local_service(
+    unit: &str,
+    action: &str,
+    user_mode: bool,
+    sudo_password: Option<&str>,
+) -> Result<String, String> {
+    validate_action(unit, action)?;
+    if action == "finish-create" {
+        local_systemctl(user_mode, &["daemon-reload"], sudo_password)?;
+        local_systemctl(user_mode, &["enable", "--now", "--", unit], sudo_password)?;
+        return Ok(format!("Enabled and started {}", unit));
     }
+    let args = if action == "daemon-reload" {
+        vec![action]
+    } else {
+        vec![action, "--", unit]
+    };
+    local_systemctl(user_mode, &args, sudo_password)?;
+    Ok(format!("{} succeeded for {}", action, unit))
 }
 
-pub fn control_remote_service(host: &SshRemoteHost, unit: &str, action: &str, user_mode: bool) -> Result<String, String> {
-    if !matches!(action, "start" | "stop" | "restart" | "reload" | "enable" | "disable" | "mask" | "unmask") {
-        return Err("Unsupported systemd action".to_string());
+pub fn control_remote_service(
+    host: &SshRemoteHost,
+    unit: &str,
+    action: &str,
+    user_mode: bool,
+    sudo_password: Option<&str>,
+) -> Result<String, String> {
+    validate_action(unit, action)?;
+    if action == "finish-create" {
+        remote_systemctl(host, user_mode, &["daemon-reload"], sudo_password)?;
+        remote_systemctl(
+            host,
+            user_mode,
+            &["enable", "--now", "--", unit],
+            sudo_password,
+        )?;
+        return Ok(format!("Enabled and started {}", unit));
     }
-    let unit = shell_quote(unit);
-    let action = shell_quote(action);
-    let cmd_str = if user_mode {
-        // Set XDG_RUNTIME_DIR so systemctl --user works in non-interactive SSH sessions
-        format!(
-            "uid=$(id -u); export XDG_RUNTIME_DIR=/run/user/$uid; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; systemctl --user {} {}",
-            action, unit
-        )
+    let args = if action == "daemon-reload" {
+        vec![action]
     } else {
-        // For system services:
-        // If password is provided, try echo password | sudo -S systemctl
-        // Otherwise try sudo -n systemctl, then systemctl directly
-        let pass = host.password.trim();
-        if !pass.is_empty() {
-            format!("printf '%s\\n' {} | sudo -S systemctl {} {} 2>/dev/null || sudo -n systemctl {} {} 2>/dev/null || systemctl {} {}",
-                shell_quote(pass), action, unit, action, unit, action, unit)
-        } else {
-            format!("sudo -n systemctl {} {} 2>/dev/null || systemctl {} {}",
-                action, unit, action, unit)
-        }
+        vec![action, "--", unit]
     };
-    let mut cmd = build_ssh_command(host, &cmd_str);
-
-    match cmd.output() {
-        Ok(out) => {
-            if out.status.success() {
-                Ok(format!("Remote {} on {} succeeded", action, unit))
-            } else {
-                let err = String::from_utf8_lossy(&out.stderr);
-                let err_trimmed = err.trim().to_string();
-                let final_err = if err_trimmed.is_empty() {
-                    String::from_utf8_lossy(&out.stdout).trim().to_string()
-                } else {
-                    err_trimmed
-                };
-                let final_err = if final_err.is_empty() {
-                    format!("systemctl {} failed (exit {}). Check sudo permissions or try 'system' scope.", action, out.status.code().unwrap_or(-1))
-                } else {
-                    final_err
-                };
-                if final_err.contains("Interactive authentication required") {
-                    Err(format!("{}. Tip: System-level services on remote machines require root. Configure passwordless sudo for '{}' on the remote host (e.g. '{} ALL=(ALL) NOPASSWD: /bin/systemctl') or set the SSH password in Edit Host.", final_err, host.user, host.user))
-                } else {
-                    Err(final_err)
-                }
-            }
-        }
-        Err(e) => Err(format!("SSH control error: {}", e)),
-    }
+    remote_systemctl(host, user_mode, &args, sudo_password)?;
+    Ok(format!("{} succeeded for {}", action, unit))
 }
 
 #[cfg(not(windows))]
-pub fn fetch_local_journal(unit: &str, user_mode: bool, lines: usize, sudo_password: Option<&str>) -> Result<String, String> {
-    let mut cmd = Command::new("journalctl");
+pub fn fetch_local_journal(
+    unit: &str,
+    user_mode: bool,
+    lines: usize,
+    sudo_password: Option<&str>,
+) -> Result<String, String> {
+    validate_unit_name(unit)?;
+    let count = lines.clamp(1, 1000).to_string();
+    let mut args = vec!["--no-pager", "-n", count.as_str(), "-u", unit];
     if user_mode {
-        cmd.arg("--user");
+        args.push("--user");
     }
-    cmd.arg("-u").arg(unit).arg("-n").arg(lines.to_string()).arg("--no-pager");
-
-    let normal_res = cmd.output();
-    let stdout_str = match &normal_res {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).to_string(),
-        _ => String::new(),
-    };
-
-    if !stdout_str.trim().is_empty() {
-        return Ok(stdout_str);
-    }
-
-    // If it's a system service and sudo_password is provided, try sudo journalctl
-    if !user_mode {
-        if let Some(pass) = sudo_password.map(|p| p.trim()).filter(|p| !p.is_empty()) {
-            let mut sudo_cmd = Command::new("sudo");
-            sudo_cmd.arg("-S").arg("-p").arg("").arg("journalctl").arg("-u").arg(unit).arg("-n").arg(lines.to_string()).arg("--no-pager");
-            sudo_cmd.stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped());
-            if let Ok(mut child) = sudo_cmd.spawn() {
-                if let Some(mut stdin) = child.stdin.take() {
-                    use std::io::Write;
-                    let _ = writeln!(stdin, "{}", pass);
-                }
-                if let Ok(out) = child.wait_with_output() {
-                    if out.status.success() {
-                        let out_str = String::from_utf8_lossy(&out.stdout).to_string();
-                        if !out_str.trim().is_empty() {
-                            return Ok(out_str);
-                        }
-                    }
-                }
-            }
+    match run_local("journalctl", &args, false, None) {
+        Ok(output) => Ok(output),
+        Err(error)
+            if !user_mode
+                && (error.to_ascii_lowercase().contains("permission")
+                    || needs_sudo_password(&error)) =>
+        {
+            run_local("journalctl", &args, true, sudo_password)
         }
-    }
-
-    match normal_res {
-        Ok(out) => Ok(String::from_utf8_lossy(&out.stdout).to_string()),
-        Err(e) => Err(format!("journalctl error: {}", e)),
+        Err(error) => Err(error),
     }
 }
 
-pub fn fetch_remote_journal(host: &SshRemoteHost, unit: &str, user_mode: bool, lines: usize) -> Result<String, String> {
-    let pass = host.password.trim();
-    let unit = shell_quote(unit);
-    let cmd_str = if user_mode {
-        // Set XDG_RUNTIME_DIR so journalctl --user works in non-interactive SSH sessions
-        format!(
-            "uid=$(id -u); export XDG_RUNTIME_DIR=/run/user/$uid; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; journalctl --user -u {} -n {} --no-pager 2>/dev/null",
-            unit, lines
-        )
-    } else {
-        // System journal: try plain first, then sudo (for root-only logs).
-        // Password-based sudo: echo pass | sudo -S journalctl ...
-        // Passwordless sudo: sudo -n journalctl ...
-        // Final fallback: plain journalctl (works if user is in 'adm'/'systemd-journal' group)
-        if !pass.is_empty() {
-            format!(
-                "printf '%s\\n' {pass} | sudo -S journalctl -u {unit} -n {lines} --no-pager 2>/dev/null \
-                 || sudo -n journalctl -u {unit} -n {lines} --no-pager 2>/dev/null \
-                 || journalctl -u {unit} -n {lines} --no-pager 2>/dev/null",
-                pass = shell_quote(pass), unit = unit, lines = lines
-            )
-        } else {
-            format!(
-                "sudo -n journalctl -u {unit} -n {lines} --no-pager 2>/dev/null \
-                 || journalctl -u {unit} -n {lines} --no-pager 2>/dev/null",
-                unit = unit, lines = lines
-            )
+pub fn fetch_remote_journal(
+    host: &SshRemoteHost,
+    unit: &str,
+    user_mode: bool,
+    lines: usize,
+    sudo_password: Option<&str>,
+) -> Result<String, String> {
+    validate_unit_name(unit)?;
+    let script = format!(
+        "journalctl {} --no-pager -n {} -u {}",
+        if user_mode { "--user" } else { "" },
+        lines.clamp(1, 1000),
+        shell_quote(unit)
+    );
+    match remote_script(host, &script, user_mode, false, None) {
+        Ok(output) => Ok(output),
+        Err(error)
+            if !user_mode
+                && (error.to_ascii_lowercase().contains("permission")
+                    || needs_sudo_password(&error)) =>
+        {
+            remote_script(host, &script, false, true, sudo_password)
         }
-    };
-    let mut cmd = build_ssh_command(host, &cmd_str);
-
-    match cmd.output() {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-            if stdout.trim().is_empty() {
-                if !out.status.success() {
-                    let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                    Err(if err.is_empty() {
-                        format!("journalctl returned no output for '{}'. The service may not have logged anything yet, or you may need sudo access.", unit)
-                    } else {
-                        err
-                    })
-                } else {
-                    // Command succeeded but no output = no logs yet
-                    Ok(format!("-- No journal entries found for {} --", unit))
-                }
-            } else {
-                Ok(stdout)
-            }
-        }
-        Err(e) => Err(format!("SSH journalctl error: {}", e)),
+        Err(error) => Err(error),
     }
 }
 
@@ -462,133 +599,60 @@ impl NewServiceDefinition {
 }
 
 #[cfg(not(windows))]
-pub fn create_local_service(def: &NewServiceDefinition, sudo_password: Option<&str>) -> Result<String, String> {
-    let service_content = def.generate_service_content();
-    let unit_name = if def.name.ends_with(".service") {
-        def.name.clone()
+pub fn create_local_service(
+    def: &NewServiceDefinition,
+    sudo_password: Option<&str>,
+) -> Result<String, String> {
+    let name = service_unit_name(def)?;
+    let directory = if def.is_user {
+        user_unit_directory()?
     } else {
-        format!("{}.service", def.name.trim())
+        PathBuf::from("/etc/systemd/system")
     };
-
-    if def.is_user {
-        let home = std::env::var("HOME").map_err(|_| "HOME directory not found".to_string())?;
-        let target_dir = PathBuf::from(home).join(".config").join("systemd").join("user");
-        fs::create_dir_all(&target_dir).map_err(|e| format!("Failed to create dir {:?}: {}", target_dir, e))?;
-        let target_file = target_dir.join(&unit_name);
-        fs::write(&target_file, &service_content).map_err(|e| format!("Failed to write service file {:?}: {}", target_file, e))?;
-
-        // daemon-reload
-        let mut reload_cmd = Command::new("systemctl");
-        reload_cmd.arg("--user").arg("daemon-reload");
-        let _ = reload_cmd.output();
-
-        // enable --now
-        let mut enable_cmd = Command::new("systemctl");
-        enable_cmd.arg("--user").arg("enable").arg("--now").arg(&unit_name);
-        let out = enable_cmd.output().map_err(|e| format!("Failed to enable unit: {}", e))?;
-
-        if out.status.success() {
-            Ok(format!("Created and started service {} at {:?}", unit_name, target_file))
-        } else {
-            let err = String::from_utf8_lossy(&out.stderr);
-            Ok(format!("Created service at {:?}. (Note: enable returned {})", target_file, err.trim()))
-        }
-    } else {
-        // System service requires root (sudo)
-        let pass = sudo_password.unwrap_or("").trim();
-        let temp_dir = std::env::temp_dir();
-        let temp_path = temp_dir.join(format!("sl_sys_{}_{}.service", unit_name, std::process::id()));
-        fs::write(&temp_path, &service_content).map_err(|e| format!("Failed to write temp service file {:?}: {}", temp_path, e))?;
-
-        let target_file = format!("/etc/systemd/system/{}", unit_name);
-        let temp_file_str = temp_path.to_string_lossy().to_string();
-
-        let run_sudo = |sh_cmd: &str| -> Result<(), String> {
-            let mut cmd = Command::new("sudo");
-            if !pass.is_empty() {
-                cmd.arg("-S").arg("-p").arg("");
-            } else {
-                cmd.arg("-n");
-            }
-            cmd.arg("sh").arg("-c").arg(sh_cmd);
-            cmd.stdin(std::process::Stdio::piped())
-               .stdout(std::process::Stdio::piped())
-               .stderr(std::process::Stdio::piped());
-
-            let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn sudo: {}", e))?;
-            if !pass.is_empty() {
-                if let Some(mut stdin) = child.stdin.take() {
-                    use std::io::Write;
-                    let _ = writeln!(stdin, "{}", pass);
-                }
-            }
-            let out = child.wait_with_output().map_err(|e| format!("Failed waiting for sudo: {}", e))?;
-            if out.status.success() {
-                Ok(())
-            } else {
-                let err = String::from_utf8_lossy(&out.stderr);
-                let trimmed = err.trim();
-                if trimmed.to_lowercase().contains("incorrect password")
-                    || trimmed.to_lowercase().contains("authentication failure")
-                    || trimmed.to_lowercase().contains("try again")
-                {
-                    Err("Incorrect sudo password. Please try again.".to_string())
-                } else if !trimmed.is_empty() {
-                    Err(trimmed.to_string())
-                } else {
-                    Err(format!("Sudo command failed with exit code {}", out.status.code().unwrap_or(-1)))
-                }
-            }
-        };
-
-        let copy_cmd = format!(
-            "cp '{}' '{}' && chmod 644 '{}' && systemctl daemon-reload && systemctl enable --now '{}'",
-            temp_file_str, target_file, target_file, unit_name
-        );
-
-        let res = run_sudo(&copy_cmd);
-        let _ = fs::remove_file(&temp_path);
-
-        match res {
-            Ok(()) => Ok(format!("Created and started system service {} at {}", unit_name, target_file)),
-            Err(e) => Err(e),
-        }
-    }
+    let target = directory.join(&name);
+    create_unit_file(
+        &target.to_string_lossy(),
+        &def.generate_service_content(),
+        sudo_password,
+    )?;
+    local_systemctl(def.is_user, &["daemon-reload"], sudo_password)
+        .map_err(|error| format!("Unit file created, but daemon reload failed: {}", error))?;
+    local_systemctl(
+        def.is_user,
+        &["enable", "--now", "--", &name],
+        sudo_password,
+    )
+    .map_err(|error| format!("Unit file saved, but enabling/starting failed: {}", error))?;
+    Ok(format!("Created, enabled and started {}", name))
 }
 
-pub fn create_remote_service(host: &SshRemoteHost, def: &NewServiceDefinition) -> Result<String, String> {
-    let service_content = def.generate_service_content();
-    let unit_name = if def.name.ends_with(".service") {
-        def.name.clone()
+pub fn create_remote_service(
+    host: &SshRemoteHost,
+    def: &NewServiceDefinition,
+    sudo_password: Option<&str>,
+) -> Result<String, String> {
+    let name = service_unit_name(def)?;
+    let target = if def.is_user {
+        format!("~/.config/systemd/user/{}", name)
     } else {
-        format!("{}.service", def.name.trim())
+        format!("/etc/systemd/system/{}", name)
     };
-
-    let target_path = if def.is_user {
-        format!("~/.config/systemd/user/{}", unit_name)
-    } else {
-        format!("/etc/systemd/system/{}", unit_name)
-    };
-
-    let user_flag = if def.is_user { "--user" } else { "" };
-
-    let script = format!(
-        "mkdir -p ~/.config/systemd/user && cat << 'EOF' > {} \n{}\nEOF\nsystemctl {} daemon-reload && systemctl {} enable --now {}",
-        target_path, service_content, user_flag, user_flag, unit_name
-    );
-
-    let mut cmd = build_ssh_command(host, &script);
-    match cmd.output() {
-        Ok(out) => {
-            if out.status.success() {
-                Ok(format!("Remote service {} created and started at {}", unit_name, target_path))
-            } else {
-                let err = String::from_utf8_lossy(&out.stderr);
-                Err(if err.trim().is_empty() { "Failed to create remote systemd service".to_string() } else { err.trim().to_string() })
-            }
-        }
-        Err(e) => Err(format!("SSH error creating service: {}", e)),
-    }
+    remote_write_content(
+        host,
+        &target,
+        &def.generate_service_content(),
+        def.is_user,
+        sudo_password,
+        true,
+    )?;
+    remote_systemctl(
+        host,
+        def.is_user,
+        &["enable", "--now", "--", &name],
+        sudo_password,
+    )
+    .map_err(|error| format!("Unit file saved, but enabling/starting failed: {}", error))?;
+    Ok(format!("Created, enabled and started {}", name))
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -655,382 +719,506 @@ pub fn parse_show_dependencies_output(stdout: &str) -> UnitDependenciesInfo {
 }
 
 #[cfg(not(windows))]
-pub fn get_local_unit_files(unit: &str, user_mode: bool) -> UnitFilesInfo {
-    let mut cmd = Command::new("systemctl");
+pub fn get_local_unit_files(unit: &str, user_mode: bool) -> Result<UnitFilesInfo, String> {
+    validate_unit_name(unit)?;
+    let mut args = vec![
+        "show",
+        "-p",
+        "FragmentPath",
+        "-p",
+        "DropInPaths",
+        "--",
+        unit,
+    ];
     if user_mode {
-        cmd.arg("--user");
+        args.insert(0, "--user");
     }
-    cmd.args(["show", "-p", "FragmentPath", "-p", "DropInPaths", unit]);
-    let mut info = match cmd.output() {
-        Ok(out) if out.status.success() => {
-            parse_show_files_output(&String::from_utf8_lossy(&out.stdout))
-        }
-        _ => UnitFilesInfo::default(),
-    };
-
-    // Fallbacks if FragmentPath not found
-    if info.fragment_path.is_none() {
-        if user_mode {
-            if let Ok(home) = std::env::var("HOME") {
-                let p = PathBuf::from(home).join(".config").join("systemd").join("user").join(unit);
-                if p.exists() {
-                    info.fragment_path = Some(p.to_string_lossy().to_string());
-                }
-            }
-        } else {
-            for dir in ["/etc/systemd/system", "/lib/systemd/system", "/usr/lib/systemd/system"] {
-                let p = PathBuf::from(dir).join(unit);
-                if p.exists() {
-                    info.fragment_path = Some(p.to_string_lossy().to_string());
-                    break;
-                }
-            }
-        }
-    }
-
-    // Also check for drop-in folder if empty
-    let dropin_dir = if user_mode {
-        std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config").join("systemd").join("user").join(format!("{}.d", unit)))
-    } else {
-        Some(PathBuf::from("/etc/systemd/system").join(format!("{}.d", unit)))
-    };
-    if let Some(dir) = dropin_dir {
-        if dir.exists() {
-            if let Ok(entries) = fs::read_dir(&dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_file() && path.extension().map_or(false, |ext| ext == "conf") {
-                        let path_str = path.to_string_lossy().to_string();
-                        if !info.drop_in_paths.contains(&path_str) {
-                            info.drop_in_paths.push(path_str);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    info.drop_in_paths.sort();
-    info
+    // systemctl knows the actual search paths, including XDG, vendor and runtime units.
+    let output = run_local("systemctl", &args, false, None)?;
+    Ok(parse_show_files_output(&output))
 }
 
-pub fn get_remote_unit_files(host: &SshRemoteHost, unit: &str, user_mode: bool) -> Result<UnitFilesInfo, String> {
-    let script = if user_mode {
-        format!(
-            "uid=$(id -u); export XDG_RUNTIME_DIR=/run/user/$uid; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; \
-             systemctl --user show -p FragmentPath -p DropInPaths {unit} 2>/dev/null",
-            unit = unit
-        )
-    } else {
-        format!("systemctl show -p FragmentPath -p DropInPaths {unit} 2>/dev/null", unit = unit)
-    };
-    let mut cmd = build_ssh_command(host, &script);
-    match cmd.output() {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let mut info = parse_show_files_output(&stdout);
-            info.drop_in_paths.sort();
-            Ok(info)
-        }
-        Err(e) => Err(format!("SSH error: {}", e)),
-    }
+pub fn get_remote_unit_files(
+    host: &SshRemoteHost,
+    unit: &str,
+    user_mode: bool,
+) -> Result<UnitFilesInfo, String> {
+    validate_unit_name(unit)?;
+    let script = format!(
+        "systemctl {} show -p FragmentPath -p DropInPaths -- {}",
+        if user_mode { "--user" } else { "" },
+        shell_quote(unit)
+    );
+    Ok(parse_show_files_output(&remote_script(
+        host, &script, user_mode, false, None,
+    )?))
 }
 
 #[cfg(not(windows))]
 pub fn read_local_unit_file(path: &str, sudo_password: Option<&str>) -> Result<String, String> {
     match fs::read_to_string(path) {
         Ok(content) => Ok(content),
-        Err(e) => {
-            let pass = sudo_password.unwrap_or("").trim();
-            if !pass.is_empty() {
-                let mut cmd = Command::new("sudo");
-                cmd.arg("-S").arg("-p").arg("").arg("cat").arg(path);
-                cmd.stdin(std::process::Stdio::piped())
-                   .stdout(std::process::Stdio::piped())
-                   .stderr(std::process::Stdio::piped());
-                if let Ok(mut child) = cmd.spawn() {
-                    if let Some(mut stdin) = child.stdin.take() {
-                        use std::io::Write;
-                        let _ = writeln!(stdin, "{}", pass);
-                    }
-                    if let Ok(out) = child.wait_with_output() {
-                        if out.status.success() {
-                            return Ok(String::from_utf8_lossy(&out.stdout).to_string());
-                        }
-                    }
-                }
-            }
-            Err(format!("Could not read file {}: {}", path, e))
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            run_local("cat", &["--", path], true, sudo_password)
         }
+        Err(error) => Err(format!("Could not read {}: {}", path, error)),
     }
 }
 
-pub fn read_remote_unit_file(host: &SshRemoteHost, path: &str) -> Result<String, String> {
-    let pass = host.password.trim();
-    let path = shell_quote(path);
-    let script = if !pass.is_empty() {
-        format!("cat {path} 2>/dev/null || (printf '%s\\n' {pass} | sudo -S cat {path} 2>/dev/null) || sudo -n cat {path}", path = path, pass = shell_quote(pass))
-    } else {
-        format!("cat {path} 2>/dev/null || sudo -n cat {path}", path = path)
-    };
-    let mut cmd = build_ssh_command(host, &script);
-    match cmd.output() {
-        Ok(out) => {
-            if out.status.success() {
-                Ok(String::from_utf8_lossy(&out.stdout).to_string())
-            } else {
-                let err = String::from_utf8_lossy(&out.stderr);
-                Err(if err.trim().is_empty() { "Failed to read remote unit file".to_string() } else { err.trim().to_string() })
-            }
+pub fn read_remote_unit_file(
+    host: &SshRemoteHost,
+    path: &str,
+    sudo_password: Option<&str>,
+) -> Result<String, String> {
+    let script = format!("cat -- {}", remote_path(path)?);
+    match remote_script(host, &script, false, false, None) {
+        Ok(output) => Ok(output),
+        Err(error) if error.to_ascii_lowercase().contains("permission denied") => {
+            remote_script(host, &script, false, true, sudo_password)
         }
-        Err(e) => Err(format!("SSH error reading unit file: {}", e)),
+        Err(error) => Err(error),
     }
 }
 
 #[cfg(not(windows))]
-pub fn write_local_unit_file(path: &str, content: &str, user_mode: bool, sudo_password: Option<&str>) -> Result<String, String> {
+pub fn write_local_unit_file(
+    path: &str,
+    content: &str,
+    user_mode: bool,
+    sudo_password: Option<&str>,
+) -> Result<String, String> {
     let target = PathBuf::from(path);
-    if user_mode || path.starts_with("/home/") || path.contains("/.config/") {
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory {:?}: {}", parent, e))?;
+    if !target.is_absolute() {
+        return Err("A unit file path must be absolute".into());
+    }
+    // Permissions, not /home or /.config substrings, determine whether sudo is needed.
+    let write = target
+        .parent()
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "Missing parent directory")
+        })
+        .and_then(fs::create_dir_all)
+        .and_then(|_| fs::write(&target, content));
+    match write {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            write_privileged_unit_content(path, content, sudo_password)?
         }
-        fs::write(&target, content).map_err(|e| format!("Failed to write {:?}: {}", target, e))?;
+        Err(error) => return Err(format!("Could not write {}: {}", path, error)),
+    }
+    local_systemctl(user_mode, &["daemon-reload"], sudo_password)
+        .map_err(|error| format!("File saved, but daemon reload failed: {}", error))?;
+    Ok(format!("Saved {} and reloaded daemon", path))
+}
 
-        let mut reload_cmd = Command::new("systemctl");
-        if user_mode {
-            reload_cmd.arg("--user");
+pub fn write_remote_unit_file(
+    host: &SshRemoteHost,
+    path: &str,
+    content: &str,
+    user_mode: bool,
+    sudo_password: Option<&str>,
+) -> Result<String, String> {
+    remote_write_content(host, path, content, user_mode, sudo_password, false)
+}
+
+#[cfg(not(windows))]
+pub fn delete_local_drop_in(
+    path: &str,
+    user_mode: bool,
+    sudo_password: Option<&str>,
+) -> Result<String, String> {
+    validate_drop_in(path)?;
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            run_local("rm", &["-f", "--", path], true, sudo_password)?;
         }
-        reload_cmd.arg("daemon-reload");
-        let _ = reload_cmd.output();
-        Ok(format!("Saved {:?} and reloaded daemon", target))
-    } else {
-        // System file requires root
-        let pass = sudo_password.unwrap_or("").trim();
-        let temp_dir = std::env::temp_dir();
-        let nanos = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-        let temp_path = temp_dir.join(format!("sl_edit_{}_{}.conf", std::process::id(), nanos));
-        fs::write(&temp_path, content).map_err(|e| format!("Failed to write temp file {:?}: {}", temp_path, e))?;
+        Err(error) => return Err(format!("Could not delete {}: {}", path, error)),
+    }
+    local_systemctl(user_mode, &["daemon-reload"], sudo_password)
+        .map_err(|error| format!("File deleted, but daemon reload failed: {}", error))?;
+    Ok(format!("Deleted {} and reloaded daemon", path))
+}
 
-        let temp_file_str = temp_path.to_string_lossy().to_string();
-        let parent_str = target.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "/etc/systemd/system".to_string());
-        let sh_cmd = format!(
-            "mkdir -p '{}' && cp '{}' '{}' && chmod 644 '{}' && systemctl daemon-reload",
-            parent_str, temp_file_str, path, path
-        );
-
-        let mut cmd = Command::new("sudo");
-        if !pass.is_empty() {
-            cmd.arg("-S").arg("-p").arg("");
-        } else {
-            cmd.arg("-n");
+pub fn delete_remote_drop_in(
+    host: &SshRemoteHost,
+    path: &str,
+    user_mode: bool,
+    sudo_password: Option<&str>,
+) -> Result<String, String> {
+    validate_drop_in(path)?;
+    let script = format!("rm -f -- {}", remote_path(path)?);
+    match remote_script(host, &script, false, false, None) {
+        Ok(_) => {}
+        Err(error) if error.to_ascii_lowercase().contains("permission denied") => {
+            remote_script(host, &script, false, true, sudo_password)?;
         }
-        cmd.arg("sh").arg("-c").arg(&sh_cmd);
-        cmd.stdin(std::process::Stdio::piped())
-           .stdout(std::process::Stdio::piped())
-           .stderr(std::process::Stdio::piped());
+        Err(error) => return Err(error),
+    }
+    remote_systemctl(host, user_mode, &["daemon-reload"], sudo_password)
+        .map_err(|error| format!("File deleted, but daemon reload failed: {}", error))?;
+    Ok("Drop-in deleted and daemon reloaded".into())
+}
 
-        let res = match cmd.spawn() {
-            Ok(mut child) => {
-                if !pass.is_empty() {
-                    if let Some(mut stdin) = child.stdin.take() {
-                        use std::io::Write;
-                        let _ = writeln!(stdin, "{}", pass);
-                    }
-                }
-                match child.wait_with_output() {
-                    Ok(out) => {
-                        if out.status.success() {
-                            Ok(format!("Saved {} and reloaded daemon", path))
-                        } else {
-                            let err = String::from_utf8_lossy(&out.stderr);
-                            Err(if err.trim().is_empty() { "Sudo write failed".to_string() } else { err.trim().to_string() })
-                        }
-                    }
-                    Err(e) => Err(format!("Failed to wait for sudo: {}", e)),
-                }
-            }
-            Err(e) => Err(format!("Failed to spawn sudo: {}", e)),
-        };
-        let _ = fs::remove_file(&temp_path);
-        res
+#[cfg(not(windows))]
+pub fn get_local_unit_dependencies(
+    unit: &str,
+    user_mode: bool,
+) -> Result<UnitDependenciesInfo, String> {
+    validate_unit_name(unit)?;
+    let mut args = vec![
+        "show",
+        "-p",
+        "Requires",
+        "-p",
+        "Wants",
+        "-p",
+        "RequiredBy",
+        "-p",
+        "WantedBy",
+        "-p",
+        "After",
+        "-p",
+        "Before",
+        "-p",
+        "Conflicts",
+        "-p",
+        "PartOf",
+        "-p",
+        "BindsTo",
+        "--",
+        unit,
+    ];
+    if user_mode {
+        args.insert(0, "--user");
+    }
+    let mut info = parse_show_dependencies_output(&run_local("systemctl", &args, false, None)?);
+    let mut tree_args = vec!["list-dependencies", "--all", "--no-pager", "--", unit];
+    if user_mode {
+        tree_args.insert(0, "--user");
+    }
+    info.tree_output = run_local("systemctl", &tree_args, false, None)?;
+    Ok(info)
+}
+
+pub fn get_remote_unit_dependencies(
+    host: &SshRemoteHost,
+    unit: &str,
+    user_mode: bool,
+) -> Result<UnitDependenciesInfo, String> {
+    validate_unit_name(unit)?;
+    let script = format!("systemctl {flag} show -p Requires -p Wants -p RequiredBy -p WantedBy -p After -p Before -p Conflicts -p PartOf -p BindsTo -- {unit} && printf '\\n---TREE---\\n' && systemctl {flag} list-dependencies --all --no-pager -- {unit}", flag = if user_mode { "--user" } else { "" }, unit = shell_quote(unit));
+    let output = remote_script(host, &script, user_mode, false, None)?;
+    let (properties, tree) = output
+        .split_once("\n---TREE---\n")
+        .ok_or_else(|| "Incomplete dependency response".to_string())?;
+    let mut info = parse_show_dependencies_output(properties);
+    info.tree_output = tree.trim_end().to_string();
+    Ok(info)
+}
+
+fn enabled_state(output: &str) -> Result<bool, String> {
+    match output.trim() {
+        "enabled" | "enabled-runtime" => Ok(true),
+        "disabled" | "static" | "indirect" | "masked" | "masked-runtime" | "generated"
+        | "transient" | "linked" | "linked-runtime" | "alias" => Ok(false),
+        _ => Err(format!(
+            "Cannot determine unit enablement: {}",
+            output.trim()
+        )),
     }
 }
 
-pub fn write_remote_unit_file(host: &SshRemoteHost, path: &str, content: &str, user_mode: bool) -> Result<String, String> {
-    let pass = host.password.trim();
+#[cfg(not(windows))]
+pub fn is_local_service_enabled(unit: &str, user_mode: bool) -> Result<bool, String> {
+    validate_unit_name(unit)?;
+    let mut command = Command::new("systemctl");
+    command.env("LC_ALL", "C").arg("--no-pager");
+    if user_mode {
+        command.arg("--user");
+    }
+    let output = command
+        .args(["is-enabled", "--", unit])
+        .output()
+        .map_err(|error| error.to_string())?;
+    let state = String::from_utf8_lossy(&output.stdout);
+    if let Ok(enabled) = enabled_state(&state) {
+        return Ok(enabled);
+    }
+    checked_output(output, "Query unit enablement").and_then(|output| enabled_state(&output))
+}
+
+pub fn is_remote_service_enabled(
+    host: &SshRemoteHost,
+    unit: &str,
+    user_mode: bool,
+) -> Result<bool, String> {
+    validate_unit_name(unit)?;
+    let script = format!("state=$(systemctl {} is-enabled -- {}); status=$?; case \"$state\" in enabled|enabled-runtime|disabled|static|indirect|masked|masked-runtime|generated|transient|linked|linked-runtime|alias) printf '%s' \"$state\";; *) exit \"$status\";; esac", if user_mode { "--user" } else { "" }, shell_quote(unit));
+    enabled_state(&remote_script(host, &script, user_mode, false, None)?)
+}
+
+pub fn validate_drop_in_name(name: &str) -> Result<(), String> {
+    validate_unit_name(name)?;
+    if name.starts_with('.') || !name.ends_with(".conf") {
+        return Err("Use a drop-in filename ending in .conf, without directories.".into());
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn create_unit_file(path: &str, content: &str, password: Option<&str>) -> Result<(), String> {
+    use std::io::Write;
+    let target = PathBuf::from(path);
+    if !target.is_absolute() {
+        return Err("A unit file path must be absolute".into());
+    }
+    let parent = target
+        .parent()
+        .ok_or_else(|| "Invalid unit file path".to_string())?;
+    let create = fs::create_dir_all(parent).and_then(|_| {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o644);
+        }
+        let mut file = options.open(&target)?;
+        let result = file.write_all(content.as_bytes());
+        if result.is_err() {
+            drop(file);
+            let _ = fs::remove_file(&target);
+        }
+        result
+    });
+    match create {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            use base64::Engine;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(content);
+            let script = format!(
+                "set -C; mkdir -p -- {} && printf '%s' {} | base64 -d > {}",
+                shell_quote(&parent.to_string_lossy()),
+                shell_quote(&encoded),
+                shell_quote(path)
+            );
+            run_local("sh", &["-c", &script], true, password).map(|_| ())
+        }
+        Err(error) => Err(format!("Could not create {}: {}", path, error)),
+    }
+}
+
+#[cfg(not(windows))]
+pub fn create_local_drop_in(
+    path: &str,
+    content: &str,
+    user_mode: bool,
+    password: Option<&str>,
+) -> Result<String, String> {
+    validate_drop_in(path)?;
+    create_unit_file(path, content, password)?;
+    local_systemctl(user_mode, &["daemon-reload"], password)
+        .map_err(|error| format!("Drop-in created, but daemon reload failed: {}", error))?;
+    Ok(format!("Created {} and reloaded daemon", path))
+}
+
+fn remote_write_content(
+    host: &SshRemoteHost,
+    path: &str,
+    content: &str,
+    user_mode: bool,
+    password: Option<&str>,
+    create_new: bool,
+) -> Result<String, String> {
     use base64::Engine;
-    let encoded_content = base64::engine::general_purpose::STANDARD.encode(content);
-    let quoted_path = shell_quote(path);
-    let script = if user_mode {
-        format!(
-            "mkdir -p \"$(dirname {path})\" && printf '%s' {content} | base64 -d > {path}\n\
-             uid=$(id -u); export XDG_RUNTIME_DIR=/run/user/$uid; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; \
-             systemctl --user daemon-reload",
-            path = quoted_path, content = shell_quote(&encoded_content)
-        )
-    } else if !pass.is_empty() {
-        format!(
-            "printf '%s\\n' {pass} | sudo -S mkdir -p \"$(dirname {path})\" && \
-             printf '%s\\n%s' {pass} {content} | sudo -S sh -c {write_script} && \
-             printf '%s\\n' {pass} | sudo -S systemctl daemon-reload",
-            path = quoted_path, content = shell_quote(&encoded_content), pass = shell_quote(pass),
-            write_script = shell_quote(&format!("base64 -d | tee {} > /dev/null", quoted_path))
-        )
-    } else {
-        format!(
-            "sudo -n mkdir -p \"$(dirname {path})\" && \
-             printf '%s' {content} | base64 -d | sudo -n tee {path} > /dev/null && \
-             sudo -n systemctl daemon-reload",
-            path = quoted_path, content = shell_quote(&encoded_content)
-        )
-    };
-    let mut cmd = build_ssh_command(host, &script);
-    match cmd.output() {
-        Ok(out) => {
-            if out.status.success() {
-                Ok(format!("Remote {} saved and daemon reloaded", path))
-            } else {
-                let err = String::from_utf8_lossy(&out.stderr);
-                Err(if err.trim().is_empty() { "Failed to write remote file".to_string() } else { err.trim().to_string() })
-            }
+    let path = remote_path(path)?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(content);
+    let script = format!(
+        "{}mkdir -p -- \"$(dirname -- {path})\" && printf '%s' {content} | base64 -d > {path}",
+        if create_new { "set -C; " } else { "" },
+        content = shell_quote(&encoded)
+    );
+    match remote_script(host, &script, false, false, None) {
+        Ok(_) => {}
+        Err(error) if error.to_ascii_lowercase().contains("permission denied") => {
+            remote_script(host, &script, false, true, password)?;
         }
-        Err(e) => Err(format!("SSH error writing file: {}", e)),
+        Err(error) => return Err(error),
+    }
+    remote_systemctl(host, user_mode, &["daemon-reload"], password)
+        .map_err(|error| format!("File saved, but daemon reload failed: {}", error))?;
+    Ok("Unit file saved and daemon reloaded".into())
+}
+
+pub fn create_remote_drop_in(
+    host: &SshRemoteHost,
+    path: &str,
+    content: &str,
+    user_mode: bool,
+    password: Option<&str>,
+) -> Result<String, String> {
+    validate_drop_in(path)?;
+    remote_write_content(host, path, content, user_mode, password, true)
+}
+
+fn parse_unit_status(unit: &str, user_mode: bool, output: &str) -> SystemdService {
+    let values: std::collections::HashMap<_, _> = output
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .collect();
+    SystemdService {
+        name: unit.to_string(),
+        is_user: user_mode,
+        load_state: values.get("LoadState").unwrap_or(&"unknown").to_string(),
+        active_state: values.get("ActiveState").unwrap_or(&"unknown").to_string(),
+        sub_state: values.get("SubState").unwrap_or(&"unknown").to_string(),
+        description: values.get("Description").unwrap_or(&"").to_string(),
     }
 }
 
 #[cfg(not(windows))]
-pub fn delete_local_drop_in(path: &str, user_mode: bool, sudo_password: Option<&str>) -> Result<String, String> {
-    if user_mode || path.starts_with("/home/") || path.contains("/.config/") {
-        let _ = fs::remove_file(path);
-        let mut reload_cmd = Command::new("systemctl");
-        if user_mode {
-            reload_cmd.arg("--user");
-        }
-        reload_cmd.arg("daemon-reload");
-        let _ = reload_cmd.output();
-        Ok(format!("Deleted drop-in {} and reloaded daemon", path))
-    } else {
-        let pass = sudo_password.unwrap_or("").trim();
-        let sh_cmd = format!("rm -f '{}' && systemctl daemon-reload", path);
-        let mut cmd = Command::new("sudo");
-        if !pass.is_empty() {
-            cmd.arg("-S").arg("-p").arg("");
-        } else {
-            cmd.arg("-n");
-        }
-        cmd.arg("sh").arg("-c").arg(&sh_cmd);
-        cmd.stdin(std::process::Stdio::piped())
-           .stdout(std::process::Stdio::piped())
-           .stderr(std::process::Stdio::piped());
-
-        match cmd.spawn() {
-            Ok(mut child) => {
-                if !pass.is_empty() {
-                    if let Some(mut stdin) = child.stdin.take() {
-                        use std::io::Write;
-                        let _ = writeln!(stdin, "{}", pass);
-                    }
-                }
-                match child.wait_with_output() {
-                    Ok(out) if out.status.success() => Ok(format!("Deleted drop-in {} and reloaded daemon", path)),
-                    Ok(out) => Err(String::from_utf8_lossy(&out.stderr).trim().to_string()),
-                    Err(e) => Err(format!("Sudo error: {}", e)),
-                }
-            }
-            Err(e) => Err(format!("Failed to spawn sudo: {}", e)),
-        }
-    }
-}
-
-pub fn delete_remote_drop_in(host: &SshRemoteHost, path: &str, user_mode: bool) -> Result<String, String> {
-    let pass = host.password.trim();
-    let path = shell_quote(path);
-    let script = if user_mode {
-        format!(
-            "rm -f {path}; uid=$(id -u); export XDG_RUNTIME_DIR=/run/user/$uid; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; \
-             systemctl --user daemon-reload",
-            path = path
-        )
-    } else if !pass.is_empty() {
-        format!("printf '%s\\n' {pass} | sudo -S rm -f {path} && printf '%s\\n' {pass} | sudo -S systemctl daemon-reload", path = path, pass = shell_quote(pass))
-    } else {
-        format!("sudo -n rm -f {path} && sudo -n systemctl daemon-reload", path = path)
-    };
-    let mut cmd = build_ssh_command(host, &script);
-    match cmd.output() {
-        Ok(out) => {
-            if out.status.success() {
-                Ok(format!("Remote drop-in {} deleted", path))
-            } else {
-                let err = String::from_utf8_lossy(&out.stderr);
-                Err(if err.trim().is_empty() { "Failed to delete remote drop-in".to_string() } else { err.trim().to_string() })
-            }
-        }
-        Err(e) => Err(format!("SSH error: {}", e)),
-    }
-}
-
-#[cfg(not(windows))]
-pub fn get_local_unit_dependencies(unit: &str, user_mode: bool) -> UnitDependenciesInfo {
-    let mut cmd = Command::new("systemctl");
+pub fn get_local_unit_status(unit: &str, user_mode: bool) -> Result<SystemdService, String> {
+    validate_unit_name(unit)?;
+    let mut args = vec![
+        "show",
+        "-p",
+        "LoadState",
+        "-p",
+        "ActiveState",
+        "-p",
+        "SubState",
+        "-p",
+        "Description",
+        "--",
+        unit,
+    ];
     if user_mode {
-        cmd.arg("--user");
+        args.insert(0, "--user");
     }
-    cmd.args(["show", "-p", "Requires", "-p", "Wants", "-p", "RequiredBy", "-p", "WantedBy", "-p", "After", "-p", "Before", "-p", "Conflicts", "-p", "PartOf", "-p", "BindsTo", unit]);
-    let mut info = match cmd.output() {
-        Ok(out) if out.status.success() => {
-            parse_show_dependencies_output(&String::from_utf8_lossy(&out.stdout))
-        }
-        _ => UnitDependenciesInfo::default(),
-    };
-
-    let mut tree_cmd = Command::new("systemctl");
-    if user_mode {
-        tree_cmd.arg("--user");
-    }
-    tree_cmd.args(["list-dependencies", unit, "--all", "--no-pager"]);
-    if let Ok(out) = tree_cmd.output() {
-        if out.status.success() {
-            info.tree_output = String::from_utf8_lossy(&out.stdout).to_string();
-        }
-    }
-    info
+    Ok(parse_unit_status(
+        unit,
+        user_mode,
+        &run_local("systemctl", &args, false, None)?,
+    ))
 }
 
-pub fn get_remote_unit_dependencies(host: &SshRemoteHost, unit: &str, user_mode: bool) -> Result<UnitDependenciesInfo, String> {
-    let script = if user_mode {
-        format!(
-            "uid=$(id -u); export XDG_RUNTIME_DIR=/run/user/$uid; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus; \
-             systemctl --user show -p Requires -p Wants -p RequiredBy -p WantedBy -p After -p Before -p Conflicts -p PartOf -p BindsTo {unit} 2>/dev/null; \
-             echo '---TREE---'; \
-             systemctl --user list-dependencies {unit} --all --no-pager 2>/dev/null",
-            unit = unit
-        )
-    } else {
-        format!(
-            "systemctl show -p Requires -p Wants -p RequiredBy -p WantedBy -p After -p Before -p Conflicts -p PartOf -p BindsTo {unit} 2>/dev/null; \
-             echo '---TREE---'; \
-             systemctl list-dependencies {unit} --all --no-pager 2>/dev/null",
-            unit = unit
-        )
-    };
-    let mut cmd = build_ssh_command(host, &script);
-    match cmd.output() {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let mut parts = stdout.split("---TREE---");
-            let show_out = parts.next().unwrap_or("");
-            let tree_out = parts.next().unwrap_or("").trim().to_string();
-            let mut info = parse_show_dependencies_output(show_out);
-            info.tree_output = tree_out;
-            Ok(info)
-        }
-        Err(e) => Err(format!("SSH error: {}", e)),
-    }
+pub fn get_remote_unit_status(
+    host: &SshRemoteHost,
+    unit: &str,
+    user_mode: bool,
+) -> Result<SystemdService, String> {
+    validate_unit_name(unit)?;
+    let script = format!(
+        "systemctl {} show -p LoadState -p ActiveState -p SubState -p Description -- {}",
+        if user_mode { "--user" } else { "" },
+        shell_quote(unit)
+    );
+    Ok(parse_unit_status(
+        unit,
+        user_mode,
+        &remote_script(host, &script, user_mode, false, None)?,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authentication_errors_do_not_hide_configuration_failures() {
+        assert!(needs_sudo_password("sudo: a password is required"));
+        assert!(needs_sudo_password("sudo: 1 incorrect password attempt"));
+        assert!(!needs_sudo_password("Unit invalid.service not found"));
+        assert!(!needs_sudo_password("SSH: Permission denied (publickey)"));
+        assert!(!needs_sudo_password(
+            "sudo: user is not in the sudoers file"
+        ));
+    }
+
+    #[test]
+    fn unit_names_and_dropins_cannot_inject_shell_commands_or_paths() {
+        for unit in [
+            "../test.service",
+            "--all",
+            "test;reboot.service",
+            "bad\nname.service",
+        ] {
+            assert!(validate_unit_name(unit).is_err(), "{unit}");
+        }
+        assert!(validate_unit_name(r"app-example\x2dscope.service").is_ok());
+        assert!(validate_drop_in("/etc/systemd/system/web.service.d/override.conf").is_ok());
+        for path in [
+            "/etc/passwd",
+            "/etc/systemd/system/x.d/../override.conf",
+            "/x.d/test\n.conf",
+        ] {
+            assert!(validate_drop_in(path).is_err(), "{path}");
+        }
+        assert!(validate_action("", "daemon-reload").is_ok());
+        assert!(validate_action("x.service", "restart; reboot").is_err());
+    }
+
+    #[test]
+    fn new_service_fields_cannot_inject_additional_directives() {
+        let mut def = NewServiceDefinition::default();
+        def.description = "description\nExecStart=/bin/false".into();
+        assert!(service_unit_name(&def).is_err());
+        def.description = "Application".into();
+        def.name = "application".into();
+        assert_eq!(service_unit_name(&def).unwrap(), "application.service");
+    }
+
+    #[test]
+    fn remote_paths_expand_on_the_remote_host_and_quote_shell_syntax() {
+        assert!(remote_path("relative/path").is_err());
+        assert!(remote_path("/tmp/file\nother").is_err());
+        assert!(remote_path("~/.config/systemd/user/app.service")
+            .unwrap()
+            .contains("XDG_CONFIG_HOME"));
+        assert_eq!(
+            remote_path("/tmp/it's.conf").unwrap(),
+            shell_quote("/tmp/it's.conf")
+        );
+    }
+
+    #[test]
+    fn inspection_preserves_inactive_and_unknown_status() {
+        let stopped = parse_unit_status(
+            "web.service",
+            true,
+            "LoadState=loaded\nActiveState=inactive\nSubState=dead\n",
+        );
+        assert!(!stopped.is_active());
+        assert_eq!(stopped.sub_state, "dead");
+        let absent = parse_unit_status(
+            "missing.service",
+            false,
+            "LoadState=not-found\nActiveState=inactive\n",
+        );
+        assert_eq!(absent.load_state, "not-found");
+        assert!(!absent.is_active());
+        assert!(!parse_unit_status("unknown.service", false, "").is_active());
+        assert_eq!(enabled_state("enabled-runtime").unwrap(), true);
+        assert_eq!(enabled_state("masked").unwrap(), false);
+        assert!(enabled_state("").is_err());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn creating_a_unit_never_overwrites_an_existing_file() {
+        let directory = std::env::temp_dir().join(format!(
+            "sl-unit-test-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        let path = directory.join("app.service");
+        create_unit_file(path.to_str().unwrap(), "original", None).unwrap();
+        assert!(create_unit_file(path.to_str().unwrap(), "replacement", None).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "original");
+        fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn test_parse_systemctl_output() {
@@ -1050,7 +1238,10 @@ mod tests {
         assert!(!services[1].is_active());
 
         assert_eq!(services[2].name, "docker.service");
-        assert_eq!(services[2].description, "Docker Application Container Engine");
+        assert_eq!(
+            services[2].description,
+            "Docker Application Container Engine"
+        );
     }
 
     #[test]
@@ -1080,10 +1271,19 @@ FragmentPath=/lib/systemd/system/docker.service
 DropInPaths=/etc/systemd/system/docker.service.d/override.conf /etc/systemd/system/docker.service.d/http-proxy.conf
 "#;
         let parsed = parse_show_files_output(raw);
-        assert_eq!(parsed.fragment_path, Some("/lib/systemd/system/docker.service".to_string()));
+        assert_eq!(
+            parsed.fragment_path,
+            Some("/lib/systemd/system/docker.service".to_string())
+        );
         assert_eq!(parsed.drop_in_paths.len(), 2);
-        assert_eq!(parsed.drop_in_paths[0], "/etc/systemd/system/docker.service.d/override.conf");
-        assert_eq!(parsed.drop_in_paths[1], "/etc/systemd/system/docker.service.d/http-proxy.conf");
+        assert_eq!(
+            parsed.drop_in_paths[0],
+            "/etc/systemd/system/docker.service.d/override.conf"
+        );
+        assert_eq!(
+            parsed.drop_in_paths[1],
+            "/etc/systemd/system/docker.service.d/http-proxy.conf"
+        );
     }
 
     #[test]

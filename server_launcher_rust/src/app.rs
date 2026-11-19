@@ -5419,6 +5419,21 @@ mod layout_tests {
     use super::*;
 
     #[test]
+    fn other_listeners_are_filtered_by_process_ownership_not_port() {
+        let pid = std::process::id();
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(sysinfo::ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]), sysinfo::ProcessRefreshKind::new());
+        let listener = crate::scanner::ListenerInfo { proto: "TCP".into(), port: 5173, pid: Some(pid), name: "node".into() };
+        assert!(!listener_is_managed(&listener, &BTreeSet::new(), &sys));
+        assert!(listener_is_managed(&listener, &BTreeSet::from([pid]), &sys));
+        assert!(!listener_is_managed(&listener, &BTreeSet::from([u32::MAX]), &sys));
+        let unknown = crate::scanner::ListenerInfo { pid: None, ..listener.clone() };
+        assert!(!listener_is_managed(&unknown, &BTreeSet::from([pid]), &sys));
+        let parent = sys.process(sysinfo::Pid::from_u32(pid)).unwrap().parent().unwrap().as_u32();
+        assert!(listener_is_managed(&listener, &BTreeSet::from([parent]), &sys));
+    }
+
+    #[test]
     fn offscreen_rows_reuse_only_matching_measured_heights() {
         let ctx = Context::default();
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
@@ -6160,6 +6175,19 @@ fn render_notebook_tab(ui: &mut Ui, mut label: egui::text::LayoutJob, width: f32
         ui.painter().rect_stroke(rect, Rounding::same(6.0), Stroke::new(1.0_f32, p.accent));
     }
     response
+}
+
+// Only hide a listener when its PID belongs to a managed process tree, never just its configured port.
+fn listener_is_managed(listener: &crate::scanner::ListenerInfo, managed_pids: &BTreeSet<u32>, sys: &System) -> bool {
+    if managed_pids.is_empty() { return false; }
+    let Some(mut pid) = listener.pid else { return false; };
+    // Use the existing process cache; scrolling must not query the OS for each row.
+    for _ in 0..=sys.processes().len() {
+        if managed_pids.contains(&pid) { return true; }
+        let Some(parent) = sys.process(sysinfo::Pid::from_u32(pid)).and_then(|process| process.parent()) else { return false; };
+        pid = parent.as_u32();
+    }
+    false
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -21722,9 +21750,12 @@ impl LauncherApp {
             .show(ui, |ui| {
                 // Other processes listening on this PC
                 let listeners = self.scanner.get_listeners();
+                let managed_pids: BTreeSet<u32> = self.services.iter()
+                    .filter(|service| service.is_active()).filter_map(|service| service.pid).collect();
                 let managed_ports: BTreeSet<u16> = self
                     .services
                     .iter()
+                    .filter(|service| service.is_active())
                     .map(|s| s.config.port)
                     .filter(|&p| p > 0)
                     .collect();
@@ -21737,7 +21768,7 @@ impl LauncherApp {
 
                 let unmanaged_raw: Vec<_> = listeners
                     .iter()
-                    .filter(|l| !managed_ports.contains(&l.port))
+                    .filter(|listener| !listener_is_managed(listener, &managed_pids, &self.sys))
                     .cloned()
                     .collect();
 

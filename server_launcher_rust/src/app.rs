@@ -5444,6 +5444,30 @@ mod layout_tests {
     use super::*;
 
     #[test]
+    fn compact_server_name_aligns_left_with_a_full_selection_target() {
+        let ctx = Context::default();
+        let palette = crate::theme::ThemeMode::Dark.palette();
+        let mut title_rect = egui::Rect::NOTHING;
+        let output = ctx.run(egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 150.0))),
+            ..Default::default()
+        }, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                title_rect = render_server_card_title(ui, "Portfolio", 200.0, 24.0, false, &palette).rect;
+            });
+        });
+        let text_x = output.shapes.iter().find_map(|shape| {
+            if let egui::Shape::Text(text) = &shape.shape {
+                if text.galley.job.text == "Portfolio" { return Some(text.pos.x); }
+            }
+            None
+        }).expect("Server name should be painted");
+        assert!((text_x - title_rect.left()).abs() < 1.0);
+        assert_eq!(title_rect.width(), 200.0);
+    }
+
+
+    #[test]
     fn server_card_switch_supports_keyboard_in_every_theme() {
         for mode in crate::theme::ThemeMode::all() {
             let ctx = Context::default();
@@ -5892,6 +5916,22 @@ fn render_custom_toggle_switch(ui: &mut Ui, on: &mut bool, accent: Color32) -> b
         ui.painter().circle_filled(center, 6.0, thumb_color);
     }
     response.changed()
+}
+
+fn render_server_card_title(ui: &mut Ui, name: &str, width: f32, height: f32, selected: bool, p: &crate::theme::ThemePalette) -> egui::Response {
+    let row = ui.allocate_ui_with_layout(egui::vec2(width, height), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_width(width);
+        ui.add(egui::Label::new(RichText::new(name).size(12.5).strong()
+            .color(if selected { p.accent } else { p.text_primary }))
+            .truncate().halign(egui::Align::Min));
+    }).response;
+    let response = ui.interact(row.rect, row.id.with("select_output"), egui::Sense::click());
+    let hint = format!("Show output for {}", name);
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), selected, &hint));
+    if response.has_focus() {
+        ui.painter().rect_stroke(row.rect, Rounding::same(4.0), Stroke::new(1.0_f32, p.accent));
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(hint)
 }
 
 fn render_modern_toggle_switch(ui: &mut Ui, on: &mut bool, p: &crate::theme::ThemePalette, label: &str) -> bool {
@@ -20496,6 +20536,7 @@ impl LauncherApp {
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.set_max_width(ui.available_width());
+                    ui.spacing_mut().item_spacing.y = 4.0;
                     let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
                     for (idx, s) in self.services.iter().enumerate() {
                         if self.active_group_filter == "All" || self.active_group_filter == s.config.group {
@@ -20572,18 +20613,21 @@ impl LauncherApp {
                     let mut to_save_config = false;
 
                     for (group_name, indices) in groups {
-                        ui.add_space(4.0);
-                        // Group Section Header (Pill container)
+                        let group_running = indices.iter().any(|&i| matches!(self.services[i].state, ServiceState::Running | ServiceState::Starting)
+                            || self.services[i].restart_at.is_some());
+                        let group_startable = indices.iter().any(|&i| !matches!(self.services[i].state, ServiceState::Running | ServiceState::Starting)
+                            && self.services[i].restart_at.is_none());
+                        // Quiet group heading; filled emphasis belongs to the group action.
                         Frame::none()
-                            .fill(p.bg_subtle)
+                            .fill(Color32::TRANSPARENT)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
-                            .inner_margin(egui::Margin::symmetric(12.0, 6.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 2.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
-                                    let header_text = format!("{}  {} ({})", crate::lucide::TAG, group_name.to_uppercase(), indices.len());
-                                    let title_w = (ui.available_width() - 150.0).max(40.0);
+                                    let header_text = format!("{} · {}", group_name, indices.len());
+                                    let title_w = (ui.available_width() - 168.0).max(40.0);
                                     ui.allocate_ui_with_layout(
                                         egui::vec2(title_w, 20.0),
                                         egui::Layout::left_to_right(egui::Align::Center),
@@ -20592,9 +20636,9 @@ impl LauncherApp {
                                             ui.add(
                                                 egui::Label::new(
                                                     RichText::new(header_text)
-                                                        .size(11.5)
+                                                        .size(10.5)
                                                         .strong()
-                                                        .color(p.accent_light),
+                                                        .color(p.text_secondary),
                                                 )
                                                 .truncate(),
                                             );
@@ -20604,31 +20648,31 @@ impl LauncherApp {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         let btn_stop_grp = egui::Button::new(
-                                            RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED)).size(10.5).strong().color(p.danger),
+                                            RichText::new(format!("{} Stop all", crate::lucide::STOP_FILLED)).size(10.5).strong().color(p.danger),
                                         )
                                         .fill(p.danger_subtle)
                                         .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(999.0))
-                                        .min_size(egui::vec2(60.0, 22.0));
-                                        if ui.add(btn_stop_grp).on_hover_text("Stop all servers in this group").clicked() {
+                                        .min_size(egui::vec2(76.0, 22.0));
+                                        if ui.add_enabled(group_running, btn_stop_grp).on_hover_text("Stop all servers in this group").on_disabled_hover_text("No running servers in this group").clicked() {
                                             stop_grp = Some(group_name.clone());
                                         }
 
                                         let btn_start_grp = egui::Button::new(
-                                            RichText::new(format!("{} Start", crate::lucide::PLAY_FILLED)).size(10.5).strong().color(p.accent_text),
+                                            RichText::new(format!("{} Start all", crate::lucide::PLAY_FILLED)).size(10.5).strong().color(p.accent_text),
                                         )
                                         .fill(p.accent)
                                         .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(999.0))
-                                        .min_size(egui::vec2(60.0, 22.0));
-                                        if ui.add(btn_start_grp).on_hover_text("Start all servers in this group").clicked() {
+                                        .min_size(egui::vec2(76.0, 22.0));
+                                        if ui.add_enabled(group_startable, btn_start_grp).on_hover_text("Start all servers in this group").on_disabled_hover_text("All servers in this group are already running").clicked() {
                                             start_grp = Some(group_name.clone());
                                         }
                                     });
                                 });
                             });
 
-                        ui.add_space(6.0);
+                        ui.add_space(2.0);
 
                         // Theme-aware server cards with minimize/expand support.
                         for idx in indices {
@@ -20653,7 +20697,7 @@ impl LauncherApp {
                             } else if s.state == ServiceState::Errored {
                                 (p.danger_subtle, p.danger, p.danger, "Errored")
                             } else {
-                                (p.bg_button, p.text_muted, p.text_secondary, "Stopped")
+                                (Color32::TRANSPARENT, p.text_muted, p.text_secondary, "Stopped")
                             };
 
                             if is_collapsed {
@@ -20672,18 +20716,7 @@ impl LauncherApp {
                                             ui.spacing_mut().item_spacing.x = 6.0;
 
                                             let title_width = (ui.available_width() - 144.0).max(0.0);
-                                            let title_resp = ui.add_sized([title_width, 24.0],
-                                                egui::Label::new(
-                                                    RichText::new(&s.config.name)
-                                                        .strong()
-                                                        .size(12.5)
-                                                        .color(p.text_primary),
-                                                )
-                                                .truncate()
-                                                .halign(egui::Align::Min)
-                                                .sense(egui::Sense::click()),
-                                            )
-                                            .on_hover_text(&s.config.name);
+                                            let title_resp = render_server_card_title(ui, &s.config.name, title_width, 24.0, is_selected_tab, &p);
 
                                             if title_resp.clicked() {
                                                 to_switch_tab = Some(key.clone());
@@ -20707,7 +20740,7 @@ impl LauncherApp {
                                                 let (action_icon, action_fg, action_bg) = if is_running {
                                                     (crate::lucide::STOP_FILLED, p.danger, p.danger_subtle)
                                                 } else {
-                                                    (crate::lucide::PLAY_FILLED, p.accent_text, p.accent)
+                                                    (crate::lucide::PLAY_FILLED, p.accent, p.accent_subtle)
                                                 };
                                                 let action = egui::Button::new(RichText::new(action_icon).size(11.0).color(action_fg))
                                                     .fill(action_bg)
@@ -20763,18 +20796,7 @@ impl LauncherApp {
                                             ui.spacing_mut().item_spacing.x = 8.0;
 
                                             let title_width = (ui.available_width() - 120.0).max(0.0);
-                                            let title_resp = ui.add_sized([title_width, 20.0],
-                                                egui::Label::new(
-                                                    RichText::new(&s.config.name)
-                                                        .strong()
-                                                        .size(12.5)
-                                                        .color(p.text_primary),
-                                                )
-                                                .truncate()
-                                                .halign(egui::Align::Min)
-                                                .sense(egui::Sense::click()),
-                                            )
-                                            .on_hover_text(&s.config.name);
+                                            let title_resp = render_server_card_title(ui, &s.config.name, title_width, 20.0, is_selected_tab, &p);
 
                                             if title_resp.clicked() {
                                                 to_switch_tab = Some(key.clone());
@@ -21192,8 +21214,8 @@ impl LauncherApp {
                                     });
                             }
 
-                            ui.add_space(6.0);
                         }
+                        ui.add_space(12.0);
                     }
 
                     if to_save_config {

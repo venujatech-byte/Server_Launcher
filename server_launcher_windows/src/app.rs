@@ -1792,20 +1792,20 @@ impl LauncherApp {
             let logs = Arc::new(Mutex::new(VecDeque::with_capacity(1000)));
             let pid_str = pid.map(|p| p.to_string()).unwrap_or_else(|| "N/A".to_string());
             let entry_welcome = crate::service::LogEntry::new(
-                format!("[terminal] Attached to {} (Port :{}, PID {})", name, port, pid_str),
+                format!("[console] Opened for {} (Port :{}, PID {})", name, port, pid_str),
                 crate::service::LogKind::Launcher,
             );
             if let Ok(mut l) = logs.lock() {
                 l.push_back(entry_welcome);
                 if !cwd_str.is_empty() {
                     l.push_back(crate::service::LogEntry::new(
-                        format!("[terminal] CWD: {}", cwd_str),
+                        format!("[console] Command directory: {}", cwd_str),
                         crate::service::LogKind::Launcher,
                     ));
                 }
                 if !cmd_str.is_empty() {
                     l.push_back(crate::service::LogEntry::new(
-                        format!("[terminal] Command: {}", cmd_str),
+                        format!("[console] Process command: {}", cmd_str),
                         crate::service::LogKind::Launcher,
                     ));
                 }
@@ -1948,7 +1948,7 @@ impl LauncherApp {
                         font_id: egui::FontId::proportional(11.5), color: p.accent,
                         ..Default::default()
                     });
-                    heading.append("Live Terminal", 0.0, egui::TextFormat {
+                    heading.append("Command Console", 0.0, egui::TextFormat {
                         font_id: egui::FontId::proportional(11.5), color: p.text_primary,
                         ..Default::default()
                     });
@@ -1960,7 +1960,7 @@ impl LauncherApp {
                     ui.allocate_ui_with_layout(egui::vec2(heading_width, 24.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         ui.set_width(heading_width);
                         ui.add(egui::Label::new(heading).truncate().halign(egui::Align::Min))
-                            .on_hover_text(format!("Live Terminal · {}", metadata));
+                            .on_hover_text(format!("Command Console · {}", metadata));
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Buttons use weak fills; set each state locally to follow the active palette.
@@ -1975,10 +1975,10 @@ impl LauncherApp {
                             egui::Button::new(RichText::new(format!("{} {}", icon, label)).size(10.5))
                                 .rounding(Rounding::same(6.0)).min_size(egui::vec2(width, 24.0))
                         };
-                        if ui.add(button(crate::lucide::X, "Close", 58.0)).on_hover_text("Close inline terminal").clicked() {
+                        if ui.add(button(crate::lucide::X, "Close", 58.0)).on_hover_text("Close command console").clicked() {
                             self.open_inline_terminals.remove(&port);
                         }
-                        if ui.add(button(crate::lucide::REFRESH_CW, "Refresh Logs", 92.0)).on_hover_text("Fetch latest systemd/journald process output").clicked() {
+                        if ui.add(button(crate::lucide::REFRESH_CW, "Refresh Logs", 92.0)).on_hover_text("Load available process logs; commands run separately from the server process").clicked() {
                             self.refresh_inline_logs(port, pid, cwd);
                         }
                         if ui.add(button(crate::lucide::TRASH, "Clear", 58.0)).on_hover_text("Clear terminal output").clicked() {
@@ -1986,6 +1986,10 @@ impl LauncherApp {
                         }
                     });
                 });
+                let directory = if cwd.is_empty() { "launcher working directory" } else { cwd };
+                ui.add(egui::Label::new(RichText::new(format!("Commands in: {}", directory))
+                    .size(10.5).color(p.text_muted)).truncate())
+                    .on_hover_text(format!("Working directory: {}\nEach command starts a separate shell; it does not send input to the server process.\nRefresh Logs loads available process logs on demand.", directory));
                 ui.separator();
 
                 ScrollArea::both()
@@ -1998,7 +2002,7 @@ impl LauncherApp {
                             if let Ok(logs) = session.logs.lock() {
                                 if logs.is_empty() {
                                     ui.label(
-                                        RichText::new("No captured output yet. Type a shell command below or click 'Refresh Logs'.")
+                                        RichText::new("No captured output yet. Run a command below or use Refresh Logs for available process logs.")
                                             .italics()
                                             .size(11.0)
                                             .color(p.text_muted),
@@ -21974,13 +21978,13 @@ impl LauncherApp {
                                                     ui.horizontal(|ui| {
                                                         if !self.open_inline_terminals.contains(&listener.port) {
                                                             let btn_inline = egui::Button::new(
-                                                                RichText::new(format!("{} View Output (Inline Terminal)", crate::lucide::TERMINAL))
+                                                                RichText::new(format!("{} Open Console", crate::lucide::TERMINAL))
                                                                     .size(11.0).strong().color(p.accent),
                                                             )
                                                             .fill(p.bg_button)
                                                             .stroke(Stroke::NONE)
                                                             .rounding(Rounding::same(999.0));
-                                                            if ui.add(btn_inline).on_hover_text("Open inline terminal to view live process output and run shell commands in working directory").clicked() {
+                                                            if ui.add(btn_inline).on_hover_text("Open a shell-command console and load available process logs").clicked() {
                                                                 self.open_inline_terminals.insert(listener.port);
                                                                 self.ensure_inline_session(listener.port, &listener.name, listener.pid, &cmd_str, &cwd_str);
                                                             }
@@ -22187,13 +22191,13 @@ impl LauncherApp {
                                                     ui.horizontal(|ui| {
                                                         if !self.open_inline_terminals.contains(port) {
                                                             let btn_inline = egui::Button::new(
-                                                                RichText::new(format!("{} View Output (Inline Terminal)", crate::lucide::TERMINAL))
+                                                                RichText::new(format!("{} Open Console", crate::lucide::TERMINAL))
                                                                     .size(11.0).strong().color(p.accent),
                                                             )
                                                             .fill(p.bg_button)
                                                             .stroke(Stroke::NONE)
                                                             .rounding(Rounding::same(999.0));
-                                                            if ui.add(btn_inline).on_hover_text("Open inline terminal to run shell commands in working directory").clicked() {
+                                                            if ui.add(btn_inline).on_hover_text("Open a shell-command console in this working directory").clicked() {
                                                                 self.open_inline_terminals.insert(*port);
                                                                 self.ensure_inline_session(*port, name, None, cmd, cwd);
                                                             }

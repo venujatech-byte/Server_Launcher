@@ -6763,7 +6763,7 @@ impl LauncherApp {
                         };
                         let compact_label = label.split_once(' ').map_or(label, |(_, text)| text);
                         let btn = egui::Button::new(
-                            RichText::new(if tab_width < 60.0 { compact_label } else { label })
+                            RichText::new(if tab_width < 60.0 || (tab == SidebarTab::SystemMD && tab_width < 72.0) { compact_label } else { label })
                                 .size(10.5)
                                 .strong()
                                 .color(fg),
@@ -6871,14 +6871,16 @@ impl LauncherApp {
         ui.set_width(ui.available_width());
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
+            ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("CUSTOM SCRIPTS").size(12.0).strong().color(p.text_muted));
+                ui.set_min_height(26.0);
+                ui.label(RichText::new("Custom scripts").size(12.0).strong().color(p.text_primary));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_new = egui::Button::new(
-                        RichText::new("+ New Script").size(11.0).strong().color(Color32::WHITE),
+                        RichText::new(format!("{} New script", crate::lucide::PLUS)).size(11.0).color(p.accent_text),
                     )
-                    .fill(p.accent)
-                    .rounding(Rounding::same(4.0));
+                    .fill(p.accent).stroke(Stroke::NONE)
+                    .rounding(Rounding::same(8.0)).min_size(egui::vec2(94.0, 24.0));
                     if ui.add(btn_new).clicked() {
                         self.script_modal.open_create(host_id.map(|s| s.to_string()));
                     }
@@ -6887,12 +6889,18 @@ impl LauncherApp {
 
             ui.add_space(6.0);
 
-            // Search filter
-            ui.add(
-                egui::TextEdit::singleline(&mut self.script_search_query)
-                    .hint_text(format!("{} Filter scripts...", crate::lucide::SEARCH))
-                    .desired_width(ui.available_width()),
-            );
+            // Match the visible search surface and muted hints used elsewhere.
+            Frame::none().fill(p.bg_button).stroke(Stroke::new(1.0_f32, p.border))
+                .rounding(Rounding::same(8.0)).inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(crate::lucide::SEARCH).size(11.0).color(p.text_muted));
+                        ui.add(egui::TextEdit::singleline(&mut self.script_search_query)
+                            .font(egui::FontId::proportional(11.5)).text_color(p.text_secondary)
+                            .hint_text(RichText::new("Filter scripts…").color(p.text_muted))
+                            .frame(false).margin(egui::Vec2::ZERO).clip_text(true).desired_width(ui.available_width()));
+                    });
+                });
 
             ui.add_space(8.0);
 
@@ -6929,7 +6937,7 @@ impl LauncherApp {
                     let mut to_delete = None;
 
                     for s in &machine_scripts {
-                        let is_selected = self.selected_script_id.as_deref() == Some(&s.id);
+                        let is_selected = self.selected_script_id.as_deref().or_else(|| self.scripts.iter().find(|script| script.host_id.as_deref() == host_id).map(|script| script.id.as_str())) == Some(s.id.as_str());
                         let is_running = self
                             .script_executions
                             .get(&s.id)
@@ -6937,8 +6945,8 @@ impl LauncherApp {
                             .map(|st| matches!(*st, ScriptRunStatus::Running))
                             .unwrap_or(false);
 
-                        Frame::none()
-                            .fill(if is_selected { p.bg_card } else { p.bg_sidebar })
+                        ui.push_id(("script_card", host_id, &s.id), |ui| Frame::none()
+                            .fill(if is_selected { p.bg_card_active } else { p.bg_card })
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(12.0))
                             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
@@ -6946,32 +6954,18 @@ impl LauncherApp {
                                 ui.set_width(ui.available_width());
                                 ui.set_max_width(ui.available_width());
                                 ui.horizontal(|ui| {
-                                    let status_text = if is_running {
-                                        RichText::new("●").size(12.0).color(Color32::from_rgb(16, 185, 129))
-                                    } else {
-                                        RichText::new("○").size(12.0).color(p.text_muted)
-                                    };
-                                    ui.label(status_text);
-
-                                    let tag_w = 55.0;
-                                    let name_w = (ui.available_width() - tag_w).max(40.0);
-
-                                    let title = RichText::new(&s.name).size(12.5).strong().color(if is_selected { p.accent_light } else { p.text_primary });
-                                    let title_resp = ui.add_sized(
-                                        [name_w, 16.0],
-                                        egui::Label::new(title).truncate().sense(egui::Sense::click()),
-                                    );
-                                    if title_resp.clicked() {
+                                    ui.set_min_height(20.0);
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                                    ui.painter().circle_filled(dot.center(), 3.0, if is_running { p.success } else { p.text_muted });
+                                    let shell_width = 76.0;
+                                    let name_width = (ui.available_width() - shell_width - ui.spacing().item_spacing.x).max(0.0);
+                                    if render_server_card_title(ui, &s.name, name_width, 20.0, is_selected, &p).clicked() {
                                         self.selected_script_id = Some(s.id.clone());
                                     }
-
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(
-                                            RichText::new(format!("[{}]", s.shell))
-                                                .size(10.5)
-                                                .color(p.text_muted),
-                                        );
-                                    });
+                                    ui.add_sized([shell_width, 20.0], egui::Label::new(
+                                        RichText::new(&s.shell).size(10.0).monospace().color(p.text_muted))
+                                        .truncate().halign(egui::Align::Max)).on_hover_text(&s.shell);
                                 });
 
                                 if s.autostart || !s.cwd.is_empty() {
@@ -6981,7 +6975,7 @@ impl LauncherApp {
                                             ui.label(
                                                 RichText::new(format!("{} Startup", crate::lucide::ZAP))
                                                     .size(10.0)
-                                                    .color(Color32::from_rgb(250, 204, 21)),
+                                                    .color(p.warning),
                                             );
                                         }
                                         if !s.cwd.is_empty() {
@@ -6989,12 +6983,12 @@ impl LauncherApp {
                                             ui.add_sized(
                                                 [cwd_w, 14.0],
                                                 egui::Label::new(
-                                                    RichText::new(format!("cwd: {}", s.cwd))
+                                                    RichText::new(format!("{} {}", crate::lucide::FOLDER, s.cwd))
                                                         .size(10.0)
                                                         .color(p.text_muted),
                                                 )
-                                                .truncate(),
-                                            );
+                                                .truncate().halign(egui::Align::Min),
+                                            ).on_hover_text(&s.cwd);
                                         }
                                     });
                                 }
@@ -7002,47 +6996,34 @@ impl LauncherApp {
                                 ui.add_space(4.0);
 
                                 ui.horizontal(|ui| {
-                                    if is_running {
-                                        let btn_stop = egui::Button::new(
-                                            RichText::new(format!("{} Stop", crate::lucide::STOP)).size(10.5).color(Color32::WHITE),
-                                        )
-                                        .fill(p.danger)
-                                        .rounding(Rounding::same(4.0));
-                                        if ui.add(btn_stop).clicked() {
-                                            to_stop = Some(s.id.clone());
-                                        }
+                                    ui.set_min_height(24.0);
+                                    let button = if is_running {
+                                        egui::Button::new(RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED)).size(10.5).color(p.danger))
+                                            .fill(p.danger_subtle)
                                     } else {
-                                        let btn_run = egui::Button::new(
-                                            RichText::new(format!("{} Run", crate::lucide::PLAY)).size(10.5).color(Color32::WHITE),
-                                        )
-                                        .fill(Color32::from_rgb(16, 185, 129))
-                                        .rounding(Rounding::same(4.0));
-                                        if ui.add(btn_run).clicked() {
-                                            to_run = Some(s.clone());
-                                        }
+                                        egui::Button::new(RichText::new(format!("{} Run", crate::lucide::PLAY_FILLED)).size(10.5).color(p.accent_text))
+                                            .fill(p.accent)
+                                    }.stroke(Stroke::NONE).rounding(Rounding::same(8.0)).min_size(egui::vec2(68.0, 24.0));
+                                    if ui.add(button).clicked() {
+                                        if is_running { to_stop = Some(s.id.clone()); }
+                                        else { to_run = Some(s.clone()); }
                                     }
-
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let btn_del = egui::Button::new(
-                                            RichText::new(crate::lucide::TRASH).size(10.5).color(p.text_muted),
-                                        )
-                                        .fill(Color32::TRANSPARENT);
-                                        if ui.add(btn_del).on_hover_text("Delete Script").clicked() {
+                                        let delete = egui::Button::new(RichText::new(crate::lucide::TRASH).size(11.0).color(p.text_muted))
+                                            .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0));
+                                        if ui.add_sized([24.0, 24.0], delete).on_hover_text("Delete script").clicked() {
                                             to_delete = Some(s.id.clone());
                                         }
-
-                                        let btn_edit = egui::Button::new(
-                                            RichText::new(crate::lucide::PENCIL).size(10.5).color(p.text_muted),
-                                        )
-                                        .fill(Color32::TRANSPARENT);
-                                        if ui.add(btn_edit).on_hover_text("Edit Script").clicked() {
+                                        let edit = egui::Button::new(RichText::new(crate::lucide::PENCIL).size(11.0).color(p.text_secondary))
+                                            .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0));
+                                        if ui.add_sized([24.0, 24.0], edit).on_hover_text("Edit script").clicked() {
                                             to_edit = Some(s.clone());
                                         }
                                     });
                                 });
-                            });
+                            }));
 
-                        ui.add_space(6.0);
+                        ui.add_space(10.0);
                     }
 
                     if let Some(s) = to_run {

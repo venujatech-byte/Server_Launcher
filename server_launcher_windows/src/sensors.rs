@@ -167,7 +167,7 @@ pub struct BatteryInfo {
     pub name: String,
     pub present: bool,
     pub status: String,
-    pub capacity_pct: f32,
+    pub capacity_pct: Option<f32>,
     pub power_watts: Option<f32>,
     pub voltage_volts: Option<f32>,
     pub energy_wh: Option<f32>,
@@ -178,6 +178,13 @@ pub struct BatteryInfo {
     pub technology: String,
     pub model_name: String,
     pub manufacturer: String,
+}
+
+fn reported_battery_charge(batteries: &[BatteryInfo]) -> Option<f32> {
+    if batteries.is_empty() { return None; }
+    let mut total = 0.0;
+    for battery in batteries { total += battery.capacity_pct?; }
+    Some(total / batteries.len() as f32)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1510,7 +1517,7 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
                         let capacity_pct = fs::read_to_string(p.join("capacity"))
                             .ok()
                             .and_then(|s| s.trim().parse::<f32>().ok())
-                            .unwrap_or(0.0);
+                            .filter(|value| value.is_finite() && (0.0..=100.0).contains(value));
 
                         let voltage_volts = fs::read_to_string(p.join("voltage_now"))
                             .ok()
@@ -1594,8 +1601,7 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
 
                         let cycle_count = fs::read_to_string(p.join("cycle_count"))
                             .ok()
-                            .and_then(|s| s.trim().parse::<u32>().ok())
-                            .filter(|&c| c > 0);
+                            .and_then(|s| s.trim().parse::<u32>().ok());
 
                         let technology = fs::read_to_string(p.join("technology"))
                             .unwrap_or_default()
@@ -1634,20 +1640,10 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
         }
     }
 
-    let total_battery_pct = if !batteries.is_empty() {
-        let sum: f32 = batteries.iter().map(|b| b.capacity_pct).sum();
-        Some(sum / batteries.len() as f32)
-    } else {
-        None
-    };
+    let total_battery_pct = reported_battery_charge(&batteries);
 
-    let total_power_watts = {
-        let sum: f32 = batteries.iter().filter_map(|b| b.power_watts).sum();
-        if sum > 0.0 {
-            Some(sum)
-        } else {
-            None
-        }
+    let total_power_watts = if batteries.is_empty() { None } else {
+        batteries.iter().map(|battery| battery.power_watts).sum::<Option<f32>>()
     };
 
     #[cfg(target_os = "linux")]
@@ -1674,74 +1670,8 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
     #[cfg(not(target_os = "linux"))]
     let backlight_ratio = None;
 
-    #[cfg(target_os = "linux")]
-    let usb_power_watts = {
-        let mut total_w = 0.35_f32;
-        let mut active_count = 0_usize;
-        if let Ok(entries) = fs::read_dir("/sys/bus/usb/devices") {
-            for entry in entries.flatten() {
-                let fname = entry.file_name().to_string_lossy().to_string();
-                if fname.starts_with("usb") || fname.contains(':') {
-                    continue;
-                }
-                let path = entry.path();
-                let bmax_path = path.join("bMaxPower");
-                if !bmax_path.is_file() {
-                    continue;
-                }
-                let is_suspended = fs::read_to_string(path.join("power/runtime_status"))
-                    .map(|s| s.trim().eq_ignore_ascii_case("suspended"))
-                    .unwrap_or(false);
-                let ma = fs::read_to_string(&bmax_path)
-                    .ok()
-                    .and_then(|s| {
-                        let cleaned = s.trim().trim_end_matches("mA").trim_end_matches("ma").trim();
-                        cleaned.parse::<f32>().ok()
-                    })
-                    .unwrap_or(100.0);
-                if is_suspended {
-                    total_w += 0.04;
-                } else {
-                    active_count += 1;
-                    let nominal_w = (ma * 0.005 * 0.45).clamp(0.25, 4.5);
-                    total_w += nominal_w;
-                }
-            }
-        }
-        Some((total_w.clamp(0.35, 25.0), active_count))
-    };
-    #[cfg(not(target_os = "linux"))]
-    let usb_power_watts = Some((0.5, 1));
-
-    #[cfg(target_os = "linux")]
-    let kbd_lights_watts = {
-        let mut total_w = 0.25_f32;
-        if let Ok(entries) = fs::read_dir("/sys/class/leds") {
-            for entry in entries.flatten() {
-                let fname = entry.file_name().to_string_lossy().to_lowercase();
-                let path = entry.path();
-                let bright_val = fs::read_to_string(path.join("brightness"))
-                    .ok()
-                    .and_then(|s| s.trim().parse::<f32>().ok())
-                    .unwrap_or(0.0);
-                let max_val = fs::read_to_string(path.join("max_brightness"))
-                    .ok()
-                    .and_then(|s| s.trim().parse::<f32>().ok())
-                    .unwrap_or(1.0);
-                if fname.contains("kbd") || fname.contains("keyboard") || fname.contains("backlight") {
-                    if max_val > 0.0 && bright_val > 0.0 {
-                        let ratio = (bright_val / max_val).clamp(0.0, 1.0);
-                        total_w += ratio * 1.5;
-                    }
-                } else if bright_val > 0.0 {
-                    total_w += 0.04;
-                }
-            }
-        }
-        Some(total_w.clamp(0.25, 5.0))
-    };
-    #[cfg(not(target_os = "linux"))]
-    let kbd_lights_watts = Some(0.3);
+    let usb_power_watts = None;
+    let kbd_lights_watts = None;
 
     let (cons_active, limit_val) = crate::power::query_charge_conservation();
     let charge_limit = if cons_active { Some(limit_val) } else { None };
@@ -2625,7 +2555,7 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
         if not present:
             continue
         status = open(ps + "/status").read().strip() if os.path.exists(ps + "/status") else "Unknown"
-        cap = float(open(ps + "/capacity").read().strip()) if os.path.exists(ps + "/capacity") else 0.0
+        cap = float(open(ps + "/capacity").read().strip()) if os.path.exists(ps + "/capacity") else None
         
         volt = None
         for vf in ["voltage_now", "voltage_min_design", "voltage_design", "voltage_nominal"]:
@@ -2637,7 +2567,7 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
                         break
                 except:
                     pass
-        nominal_volt = volt if volt else 11.4
+        nominal_volt = volt
             
         p_watts = None
         if os.path.exists(ps + "/power_now"):
@@ -2673,13 +2603,6 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
             try: energy_design_wh = round((int(open(ps + "/charge_full_design").read().strip()) / 1e6) * nominal_volt, 2)
             except: pass
 
-        if energy_wh is None and energy_full_wh is not None:
-            energy_wh = round(energy_full_wh * (cap / 100.0), 2)
-        elif energy_wh is None and energy_full_wh is None:
-            energy_full_wh = 50.0
-            energy_design_wh = 52.0
-            energy_wh = round(energy_full_wh * (cap / 100.0), 2)
-            
         health = None
         if energy_full_wh and energy_design_wh and energy_design_wh > 0:
             health = round(min(100.0, (energy_full_wh / energy_design_wh) * 100.0), 1)
@@ -2689,26 +2612,17 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
                 cd = int(open(ps + "/charge_full_design").read().strip())
                 if cd > 0: health = round(min(100.0, (cf / cd) * 100.0), 1)
             except: pass
-        if health is None:
-            health = 96.0
             
         cycles = None
         if os.path.exists(ps + "/cycle_count"):
             try:
                 c = int(open(ps + "/cycle_count").read().strip())
-                if c > 0: cycles = c
+                if c >= 0: cycles = c
             except: pass
             
         tech = open(ps + "/technology").read().strip() if os.path.exists(ps + "/technology") else ""
         model = open(ps + "/model_name").read().strip() if os.path.exists(ps + "/model_name") else ""
         mfg = open(ps + "/manufacturer").read().strip() if os.path.exists(ps + "/manufacturer") else ""
-        if not mfg and os.path.exists("/sys/class/dmi/id/sys_vendor"):
-            try: mfg = open("/sys/class/dmi/id/sys_vendor").read().strip()
-            except: pass
-        if not model and os.path.exists("/sys/class/dmi/id/product_name"):
-            try: model = open("/sys/class/dmi/id/product_name").read().strip()
-            except: pass
-
         if os.path.exists(ps + "/charge_control_end_threshold"):
             try:
                 cl = int(open(ps + "/charge_control_end_threshold").read().strip())
@@ -2720,13 +2634,13 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
             "status": status,
             "capacity_pct": cap,
             "power_watts": p_watts,
-            "voltage_volts": volt if volt else round(nominal_volt, 2),
+            "voltage_volts": volt,
             "energy_wh": energy_wh,
             "energy_full_wh": energy_full_wh,
             "energy_design_wh": energy_design_wh,
             "health_pct": health,
             "cycle_count": cycles,
-            "technology": tech if tech else "Li-ion",
+            "technology": tech,
             "model_name": model if model else "Standard Pack",
             "manufacturer": mfg if mfg else "OEM"
         })
@@ -3262,7 +3176,7 @@ print(json.dumps(data))
                     name: b["name"].as_str().unwrap_or("BAT").to_string(),
                     present: true,
                     status: b["status"].as_str().unwrap_or("Unknown").to_string(),
-                    capacity_pct: b["capacity_pct"].as_f64().unwrap_or(0.0) as f32,
+                    capacity_pct: b["capacity_pct"].as_f64().map(|value| value as f32).filter(|value| value.is_finite() && (0.0..=100.0).contains(value)),
                     power_watts: b["power_watts"].as_f64().map(|v| v as f32),
                     voltage_volts: b["voltage_volts"].as_f64().map(|v| v as f32),
                     energy_wh: b["energy_wh"].as_f64().map(|v| v as f32),
@@ -3278,20 +3192,10 @@ print(json.dumps(data))
         }
     }
 
-    let total_battery_pct = if !batteries.is_empty() {
-        let sum: f32 = batteries.iter().map(|b| b.capacity_pct).sum();
-        Some(sum / batteries.len() as f32)
-    } else {
-        None
-    };
+    let total_battery_pct = reported_battery_charge(&batteries);
 
-    let total_power_watts = {
-        let sum: f32 = batteries.iter().filter_map(|b| b.power_watts).sum();
-        if sum > 0.0 {
-            Some(sum)
-        } else {
-            None
-        }
+    let total_power_watts = if batteries.is_empty() { None } else {
+        batteries.iter().map(|battery| battery.power_watts).sum::<Option<f32>>()
     };
 
     let charge_limit = parsed.get("power").and_then(|p| p.get("charge_limit")).and_then(|v| v.as_u64()).map(|v| v as u32);
@@ -3554,6 +3458,17 @@ print(json.dumps(data))
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unknown_battery_charge_is_distinct_from_empty() {
+        let mut battery = BatteryInfo::default();
+        assert_eq!(reported_battery_charge(&[battery.clone()]), None);
+        battery.capacity_pct = Some(0.0);
+        assert_eq!(reported_battery_charge(&[battery.clone()]), Some(0.0));
+        assert_eq!(reported_battery_charge(&[battery, BatteryInfo::default()]), None);
+        assert_eq!(reported_battery_charge(&[]), None);
+    }
+
+
 
     #[test]
     fn test_format_bytes() {
@@ -3835,16 +3750,16 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
     }
     if let Some(batteries) = data["battery"].as_array() {
         for b in batteries {
-            let Some(percent) = b["EstimatedChargeRemaining"].as_f64().filter(|v| (0.0..=100.0).contains(v)) else { continue; };
+            let percent = b["EstimatedChargeRemaining"].as_f64().filter(|v| v.is_finite() && (0.0..=100.0).contains(v));
             snap.power.batteries.push(BatteryInfo {
                 name: b["Name"].as_str().unwrap_or("Battery").into(), present: true,
-                capacity_pct: percent as f32,
+                capacity_pct: percent.map(|value| value as f32),
                 status: match b["BatteryStatus"].as_u64() { Some(1) => "Discharging", Some(2) => "AC connected", Some(3) => "Fully charged", _ => "Unknown" }.into(),
                 ..Default::default()
             });
         }
         if !snap.power.batteries.is_empty() {
-            snap.power.total_battery_pct = Some(snap.power.batteries.iter().map(|b| b.capacity_pct).sum::<f32>() / snap.power.batteries.len() as f32);
+            snap.power.total_battery_pct = reported_battery_charge(&snap.power.batteries);
         }
     }
     if let Some(ram) = data["ram"].as_array().filter(|r| !r.is_empty()) {

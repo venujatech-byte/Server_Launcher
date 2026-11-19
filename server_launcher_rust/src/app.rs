@@ -5133,6 +5133,15 @@ fn draw_dotted_hline(
     }
 }
 
+fn battery_capacity_retention(battery: &crate::sensors::BatteryInfo) -> Option<f32> {
+    battery.health_pct.filter(|value| value.is_finite() && (0.0..=100.0).contains(value)).or_else(|| {
+        let full = battery.energy_full_wh?;
+        let design = battery.energy_design_wh?;
+        (full.is_finite() && design.is_finite() && full >= 0.0 && design > 0.0)
+            .then(|| (full / design * 100.0).clamp(0.0, 100.0))
+    })
+}
+
 fn reported_sensor_value(value: Option<f32>, decimals: usize) -> String {
     value.filter(|value| value.is_finite()).map(|value| format!("{value:.decimals$}"))
         .unwrap_or_else(|| "—".to_string())
@@ -5259,6 +5268,21 @@ fn sensor_card_columns(ui: &mut Ui, count: usize, mut render: impl FnMut(&mut Ui
 #[cfg(test)]
 mod layout_tests {
     use super::*;
+    #[test]
+    fn battery_capacity_retention_does_not_infer_new_or_healthy_batteries() {
+        let mut battery = crate::sensors::BatteryInfo::default();
+        assert_eq!(battery_capacity_retention(&battery), None);
+        battery.energy_full_wh = Some(23.0);
+        battery.energy_design_wh = Some(47.5);
+        assert!((battery_capacity_retention(&battery).unwrap() - 48.421).abs() < 0.01);
+        assert_eq!(battery.cycle_count, None);
+        battery.energy_design_wh = Some(0.0);
+        assert_eq!(battery_capacity_retention(&battery), None);
+        battery.health_pct = Some(f32::NAN);
+        assert_eq!(battery_capacity_retention(&battery), None);
+    }
+
+
     #[test]
     fn reported_sensor_history_never_invents_samples() {
         let now = Instant::now();
@@ -6547,83 +6571,6 @@ fn draw_thermal_dual_waveform(ui: &mut Ui, height: f32, samples: &VecDeque<(Inst
     }
     if !any_reading {
         painter.text(rect.center(), egui::Align2::CENTER_CENTER, "Temperature readings unavailable", egui::FontId::proportional(11.0), Color32::from_rgb(148, 163, 184));
-    }
-}
-
-fn draw_power_realtime_waveform(ui: &mut Ui, height: f32, watts: f32, _is_ac: bool, accent: Color32) {
-    let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
-    let rect = response.rect;
-
-    painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
-
-    let y_bot = rect.bottom() - 12.0;
-    let y_top = rect.top() + 12.0;
-    let plot_h = y_bot - y_top;
-
-    // Dotted guide grid lines at 25%, 50%, 75%
-    for ratio in [0.25_f32, 0.50_f32, 0.75_f32] {
-        let y = y_bot - ratio * plot_h;
-        draw_dotted_hline(&painter, y, rect.left() + 10.0, rect.right() - 10.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 12)), 4.0, 4.0);
-    }
-
-    let n = 48;
-    let step_x = (rect.width() - 20.0) / (n - 1) as f32;
-    let time_sec = ui.input(|i| i.time as f32);
-
-    let max_watts = if watts > 60.0 { 150.0_f32 } else if watts > 30.0 { 65.0_f32 } else { 35.0_f32 };
-    let to_y = |w: f32| -> f32 {
-        let norm = (w / max_watts).clamp(0.08, 0.92);
-        y_bot - norm * plot_h
-    };
-
-    let pts: Vec<egui::Pos2> = (0..n).map(|i| {
-        let x = rect.left() + 10.0 + i as f32 * step_x;
-        let progress = i as f32 / (n - 1) as f32;
-        // Animated smooth ripple
-        let a = progress * std::f32::consts::TAU * 1.5 - time_sec * 1.8;
-        let ripple = (a.sin() * 0.12 + (a * 2.3).cos() * 0.05) * watts;
-        // Center bump / natural telemetry crest
-        let bell = (-(progress - 0.65).powi(2) / 0.08).exp() * (watts * 0.28);
-        let current_w = (watts * 0.85 + bell + ripple).max(1.0);
-        egui::pos2(x, to_y(current_w))
-    }).collect();
-
-    // Gradient Mesh Fill under curve
-    let mut mesh = egui::Mesh::default();
-    let c_top = accent_with_alpha(accent, 38);
-    let c_bot = accent_with_alpha(accent, 2);
-    for i in 0..(pts.len() - 1) {
-        let p1 = pts[i];
-        let p2 = pts[i + 1];
-        let b1 = egui::pos2(p1.x, y_bot);
-        let b2 = egui::pos2(p2.x, y_bot);
-        let idx = mesh.vertices.len() as u32;
-        mesh.vertices.push(egui::epaint::Vertex { pos: p1, uv: egui::epaint::WHITE_UV, color: c_top });
-        mesh.vertices.push(egui::epaint::Vertex { pos: p2, uv: egui::epaint::WHITE_UV, color: c_top });
-        mesh.vertices.push(egui::epaint::Vertex { pos: b2, uv: egui::epaint::WHITE_UV, color: c_bot });
-        mesh.vertices.push(egui::epaint::Vertex { pos: b1, uv: egui::epaint::WHITE_UV, color: c_bot });
-        mesh.indices.extend_from_slice(&[idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
-    }
-    painter.add(egui::Shape::mesh(mesh));
-
-    // Outer glow line segment
-    for i in 0..(pts.len() - 1) {
-        painter.line_segment([pts[i], pts[i + 1]], Stroke::new(2.4_f32, accent));
-    }
-
-    // Glowing telemetry head on the rightmost point
-    if let Some(&last_pt) = pts.last() {
-        painter.circle_filled(last_pt, 6.0, accent_with_alpha(accent, 80));
-        painter.circle_filled(last_pt, 3.0, Color32::from_rgb(241, 245, 249));
-
-        // Floating readout chip
-        let tag_w = 72.0_f32;
-        let tag_h = 16.0_f32;
-        let tag_rect = egui::Rect::from_min_size(egui::pos2(last_pt.x - tag_w - 6.0, (last_pt.y - tag_h - 4.0).max(rect.top() + 4.0)), egui::vec2(tag_w, tag_h));
-        painter.rect_filled(tag_rect, Rounding::same(3.0), Color32::from_rgb(18, 28, 42));
-        painter.rect_stroke(tag_rect, Rounding::same(3.0), Stroke::new(1.0_f32, accent));
-        let label_str = format!("{:.1} W LOAD", watts);
-        painter.text(tag_rect.center(), egui::Align2::CENTER_CENTER, label_str, egui::FontId::monospace(8.5), Color32::from_rgb(241, 245, 249));
     }
 }
 
@@ -11616,13 +11563,13 @@ impl LauncherApp {
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     // Tjunction Max badge
-                                    let tj_max = snap.cpu_tjunction_max.unwrap_or(100.0);
+                                    let tj_max = reported_sensor_value(snap.cpu_tjunction_max, 0);
                                     Frame::none()
                                         .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 8))
                                         .rounding(Rounding::same(4.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 3.5))
                                         .show(ui, |ui| {
-                                            ui.label(RichText::new(format!("Tjunction Max: {:.0}°C", tj_max)).size(9.5).monospace().color(p.text_muted));
+                                            ui.label(RichText::new(format!("Tjunction Max: {}°C", tj_max)).size(9.5).monospace().color(p.text_muted));
                                         });
 
                                     ui.add_space(6.0);
@@ -11637,8 +11584,8 @@ impl LauncherApp {
                                                 ui.spacing_mut().item_spacing.x = 5.0;
                                                 let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                                 ui.painter().circle_filled(d_rect.center(), 2.8, accent);
-                                                let pl1 = snap.cpu_tdp_watts.unwrap_or(12.0);
-                                                ui.label(RichText::new(format!("PL1 Limit: {:.1}W", pl1)).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                                let pl1 = reported_sensor_value(snap.cpu_tdp_watts, 1);
+                                                ui.label(RichText::new(format!("PL1 Limit: {} W", pl1)).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                             });
                                         });
                                 });
@@ -11915,8 +11862,8 @@ impl LauncherApp {
                 let avail_pct = (snap.mem_free_bytes as f32 / snap.mem_total_bytes.max(1) as f32 * 100.0).clamp(0.0, 100.0);
 
                 let (slot_label, topol_label, mem_type_str, ram_mod_str) = if let Some(ref hw) = snap.memory_hw {
-                    let slot = if host_id.is_some() { "REMOTE : ACTIVE".to_string() } else { hw.slot_summary.clone() };
-                    let topol = if host_id.is_some() { "HOST MEMORY POOL".to_string() } else { hw.topology.clone() };
+                    let slot = if host_id.is_some() { "REMOTE : ACTIVE".to_string() } else { if hw.slot_summary.is_empty() { "SLOTS UNAVAILABLE".into() } else { hw.slot_summary.clone() } };
+                    let topol = if host_id.is_some() { "HOST MEMORY POOL".to_string() } else { if hw.topology.is_empty() { "TOPOLOGY UNAVAILABLE".into() } else { hw.topology.clone() } };
                     let mtype = format!("{} {}", total_ram_str, hw.memory_type);
                     let mspec = hw.module_spec.clone();
                     (slot, topol, mtype, mspec)
@@ -16285,75 +16232,13 @@ impl LauncherApp {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
 
-                let ac_online = snap.power.ac_online.unwrap_or(true);
-                let bat_pct = snap.power.total_battery_pct.unwrap_or(100.0);
-                let full_wh = bat.and_then(|b| b.energy_full_wh).or_else(|| bat.and_then(|b| b.energy_design_wh)).unwrap_or(50.0);
-                let remaining_wh = bat.and_then(|b| b.energy_wh).unwrap_or((full_wh * (bat_pct / 100.0)).max(0.1));
-                let bat_health = bat.and_then(|b| b.health_pct).unwrap_or_else(|| {
-                    if let (Some(f), Some(d)) = (bat.and_then(|b| b.energy_full_wh), bat.and_then(|b| b.energy_design_wh)) {
-                        if d > 0.0 {
-                            (f / d * 100.0).clamp(10.0, 100.0)
-                        } else {
-                            96.0
-                        }
-                    } else {
-                        96.0
-                    }
-                });
-
-                let p_watts = bat.and_then(|b| b.power_watts)
-                    .or(snap.power.total_power_watts)
-                    .filter(|&w| w > 0.5)
-                    .unwrap_or_else(|| snap.cpu_power_watts.unwrap_or(8.0).max(4.0));
-
-                let (est_time_str, _est_time_short, status_str, status_col, status_bg) = if !has_battery {
-                    let st_str = if is_remote {
-                        format!("AC MAINS • HOST '{}'", self.host_display_name(host_id))
-                    } else {
-                        "AC MAINS • DIRECT FEED".to_string()
-                    };
-                    ("AC Grid Connected".to_string(), "Mains".to_string(), st_str, accent, accent_with_alpha(accent, 22))
-                } else if ac_online {
-                    if bat_pct >= 99.0 {
-                        ("Fully Charged".to_string(), "Full".to_string(), "AC ONLINE • 100% • FULLY CHARGED".to_string(), accent, accent_with_alpha(accent, 22))
-                    } else {
-                        let needed_wh = (full_wh - remaining_wh).max(0.1_f32);
-                        let hours_to_full = needed_wh / p_watts;
-                        let total_mins = (hours_to_full * 60.0).round() as u64;
-                        let time_formatted = if total_mins >= 60 {
-                            let h = total_mins / 60;
-                            let m = total_mins % 60;
-                            format!("{}h {}m", h, m)
-                        } else {
-                            format!("{}m", total_mins.max(1))
-                        };
-                        (
-                            format!("{} to full", time_formatted),
-                            time_formatted.clone(),
-                            format!("CHARGING • {:.0}% • {} TO FULL", bat_pct, time_formatted),
-                            accent,
-                            accent_with_alpha(accent, 22),
-                        )
-                    }
-                } else {
-                    // Discharging
-                    let hours_left = remaining_wh / p_watts;
-                    let total_mins = (hours_left * 60.0).round() as u64;
-                    let time_formatted = if total_mins >= 60 {
-                        let h = total_mins / 60;
-                        let m = total_mins % 60;
-                        format!("{}h {}m", h, m)
-                    } else {
-                        format!("{}m", total_mins.max(1))
-                    };
-                    (
-                        format!("{} remaining", time_formatted),
-                        time_formatted.clone(),
-                        format!("BATTERY • {:.0}% • {} LEFT", bat_pct, time_formatted),
-                        Color32::from_rgb(245, 158, 11),
-                        Color32::from_rgba_unmultiplied(245, 158, 11, 24),
-                    )
+                let reported_status = bat.map(|battery| battery.status.trim()).filter(|status| !status.is_empty()).unwrap_or("Battery state unavailable");
+                let status_str = if has_battery { reported_status.to_string() } else {
+                    match snap.power.ac_online { Some(true) => "External power connected", Some(false) => "External power disconnected", None => "Power-source status unavailable" }.to_string()
                 };
+                let status_col = p.text_secondary;
+                let status_bg = p.bg_button;
+                let est_time_str = "Runtime estimate unavailable";
 
                 // 1. Top Header Banner
                 Frame::none()
@@ -16431,9 +16316,9 @@ impl LauncherApp {
                             ui.horizontal_wrapped(|ui| {
                                 let sub_str = if !has_battery {
                                     if is_remote {
-                                        format!("Hardware AC power telemetry • Uptime {}", format_uptime(snap.uptime_secs))
+                                        format!("Reported power telemetry • Uptime {}", format_uptime(snap.uptime_secs))
                                     } else {
-                                        "AC continuous feed power telemetry & energy states".to_string()
+                                        "Reported power telemetry; battery information unavailable".to_string()
                                     }
                                 } else {
                                     format!("ACPI battery health & power telemetry • Remaining: {}", est_time_str)
@@ -16477,469 +16362,58 @@ impl LauncherApp {
                 } else {
                     self.cpu_tdp_profile
                 };
-                let active_gov = if is_remote {
-                    snap.cpu_governor.clone().unwrap_or_else(|| "performance".to_string())
-                } else {
-                    crate::power::query_current_governor()
-                };
-                let active_preset_idx = if is_remote {
-                    snap.cpu_governor.as_deref().map(crate::power::governor_to_preset_index).unwrap_or(self.power_preset)
-                } else {
-                    self.power_preset
-                };
-                let cpu_load = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
-                let raw_cpu = snap.cpu_power_watts.unwrap_or_else(|| {
-                    let tdp = snap.cpu_tdp_watts.unwrap_or(profile.nominal_watts);
-                    let idle = (tdp * 0.12).clamp(1.5, 20.0);
-                    idle + (tdp - idle) * (0.35 * cpu_load + 0.65 * cpu_load.powf(1.35))
-                });
-
+                let active_gov = snap.cpu_governor.as_deref().unwrap_or("Unavailable");
+                let active_preset_idx = snap.cpu_governor.as_deref().map(crate::power::governor_to_preset_index);
                 ui.allocate_ui_with_layout(egui::vec2(total_w, 0.0), egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true), |ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     // Left Column
                     ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                         ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
-                        if !has_battery {
-                            // Direct AC Power Supply Card (Desktop, Mini-PC, Server, or Workstation without battery)
-                            Frame::none()
-                                .fill(p.bg_card)
-                                .rounding(Rounding::same(8.0))
-                                .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                                .show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 6.0;
-                                        ui.label(RichText::new(crate::lucide::ZAP).size(12.0).color(accent));
-                                        let psu_hdr = if is_remote {
-                                            format!("POWER SUPPLY // DIRECT AC GRID FEED • HOST '{}'", self.host_display_name(host_id))
-                                        } else {
-                                            "POWER SUPPLY // DIRECT AC GRID FEED".to_string()
-                                        };
-                                        ui.label(RichText::new(psu_hdr).size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
-
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            Frame::none()
-                                                .fill(accent_with_alpha(accent, 20))
-                                                .rounding(Rounding::same(4.0))
-                                                .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                                .show(ui, |ui| {
-                                                    let badge_txt = if num_cores >= 16 || snap.cpu_brand.to_lowercase().contains("xeon") || snap.cpu_brand.to_lowercase().contains("epyc") {
-                                                        "Enterprise Platform"
-                                                    } else if !snap.gpus.is_empty() {
-                                                        "Workstation Grade"
-                                                    } else {
-                                                        "AC Continuous Feed"
-                                                    };
-                                                    ui.label(RichText::new(badge_txt).size(9.0).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
-                                                });
-                                        });
-                                    });
-
-                                    ui.add_space(10.0);
-
-                                    let render_ac_meta_row = |ui: &mut egui::Ui, label: &str, val: &str, val_col: Color32| {
-                                        ui.horizontal(|ui| {
-                                            let avail = ui.available_width();
-                                            let left_w = (avail * 0.40).clamp(28.0, 55.0);
-                                            let right_w = (avail - left_w - 4.0).max(10.0);
-                                            ui.allocate_ui_with_layout(egui::vec2(left_w, 14.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                                ui.add(egui::Label::new(RichText::new(label).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184))).truncate());
-                                            });
-                                            ui.allocate_ui_with_layout(egui::vec2(right_w, 14.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.add(egui::Label::new(RichText::new(val).size(8.5).monospace().strong().color(val_col)).truncate());
-                                            });
-                                        });
-                                    };
-
-                                    // 3 Metric Cards in row (Equal Height Synced)
-                                    let ac_card_height_id = ui.make_persistent_id("ac_power_top_metric_cards_h");
-                                    let target_ac_card_h: f32 = ui.data(|d| d.get_temp::<f32>(ac_card_height_id)).unwrap_or(118.0).max(118.0);
-                                    let mut observed_ac_max_inner_h: f32 = 98.0;
-                                    let needed_ac_inner_h = (target_ac_card_h - 20.0).max(98.0);
-
-                                    ui.columns(3, |cols| {
-                                        // Card 1: Power Delivery Feed
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(10, 15, 29))
-                                            .stroke(Stroke::NONE)
-                                            .rounding(Rounding::same(6.0))
-                                            .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                                            .show(&mut cols[0], |ui| {
-                                                ui.set_width(ui.available_width());
-                                                let content_start_y = ui.cursor().min.y;
-
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 5.0;
-                                                    ui.label(RichText::new(crate::lucide::PLUG).size(11.0).color(accent));
-                                                    ui.label(RichText::new("Power Delivery Feed").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                });
-                                                ui.add_space(4.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 2.0;
-                                                    ui.label(RichText::new("Continuous").size(20.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                                });
-                                                ui.add_space(8.0);
-                                                let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), accent);
-                                                ui.add_space(8.0);
-
-                                                render_ac_meta_row(ui, "Feed", "AC Mains Feed", Color32::from_rgb(203, 213, 225));
-                                                ui.add_space(3.0);
-                                                let up_str = format_uptime(snap.uptime_secs);
-                                                render_ac_meta_row(ui, "Uptime", &up_str, accent);
-
-                                                let inner_h = ui.cursor().min.y - content_start_y;
-                                                observed_ac_max_inner_h = observed_ac_max_inner_h.max(inner_h);
-                                                if inner_h < needed_ac_inner_h {
-                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_ac_inner_h - inner_h));
-                                                }
-                                            });
-
-                                        // Card 2: Processor Package Draw
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(10, 15, 29))
-                                            .stroke(Stroke::NONE)
-                                            .rounding(Rounding::same(6.0))
-                                            .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                                            .show(&mut cols[1], |ui| {
-                                                ui.set_width(ui.available_width());
-                                                let content_start_y = ui.cursor().min.y;
-
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 5.0;
-                                                    ui.label(RichText::new(crate::lucide::ACTIVITY).size(11.0).color(accent));
-                                                    ui.label(RichText::new("Processor Package Draw").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                });
-                                                ui.add_space(4.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 2.0;
-                                                    ui.label(RichText::new(format!("{:.1}", raw_cpu)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                                    ui.label(RichText::new("W Package").size(11.0).color(Color32::from_rgb(148, 163, 184)));
-                                                });
-                                                ui.add_space(8.0);
-                                                let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
-                                                let fill_ratio = (raw_cpu / profile.turbo_pl2_watts.max(15.0)).clamp(0.05, 1.0);
-                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * fill_ratio, bar_r.height())), Rounding::same(2.0), accent);
-                                                ui.add_space(8.0);
-
-                                                let pl1_s = format!("{:.0} W", profile.balanced_pl1_watts);
-                                                let pl2_s = format!("{:.0} W", profile.turbo_pl2_watts);
-                                                render_ac_meta_row(ui, "PL1 Cap", &pl1_s, Color32::from_rgb(203, 213, 225));
-                                                ui.add_space(3.0);
-                                                render_ac_meta_row(ui, "PL2 Peak", &pl2_s, accent);
-
-                                                let inner_h = ui.cursor().min.y - content_start_y;
-                                                observed_ac_max_inner_h = observed_ac_max_inner_h.max(inner_h);
-                                                if inner_h < needed_ac_inner_h {
-                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_ac_inner_h - inner_h));
-                                                }
-                                            });
-
-                                        // Card 3: Thermal Dissipation
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(10, 15, 29))
-                                            .stroke(Stroke::NONE)
-                                            .rounding(Rounding::same(6.0))
-                                            .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                                            .show(&mut cols[2], |ui| {
-                                                ui.set_width(ui.available_width());
-                                                let content_start_y = ui.cursor().min.y;
-
-                                                let temp_c = snap.cpu_temp.unwrap_or(36.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 5.0;
-                                                    ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(accent));
-                                                    ui.label(RichText::new("Thermal Dissipation").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                });
-                                                ui.add_space(4.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 2.0;
-                                                    ui.label(RichText::new(format!("{:.1}", temp_c)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                                    ui.label(RichText::new("°C Core").size(11.0).color(Color32::from_rgb(148, 163, 184)));
-                                                });
-                                                ui.add_space(8.0);
-                                                let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
-                                                let temp_ratio = (temp_c / 95.0).clamp(0.05, 1.0);
-                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * temp_ratio, bar_r.height())), Rounding::same(2.0), accent);
-                                                ui.add_space(8.0);
-
-                                                let clk_s = format!("{} MHz", snap.cpu_frequency_mhz);
-                                                render_ac_meta_row(ui, "Gov", &active_gov, Color32::from_rgb(203, 213, 225));
-                                                ui.add_space(3.0);
-                                                render_ac_meta_row(ui, "Clock", &clk_s, accent);
-
-                                                let inner_h = ui.cursor().min.y - content_start_y;
-                                                observed_ac_max_inner_h = observed_ac_max_inner_h.max(inner_h);
-                                                if inner_h < needed_ac_inner_h {
-                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_ac_inner_h - inner_h));
-                                                }
-                                            });
-                                    });
-
-                                    ui.data_mut(|d| d.insert_temp(ac_card_height_id, observed_ac_max_inner_h + 20.0));
-
-                                    ui.add_space(12.0);
-
-                                    // Row of 4 Sub-chips
-                                    ui.columns(4, |cols| {
-                                        let temp_val = snap.cpu_temp.unwrap_or(36.0);
-                                        let topology_str = if num_cores >= 16 || snap.cpu_brand.to_lowercase().contains("xeon") || snap.cpu_brand.to_lowercase().contains("epyc") {
-                                            "Rackmount / Server".to_string()
-                                        } else if !snap.gpus.is_empty() {
-                                            "Desktop Workstation".to_string()
-                                        } else {
-                                            "Desktop / Compact PC".to_string()
-                                        };
-                                        let vrm_str = if snap.cpu_tdp_watts.is_some() {
-                                            "RAPL Digital Regulation".to_string()
-                                        } else {
-                                            "Active Digital PMIC".to_string()
-                                        };
-                                        let chips = [
-                                            ("Mains Standard", "230V / 115V AC Pure Sine".to_string(), Color32::from_rgb(241, 245, 249)),
-                                            ("Chassis Topology", topology_str, Color32::from_rgb(241, 245, 249)),
-                                            ("Thermal Margin", format!("{:.1} °C Headroom", (95.0 - temp_val).max(0.0)), Color32::from_rgb(203, 213, 225)),
-                                            ("Power Regulation", vrm_str, Color32::from_rgb(203, 213, 225)),
-                                        ];
-                                        for (i, (title, val, val_col)) in chips.into_iter().enumerate() {
-                                            Frame::none()
-                                                .fill(Color32::from_rgb(10, 15, 29))
-                                                .rounding(Rounding::same(6.0))
-                                                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                                .show(&mut cols[i], |ui| {
-                                                    ui.set_width(ui.available_width());
-                                                    ui.label(RichText::new(title).size(8.0).monospace().color(p.text_muted));
-                                                    ui.add_space(2.0);
-                                                    ui.label(RichText::new(val).size(9.5).monospace().strong().color(val_col));
-                                                });
+                        Frame::none().fill(p.bg_card).rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 12.0)).show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.label(RichText::new("Reported battery information").size(12.0).strong().color(p.text_primary));
+                                if let Some(battery) = bat {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(RichText::new(&battery.name).size(11.0).color(p.text_secondary));
+                                        for text in [&battery.manufacturer, &battery.model_name] {
+                                            if !text.trim().is_empty() { ui.label(RichText::new(text).size(11.0).color(p.text_muted)); }
                                         }
                                     });
-                                });
-                        } else {
-                            // Primary Battery Telemetry Card (Local PC or Remote Laptop with detected battery)
-                            Frame::none()
-                                .fill(p.bg_card)
-                                .rounding(Rounding::same(8.0))
-                                .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                                .show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 6.0;
-                                        ui.label(RichText::new(crate::lucide::BATTERY).size(12.0).color(accent));
-                                        let bat_name = bat.map(|b| b.name.as_str()).unwrap_or("BAT1");
-                                        let bat_mfg = bat.map(|b| b.manufacturer.trim()).filter(|s| !s.is_empty()).unwrap_or(if is_remote { "OEM Pack" } else { "COMPAL" });
-                                        let bat_model = bat.map(|b| b.model_name.trim()).filter(|s| !s.is_empty()).unwrap_or(if is_remote { "Lithium-Ion Pack" } else { "PABAS0241231" });
-                                        let bat_hdr = format!("PRIMARY CELL TELEMETRY // {} ({} {})", bat_name, bat_mfg, bat_model);
-                                        ui.label(RichText::new(bat_hdr).size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
-
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            Frame::none()
-                                                .fill(accent_with_alpha(accent, 20))
-                                                .rounding(Rounding::same(4.0))
-                                                .inner_margin(egui::Margin::symmetric(7.0, 2.5))
-                                                .show(ui, |ui| {
-                                                    ui.horizontal(|ui| {
-                                                        ui.spacing_mut().item_spacing.x = 4.0;
-                                                        let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
-                                                        ui.painter().circle_filled(d_rect.center(), 2.5, accent);
-                                                        ui.label(RichText::new("HEALTHY").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                                    });
-                                                });
-                                        });
-                                    });
-
-                                    ui.add_space(10.0);
-
-                                    // 3 Metric Cards in row (Equal Height Synced)
-                                    let card_height_id = ui.make_persistent_id("power_top_metric_cards_h");
-                                    let target_card_h: f32 = ui.data(|d| d.get_temp::<f32>(card_height_id)).unwrap_or(118.0).max(118.0);
-                                    let mut observed_max_inner_h: f32 = 98.0;
-                                    let needed_inner_h = (target_card_h - 20.0).max(98.0);
-
-                                    let render_card_meta_row = |ui: &mut egui::Ui, label: &str, val: &str, val_col: Color32| {
-                                        ui.horizontal(|ui| {
-                                            let avail = ui.available_width();
-                                            let left_w = (avail * 0.40).clamp(28.0, 55.0);
-                                            let right_w = (avail - left_w - 4.0).max(10.0);
-                                            ui.allocate_ui_with_layout(egui::vec2(left_w, 14.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                                ui.add(egui::Label::new(RichText::new(label).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184))).truncate());
-                                            });
-                                            ui.allocate_ui_with_layout(egui::vec2(right_w, 14.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.add(egui::Label::new(RichText::new(val).size(8.5).monospace().strong().color(val_col)).truncate());
-                                            });
-                                        });
-                                    };
-
-                                    ui.columns(3, |cols| {
-                                        // Card 1: State of Charge
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(10, 15, 29))
-                                            .stroke(Stroke::NONE)
-                                            .rounding(Rounding::same(6.0))
-                                            .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                                            .show(&mut cols[0], |ui| {
-                                                ui.set_width(ui.available_width());
-                                                let content_start_y = ui.cursor().min.y;
-
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 5.0;
-                                                    ui.label(RichText::new(crate::lucide::BATTERY_CHARGING).size(11.0).color(accent));
-                                                    ui.label(RichText::new("State of Charge").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                });
-                                                ui.add_space(4.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 2.0;
-                                                    ui.label(RichText::new(format!("{:.0}", bat_pct)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                                    ui.label(RichText::new("%").size(12.0).color(Color32::from_rgb(148, 163, 184)));
-                                                });
-                                                ui.add_space(8.0);
-                                                let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
-                                                let fill_w = bar_r.width() * (bat_pct / 100.0).clamp(0.05, 1.0);
-                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(2.0), accent);
-                                                ui.add_space(8.0);
-
-                                                let delivery_str = if ac_online {
-                                                    if bat_pct >= 99.0 { "Mains Bypass" } else { "AC Charging" }
-                                                } else {
-                                                    "Discharging"
-                                                };
-                                                render_card_meta_row(ui, "Mode", delivery_str, Color32::from_rgb(203, 213, 225));
-                                                ui.add_space(3.0);
-                                                render_card_meta_row(ui, "Time", &est_time_str, accent);
-
-                                                let inner_h = ui.cursor().min.y - content_start_y;
-                                                observed_max_inner_h = observed_max_inner_h.max(inner_h);
-                                                if inner_h < needed_inner_h {
-                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
-                                                }
-                                            });
-
-                                        // Card 2: Remaining vs Design
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(10, 15, 29))
-                                            .stroke(Stroke::NONE)
-                                            .rounding(Rounding::same(6.0))
-                                            .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                                            .show(&mut cols[1], |ui| {
-                                                ui.set_width(ui.available_width());
-                                                let content_start_y = ui.cursor().min.y;
-
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 5.0;
-                                                    ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(accent));
-                                                    ui.label(RichText::new("Remaining vs Design").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                });
-                                                ui.add_space(4.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 2.0;
-                                                    ui.label(RichText::new(format!("{:.1}", remaining_wh)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                                    ui.label(RichText::new(format!("/ {:.1} Wh", full_wh)).size(11.0).color(Color32::from_rgb(148, 163, 184)));
-                                                });
-                                                ui.add_space(8.0);
-                                                let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
-                                                let cap_ratio = if full_wh > 0.0 { (remaining_wh / full_wh).clamp(0.05, 1.0) } else { 1.0 };
-                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * cap_ratio, bar_r.height())), Rounding::same(2.0), accent);
-                                                ui.add_space(8.0);
-
-                                                let design_wh = bat.and_then(|b| b.energy_design_wh).unwrap_or(full_wh);
-                                                render_card_meta_row(ui, "Health", &format!("{:.1}%", bat_health), Color32::from_rgb(203, 213, 225));
-                                                ui.add_space(3.0);
-                                                render_card_meta_row(ui, "Design", &format!("{:.1} Wh", design_wh), Color32::from_rgb(148, 163, 184));
-
-                                                let inner_h = ui.cursor().min.y - content_start_y;
-                                                observed_max_inner_h = observed_max_inner_h.max(inner_h);
-                                                if inner_h < needed_inner_h {
-                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
-                                                }
-                                            });
-
-                                        // Card 3: Lifecycle Endurance
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(10, 15, 29))
-                                            .stroke(Stroke::NONE)
-                                            .rounding(Rounding::same(6.0))
-                                            .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                                            .show(&mut cols[2], |ui| {
-                                                ui.set_width(ui.available_width());
-                                                let content_start_y = ui.cursor().min.y;
-
-                                                let cycles_val = bat.and_then(|b| b.cycle_count).unwrap_or(0);
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 5.0;
-                                                    ui.label(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(accent));
-                                                    ui.label(RichText::new("Lifecycle Endurance").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                                });
-                                                ui.add_space(4.0);
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 2.0;
-                                                    if cycles_val > 0 {
-                                                        ui.label(RichText::new(format!("{}", cycles_val)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                                        ui.label(RichText::new("cycles").size(11.0).color(Color32::from_rgb(148, 163, 184)));
-                                                    } else {
-                                                        ui.label(RichText::new("Fresh").size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                                        ui.label(RichText::new("pack").size(11.0).color(Color32::from_rgb(148, 163, 184)));
-                                                    }
-                                                });
-                                                ui.add_space(8.0);
-                                                let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
-                                                let cycle_ratio = ((cycles_val as f32) / 1000.0).clamp(0.04, 1.0);
-                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * cycle_ratio, bar_r.height())), Rounding::same(2.0), accent);
-                                                ui.add_space(8.0);
-
-                                                let life_label = if cycles_val == 0 { "1000 (New)" } else { "1000 Total" };
-                                                let cond_label = if cycles_val == 0 { "Optimal" } else if cycles_val < 300 { "Good" } else { "Normal" };
-                                                render_card_meta_row(ui, "Lifespan", life_label, Color32::from_rgb(203, 213, 225));
-                                                ui.add_space(3.0);
-                                                render_card_meta_row(ui, "Condition", cond_label, Color32::from_rgb(148, 163, 184));
-
-                                                let inner_h = ui.cursor().min.y - content_start_y;
-                                                observed_max_inner_h = observed_max_inner_h.max(inner_h);
-                                                if inner_h < needed_inner_h {
-                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
-                                                }
-                                            });
-                                    });
-
-                                    ui.data_mut(|d| d.insert_temp(card_height_id, observed_max_inner_h + 20.0));
-
-                                    ui.add_space(12.0);
-
-                                    // Row of 4 Sub-chips (Fits cleanly on 1 line without wrapping)
-                                    ui.columns(4, |cols| {
-                                        let volts_val = bat.and_then(|b| b.voltage_volts).unwrap_or(12.90);
-                                        let chem_str = bat.map(|b| b.technology.trim()).filter(|s| !s.is_empty()).unwrap_or("Li-ion");
-                                        let temp_val = snap.cpu_temp.unwrap_or(27.4);
-                                        let ac_status = if ac_online {
-                                            if bat_pct >= 99.0 { "Mains Bypass" } else { "AC Charging" }
-                                        } else {
-                                            "Disconnected"
+                                    ui.add_space(8.0);
+                                    let health = battery_capacity_retention(battery);
+                                    sensor_card_columns(ui, 3, |ui, index| {
+                                        let (label, value, unit) = match index {
+                                            0 => ("State of charge", reported_sensor_value(battery.capacity_pct, 0), "%"),
+                                            1 => ("Capacity retention", reported_sensor_value(health, 1), "%"),
+                                            _ => ("Cycle count", battery.cycle_count.map(|value| value.to_string()).unwrap_or_else(|| "—".into()), ""),
                                         };
-                                        let chips = [
-                                            ("Terminal Potential", format!("{:.2} V", volts_val), Color32::from_rgb(241, 245, 249)),
-                                            ("Chemistry Stack", chem_str.to_string(), Color32::from_rgb(241, 245, 249)),
-                                            ("Operating Temp", format!("{:.1} °C", temp_val), Color32::from_rgb(203, 213, 225)),
-                                            ("AC Adapter State", ac_status.to_string(), Color32::from_rgb(203, 213, 225)),
-                                        ];
-                                        for (i, (title, val, val_col)) in chips.into_iter().enumerate() {
-                                            Frame::none()
-                                                .fill(Color32::from_rgb(10, 15, 29))
-                                                .rounding(Rounding::same(6.0))
-                                                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                                .show(&mut cols[i], |ui| {
-                                                    ui.set_width(ui.available_width());
-                                                    ui.label(RichText::new(title).size(8.0).monospace().color(p.text_muted));
-                                                    ui.add_space(2.0);
-                                                    ui.label(RichText::new(val).size(9.5).monospace().strong().color(val_col));
-                                                });
-                                        }
+                                        ui.label(RichText::new(label).size(11.0).color(p.text_muted));
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(&value).size(22.0).strong().color(p.text_primary));
+                                            if value != "—" { ui.label(RichText::new(unit).size(11.0).color(p.text_secondary)); }
+                                        });
                                     });
-                                });
-                        }
+                                    ui.add_space(10.0);
+                                    for (label, value) in [
+                                        ("Remaining energy", battery.energy_wh.map(|value| format!("{value:.1} Wh"))),
+                                        ("Full-charge capacity", battery.energy_full_wh.map(|value| format!("{value:.1} Wh"))),
+                                        ("Design capacity", battery.energy_design_wh.map(|value| format!("{value:.1} Wh"))),
+                                        ("Voltage", battery.voltage_volts.map(|value| format!("{value:.2} V"))),
+                                        ("Chemistry", (!battery.technology.trim().is_empty()).then(|| battery.technology.clone())),
+                                    ] {
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.label(RichText::new(label).size(11.0).color(p.text_muted));
+                                            ui.label(RichText::new(value.unwrap_or_else(|| "Unavailable".into())).size(11.0).color(p.text_primary));
+                                        });
+                                    }
+                                    ui.add_space(6.0);
+                                    ui.label(RichText::new("Capacity retention compares full-charge capacity with design capacity. Cycle life and charging bypass are not inferred.").size(11.0).color(p.text_muted));
+                                } else {
+                                    ui.label(RichText::new("No battery information was reported by this host.").size(11.0).color(p.text_muted));
+                                }
+                            });
+
 
                         ui.add_space(8.0);
 
@@ -16956,11 +16430,6 @@ impl LauncherApp {
                                     ui.label(RichText::new("THERMAL & POWER GOVERNOR PRESET").size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let active_gov = if is_remote {
-                                            snap.cpu_governor.clone().unwrap_or_else(|| "performance".to_string())
-                                        } else {
-                                            crate::power::query_current_governor()
-                                        };
                                         Frame::none()
                                             .fill(accent_with_alpha(accent, 18))
                                             .rounding(Rounding::same(4.0))
@@ -16980,21 +16449,9 @@ impl LauncherApp {
 
                                 // 3 Presets in row
                                 ui.columns(3, |cols| {
-                                    let quiet_desc = if profile.quiet_pl1_watts.fract() == 0.0 {
-                                        format!("Continuous PL1 Cap ({:.0}W)", profile.quiet_pl1_watts)
-                                    } else {
-                                        format!("Continuous PL1 Cap ({:.1}W)", profile.quiet_pl1_watts)
-                                    };
-                                    let balanced_desc = if profile.balanced_pl1_watts.fract() == 0.0 {
-                                        format!("Optimized Dynamic ({:.0}W)", profile.balanced_pl1_watts)
-                                    } else {
-                                        format!("Optimized Dynamic ({:.1}W)", profile.balanced_pl1_watts)
-                                    };
-                                    let turbo_desc = if profile.turbo_pl2_watts.fract() == 0.0 {
-                                        format!("Peak Burst TDP ({:.0}W)", profile.turbo_pl2_watts)
-                                    } else {
-                                        format!("Peak Burst TDP ({:.1}W)", profile.turbo_pl2_watts)
-                                    };
+                                    let quiet_desc = "Power-saving governor request".to_string();
+                                    let balanced_desc = "Balanced governor request".to_string();
+                                    let turbo_desc = "Performance governor request".to_string();
 
                                     let presets: [(&str, String, &str, usize); 3] = [
                                         ("Quiet / Eco", quiet_desc, "powersave", 0),
@@ -17003,7 +16460,7 @@ impl LauncherApp {
                                     ];
                                     for (name, desc, gov_name, idx) in &presets {
                                         let idx = *idx;
-                                        let is_sel = active_preset_idx == idx;
+                                        let is_sel = active_preset_idx == Some(idx);
                                         let border = if is_sel { Stroke::new(1.2_f32, accent) } else { Stroke::NONE };
                                         let bg = if is_sel { accent_with_alpha(accent, 18) } else { Color32::from_rgb(10, 15, 29) };
 
@@ -17072,227 +16529,39 @@ impl LauncherApp {
 
                     ui.add_space(gap);
 
-                    // Right Column: LIVE TELEMETRY
+                    // Reported power domains remain separate; they are not a measured wall-power total.
                     ui.allocate_ui_with_layout(egui::vec2(right_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                            .show(ui, |ui| {
+                        Frame::none().fill(p.bg_card).rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 12.0)).show(ui, |ui| {
                                 ui.set_width(ui.available_width());
+                                let (label, reading) = if has_battery {
+                                    ("Reported battery power", snap.power.total_power_watts.or_else(|| bat.and_then(|battery| battery.power_watts)))
+                                } else { ("Reported CPU package power", snap.cpu_power_watts) };
+                                ui.label(RichText::new(label).size(12.0).strong().color(p.text_primary));
                                 ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 6.0;
-                                    ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(accent));
-                                    ui.label(RichText::new("LIVE TELEMETRY").size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
-
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                        ui.painter().circle_filled(d_rect.center(), 3.0, accent);
-                                    });
-                                });
-
-                                ui.add_space(10.0);
-
-                                // Realtime live telemetry calculation for components and total draw
-                                let disk_mb_s = ((snap.total_disk_read_rate_bps + snap.total_disk_write_rate_bps) / (1024.0 * 1024.0)) as f32;
-                                let net_mb_s = ((snap.total_rx_rate_bps + snap.total_tx_rate_bps) / (1024.0 * 1024.0)) as f32;
-                                let mem_ratio = (snap.mem_usage_pct / 100.0).clamp(0.0, 1.0);
-
-                                let is_discharging = !ac_online || bat.map(|b| b.status.eq_ignore_ascii_case("discharging")).unwrap_or(false);
-                                let is_charging = ac_online && bat.map(|b| b.status.eq_ignore_ascii_case("charging")).unwrap_or(false);
-
-                                let (badge_str, badge_col) = if !has_battery {
-                                    ("Direct PSU Line".to_string(), accent)
-                                } else if is_discharging {
-                                    ("Battery active".to_string(), Color32::from_rgb(245, 158, 11))
-                                } else if is_charging {
-                                    (format!("Charging ({:.0}%)", bat_pct), Color32::from_rgb(34, 197, 94))
-                                } else {
-                                    ("Bypass active".to_string(), accent)
-                                };
-
-                                // GPU telemetry
-                                let (raw_gpu, gpu_cap) = if !snap.gpus.is_empty() {
-                                    let mut total_g_w = 0.0_f32;
-                                    let mut total_g_cap = 0.0_f32;
-                                    for g in &snap.gpus {
-                                        let limit = g.power_limit_watts.unwrap_or(if is_remote { 75.0 } else { 35.0 });
-                                        let g_load = (g.load_pct.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0);
-                                        let w = g.power_watts.unwrap_or_else(|| {
-                                            (limit * 0.08).max(0.5) + (limit * 0.92) * g_load
-                                        });
-                                        total_g_w += w;
-                                        total_g_cap += limit.max(w * 1.25);
-                                    }
-                                    (total_g_w, total_g_cap.max(total_g_w * 1.25))
-                                } else {
-                                    let g_tdp = (profile.nominal_watts * 0.30).clamp(3.0, 35.0);
-                                    let g_load = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
-                                    let igpu_w = (g_tdp * 0.06).max(0.3) + (g_tdp * 0.40) * (g_load * 0.5);
-                                    (igpu_w, g_tdp)
-                                };
-
-                                // Storage subsystem
-                                let (num_rotational, num_ssd) = {
-                                    let mut rot = 0;
-                                    let mut ssd = 0;
-                                    for d in &snap.physical_disks {
-                                        if d.is_ssd { ssd += 1; } else { rot += 1; }
-                                    }
-                                    if rot == 0 && ssd == 0 {
-                                        if snap.disks.is_empty() { (0, 1) } else { (0, snap.disks.len()) }
-                                    } else {
-                                        (rot, ssd)
-                                    }
-                                };
-                                let hdd_draw = (num_rotational as f32 * 2.2) + (disk_mb_s * 0.10).clamp(0.0, 8.0);
-                                let ssd_draw = (num_ssd.max(1) as f32 * 0.5) + (disk_mb_s * 0.04).clamp(0.0, 4.0);
-                                let raw_storage = (hdd_draw + ssd_draw).clamp(0.5, 50.0);
-                                let storage_cap = (num_rotational as f32 * 7.0 + num_ssd as f32 * 3.5).clamp(5.0, 60.0);
-
-                                // Motherboard chipset & memory
-                                let mem_gb = (snap.mem_total_bytes as f32 / (1024.0 * 1024.0 * 1024.0)).max(4.0);
-                                let ram_draw = (mem_gb / 8.0) * (0.35 + mem_ratio * 0.55);
-                                let chipset_draw = if has_battery { 1.0 } else if num_cores >= 16 { 5.0 } else { 2.2 };
-                                let raw_mb = (chipset_draw + ram_draw).clamp(1.2, 35.0);
-                                let mb_cap = (chipset_draw * 2.0 + (mem_gb / 8.0) * 1.8).clamp(6.0, 40.0);
-
-                                // Network PHY & bus
-                                let raw_net = (0.4 + (net_mb_s * 0.06)).clamp(0.4, 20.0);
-                                let net_cap = 15.0_f32;
-
-                                // USB & Peripherals
-                                let (base_usb_w, usb_device_count) = snap.power.usb_power_watts.unwrap_or((0.45, 0));
-                                let usb_cap = (usb_device_count as f32 * 4.5 + 5.0).clamp(8.0, 30.0);
-
-                                // CPU cap
-                                let cpu_cap = profile.turbo_pl2_watts.max(raw_cpu * 1.25);
-
-                                let (watts_val, components): (f32, Vec<(&'static str, f32, f32)>) = if has_battery {
-                                    let br = snap.power.backlight_ratio.unwrap_or(0.40);
-                                    let raw_display = 1.0 + br * 2.8;
-                                    let disp_cap = 6.0_f32;
-                                    let raw_kbd_lights = snap.power.kbd_lights_watts.unwrap_or(0.25);
-                                    let kbd_cap = 4.0_f32;
-
-                                    let bat_power = snap.power.total_power_watts.filter(|&w| w > 0.1);
-
-                                    let (final_watts, c_cpu, c_gpu, c_disp, c_storage, c_usb, c_kbd_lights, c_mb) = if is_discharging && bat_power.is_some() {
-                                        let total = bat_power.unwrap();
-                                        let base_internal = raw_cpu + raw_gpu + raw_display + raw_storage + raw_kbd_lights + raw_mb + base_usb_w;
-                                        let c_usb_raw = if total > base_internal {
-                                            base_usb_w.max(total - base_internal)
-                                        } else {
-                                            base_usb_w
-                                        };
-                                        let non_cpu_sum = (raw_display + raw_storage + c_usb_raw + raw_kbd_lights + raw_mb).max(0.1);
-                                        let target_non_cpu = (total - raw_cpu - raw_gpu).max(0.1);
-                                        let scale = (target_non_cpu / non_cpu_sum).clamp(0.4, 1.8);
-
-                                        (
-                                            total,
-                                            raw_cpu,
-                                            raw_gpu,
-                                            raw_display * scale,
-                                            raw_storage * scale,
-                                            c_usb_raw * scale,
-                                            raw_kbd_lights * scale,
-                                            raw_mb * scale,
-                                        )
-                                    } else if is_charging && bat_power.is_some() {
-                                        let sys_draw = raw_cpu + raw_gpu + raw_display + raw_storage + base_usb_w + raw_kbd_lights + raw_mb;
-                                        let total = sys_draw + bat_power.unwrap();
-                                        (total, raw_cpu, raw_gpu, raw_display, raw_storage, base_usb_w, raw_kbd_lights, raw_mb)
-                                    } else {
-                                        let total = (raw_cpu + raw_gpu + raw_display + raw_storage + base_usb_w + raw_kbd_lights + raw_mb).max(2.5);
-                                        (total, raw_cpu, raw_gpu, raw_display, raw_storage, base_usb_w, raw_kbd_lights, raw_mb)
-                                    };
-
-                                    let mut comps = vec![
-                                        ("CPU Package (PL0/1)", c_cpu, cpu_cap),
-                                    ];
-                                    if !snap.gpus.is_empty() {
-                                        comps.push(("Graphics Subsystem (GPU)", c_gpu, gpu_cap));
-                                    } else {
-                                        comps.push(("Integrated GPU (iGPU)", c_gpu, gpu_cap));
-                                    }
-                                    comps.push(("eDP Panel & Backlight", c_disp, disp_cap));
-                                    comps.push(("Drives & Storage (HDD/NVMe)", c_storage, storage_cap));
-                                    comps.push(("USB Ports & Peripherals", c_usb, usb_cap));
-                                    comps.push(("Keyboard & System Lights", c_kbd_lights, kbd_cap));
-                                    comps.push(("Motherboard Logic & RAM", c_mb, mb_cap));
-
-                                    (final_watts, comps)
-                                } else {
-                                    let fan_draw = ((snap.cpu_temp.unwrap_or(35.0) - 30.0) / 40.0).clamp(0.0, 1.0) * 5.0 + 1.2;
-                                    let fan_cap = 15.0_f32;
-                                    let total = raw_cpu + (if !snap.gpus.is_empty() { raw_gpu } else { 0.0 }) + raw_storage + raw_net + raw_mb + base_usb_w + fan_draw;
-
-                                    let mut comps = vec![
-                                        ("CPU Package & Cores", raw_cpu, cpu_cap),
-                                    ];
-                                    if !snap.gpus.is_empty() {
-                                        comps.push(("Graphics Subsystem (GPU)", raw_gpu, gpu_cap));
-                                    }
-                                    comps.push(("Storage Subsystem (HDD/NVMe)", raw_storage, storage_cap));
-                                    comps.push(("Network PHY & Interface", raw_net, net_cap));
-                                    comps.push(("Motherboard Logic & RAM", raw_mb, mb_cap));
-                                    comps.push(("Chassis Cooling & Fans", fan_draw, fan_cap));
-                                    comps.push(("USB & System Peripherals", base_usb_w, usb_cap));
-
-                                    (total, comps)
-                                };
-
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new("Combined System Draw").size(9.5).monospace().color(p.text_muted));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(18, 28, 42))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new(&badge_str).size(8.5).monospace().color(badge_col));
-                                            });
-                                    });
-                                });
-
-                                ui.add_space(2.0);
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 3.0;
-                                    ui.label(RichText::new(format!("{:.1}", watts_val)).size(26.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                    ui.label(RichText::new(reported_sensor_value(reading, 1)).size(26.0).strong().color(p.text_primary));
                                     ui.label(RichText::new("W").size(12.0).color(p.text_muted));
                                 });
-
-                                ui.add_space(8.0);
-
-                                // Smooth realtime animated waveform canvas
-                                draw_power_realtime_waveform(ui, 68.0, watts_val, ac_online, accent);
-
-                                ui.add_space(10.0);
-
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new("LOAD ALLOCATION").size(8.0).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new("ESTIMATED").size(7.5).monospace().color(Color32::from_rgb(71, 85, 105)));
-                                    });
-                                });
-                                ui.add_space(4.0);
-
-                                for &(c_name, c_watts, c_max) in &components {
-                                    ui.horizontal(|ui| {
-                                        ui.label(RichText::new(c_name).size(8.5).monospace().color(Color32::from_rgb(203, 213, 225)));
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new(format!("{:.1} W", c_watts)).size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                        });
-                                    });
-                                    ui.add_space(2.0);
-                                    let (br, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                                    ui.painter().rect_filled(br, Rounding::same(2.0), Color32::from_rgb(14, 20, 36));
-                                    let fill_w = br.width() * (c_watts / c_max).clamp(0.04, 1.0);
-                                    ui.painter().rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(fill_w, br.height())), Rounding::same(2.0), accent);
-                                    ui.add_space(3.0);
+                                let history = sensor_metric_history(ui, host_id, label, snap.timestamp, reading);
+                                if history.len() >= 2 {
+                                    let maximum = history.iter().copied().reduce(f32::max).unwrap_or(1.0).max(1.0);
+                                    draw_card_sparkline(ui, 68.0, &history, maximum * 1.1, None, accent);
+                                } else {
+                                    ui.label(RichText::new(if reading.is_some() { "Waiting for measured samples…" } else { "Power telemetry is unavailable from this collector." }).size(11.0).color(p.text_muted));
                                 }
+                                ui.add_space(10.0);
+                                ui.label(RichText::new("Reported power domains").size(11.0).strong().color(p.text_secondary));
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(RichText::new("CPU package").size(11.0).color(p.text_muted));
+                                    ui.label(RichText::new(format!("{} W", reported_sensor_value(snap.cpu_power_watts, 1))).size(11.0).color(p.text_primary));
+                                });
+                                for gpu in &snap.gpus {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(RichText::new(&gpu.name).size(11.0).color(p.text_muted));
+                                        ui.label(RichText::new(format!("{} W", reported_sensor_value(gpu.power_watts, 1))).size(11.0).color(p.text_primary));
+                                    });
+                                }
+                                ui.label(RichText::new("These readings may cover overlapping domains. Total system consumption and per-component allocation are not estimated.").size(11.0).color(p.text_muted));
                             });
                     });
                 });
@@ -17300,150 +16569,7 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 3. Bottom Card: Conservation & Longevity Circuit (Battery) or Platform Governance (AC Continuous)
-                if !has_battery {
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::SLIDERS).size(12.0).color(accent));
-                                let card_title = if is_remote {
-                                    format!("PLATFORM POWER & THERMAL GOVERNANCE • HOST '{}'", self.host_display_name(host_id))
-                                } else {
-                                    "PLATFORM POWER & THERMAL GOVERNANCE".to_string()
-                                };
-                                ui.label(RichText::new(card_title).size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
-
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    Frame::none()
-                                        .fill(accent_with_alpha(accent, 18))
-                                        .stroke(Stroke::NONE)
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.spacing_mut().item_spacing.x = 4.0;
-                                                ui.label(RichText::new(crate::lucide::SHIELD).size(10.0).color(accent));
-                                                ui.label(RichText::new("CONTINUOUS AC OPERATION").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                            });
-                                        });
-                                });
-                            });
-
-                            ui.add_space(10.0);
-
-                            let gov_card_height_id = ui.make_persistent_id("platform_power_card_h");
-                            let target_gov_h: f32 = ui.data(|d| d.get_temp::<f32>(gov_card_height_id)).unwrap_or(84.0);
-                            let mut observed_gov_max_inner_h: f32 = 64.0;
-                            let needed_gov_inner_h = (target_gov_h - 20.0).max(64.0);
-
-                            let render_gov_meta_row = |ui: &mut egui::Ui, label: &str, val: &str, val_col: Color32| {
-                                ui.horizontal(|ui| {
-                                    let avail = ui.available_width();
-                                    let left_w = (avail * 0.45).clamp(30.0, 80.0);
-                                    let right_w = (avail - left_w - 4.0).max(10.0);
-                                    ui.allocate_ui_with_layout(egui::vec2(left_w, 14.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                        ui.add(egui::Label::new(RichText::new(label).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184))).truncate());
-                                    });
-                                    ui.allocate_ui_with_layout(egui::vec2(right_w, 14.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.add(egui::Label::new(RichText::new(val).size(8.5).monospace().strong().color(val_col)).truncate());
-                                    });
-                                });
-                            };
-
-                            ui.columns(3, |cols| {
-                                // Col 1: Delivery & Governor
-                                Frame::none()
-                                    .fill(Color32::from_rgb(10, 15, 29))
-                                    .stroke(Stroke::NONE)
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(10.0, 10.0))
-                                    .show(&mut cols[0], |ui| {
-                                        ui.set_width(ui.available_width());
-                                        let content_start_y = ui.cursor().min.y;
-                                        ui.label(RichText::new("Delivery & Governor").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                        ui.add_space(8.0);
-                                        render_gov_meta_row(ui, "Feed", "AC Grid Mains", Color32::from_rgb(241, 245, 249));
-                                        ui.add_space(3.0);
-                                        render_gov_meta_row(ui, "Governor", &active_gov, accent);
-                                        ui.add_space(3.0);
-                                        let clk_str = format!("{} MHz", snap.cpu_frequency_mhz);
-                                        render_gov_meta_row(ui, "Clock", &clk_str, Color32::from_rgb(203, 213, 225));
-
-                                        let inner_h = ui.cursor().min.y - content_start_y;
-                                        observed_gov_max_inner_h = observed_gov_max_inner_h.max(inner_h);
-                                        if inner_h < needed_gov_inner_h {
-                                            ui.allocate_space(egui::vec2(ui.available_width(), needed_gov_inner_h - inner_h));
-                                        }
-                                    });
-
-                                // Col 2: Thermal & TDP Limits
-                                Frame::none()
-                                    .fill(Color32::from_rgb(10, 15, 29))
-                                    .stroke(Stroke::NONE)
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(10.0, 10.0))
-                                    .show(&mut cols[1], |ui| {
-                                        ui.set_width(ui.available_width());
-                                        let content_start_y = ui.cursor().min.y;
-                                        ui.label(RichText::new("Thermal & TDP Limits").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                        ui.add_space(8.0);
-                                        let pl1_str = format!("{:.0} W", profile.balanced_pl1_watts);
-                                        render_gov_meta_row(ui, "PL1 Limit", &pl1_str, Color32::from_rgb(203, 213, 225));
-                                        ui.add_space(3.0);
-                                        let pl2_str = format!("{:.0} W", profile.turbo_pl2_watts);
-                                        render_gov_meta_row(ui, "PL2 Burst", &pl2_str, accent);
-                                        ui.add_space(3.0);
-                                        let temp_c = snap.cpu_temp.unwrap_or(36.0);
-                                        let hr_str = format!("{:.1} °C Headroom", (95.0 - temp_c).max(0.0));
-                                        render_gov_meta_row(ui, "Headroom", &hr_str, Color32::from_rgb(241, 245, 249));
-
-                                        let inner_h = ui.cursor().min.y - content_start_y;
-                                        observed_gov_max_inner_h = observed_gov_max_inner_h.max(inner_h);
-                                        if inner_h < needed_gov_inner_h {
-                                            ui.allocate_space(egui::vec2(ui.available_width(), needed_gov_inner_h - inner_h));
-                                        }
-                                    });
-
-                                // Col 3: Hardware Topology
-                                Frame::none()
-                                    .fill(Color32::from_rgb(10, 15, 29))
-                                    .stroke(Stroke::NONE)
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(10.0, 10.0))
-                                    .show(&mut cols[2], |ui| {
-                                        ui.set_width(ui.available_width());
-                                        let content_start_y = ui.cursor().min.y;
-                                        ui.label(RichText::new("Hardware Topology").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                        ui.add_space(8.0);
-                                        let cpu_topo = format!("{} Physical Cores", num_cores);
-                                        render_gov_meta_row(ui, "CPU Topology", &cpu_topo, Color32::from_rgb(203, 213, 225));
-                                        ui.add_space(3.0);
-                                        let gpu_topo = if !snap.gpus.is_empty() {
-                                            format!("{} GPU(s) Active", snap.gpus.len())
-                                        } else {
-                                            "Integrated Logic".to_string()
-                                        };
-                                        render_gov_meta_row(ui, "Graphics", &gpu_topo, accent);
-                                        ui.add_space(3.0);
-                                        let disk_cnt = snap.physical_disks.len().max(snap.disks.len()).max(1);
-                                        let disk_topo = format!("{} Storage Drive(s)", disk_cnt);
-                                        render_gov_meta_row(ui, "Storage", &disk_topo, Color32::from_rgb(241, 245, 249));
-
-                                        let inner_h = ui.cursor().min.y - content_start_y;
-                                        observed_gov_max_inner_h = observed_gov_max_inner_h.max(inner_h);
-                                        if inner_h < needed_gov_inner_h {
-                                            ui.allocate_space(egui::vec2(ui.available_width(), needed_gov_inner_h - inner_h));
-                                        }
-                                    });
-                            });
-
-                            ui.data_mut(|d| d.insert_temp(gov_card_height_id, observed_gov_max_inner_h + 20.0));
-                        });
-                } else {
+                if has_battery {
                     if is_remote {
                         if ui.ctx().dragged_id().is_none() {
                             if let Some(limit) = snap.power.charge_limit {

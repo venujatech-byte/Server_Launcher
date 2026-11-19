@@ -8458,15 +8458,24 @@ impl LauncherApp {
                         SystemdTab::Status => {
                             // Journalctl Logs Viewer
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(if cfg!(windows) && host_id.is_none() { "Windows Service Control Manager events" } else { "Service Logs (journalctl -n 100)" }).size(12.0).strong().color(p.text_muted));
+                                ui.set_min_height(24.0);
+                                ui.spacing_mut().interact_size.y = 24.0;
+                                ui.spacing_mut().button_padding = egui::vec2(6.0, 3.0);
+                                ui.visuals_mut().widgets.inactive.weak_bg_fill = p.bg_button;
+                                ui.visuals_mut().widgets.inactive.rounding = Rounding::same(6.0);
+                                ui.visuals_mut().widgets.hovered.rounding = Rounding::same(6.0);
+                                ui.visuals_mut().widgets.active.rounding = Rounding::same(6.0);
+                                let title_width = (ui.available_width() - 232.0 - if is_journal_in_flight { 24.0 } else { 0.0 }).max(0.0);
+                                ui.add_sized([title_width, 24.0], egui::Label::new(RichText::new(if cfg!(windows) && host_id.is_none() { "Service events" } else { "Service logs" }).size(11.5).strong().color(p.text_muted))
+                                    .truncate().halign(egui::Align::Min));
                                 if is_journal_in_flight {
                                     ui.add_space(4.0);
                                     ui.spinner();
                                 }
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     let btn_ref_log = egui::Button::new(RichText::new(format!("{} Refresh Logs", crate::lucide::REFRESH_CW)).size(11.0).color(p.text_secondary))
-                                        .fill(p.bg_button);
-                                    if ui.add(btn_ref_log).clicked() {
+                                        .fill(p.bg_button).stroke(Stroke::NONE).rounding(Rounding::same(6.0));
+                                    if ui.add_sized([104.0, 24.0], btn_ref_log).clicked() {
                                         if let Some(host) = &host_opt {
                                             self.trigger_remote_journal_fetch(host, &s.name, user_mode);
                                         } else {
@@ -8486,18 +8495,24 @@ impl LauncherApp {
                                         0 => format!("{} Auto: Off", crate::lucide::CLOCK),
                                         secs => format!("{} Auto: {}s", crate::lucide::CLOCK, secs),
                                     };
-                                    egui::ComboBox::from_id_salt("journal_refresh_interval_combo")
-                                        .selected_text(RichText::new(interval_label).size(11.0).color(p.text_primary))
-                                        .width(105.0)
-                                        .show_ui(ui, |ui| {
-                                             ui.selectable_value(&mut self.journal_refresh_interval, 0, "Off (Manual)");
-                                            ui.selectable_value(&mut self.journal_refresh_interval, 1, "Every 1s");
-                                            ui.selectable_value(&mut self.journal_refresh_interval, 2, "Every 2s");
-                                            ui.selectable_value(&mut self.journal_refresh_interval, 5, "Every 5s");
-                                            ui.selectable_value(&mut self.journal_refresh_interval, 10, "Every 10s");
-                                            ui.selectable_value(&mut self.journal_refresh_interval, 30, "Every 30s");
-                                            ui.selectable_value(&mut self.journal_refresh_interval, 60, "Every 60s");
-                                        });
+                                    ui.allocate_ui_with_layout(egui::vec2(108.0, 24.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                        egui::ComboBox::from_id_salt("journal_refresh_interval_combo")
+                                            .selected_text(RichText::new(interval_label).size(11.0).color(p.text_secondary))
+                                            .width(108.0).height(216.0).wrap_mode(egui::TextWrapMode::Truncate)
+                                            .show_ui(ui, |ui| {
+                                                ui.spacing_mut().interact_size.y = 24.0;
+                                                ui.spacing_mut().item_spacing.y = 2.0;
+                                                ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
+                                                ui.visuals_mut().selection.bg_fill = p.accent_subtle;
+                                                ui.visuals_mut().selection.stroke = Stroke::new(1.0_f32, p.accent);
+                                                ui.visuals_mut().widgets.hovered.weak_bg_fill = p.bg_button_hover;
+                                                for (seconds, label) in [(0, "Off (Manual)"), (1, "Every 1s"), (2, "Every 2s"), (5, "Every 5s"), (10, "Every 10s"), (30, "Every 30s"), (60, "Every 60s")] {
+                                                    let selected = self.journal_refresh_interval == seconds;
+                                                    ui.selectable_value(&mut self.journal_refresh_interval, seconds,
+                                                        RichText::new(label).size(11.5).color(if selected { p.accent } else { p.text_secondary }));
+                                                }
+                                            });
+                                    });
                                     if self.journal_refresh_interval != prev_interval {
                                         self.last_journal_refresh = Instant::now();
                                         self.persist_config();

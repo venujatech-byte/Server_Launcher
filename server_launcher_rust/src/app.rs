@@ -20807,18 +20807,24 @@ impl LauncherApp {
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
             ui.set_max_width(ui.available_width());
+            ui.add_space(8.0);
+            // Reserve the row height before laying out children so their centres stay aligned.
             // Keep filters scrollable while the Add action stays visible.
             ui.horizontal(|ui| {
+                ui.set_height(28.0);
+                ui.set_min_height(28.0);
                 ui.spacing_mut().item_spacing.x = 6.0;
                 ui.label(RichText::new("Group").size(10.5).color(p.text_muted));
                 let filters_width = (ui.available_width() - 54.0 - ui.spacing().item_spacing.x).max(0.0);
-                ui.allocate_ui_with_layout(egui::vec2(filters_width, 28.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.allocate_ui_with_layout(egui::vec2(filters_width, 24.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ScrollArea::horizontal()
                         .id_salt("server_groups_hscroll")
                         .auto_shrink([false, true])
-                        .max_height(28.0)
+                        .max_height(24.0)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
+                                ui.set_height(24.0);
+                                ui.set_min_height(24.0);
                                 ui.spacing_mut().item_spacing.x = 4.0;
                                 ui.spacing_mut().button_padding = egui::vec2(9.0, 3.0);
                                 let mut all_groups = vec!["All".to_string()];

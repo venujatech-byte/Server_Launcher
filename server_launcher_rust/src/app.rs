@@ -8736,7 +8736,8 @@ impl LauncherApp {
                     ui.label(RichText::new(if is_dropin { "Drop-in override" } else { "Primary unit" }).size(10.0).color(p.text_muted));
                     if is_modified { ui.label(RichText::new("● Unsaved").size(10.5).color(p.warning)); }
                 });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true), |ui| {
+                // A horizontal row must size to its controls, leaving the remaining height for the editor.
+                ui.horizontal_wrapped(|ui| {
                     ui.set_min_height(24.0);
                     ui.spacing_mut().button_padding = egui::vec2(6.0, 3.0);
                         ui.spacing_mut().item_spacing.x = 6.0;

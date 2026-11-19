@@ -20815,9 +20815,9 @@ impl LauncherApp {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
                                         let btn_stop_grp = egui::Button::new(
-                                            RichText::new(format!("{} Stop all", crate::lucide::STOP_FILLED)).size(10.5).strong().color(p.danger),
+                                            RichText::new(format!("{} Stop all", crate::lucide::STOP_FILLED)).size(10.5).strong().color(Color32::WHITE),
                                         )
-                                        .fill(p.danger_subtle)
+                                        .fill(p.danger)
                                         .stroke(Stroke::NONE)
                                         .rounding(Rounding::same(999.0))
                                         .min_size(egui::vec2(76.0, 22.0));
@@ -20905,7 +20905,7 @@ impl LauncherApp {
                                                 }
 
                                                 let (action_icon, action_fg, action_bg) = if is_running {
-                                                    (crate::lucide::STOP_FILLED, p.danger, p.danger_subtle)
+                                                    (crate::lucide::STOP_FILLED, Color32::WHITE, p.danger)
                                                 } else {
                                                     (crate::lucide::PLAY_FILLED, p.accent, p.accent_subtle)
                                                 };
@@ -21177,9 +21177,9 @@ impl LauncherApp {
                                                     RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED))
                                                         .size(10.5)
                                                         .strong()
-                                                        .color(p.danger),
+                                                        .color(Color32::WHITE),
                                                 )
-                                                .fill(p.danger_subtle)
+                                                .fill(p.danger)
                                                 .rounding(Rounding::same(999.0))
                                                 .min_size(egui::vec2(80.0, 24.0));
 
@@ -21770,8 +21770,8 @@ impl LauncherApp {
                                             });
                                         });
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                                            let stop = egui::Button::new(RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED)).size(10.5).color(p.danger))
-                                                .fill(p.danger_subtle).rounding(Rounding::same(6.0)).min_size(egui::vec2(60.0, 24.0));
+                                            let stop = egui::Button::new(RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED)).size(10.5).color(Color32::WHITE))
+                                                .fill(p.danger).rounding(Rounding::same(6.0)).min_size(egui::vec2(60.0, 24.0));
                                             if ui.add(stop).on_hover_text("Stop this process").clicked() {
                                                 to_kill_pid = Some((listener.pid, listener.port, listener.name.clone(), cmd_str.clone(), cwd_str.clone()));
                                             }

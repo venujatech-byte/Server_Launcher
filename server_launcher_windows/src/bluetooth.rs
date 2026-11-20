@@ -29,6 +29,7 @@ pub struct BluetoothController {
     pub alias: String,
     pub powered: bool,
     pub discoverable: bool,
+    pub discoverable_reported: bool,
     pub pairable: bool,
     pub discovering: bool,
     pub manufacturer: String,
@@ -130,6 +131,7 @@ fn parse_controller_show(output: &str) -> Option<BluetoothController> {
             powered_reported = matches!(stripped.trim(), "yes" | "no");
             ctrl.powered = stripped.trim() == "yes";
         } else if let Some(stripped) = line.strip_prefix("Discoverable: ") {
+            ctrl.discoverable_reported = matches!(stripped.trim(), "yes" | "no");
             ctrl.discoverable = stripped.trim() == "yes";
         } else if let Some(stripped) = line.strip_prefix("Pairable: ") {
             ctrl.pairable = stripped.trim() == "yes";
@@ -243,93 +245,118 @@ pub fn clean_device_name(name: &str) -> String {
     }
 }
 
-/// Set Bluetooth radio power (ON or OFF)
+fn checked_bluetooth_result(success: bool, stdout: &str, stderr: &str) -> Result<(), String> {
+    let combined = format!("{}\n{}", stdout.trim(), stderr.trim());
+    let lower = combined.to_ascii_lowercase();
+    let failed = ["failed", "not available", "not ready", "no default controller", "org.bluez.error", "not found", "invalid argument"]
+        .iter().any(|message| lower.contains(message));
+    if success && !failed { Ok(()) } else if combined.trim().is_empty() { Err("Bluetooth command failed".into()) } else { Err(combined.trim().to_string()) }
+}
+
+fn run_bluetooth_command(args: &[&str]) -> Result<(), String> {
+    let output = Command::new("bluetoothctl").args(["--timeout", "20"]).args(args).env("LC_ALL", "C")
+        .output().map_err(|error| format!("Could not start bluetoothctl: {error}"))?;
+    checked_bluetooth_result(output.status.success(), &String::from_utf8_lossy(&output.stdout), &String::from_utf8_lossy(&output.stderr))
+}
+
+fn read_controller() -> Result<BluetoothController, String> {
+    let output = Command::new("bluetoothctl").arg("show").env("LC_ALL", "C").output()
+        .map_err(|error| format!("Could not query Bluetooth controller: {error}"))?;
+    checked_bluetooth_result(output.status.success(), &String::from_utf8_lossy(&output.stdout), &String::from_utf8_lossy(&output.stderr))?;
+    parse_controller_show(&String::from_utf8_lossy(&output.stdout)).ok_or_else(|| "Bluetooth controller state is unavailable".into())
+}
+
+/// Set and verify the default Bluetooth controller's power state.
 pub fn set_radio_power(on: bool) -> Result<(), String> {
-    let arg = if on { "on" } else { "off" };
-    let res = Command::new("bluetoothctl")
-        .args(["power", arg])
-        .output();
-
-    // Also run rfkill as backup
-    let rf_arg = if on { "unblock" } else { "block" };
-    let _ = Command::new("rfkill").args([rf_arg, "bluetooth"]).output();
-
-    match res {
-        Ok(out) if out.status.success() => Ok(()),
-        Ok(out) => Err(String::from_utf8_lossy(&out.stderr).to_string()),
-        Err(e) => Err(format!("Failed to execute bluetoothctl: {}", e)),
-    }
+    run_bluetooth_command(&["power", if on { "on" } else { "off" }])?;
+    if read_controller()?.powered != on { return Err("Bluetooth radio did not reach the requested state".into()); }
+    Ok(())
 }
 
-/// Set Bluetooth discoverable state
+/// Set and verify whether the default controller is discoverable.
 pub fn set_discoverable(on: bool) -> Result<(), String> {
-    let arg = if on { "on" } else { "off" };
-    let res = Command::new("bluetoothctl")
-        .args(["discoverable", arg])
-        .output();
+    run_bluetooth_command(&["discoverable", if on { "on" } else { "off" }])?;
+    let controller = read_controller()?;
+    if !controller.discoverable_reported { return Err("Bluetooth discoverability state is unavailable".into()); }
+    if controller.discoverable != on { return Err("Discoverability did not reach the requested state".into()); }
+    Ok(())
+}
 
-    match res {
-        Ok(out) if out.status.success() => Ok(()),
-        Ok(out) => Err(String::from_utf8_lossy(&out.stderr).to_string()),
-        Err(e) => Err(format!("Failed to execute bluetoothctl: {}", e)),
+fn valid_device_address(mac: &str) -> bool {
+    let parts: Vec<_> = mac.split(':').collect();
+    parts.len() == 6 && parts.iter().all(|part| part.len() == 2 && part.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
+fn run_device_command(action: &str, mac: &str) -> Result<(), String> {
+    if !valid_device_address(mac) { return Err("Invalid Bluetooth device address".into()); }
+    run_bluetooth_command(&[action, mac])
+}
+
+fn device_property_state(output: &str, property: &str) -> Option<bool> {
+    output.lines().find_map(|line| {
+        let (name, value) = line.trim().split_once(':')?;
+        if name != property { return None; }
+        match value.trim() { "yes" => Some(true), "no" => Some(false), _ => None }
+    })
+}
+
+fn verify_device_property(mac: &str, property: &str, expected: bool) -> Result<(), String> {
+    let output = Command::new("bluetoothctl").args(["--timeout", "20", "info", mac]).env("LC_ALL", "C")
+        .output().map_err(|error| format!("Could not query Bluetooth device: {error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    checked_bluetooth_result(output.status.success(), &stdout, &String::from_utf8_lossy(&output.stderr))?;
+    match device_property_state(&stdout, property) {
+        Some(value) if value == expected => Ok(()),
+        Some(_) => Err(format!("Bluetooth device {property} state did not change")),
+        None => Err(format!("Bluetooth device {property} state is unavailable")),
     }
 }
 
-/// Connect to a device by MAC address
+/// Connect to a device and check the reported connection state.
 pub fn connect_device(mac: &str) -> Result<(), String> {
-    let res = Command::new("bluetoothctl")
-        .args(["connect", mac])
-        .output();
-
-    match res {
-        Ok(out) if out.status.success() => Ok(()),
-        Ok(out) => {
-            let msg = String::from_utf8_lossy(&out.stdout);
-            if msg.contains("Connection successful") {
-                Ok(())
-            } else {
-                Err(format!("{}: {}", String::from_utf8_lossy(&out.stderr), msg))
-            }
-        }
-        Err(e) => Err(format!("Failed to connect: {}", e)),
-    }
+    run_device_command("connect", mac)?;
+    verify_device_property(mac, "Connected", true)
 }
 
-/// Disconnect a device by MAC address
+/// Disconnect a device and check the reported connection state.
 pub fn disconnect_device(mac: &str) -> Result<(), String> {
-    let res = Command::new("bluetoothctl")
-        .args(["disconnect", mac])
-        .output();
-
-    match res {
-        Ok(out) if out.status.success() => Ok(()),
-        Ok(out) => Err(String::from_utf8_lossy(&out.stderr).to_string()),
-        Err(e) => Err(format!("Failed to disconnect: {}", e)),
-    }
+    run_device_command("disconnect", mac)?;
+    verify_device_property(mac, "Connected", false)
 }
 
-/// Pair and trust a device by MAC address
+/// Pair first, then trust the device only if pairing succeeded.
 pub fn pair_and_trust(mac: &str) -> Result<(), String> {
-    let _ = Command::new("bluetoothctl").args(["pair", mac]).output();
-    let res = Command::new("bluetoothctl").args(["trust", mac]).output();
-
-    match res {
-        Ok(out) if out.status.success() => Ok(()),
-        Ok(out) => Err(String::from_utf8_lossy(&out.stderr).to_string()),
-        Err(e) => Err(format!("Failed to pair: {}", e)),
-    }
+    run_device_command("pair", mac)?;
+    verify_device_property(mac, "Paired", true)?;
+    run_device_command("trust", mac).map_err(|error| format!("Pairing completed, but trust failed: {error}"))?;
+    verify_device_property(mac, "Trusted", true).map_err(|error| format!("Pairing completed, but trust could not be verified: {error}"))
 }
 
-/// Remove/unpair a device by MAC address
+/// Remove/unpair a device and verify that it is absent from the paired-device list.
 pub fn remove_device(mac: &str) -> Result<(), String> {
-    let res = Command::new("bluetoothctl")
-        .args(["remove", mac])
-        .output();
+    run_device_command("remove", mac)?;
+    let output = Command::new("bluetoothctl").args(["--timeout", "20", "devices", "Paired"]).env("LC_ALL", "C")
+        .output().map_err(|error| format!("Could not query paired devices: {error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    checked_bluetooth_result(output.status.success(), &stdout, &String::from_utf8_lossy(&output.stderr))?;
+    if stdout.lines().any(|line| line.split_whitespace().nth(1).is_some_and(|address| address.eq_ignore_ascii_case(mac))) {
+        return Err("Bluetooth device is still paired".into());
+    }
+    Ok(())
+}
 
-    match res {
-        Ok(out) if out.status.success() => Ok(()),
-        Ok(out) => Err(String::from_utf8_lossy(&out.stderr).to_string()),
-        Err(e) => Err(format!("Failed to remove device: {}", e)),
+#[cfg(test)]
+mod action_tests {
+    #[test]
+    fn reports_command_errors_even_when_the_process_succeeds() {
+        assert!(super::checked_bluetooth_result(true, "Failed to pair: org.bluez.Error.AuthenticationFailed", "").is_err());
+        assert!(super::checked_bluetooth_result(false, "", "permission denied").is_err());
+        assert!(super::checked_bluetooth_result(true, "Pairing successful", "").is_ok());
+        assert!(super::valid_device_address("AA:bb:00:11:22:ff"));
+        assert!(!super::valid_device_address("--help"));
+        assert_eq!(super::device_property_state("Device AA\n Connected: yes\n Trusted: no", "Connected"), Some(true));
+        assert_eq!(super::device_property_state("Device AA\n Connected: no", "Connected"), Some(false));
+        assert_eq!(super::device_property_state("Device AA", "Connected"), None);
     }
 }
 
@@ -344,9 +371,10 @@ pub fn trigger_discovery_async(
 
     std::thread::spawn(move || {
         // Run scan for 8 seconds
-        let _ = Command::new("bluetoothctl")
-            .args(["--timeout", "8", "scan", "on"])
-            .output();
+        let result = Command::new("bluetoothctl")
+            .args(["--timeout", "8", "scan", "on"]).env("LC_ALL", "C").output()
+            .map_err(|error| format!("Could not start Bluetooth scan: {error}"))
+            .and_then(|output| checked_bluetooth_result(output.status.success(), &String::from_utf8_lossy(&output.stdout), &String::from_utf8_lossy(&output.stderr)));
 
         // Refresh snapshot
         let updated = query_bluetooth_status();
@@ -354,7 +382,7 @@ pub fn trigger_discovery_async(
             let mut snap = shared_snap.lock().unwrap();
             *snap = updated;
             snap.is_scanning = false;
-            snap.status_msg = Some(("Device discovery completed".to_string(), false, Instant::now()));
+            snap.status_msg = Some(match result { Ok(()) => ("Device discovery completed".to_string(), false, Instant::now()), Err(error) => (format!("Bluetooth scan failed: {error}"), true, Instant::now()) });
         }
 
         scanning_flag.store(false, Ordering::SeqCst);

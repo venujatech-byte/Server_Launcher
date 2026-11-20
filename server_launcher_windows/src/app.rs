@@ -16961,12 +16961,12 @@ impl LauncherApp {
                                             ui.add_space(10.0);
                                             let mut power_toggle = self.bt_radio_on;
                                             if ui.add_enabled_ui(bt_snap.available, |ui| render_custom_toggle_switch(ui, &mut power_toggle, accent)).inner {
-                                                self.bt_radio_on = power_toggle;
                                                 let snap_arc = Arc::clone(&self.bluetooth_snapshot);
                                                 let ctx_clone = ui.ctx().clone();
                                                 std::thread::spawn(move || {
-                                                    let _ = crate::bluetooth::set_radio_power(power_toggle);
-                                                    let updated = crate::bluetooth::query_bluetooth_status();
+                                                    let result = crate::bluetooth::set_radio_power(power_toggle);
+                                                    let mut updated = crate::bluetooth::query_bluetooth_status();
+                                                    updated.status_msg = Some(match result { Ok(()) => ("Bluetooth radio updated".into(), false, Instant::now()), Err(error) => (format!("Radio update failed: {error}"), true, Instant::now()) });
                                                     if let Ok(mut lock) = snap_arc.lock() {
                                                         *lock = updated;
                                                     }
@@ -17011,12 +17011,12 @@ impl LauncherApp {
                                                     ui.add_space(10.0);
                                                     let mut power_toggle = self.bt_radio_on;
                                                     if ui.add_enabled_ui(bt_snap.available, |ui| render_custom_toggle_switch(ui, &mut power_toggle, accent)).inner {
-                                                        self.bt_radio_on = power_toggle;
                                                         let snap_arc = Arc::clone(&self.bluetooth_snapshot);
                                                         let ctx_clone = ui.ctx().clone();
                                                         std::thread::spawn(move || {
-                                                            let _ = crate::bluetooth::set_radio_power(power_toggle);
-                                                            let updated = crate::bluetooth::query_bluetooth_status();
+                                                            let result = crate::bluetooth::set_radio_power(power_toggle);
+                                                            let mut updated = crate::bluetooth::query_bluetooth_status();
+                                                            updated.status_msg = Some(match result { Ok(()) => ("Bluetooth radio updated".into(), false, Instant::now()), Err(error) => (format!("Radio update failed: {error}"), true, Instant::now()) });
                                                             if let Ok(mut lock) = snap_arc.lock() {
                                                                 *lock = updated;
                                                             }
@@ -17088,13 +17088,13 @@ impl LauncherApp {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 ui.label(RichText::new("Discoverable to nearby devices").size(10.5).color(p.text_primary));
                                 let mut disc_toggle = self.bt_discoverable;
-                                if ui.add_enabled_ui(bt_snap.available && self.bt_radio_on, |ui| render_custom_toggle_switch(ui, &mut disc_toggle, accent)).inner {
-                                    self.bt_discoverable = disc_toggle;
+                                if ui.add_enabled_ui(bt_snap.controller.as_ref().is_some_and(|ctrl| ctrl.discoverable_reported && ctrl.powered), |ui| render_custom_toggle_switch(ui, &mut disc_toggle, accent)).inner {
                                     let snap_arc = Arc::clone(&self.bluetooth_snapshot);
                                     let ctx_clone = ui.ctx().clone();
                                     std::thread::spawn(move || {
-                                        let _ = crate::bluetooth::set_discoverable(disc_toggle);
-                                        let updated = crate::bluetooth::query_bluetooth_status();
+                                        let result = crate::bluetooth::set_discoverable(disc_toggle);
+                                        let mut updated = crate::bluetooth::query_bluetooth_status();
+                                        updated.status_msg = Some(match result { Ok(()) => ("Bluetooth discoverability updated".into(), false, Instant::now()), Err(error) => (format!("Discoverability update failed: {error}"), true, Instant::now()) });
                                         if let Ok(mut lock) = snap_arc.lock() {
                                             *lock = updated;
                                         }
@@ -17297,11 +17297,11 @@ impl LauncherApp {
                                             let snap_arc = Arc::clone(&self.bluetooth_snapshot);
                                             let ctx_c = ui.ctx().clone();
                                             std::thread::spawn(move || {
-                                                let _ = crate::bluetooth::remove_device(&mac_c);
+                                                let result = crate::bluetooth::remove_device(&mac_c);
                                                 let updated = crate::bluetooth::query_bluetooth_status();
                                                 if let Ok(mut lock) = snap_arc.lock() {
                                                     *lock = updated;
-                                                    lock.status_msg = Some(("Device removed from paired list".to_string(), false, Instant::now()));
+                                                    lock.status_msg = Some(match result { Ok(()) => ("Device removed from paired list".into(), false, Instant::now()), Err(error) => (format!("Device removal failed: {error}"), true, Instant::now()) });
                                                 }
                                                 ctx_c.request_repaint();
                                             });
@@ -17343,12 +17343,11 @@ impl LauncherApp {
                                             let snap_arc = Arc::clone(&self.bluetooth_snapshot);
                                             let ctx_c = ui.ctx().clone();
                                             std::thread::spawn(move || {
-                                                let _ = crate::bluetooth::pair_and_trust(&mac_c);
-                                                let _ = crate::bluetooth::connect_device(&mac_c);
+                                                let result = crate::bluetooth::pair_and_trust(&mac_c);
                                                 let updated = crate::bluetooth::query_bluetooth_status();
                                                 if let Ok(mut lock) = snap_arc.lock() {
                                                     *lock = updated;
-                                                    lock.status_msg = Some(("Pairing initiated".to_string(), false, Instant::now()));
+                                                    lock.status_msg = Some(match result { Ok(()) => ("Device paired and trusted".into(), false, Instant::now()), Err(error) => (format!("Pairing failed: {error}"), true, Instant::now()) });
                                                 }
                                                 ctx_c.request_repaint();
                                             });

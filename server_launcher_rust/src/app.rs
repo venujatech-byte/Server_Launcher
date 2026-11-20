@@ -5291,6 +5291,20 @@ mod sensor_freshness_tests {
     }
 }
 
+fn memory_reclaimable_estimate(available: u64, free: Option<u64>) -> Option<u64> {
+    free.map(|free| available.saturating_sub(free))
+}
+
+#[cfg(test)]
+mod memory_quantity_tests {
+    #[test]
+    fn reclaimable_is_available_beyond_unallocated_memory() {
+        assert_eq!(super::memory_reclaimable_estimate(400, Some(100)), Some(300));
+        assert_eq!(super::memory_reclaimable_estimate(100, Some(200)), Some(0));
+        assert_eq!(super::memory_reclaimable_estimate(400, None), None);
+    }
+}
+
 fn mounted_storage_totals(disks: &[crate::sensors::DiskInfo]) -> (u64, u64, u64) {
     let mut seen_devices = std::collections::HashSet::new();
     disks.iter().filter(|disk| !disk.name.starts_with("/dev/") || seen_devices.insert(disk.name.as_str()))
@@ -11901,17 +11915,16 @@ impl LauncherApp {
 
                 let total_ram_gb = snap.mem_total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                 let used_ram_gb = snap.mem_used_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-                let free_ram_gb = snap.mem_free_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-                let cache_bytes = snap.mem_total_bytes.saturating_sub(snap.mem_used_bytes + snap.mem_free_bytes);
-                let cache_gb = cache_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-                let cache_mb = cache_bytes / (1024 * 1024);
+                let available_ram_gb = snap.mem_available_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+                let cache_bytes = memory_reclaimable_estimate(snap.mem_available_bytes, snap.mem_free_bytes);
+                let cache_gb = cache_bytes.map(|bytes| bytes as f64 / (1024.0 * 1024.0 * 1024.0));
 
                 let total_ram_str = format!("{:.1} GB", total_ram_gb);
                 let used_gb_val = used_ram_gb;
-                let avail_gb_val = free_ram_gb;
+                let avail_gb_val = available_ram_gb;
                 let cached_gb_val = cache_gb;
                 let used_pct = snap.mem_usage_pct.clamp(0.0, 100.0);
-                let avail_pct = (snap.mem_free_bytes as f32 / snap.mem_total_bytes.max(1) as f32 * 100.0).clamp(0.0, 100.0);
+                let avail_pct = (snap.mem_available_bytes as f32 / snap.mem_total_bytes.max(1) as f32 * 100.0).clamp(0.0, 100.0);
 
                 let (slot_label, topol_label, mem_type_str, ram_mod_str) = if let Some(ref hw) = snap.memory_hw {
                     let slot = if host_id.is_some() { "REMOTE : ACTIVE".to_string() } else { if hw.slot_summary.is_empty() { "SLOTS UNAVAILABLE".into() } else { hw.slot_summary.clone() } };
@@ -12048,10 +12061,10 @@ impl LauncherApp {
                     render_big_stat_card(
                         ui,
                         crate::lucide::CHECK,
-                        "FREE MEMORY",
+                        "AVAILABLE MEMORY",
                         &format!("{:.1}", avail_gb_val),
                         "GB",
-                        &format!("Free Headroom {:.1}%", avail_pct),
+                        &format!("Available {:.1}%", avail_pct),
                         &format!("TOTAL {}", total_ram_str),
                         "",
                         &avail_slice,
@@ -12070,13 +12083,13 @@ impl LauncherApp {
                         ui,
                         crate::lucide::FILE_TEXT,
                         "RECLAIMABLE ESTIMATE",
-                        &format!("{:.1}", cached_gb_val),
+                        &cached_gb_val.map_or_else(|| "—".into(), |value| format!("{value:.1}")),
                         "GB",
-                        "Total − used − free",
-                        &format!("CACHE {} MB", cache_mb),
+                        "Available − free",
+                        &cache_bytes.map_or_else(|| "FREE MEMORY UNAVAILABLE".into(), |value| format!("EST. {} MB", value / (1024 * 1024))),
                         "ESTIMATE",
                         &cache_slice,
-                        (cached_gb_val as f32 * 1.5).max(4.0),
+                        (cached_gb_val.unwrap_or(0.0) as f32 * 1.5).max(4.0),
                         None,
                         accent,
                         p.bg_card,
@@ -12158,10 +12171,10 @@ impl LauncherApp {
 
                         // Segmented Bar (In Use: cyan, Modified: coral, Standby: soft blue, Free: dark slate)
                         let used_frac = (used_pct / 100.0).clamp(0.0, 1.0);
-                        // Dirty pages are part of used memory, not an additional allocation.
-                        let mod_frac = (snap.mem_dirty_bytes.unwrap_or(0) as f32 / snap.mem_total_bytes.max(1) as f32).min(used_frac);
-                        let in_use_frac = used_frac - mod_frac;
-                        let standby_frac = (cache_bytes as f32 / snap.mem_total_bytes.max(1) as f32).min(1.0 - used_frac);
+                        // Dirty pages may overlap available memory, so they are not a separate segment.
+                        let mod_frac = 0.0;
+                        let in_use_frac = used_frac;
+                        let standby_frac = (cache_bytes.unwrap_or(0) as f32 / snap.mem_total_bytes.max(1) as f32).min(1.0 - used_frac);
                         let free_frac = (1.0 - used_frac - standby_frac).max(0.0);
 
                         let (bar_res, bar_p) = ui.allocate_painter(egui::vec2(ui.available_width(), 16.0), egui::Sense::hover());
@@ -12203,33 +12216,33 @@ impl LauncherApp {
                                 let dirty_str = if let Some(dirty) = snap.mem_dirty_bytes {
                                     crate::sensors::format_bytes(dirty)
                                 } else {
-                                    "48 MB".to_string()
+                                    "—".to_string()
                                 };
                                 ui.label(RichText::new(&dirty_str).size(14.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("Dirty pages").size(9.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new("Dirty pages · may overlap").size(9.0).monospace().color(p.text_muted));
                             });
 
                             cols[2].vertical(|ui| {
                                 ui.horizontal(|ui| {
                                     let (d_rect, _) = ui.allocate_exact_size(egui::vec2(7.0, 7.0), egui::Sense::hover());
                                     ui.painter().rect_filled(d_rect, Rounding::same(1.5), Color32::from_rgb(96, 165, 250));
-                                    ui.label(RichText::new("STANDBY / CACHED").size(9.5).monospace().strong().color(p.text_muted));
+                                    ui.label(RichText::new("EST. RECLAIMABLE").size(9.5).monospace().strong().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
-                                ui.label(RichText::new(format!("{:.1} GB", cached_gb_val)).size(14.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("Reclaimable").size(9.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new(cached_gb_val.map_or_else(|| "—".into(), |value| format!("{value:.1} GB"))).size(14.0).strong().color(p.text_primary));
+                                ui.label(RichText::new("Available beyond free").size(9.0).monospace().color(p.text_muted));
                             });
 
                             cols[3].vertical(|ui| {
                                 ui.horizontal(|ui| {
                                     let (d_rect, _) = ui.allocate_exact_size(egui::vec2(7.0, 7.0), egui::Sense::hover());
                                     ui.painter().rect_filled(d_rect, Rounding::same(1.5), Color32::from_rgb(51, 65, 85));
-                                    ui.label(RichText::new("FREE POOL").size(9.5).monospace().strong().color(p.text_muted));
+                                    ui.label(RichText::new(if snap.mem_free_bytes.is_some() { "FREE POOL" } else { "AVAILABLE" }).size(9.5).monospace().strong().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
-                                let free_mb = snap.mem_free_bytes / (1024 * 1024);
-                                ui.label(RichText::new(format!("{} MB", free_mb)).size(14.0).strong().color(p.text_primary));
-                                ui.label(RichText::new("Unallocated").size(9.0).monospace().color(p.text_muted));
+                                let free_label = format!("{} MB", snap.mem_free_bytes.unwrap_or(snap.mem_available_bytes) / (1024 * 1024));
+                                ui.label(RichText::new(free_label).size(14.0).strong().color(p.text_primary));
+                                ui.label(RichText::new(if snap.mem_free_bytes.is_some() { "Unallocated" } else { "Available for reuse" }).size(9.0).monospace().color(p.text_muted));
                             });
                         });
                     });

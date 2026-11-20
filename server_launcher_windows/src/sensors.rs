@@ -219,7 +219,8 @@ pub struct SystemSensorsSnapshot {
     // Memory (RAM & Swap)
     pub mem_total_bytes: u64,
     pub mem_used_bytes: u64,
-    pub mem_free_bytes: u64,
+    pub mem_free_bytes: Option<u64>,
+    pub mem_available_bytes: u64,
     pub mem_dirty_bytes: Option<u64>,
     pub mem_usage_pct: f32,
     pub swap_total_bytes: u64,
@@ -406,7 +407,8 @@ impl SystemSensorsCollector {
         // 3. Memory
         let mem_total_bytes = self.sys.total_memory();
         let mem_used_bytes = self.sys.used_memory();
-        let mem_free_bytes = self.sys.free_memory();
+        let mem_free_bytes = if cfg!(target_os = "linux") { Some(self.sys.free_memory()) } else { None };
+        let mem_available_bytes = self.sys.available_memory();
         let mem_usage_pct = if mem_total_bytes > 0 {
             (mem_used_bytes as f32 / mem_total_bytes as f32) * 100.0
         } else {
@@ -791,6 +793,7 @@ impl SystemSensorsCollector {
             mem_total_bytes,
             mem_used_bytes,
             mem_free_bytes,
+            mem_available_bytes,
             mem_dirty_bytes,
             mem_usage_pct,
             swap_total_bytes,
@@ -2984,6 +2987,7 @@ data = {
     "cpu_power": cpu_power,
     "mem_total": mem.get("MemTotal", 0),
     "mem_avail": mem.get("MemAvailable", mem.get("MemFree", 0)),
+    "mem_free": mem.get("MemFree"),
     "swap_total": mem.get("SwapTotal", 0),
     "swap_free": mem.get("SwapFree", 0),
     "disks": disks,
@@ -3376,7 +3380,8 @@ print(json.dumps(data))
         cpu_tjunction_max,
         mem_total_bytes,
         mem_used_bytes,
-        mem_free_bytes: mem_avail,
+        mem_free_bytes: parsed["mem_free"].as_u64(),
+        mem_available_bytes: mem_avail,
         mem_dirty_bytes: None,
         mem_usage_pct,
         swap_total_bytes,
@@ -3617,7 +3622,8 @@ impl SystemSensorsCollector {
         snap.cpu_frequency_mhz = snap.cpu_frequencies_mhz.iter().sum::<u64>() / snap.cpu_cores_logical.max(1) as u64;
         snap.mem_total_bytes = self.sys.total_memory();
         snap.mem_used_bytes = self.sys.used_memory();
-        snap.mem_free_bytes = self.sys.available_memory();
+        snap.mem_free_bytes = None;
+        snap.mem_available_bytes = self.sys.available_memory();
         snap.mem_usage_pct = percentage(snap.mem_used_bytes, snap.mem_total_bytes);
         snap.swap_total_bytes = self.sys.total_swap();
         snap.swap_used_bytes = self.sys.used_swap();

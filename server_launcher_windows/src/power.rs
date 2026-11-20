@@ -343,260 +343,37 @@ pub fn detect_cpu_tdp_capability() -> CpuTdpProfile {
 /// 0 = Quiet / Eco (powersave, low-power EC platform profile, clamped PL1)
 /// 1 = Balanced (schedutil, balanced EC platform profile, nominal PL1)
 /// 2 = Turbo Boost (performance, performance EC platform profile, peak PL2 burst)
-pub fn apply_thermal_power_preset(idx: usize, profile: &CpuTdpProfile) -> Result<String, String> {
-    let gov = preset_to_governor(idx);
-    let mut applied_actions: Vec<String> = Vec::new();
-
-    // 1. CPU Scaling Governor
-    let gov_applied = apply_governor(gov);
-    if gov_applied.is_ok() {
-        applied_actions.push(format!("Gov: {}", gov));
-    }
-
-    // 2. CPU Energy Performance Preference (EPP)
-    let epp_val = match idx {
-        0 => "power",
+/// Apply a supported governor on every CPU policy and verify each result.
+pub fn apply_checked_governor(idx: usize, host: Option<&crate::config::SshRemoteHost>, password: Option<&str>) -> Result<String, String> {
+    let governor = match idx {
+        0 => "powersave",
+        1 => "schedutil",
         2 => "performance",
-        _ => "balance_performance",
+        _ => return Err("Invalid governor selection".into()),
     };
-    let mut epp_set = false;
-    if let Ok(entries) = fs::read_dir("/sys/devices/system/cpu") {
-        for entry in entries.flatten() {
-            let path = entry.path().join("cpufreq/energy_performance_preference");
-            if path.exists() {
-                if fs::write(&path, epp_val).is_ok() {
-                    epp_set = true;
-                }
-            }
-        }
-    }
-    if epp_set {
-        applied_actions.push(format!("EPP: {}", epp_val));
-    }
-
-    // 3. Embedded Controller (EC) via ACPI platform_profile (/sys/firmware/acpi/platform_profile)
-    let ec_profile = match idx {
-        0 => "low-power",
-        2 => "performance",
-        _ => "balanced",
-    };
-    let acpi_profile_path = "/sys/firmware/acpi/platform_profile";
-    if Path::new(acpi_profile_path).exists() {
-        let choice = if let Ok(choices) = fs::read_to_string("/sys/firmware/acpi/platform_profile_choices") {
-            if idx == 0 && choices.contains("quiet") && !choices.contains("low-power") {
-                "quiet"
-            } else {
-                ec_profile
-            }
-        } else {
-            ec_profile
-        };
-
-        if fs::write(acpi_profile_path, choice).is_ok() {
-            applied_actions.push(format!("EC: {}", choice));
-        } else {
-            let choice_s = choice.to_string();
-            std::thread::spawn(move || {
-                let cmd = format!("echo {} | tee /sys/firmware/acpi/platform_profile", choice_s);
-                let _ = Command::new("pkexec").args(["sh", "-c", &cmd]).output();
-            });
-            applied_actions.push(format!("EC: {} (auth)", choice));
-        }
-    }
-
-    // 4. Vendor-Specific EC Hardware Registers
-    // Lenovo IdeaPad / Legion EC Thermal Mode
-    for lenovo_thermal in [
-        "/sys/bus/platform/drivers/ideapad_laptop/VPC2004:00/thermal_mode",
-        "/sys/bus/platform/devices/VPC2004:00/thermal_mode",
-    ] {
-        if Path::new(lenovo_thermal).exists() {
-            let t_val = match idx { 0 => "1", 2 => "3", _ => "2" };
-            if fs::write(lenovo_thermal, t_val).is_ok() {
-                applied_actions.push(format!("Lenovo EC: mode {}", t_val));
-            }
-        }
-    }
-
-    // ASUS EC Thermal Throttle Policy
-    let asus_thermal = "/sys/devices/platform/asus-nb-wmi/throttle_thermal_policy";
-    if Path::new(asus_thermal).exists() {
-        let t_val = match idx { 0 => "2", 2 => "1", _ => "0" };
-        let _ = fs::write(asus_thermal, t_val);
-        applied_actions.push(format!("ASUS EC: policy {}", t_val));
-    }
-
-    // Dell EC Thermal Management via cctk / smbios-thermal-ctl
-    let dell_mode = match idx { 0 => "Quiet", 2 => "Performance", _ => "Balanced" };
-    let cctk_path = Command::new("which").arg("cctk").output();
-    if let Ok(out) = cctk_path {
-        if out.status.success() {
-            let arg = format!("--ThermalManagement={}", dell_mode);
-            std::thread::spawn(move || {
-                let _ = Command::new("pkexec").args(["cctk", &arg]).output();
-            });
-            applied_actions.push(format!("Dell EC: {}", dell_mode));
-        }
-    }
-    let smbios_th = Command::new("which").arg("smbios-thermal-ctl").output();
-    if let Ok(out) = smbios_th {
-        if out.status.success() {
-            let arg = format!("--set-thermal-mode={}", dell_mode.to_lowercase());
-            std::thread::spawn(move || {
-                let _ = Command::new("pkexec").args(["smbios-thermal-ctl", &arg]).output();
-            });
-            applied_actions.push(format!("Dell EC: {}", dell_mode));
-        }
-    }
-
-    // 5. Hardware RAPL (Running Average Power Limit) Real Silicon TDP Enforcement
-    let (target_pl1_w, target_pl2_w) = match idx {
-        0 => (profile.quiet_pl1_watts, profile.quiet_pl1_watts * 1.15),
-        2 => (profile.turbo_pl2_watts, profile.turbo_pl2_watts * 1.25),
-        _ => (profile.balanced_pl1_watts, profile.balanced_pl1_watts * 1.25),
-    };
-    let target_pl1_uw = (target_pl1_w * 1_000_000.0) as u64;
-    let target_pl2_uw = (target_pl2_w * 1_000_000.0) as u64;
-
-    let mut rapl_written = false;
-    let mut rapl_files_to_elevate = Vec::new();
-
-    if let Ok(entries) = fs::read_dir("/sys/class/powercap") {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if fname.starts_with("intel-rapl:") && !fname[11..].contains(':') {
-                let c0 = path.join("constraint_0_power_limit_uw");
-                let c1 = path.join("constraint_1_power_limit_uw");
-                let en = path.join("enabled");
-
-                let _ = fs::write(&en, "1");
-
-                if fs::write(&c0, format!("{}", target_pl1_uw)).is_ok() {
-                    rapl_written = true;
-                    let _ = fs::write(&c1, format!("{}", target_pl2_uw));
-                } else {
-                    rapl_files_to_elevate.push((c0, c1, en));
-                }
-            }
-        }
-    }
-
-    if rapl_written {
-        applied_actions.push(format!("PL1: {:.1}W", target_pl1_w));
-    } else if !rapl_files_to_elevate.is_empty() {
-        let files = rapl_files_to_elevate;
-        std::thread::spawn(move || {
-            for (c0, c1, en) in files {
-                let cmd = format!(
-                    "echo 1 | tee \"{}\" 2>/dev/null; echo {} | tee \"{}\" 2>/dev/null; echo {} | tee \"{}\" 2>/dev/null",
-                    en.display(), target_pl1_uw, c0.display(), target_pl2_uw, c1.display()
-                );
-                let _ = Command::new("pkexec").args(["sh", "-c", &cmd]).output();
-            }
-        });
-        applied_actions.push(format!("PL1: {:.1}W (auth)", target_pl1_w));
-    }
-
-    let preset_name = match idx {
-        0 => "Quiet / Eco",
-        2 => "Turbo Boost",
-        _ => "Balanced",
-    };
-
-    if applied_actions.is_empty() {
-        Ok(format!("{} active: Governor '{}' configured", preset_name, gov))
+    let script = format!(r#"set -eu
+found=0
+for p in /sys/devices/system/cpu/cpufreq/policy*; do
+    [ -d "$p" ] || continue
+    found=1
+    case " $(cat "$p/scaling_available_governors") " in
+        *" {governor} "*) ;;
+        *) echo "Governor {governor} is not supported by $p" >&2; exit 1 ;;
+    esac
+done
+[ "$found" = 1 ] || {{ echo 'No CPU frequency policies are available' >&2; exit 1; }}
+for p in /sys/devices/system/cpu/cpufreq/policy*; do
+    [ -d "$p" ] || continue
+    printf '%s' '{governor}' > "$p/scaling_governor" || {{ echo "Failed to set $p; earlier policies may have changed" >&2; exit 1; }}
+    [ "$(cat "$p/scaling_governor")" = '{governor}' ] || {{ echo "Read-back failed for $p; policies may have changed" >&2; exit 1; }}
+done"#);
+    if let Some(host) = host {
+        crate::systemd::remote_script(host, &script, false, true, password)?;
     } else {
-        Ok(format!("{} applied [{}]", preset_name, applied_actions.join(" • ")))
+        crate::systemd::run_local("sh", &["-c", &script], true, password)?;
     }
+    Ok(format!("CPU governor set to {} on all policies", governor))
 }
-
-/// Builds an SSH command to configure thermal preset, EC platform profile, and RAPL TDP limits on a remote host.
-pub fn build_remote_preset_command(idx: usize, profile: &CpuTdpProfile) -> String {
-    let gov = preset_to_governor(idx);
-    let ec_profile = match idx { 0 => "low-power", 2 => "performance", _ => "balanced" };
-    let epp = match idx { 0 => "power", 2 => "performance", _ => "balance_performance" };
-    let lenovo_ec = match idx { 0 => "1", 2 => "3", _ => "2" };
-    let asus_ec = match idx { 0 => "2", 2 => "1", _ => "0" };
-    let dell_mode = match idx { 0 => "Quiet", 2 => "Performance", _ => "Balanced" };
-
-    let (target_pl1_w, target_pl2_w) = match idx {
-        0 => (profile.quiet_pl1_watts, profile.quiet_pl1_watts * 1.15),
-        2 => (profile.turbo_pl2_watts, profile.turbo_pl2_watts * 1.25),
-        _ => (profile.balanced_pl1_watts, profile.balanced_pl1_watts * 1.25),
-    };
-    let pl1_uw = (target_pl1_w * 1_000_000.0) as u64;
-    let pl2_uw = (target_pl2_w * 1_000_000.0) as u64;
-
-    format!(
-        "echo {gov} | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true; \
-         echo {epp} | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference 2>/dev/null || true; \
-         echo {ec} | sudo tee /sys/firmware/acpi/platform_profile 2>/dev/null || true; \
-         echo {lenovo} | sudo tee /sys/bus/platform/drivers/ideapad_laptop/VPC2004:00/thermal_mode 2>/dev/null || true; \
-         echo {lenovo} | sudo tee /sys/bus/platform/devices/VPC2004:00/thermal_mode 2>/dev/null || true; \
-         echo {asus} | sudo tee /sys/devices/platform/asus-nb-wmi/throttle_thermal_policy 2>/dev/null || true; \
-         sudo cctk --ThermalManagement={dell} 2>/dev/null || true; \
-         sudo smbios-thermal-ctl --set-thermal-mode={dell_lower} 2>/dev/null || true; \
-         for f in /sys/class/powercap/intel-rapl:*/constraint_0_power_limit_uw; do echo {pl1} | sudo tee \"$f\" 2>/dev/null; done; \
-         for f in /sys/class/powercap/intel-rapl:*/constraint_1_power_limit_uw; do echo {pl2} | sudo tee \"$f\" 2>/dev/null; done || true",
-        gov = gov,
-        epp = epp,
-        ec = ec_profile,
-        lenovo = lenovo_ec,
-        asus = asus_ec,
-        dell = dell_mode,
-        dell_lower = dell_mode.to_lowercase(),
-        pl1 = pl1_uw,
-        pl2 = pl2_uw
-    )
-}
-
-/// Applies the CPU governor via direct sysfs or cpupower / pkexec.
-pub fn apply_governor(gov: &str) -> Result<String, String> {
-    let gov = gov.trim();
-
-    // 1. Attempt direct sysfs write to all CPU scaling_governor files
-    let mut wrote_direct = false;
-    if let Ok(entries) = fs::read_dir("/sys/devices/system/cpu") {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.file_name().and_then(|n| n.to_str()).map_or(false, |name| name.starts_with("cpu") && name[3..].chars().all(|c| c.is_ascii_digit())) {
-                let gov_file = path.join("cpufreq/scaling_governor");
-                if gov_file.exists() {
-                    if fs::write(&gov_file, gov).is_ok() {
-                        wrote_direct = true;
-                    }
-                }
-            }
-        }
-    }
-
-    if wrote_direct {
-        return Ok(format!("Governor set to '{}' via sysfs", gov));
-    }
-
-    // 2. Attempt cpupower without elevation
-    let cpupower_res = Command::new("cpupower")
-        .args(["frequency-set", "-g", gov])
-        .output();
-
-    if let Ok(out) = cpupower_res {
-        if out.status.success() {
-            return Ok(format!("Governor set to '{}' via cpupower", gov));
-        }
-    }
-
-    // 3. Spawn pkexec cpupower in background so it doesn't block GUI thread
-    let gov_string = gov.to_string();
-    std::thread::spawn(move || {
-        let _ = Command::new("pkexec")
-            .args(["cpupower", "frequency-set", "-g", &gov_string])
-            .output();
-    });
-
-    Ok(format!("Requested governor '{}' via authorization agent", gov))
-}
-
 
 /// Queries the current battery charge conservation threshold from sysfs or vendor platform drivers.
 /// Returns (is_active, ceiling_percentage).
@@ -1113,3 +890,11 @@ pub fn build_remote_power_command(action: &str, enabled: bool, val: u32) -> Stri
     }
 }
 
+
+#[cfg(test)]
+mod checked_governor_tests {
+    #[test]
+    fn rejects_invalid_preset_before_running_a_command() {
+        assert!(super::apply_checked_governor(3, None, None).is_err());
+    }
+}

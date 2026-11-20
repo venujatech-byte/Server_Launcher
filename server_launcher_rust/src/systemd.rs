@@ -71,7 +71,7 @@ fn run_command(mut command: Command, password: Option<&str>) -> Result<String, S
     )
 }
 
-fn run_local(
+pub(crate) fn run_local(
     program: &str,
     args: &[&str],
     privileged: bool,
@@ -118,7 +118,7 @@ fn local_systemctl(
     run_local("systemctl", &all_args, !user_mode, password)
 }
 
-fn remote_script(
+pub(crate) fn remote_script(
     host: &SshRemoteHost,
     script: &str,
     user_mode: bool,

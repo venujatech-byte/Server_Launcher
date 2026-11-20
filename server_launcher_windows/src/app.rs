@@ -169,6 +169,7 @@ pub struct WifiAppNetItem {
 #[derive(Clone, Debug)]
 pub enum PendingSudoAction {
     UnlockSensorAccess,
+    SetCpuGovernor { idx: usize },
     ServiceAction { unit: String, action: &'static str, user_mode: bool },
     CreateService { def: crate::systemd::NewServiceDefinition },
     SaveUnitFile { path: String, content: String, user_mode: bool },
@@ -200,6 +201,7 @@ impl PendingSudoAction {
     fn key(&self, host_id: Option<&str>) -> String {
         let (kind, target, user_mode) = match self {
             Self::UnlockSensorAccess => ("hardware", "local", false),
+            Self::SetCpuGovernor { .. } => ("governor", "cpu", false),
             Self::ServiceAction { unit, user_mode, .. } => ("control", unit.as_str(), *user_mode),
             Self::CreateService { def } => ("create", def.name.as_str(), def.is_user),
             Self::SaveUnitFile { path, user_mode, .. } => ("save", path.as_str(), *user_mode),
@@ -9046,6 +9048,7 @@ impl LauncherApp {
                     if host.is_some() { Err("Protected sensor access applies to the local host only.".into()) }
                     else { sensor_collector.lock().unwrap().unlock_hardware_access(pass).map(SystemdActionValue::Message) }
                 },
+                PendingSudoAction::SetCpuGovernor { idx } => crate::power::apply_checked_governor(*idx, host.as_ref(), pass).map(SystemdActionValue::Message),
                 PendingSudoAction::ServiceAction { unit, action, user_mode } => {
                     if let Some(host) = &host { control_remote_service(host, unit, action, *user_mode, pass) }
                     else { control_local_service(unit, action, *user_mode, pass) }.map(SystemdActionValue::Message)
@@ -9105,7 +9108,7 @@ impl LauncherApp {
                 continue;
             };
             let action_scope = match &action {
-                PendingSudoAction::UnlockSensorAccess => false,
+                PendingSudoAction::UnlockSensorAccess | PendingSudoAction::SetCpuGovernor { .. } => false,
                 PendingSudoAction::CreateService { def } => def.is_user,
                 PendingSudoAction::ServiceAction { user_mode, .. } | PendingSudoAction::SaveUnitFile { user_mode, .. }
                 | PendingSudoAction::CreateDropIn { user_mode, .. } | PendingSudoAction::DeleteDropIn { user_mode, .. }
@@ -9124,6 +9127,7 @@ impl LauncherApp {
                         if result.host_id.is_some() { self.remote_journal_logs.lock().unwrap().insert(format!("{}:{}:{}", host_key, unit, scope), format!("Error: {}", error)); }
                         else { self.local_journal_logs.lock().unwrap().insert(format!("{}:{}", unit, scope), format!("Error: {}", error)); }
                     }
+                    if current_host && matches!(action, PendingSudoAction::SetCpuGovernor { .. }) { self.power_status_msg = Some((error.clone(), true, Instant::now())); }
                     if current_host { self.systemd_file_status_msg = Some((error.clone(), true)); }
                     if result.host_id.is_some() { *self.remote_service_action_msg.lock().unwrap() = Some(format!("Error: {}", error)); }
                     else { self.service_action_msg = Some(format!("Error: {}", error)); }
@@ -9182,6 +9186,7 @@ impl LauncherApp {
                             let mut refresh = None;
                             match &action {
                                 PendingSudoAction::UnlockSensorAccess => self.trigger_local_sensors_query(false, None),
+                                PendingSudoAction::SetCpuGovernor { .. } => { if current_host { self.power_status_msg = Some((message.clone(), false, Instant::now())); } },
                                 PendingSudoAction::ServiceAction { unit, user_mode, .. } => { refresh = Some((unit.clone(), *user_mode)); }
                                 PendingSudoAction::CreateService { def } => {
                                     if let Ok(unit) = crate::systemd::service_unit_name(def) { refresh = Some((unit, def.is_user)); }
@@ -9280,6 +9285,7 @@ impl LauncherApp {
                 if let Some(pending) = &self.sudo_popup.pending {
                     match pending {
                         PendingSudoAction::UnlockSensorAccess => { ui.label("Read-only access to CPU energy, Intel GPU counters and RAM inventory on this computer."); }
+                        PendingSudoAction::SetCpuGovernor { idx } => { ui.label(format!("Set CPU governor to {} on the selected host.", crate::power::preset_to_governor(*idx))); }
                         PendingSudoAction::ServiceAction { unit, action, .. } => {
                             let act_color = match *action {
                                 "start" => palette.success,
@@ -16562,7 +16568,7 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 6.0;
                                     ui.label(RichText::new(crate::lucide::GAUGE).size(12.0).color(accent));
-                                    ui.label(RichText::new("THERMAL & POWER GOVERNOR PRESET").size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                                    ui.label(RichText::new("CPU GOVERNOR").size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         Frame::none()
@@ -16591,7 +16597,7 @@ impl LauncherApp {
                                     let presets: [(&str, String, &str, usize); 3] = [
                                         ("Quiet / Eco", quiet_desc, "powersave", 0),
                                         ("Balanced", balanced_desc, "schedutil", 1),
-                                        ("Turbo Boost", turbo_desc, "performance", 2),
+                                        ("Performance", turbo_desc, "performance", 2),
                                     ];
                                     for (name, desc, gov_name, idx) in &presets {
                                         let idx = *idx;
@@ -16638,22 +16644,12 @@ impl LauncherApp {
                                             });
 
                                         if frame_resp.response.interact(egui::Sense::click()).clicked() {
-                                            self.power_preset = idx;
-                                            if let Some(hid) = host_id {
-                                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                                    let host_name = host.name.clone();
-                                                    let cmd_str = crate::power::build_remote_preset_command(idx, &profile);
-                                                    std::thread::spawn(move || {
-                                                        let mut cmd = crate::remote::build_ssh_command(&host, &cmd_str);
-                                                        let _ = cmd.output();
-                                                    });
-                                                    self.power_status_msg = Some((format!("Applied preset to remote host {}", host_name), false, Instant::now()));
-                                                }
+                                            let host = host_id.and_then(|hid| self.ssh_hosts.iter().find(|h| h.id == hid)).cloned();
+                                            if host_id.is_none() || host.is_some() {
+                                                self.power_status_msg = Some(("Applying CPU governor…".into(), false, Instant::now()));
+                                                self.queue_systemd_action(PendingSudoAction::SetCpuGovernor { idx }, host.as_ref(), None);
                                             } else {
-                                                match crate::power::apply_thermal_power_preset(idx, &profile) {
-                                                    Ok(msg) => self.power_status_msg = Some((msg, false, Instant::now())),
-                                                    Err(err) => self.power_status_msg = Some((err, true, Instant::now())),
-                                                }
+                                                self.power_status_msg = Some(("Selected host is unavailable".into(), true, Instant::now()));
                                             }
                                         }
                                     }

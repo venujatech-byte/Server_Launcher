@@ -11049,6 +11049,7 @@ impl LauncherApp {
         // Reset telemetry histories when switching between local host and remote SSH targets
         let cur_host_str = host_id.map(|s| s.to_string());
         if self.current_sensors_host != cur_host_str {
+            self.sensors_top_apps_selected_pid = None;
             self.current_sensors_host = cur_host_str.clone();
             self.last_telemetry_sample = None;
             self.cpu_history.clear();
@@ -16867,6 +16868,9 @@ impl LauncherApp {
     }
 
     fn render_sensors_top_apps_tab(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
+        if self.sensors_top_apps_selected_pid.is_some_and(|pid| !snap.top_apps.iter().any(|process| process.pid == pid)) {
+            self.sensors_top_apps_selected_pid = None;
+        }
         if let Some((message, is_error)) = self.remote_process_results.lock().unwrap().pop_front() {
             self.sensors_top_apps_status_msg = Some((message, is_error, Instant::now()));
         }

@@ -11491,7 +11491,7 @@ impl LauncherApp {
                 self.queue_systemd_action(PendingSudoAction::UnlockSensorAccess, None, None);
             }
             if busy { ui.spinner(); }
-            ui.label(RichText::new("Extra CPU power, Intel GPU engine and RAM module details require authorization.").size(11.0).color(p.text_muted));
+            ui.label(RichText::new("Some CPU power, Intel GPU engine and RAM module details may require authorization and hardware support.").size(11.0).color(p.text_muted));
         });
         if let Some(message) = self.service_action_msg.as_ref().filter(|message| message.starts_with("Read-only hardware") || message.starts_with("Error: Hardware probe") || message.starts_with("Error: Could not start hardware")) {
             ui.label(RichText::new(message).size(11.0).color(p.text_muted));
@@ -12569,7 +12569,7 @@ impl LauncherApp {
                         ui.label(RichText::new("GPU engine utilization").size(12.5).strong().color(p.text_primary));
                         let engines = gpu.map(|gpu| gpu.engine_loads.as_slice()).unwrap_or(&[]);
                         if engines.is_empty() {
-                            ui.label(RichText::new("Per-engine counters are unavailable. On Linux, unlock hardware sensors to read supported Intel PMU counters.").size(11.0).color(p.text_muted));
+                            ui.label(RichText::new("Per-engine counters are unavailable for this GPU or collector.").size(11.0).color(p.text_muted));
                         } else {
                             sensor_card_columns(ui, engines.len(), |ui, index| {
                                 let (name, load) = &engines[index];

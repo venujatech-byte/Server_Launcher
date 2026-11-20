@@ -16146,6 +16146,17 @@ impl LauncherApp {
     // SENSORS PAGE: Power Dashboard
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_power_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
+        // An initial empty snapshot is still loading, not evidence that the host has no battery.
+        if snap.timestamp.is_none() {
+            if host_id.is_none() {
+                self.trigger_local_sensors_query(false, Some(ui.ctx().clone()));
+            }
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Loading power and battery data…");
+            });
+            return;
+        }
         #[cfg(windows)]
         if host_id.is_none() {
             ScrollArea::vertical().id_salt("windows_power_scroll").auto_shrink([false, false]).show(ui, |ui| {

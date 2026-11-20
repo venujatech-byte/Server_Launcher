@@ -16107,6 +16107,17 @@ impl LauncherApp {
     // SENSORS PAGE: Power Dashboard
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_power_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
+        // An initial empty snapshot is still loading, not evidence that the host has no battery.
+        if snap.timestamp.is_none() {
+            if host_id.is_none() {
+                self.trigger_local_sensors_query(false, Some(ui.ctx().clone()));
+            }
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Loading power and battery data…");
+            });
+            return;
+        }
         let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();

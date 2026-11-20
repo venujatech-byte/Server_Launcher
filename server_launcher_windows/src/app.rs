@@ -603,10 +603,6 @@ pub struct LauncherApp {
     pub last_telemetry_sample: Option<Instant>,
 
     // Power & Battery State (matching Image 1)
-    pub power_preset: usize, // 0: Eco, 1: Balanced, 2: Turbo
-    pub power_conservation: bool, // 80% ceiling
-    pub power_rapid_charge: bool,
-    pub power_usb_always_on: bool,
     pub power_ceiling: f32,
     pub cpu_tdp_profile: crate::power::CpuTdpProfile,
 
@@ -662,7 +658,6 @@ pub struct LauncherApp {
 
     // Power Subsystem Status Toast
     pub power_status_msg: Option<(String, bool, Instant)>,
-    pub last_conservation_warn: Option<Instant>,
 
     // Cached grouped processes for Top Apps tab (prevents re-filtering and sorting every frame)
     pub sensors_cached_apps_groups: Vec<ProcessGroupSummary>,
@@ -908,10 +903,7 @@ impl LauncherApp {
             }
         }
 
-        let (init_cons_on, init_cons_ceil) = crate::power::query_charge_conservation();
-        let init_rapid = crate::power::query_rapid_charge();
-        let init_usb_on = crate::power::query_usb_always_on();
-        let cpu_tdp_profile = crate::power::detect_cpu_tdp_capability();
+        let cpu_tdp_profile = if cfg!(windows) { crate::power::CpuTdpProfile::default() } else { crate::power::detect_cpu_tdp_capability() };
 
         Self {
             active_sidebar_tab: SidebarTab::Servers,
@@ -1075,11 +1067,7 @@ impl LauncherApp {
             per_disk_write_history: std::collections::HashMap::new(),
             per_disk_read_history: std::collections::HashMap::new(),
             last_telemetry_sample: None,
-            power_preset: crate::power::query_current_preset(),
-            power_conservation: init_cons_on,
-            power_rapid_charge: init_rapid,
-            power_usb_always_on: init_usb_on,
-            power_ceiling: init_cons_ceil as f32,
+            power_ceiling: 80.0,
             cpu_tdp_profile,
             fan_mode: 0, // Silent
             fan_full_blast: false,
@@ -1131,7 +1119,6 @@ impl LauncherApp {
             wifi_cached_total_tx: 0,
             wifi_cached_total_rate: 0.0,
             power_status_msg: None,
-            last_conservation_warn: None,
             sensors_cached_apps_groups: Vec::new(),
             sensors_cached_bg_groups: Vec::new(),
             sensors_cached_snap_timestamp: None,
@@ -1304,6 +1291,7 @@ impl LauncherApp {
     }
 
     pub fn trigger_bluetooth_query(&mut self, ctx: Option<egui::Context>) {
+        if cfg!(windows) { return; }
         if self.bluetooth_in_flight.swap(true, std::sync::atomic::Ordering::SeqCst) {
             return;
         }
@@ -1331,6 +1319,7 @@ impl LauncherApp {
     }
 
     pub fn trigger_wifi_query(&mut self, ctx: Option<egui::Context>) {
+        if cfg!(windows) { return; }
         if self.wifi_in_flight.swap(true, std::sync::atomic::Ordering::SeqCst) {
             return;
         }
@@ -16840,210 +16829,11 @@ impl LauncherApp {
         let is_remote = host_id.is_some();
 
         if is_remote {
-            ScrollArea::vertical()
-                .id_salt("sensors_remote_bt_scroll")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-
-                    // 1. Header Banner
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-
-                            ui.horizontal(|ui| {
-                                ui.vertical(|ui| {
-                                    ui.label(RichText::new("BLUETOOTH").size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                    ui.add_space(2.0);
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 8.0;
-                                        let title_str = format!("Remote RF Controller & Peripherals • Host '{}'", self.host_display_name(host_id));
-                                        ui.label(RichText::new(title_str).size(16.5).strong().color(p.text_primary));
-
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(148, 163, 184).gamma_multiply(0.14))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 2.5))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 4.0;
-                                                    let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                                    ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(148, 163, 184));
-                                                    ui.label(RichText::new("HCI UNATTACHED").size(8.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
-                                                });
-                                            });
-                                    });
-                                    ui.add_space(3.0);
-                                    ui.label(RichText::new("Bluetooth host controller interface is not forwarded over standard SSH secure shell sessions.").size(10.0).color(Color32::from_rgb(148, 163, 184)));
-                                    ui.add_space(2.0);
-                                    let host_info = self.ssh_hosts.iter().find(|h| Some(h.id.as_str()) == host_id);
-                                    let ctrl_desc = if let Some(h) = host_info {
-                                        format!("REMOTE HOST: {} ({}:{}) • Standard SSH Session • Local HCI Hardware Isolated", h.name, h.host, h.port)
-                                    } else {
-                                        "REMOTE HOST: Headless Linux Server • Local Bluetooth Hardware Isolated".to_string()
-                                    };
-                                    ui.label(RichText::new(ctrl_desc).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                });
-
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    Frame::none()
-                                        .fill(Color32::from_rgb(10, 14, 22))
-                                        .rounding(Rounding::same(6.0))
-                                        .inner_margin(egui::Margin::symmetric(12.0, 8.0))
-                                        .show(ui, |ui| {
-                                            ui.vertical(|ui| {
-                                                ui.label(RichText::new("RADIO TUNNEL").size(9.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
-                                                ui.label(RichText::new("Isolated / Secure Shell").size(8.5).monospace().color(Color32::from_rgb(203, 213, 225)));
-                                            });
-                                        });
-                                });
-                            });
-                        });
-
-                    ui.add_space(8.0);
-
-                    // 2. Info / Action Toolbar
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                Frame::none()
-                                    .fill(Color32::from_rgb(18, 28, 42))
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(12.0, 6.0))
-                                    .show(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new(crate::lucide::LOCK).size(11.0).color(Color32::from_rgb(148, 163, 184)));
-                                            ui.label(RichText::new("Scan Disabled for Remote Host").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                        });
-                                    });
-
-                                ui.add_space(12.0);
-                                ui.label(RichText::new("RF peripheral discovery, audio sinks & BLE controllers operate locally on your client machine.").size(9.5).color(p.text_muted));
-
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("REMOTE HCI: N/A").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                });
-                            });
-                        });
-
-                    ui.add_space(8.0);
-
-                    // 3. 4 Informational Cards on Remote Architecture
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("REMOTE PERIPHERAL TOPOLOGY & SUBSYSTEM ROUTING").size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
-                    });
-                    ui.add_space(4.0);
-
-                    ui.columns(2, |cols| {
-                        // Card 1
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                            .show(&mut cols[0], |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(crate::lucide::SERVER).size(15.0).color(accent));
-                                    ui.label(RichText::new("Headless Server Topology").size(12.0).strong().color(p.text_primary));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(18, 28, 42))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new("Unpopulated").size(8.0).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                            });
-                                    });
-                                });
-                                ui.add_space(6.0);
-                                ui.label(RichText::new("Production rack servers, cloud VPS instances, and headless Linux nodes do not attach Bluetooth transceivers (hci0) to save PCIe lanes and minimize RF attack surface.").size(9.5).color(Color32::from_rgb(148, 163, 184)));
-                            });
-
-                        // Card 2
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                            .show(&mut cols[1], |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(crate::lucide::SHIELD).size(15.0).color(accent));
-                                    ui.label(RichText::new("SSH Protocol Isolation").size(12.0).strong().color(p.text_primary));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(18, 28, 42))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new("Encrypted Shell").size(8.0).monospace().color(Color32::from_rgb(203, 213, 225)));
-                                            });
-                                    });
-                                });
-                                ui.add_space(6.0);
-                                ui.label(RichText::new("Secure Shell sessions forward TTY terminals, TCP port streams, and remote telemetry scripts, but intentionally isolate host kernel D-Bus and BlueZ socket domains.").size(9.5).color(Color32::from_rgb(148, 163, 184)));
-                            });
-                    });
-
-                    ui.add_space(8.0);
-
-                    ui.columns(2, |cols| {
-                        // Card 3
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                            .show(&mut cols[0], |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(crate::lucide::RADIO).size(15.0).color(accent));
-                                    ui.label(RichText::new("USB-IP HCI Passthrough").size(12.0).strong().color(p.text_primary));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(18, 28, 42))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new("Kernel Module").size(8.0).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                            });
-                                    });
-                                });
-                                ui.add_space(6.0);
-                                ui.label(RichText::new("To attach a physical Bluetooth radio to this remote host, load `usbip-core` and execute `usbip attach` over an encrypted IPsec or WireGuard tunnel.").size(9.5).color(Color32::from_rgb(148, 163, 184)));
-                            });
-
-                        // Card 4
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                            .show(&mut cols[1], |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(crate::lucide::HEADPHONES).size(15.0).color(accent));
-                                    ui.label(RichText::new("Client Workstation Audio").size(12.0).strong().color(p.text_primary));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(18, 28, 42))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new("Local Route").size(8.0).monospace().color(Color32::from_rgb(203, 213, 225)));
-                                            });
-                                    });
-                                });
-                                ui.add_space(6.0);
-                                ui.label(RichText::new("Your headphones, keyboards, mice, and BLE controllers are connected directly to your local PC with low-latency zero-hop hardware acceleration.").size(9.5).color(Color32::from_rgb(148, 163, 184)));
-                            });
-                    });
-
-                    ui.add_space(10.0);
+            Frame::none().fill(p.bg_card).rounding(Rounding::same(8.0))
+                .inner_margin(egui::Margin::symmetric(14.0, 12.0)).show(ui, |ui| {
+                    ui.label(RichText::new(format!("Bluetooth · {}", self.host_display_name(host_id))).size(16.0).strong().color(p.text_primary));
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("Remote Bluetooth status and controls are not available in Server Launcher yet.").size(11.0).color(p.text_secondary));
                 });
             return;
         }

@@ -3448,6 +3448,14 @@ print(json.dumps(data))
 mod tests {
     use super::*;
     #[test]
+    fn unlock_reports_actual_metrics_instead_of_unconditional_success() {
+        assert!(protected_hardware_summary(&serde_json::json!({"cpu_watts":null,"gpus":[],"memory":[],"notes":["No usable counters"]})).unwrap_err().contains("No usable counters"));
+        assert!(protected_hardware_summary(&serde_json::json!({"cpu_watts":0.0,"gpus":[],"memory":[]})).unwrap().contains("CPU power available"));
+        assert!(protected_hardware_summary(&serde_json::json!({"cpu_watts":null,"gpus":[],"memory":[{"kind":"DDR4"}]})).unwrap().contains("1 RAM module"));
+    }
+
+
+    #[test]
     fn protected_readings_match_devices_and_preserve_unknown_fields() {
         let mut snapshot = SystemSensorsSnapshot::default();
         snapshot.gpus.push(GpuSensorInfo { device_path: "/pci/intel".into(), ..Default::default() });
@@ -3600,6 +3608,7 @@ def read_number(path):
         return None
 
 zones = []
+unreadable_zones = []
 for path in glob.glob('/sys/class/powercap/intel-rapl:*'):
     if os.path.basename(path).count(':') != 1:
         continue
@@ -3607,8 +3616,12 @@ for path in glob.glob('/sys/class/powercap/intel-rapl:*'):
     maximum = read_number(path + '/max_energy_range_uj')
     if energy is not None:
         zones.append((path, energy, maximum))
+    else:
+        unreadable_zones.append(path)
 started = time.monotonic()
 result = {'cpu_watts': None, 'gpus': [], 'memory': None, 'notes': []}
+if unreadable_zones:
+    result['notes'].append('CPU energy counters are not readable: ' + ', '.join(unreadable_zones))
 if len(sys.argv) > 1 and sys.argv[1] == 'inventory':
     result['memory'] = []
     try:
@@ -3684,7 +3697,11 @@ pub fn read_protected_hardware(password: Option<&str>, inventory: bool) -> Resul
     }
     let output = child.wait_with_output().map_err(|error| error.to_string())?;
     if !output.status.success() {
-        return Err(format!("Hardware probe failed: {}", String::from_utf8_lossy(&output.stderr).trim()));
+        let detail = String::from_utf8_lossy(&output.stderr);
+        if detail.to_ascii_lowercase().contains("no new privileges") {
+            return Err("Hardware probe failed: the launch sandbox blocks privilege elevation (NoNewPrivs). Restart Server Launcher directly from a desktop shortcut or host terminal; a sudo password cannot override this restriction.".into());
+        }
+        return Err(format!("Hardware probe failed: {}", detail.trim()));
     }
     serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid hardware probe response: {error}"))
 }
@@ -3716,11 +3733,24 @@ fn apply_protected_hardware(snapshot: &mut SystemSensorsSnapshot, data: &serde_j
     }
 }
 
+fn protected_hardware_summary(data: &serde_json::Value) -> Result<String, String> {
+    let cpu = data["cpu_watts"].as_f64().is_some_and(|value| value.is_finite() && value >= 0.0);
+    let gpus = data["gpus"].as_array().map_or(0, Vec::len);
+    let modules = data["memory"].as_array().map_or(0, Vec::len);
+    if !cpu && gpus == 0 && modules == 0 {
+        let notes = data["notes"].as_array().map(|notes| notes.iter().filter_map(|note| note.as_str()).collect::<Vec<_>>().join("; ")).unwrap_or_default();
+        return Err(format!("Hardware probe failed: authorization completed, but no CPU power, Intel GPU counters or RAM module details could be read. {}", notes));
+    }
+    Ok(format!("Read-only hardware: CPU power {}; {} GPU adapter(s); {} RAM module(s).", if cpu { "available" } else { "unavailable" }, gpus, modules))
+}
+
 impl SystemSensorsCollector {
     pub fn unlock_hardware_access(&mut self, password: Option<&str>) -> Result<String, String> {
-        self.protected_data = Some(read_protected_hardware(password, true)?);
+        let data = read_protected_hardware(password, true)?;
+        let summary = protected_hardware_summary(&data)?;
+        self.protected_data = Some(data);
         self.last_protected_poll = Instant::now();
-        Ok("Read-only hardware sensor access enabled. Some metrics may still depend on driver support.".into())
+        Ok(summary)
     }
 
     pub fn refresh_protected_hardware(&mut self, snapshot: &mut SystemSensorsSnapshot, password: Option<&str>) {

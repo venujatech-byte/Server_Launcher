@@ -620,12 +620,13 @@ pub struct LauncherApp {
     pub bluetooth_last_query: Instant,
 
     // Wi-Fi Control State (matching Image 4)
-    pub wifi_rescan_anim: bool,
     pub wifi_snapshot: Arc<Mutex<crate::wifi::WifiSnapshot>>,
     pub wifi_selected_interface: Option<String>,
     pub wifi_in_flight: Arc<std::sync::atomic::AtomicBool>,
     pub wifi_last_query: Instant,
     pub wifi_status_msg: Option<(String, bool, Instant)>,
+    pub wifi_action_in_flight: Arc<std::sync::atomic::AtomicBool>,
+    pub wifi_action_results: Arc<Mutex<VecDeque<(String, bool, bool)>>>,
     pub wifi_app_search_query: String,
     pub wifi_app_sort: String,
     pub wifi_app_sort_desc: bool,
@@ -1075,12 +1076,13 @@ impl LauncherApp {
             bluetooth_in_flight: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             bluetooth_scanning: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             bluetooth_last_query: Instant::now() - std::time::Duration::from_secs(10), // trigger immediately
-            wifi_rescan_anim: false,
             wifi_snapshot: Arc::new(Mutex::new(crate::wifi::WifiSnapshot::default())),
             wifi_selected_interface: None,
             wifi_in_flight: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             wifi_last_query: Instant::now() - std::time::Duration::from_secs(10), // trigger immediately
             wifi_status_msg: None,
+            wifi_action_in_flight: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            wifi_action_results: Arc::new(Mutex::new(VecDeque::new())),
             wifi_app_search_query: String::new(),
             wifi_app_sort: "data".to_string(),
             wifi_app_sort_desc: true,
@@ -1332,6 +1334,21 @@ impl LauncherApp {
             if let Some(c) = ctx {
                 c.request_repaint();
             }
+        });
+    }
+
+    fn queue_wifi_action(&mut self, interface: Option<String>, ctx: egui::Context) {
+        if self.wifi_action_in_flight.swap(true, std::sync::atomic::Ordering::SeqCst) { return; }
+        self.wifi_status_msg = Some((if interface.is_some() { "Requesting Wi-Fi scan…" } else { "Flushing DNS cache…" }.into(), false, Instant::now()));
+        let in_flight = Arc::clone(&self.wifi_action_in_flight);
+        let results = Arc::clone(&self.wifi_action_results);
+        std::thread::spawn(move || {
+            let refresh = interface.is_some();
+            let result = if let Some(interface) = interface { crate::wifi::scan_wifi(&interface) } else { crate::wifi::flush_dns() };
+            let (message, error) = match result { Ok(message) => (message, false), Err(error) => (error, true) };
+            if let Ok(mut results) = results.lock() { results.push_back((message, error, refresh && !error)); }
+            in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
+            ctx.request_repaint();
         });
     }
 
@@ -13968,6 +13985,17 @@ impl LauncherApp {
         let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
 
+        if !is_remote {
+            let results: Vec<_> = self.wifi_action_results.lock().unwrap().drain(..).collect();
+            for (message, error, refresh) in results {
+                self.wifi_status_msg = Some((message, error, Instant::now()));
+                if refresh {
+                    self.wifi_last_query = Instant::now() - Duration::from_secs(10);
+                    self.trigger_wifi_query(Some(ui.ctx().clone()));
+                }
+            }
+        }
+
         // Only query local Wi-Fi telemetry when viewing the local PC (10s throttle prevents high CPU from external commands)
         if !is_remote && self.wifi_last_query.elapsed().as_secs() >= 10 {
             self.trigger_wifi_query(Some(ui.ctx().clone()));
@@ -14072,10 +14100,7 @@ impl LauncherApp {
                                         ui.painter().rect_stroke(rescan_rect, Rounding::same(6.0), Stroke::new(1.0_f32, accent_with_alpha(accent, 40)));
                                         ui.painter().text(rescan_rect.center(), egui::Align2::CENTER_CENTER, format!("{} Re-Scan", crate::lucide::REFRESH_CW), egui::FontId::monospace(9.0), Color32::from_rgb(226, 232, 240));
                                         if rescan_resp.clicked() && !wifi_snap.interface.is_empty() {
-                                            self.wifi_rescan_anim = true;
-                                            crate::wifi::trigger_wifi_rescan_async(wifi_snap.interface.clone());
-                                            self.wifi_status_msg = Some(("NetworkManager Wi-Fi scan requested...".to_string(), false, Instant::now()));
-                                            self.trigger_wifi_query(Some(ui.ctx().clone()));
+                                            self.queue_wifi_action(Some(wifi_snap.interface.clone()), ui.ctx().clone());
                                         }
 
                                         // Badges
@@ -14141,10 +14166,7 @@ impl LauncherApp {
                                             ui.painter().rect_stroke(rescan_rect, Rounding::same(6.0), Stroke::new(1.0_f32, accent_with_alpha(accent, 40)));
                                             ui.painter().text(rescan_rect.center(), egui::Align2::CENTER_CENTER, format!("{} Re-Scan", crate::lucide::REFRESH_CW), egui::FontId::monospace(9.0), Color32::from_rgb(226, 232, 240));
                                             if rescan_resp.clicked() && !wifi_snap.interface.is_empty() {
-                                                self.wifi_rescan_anim = true;
-                                                crate::wifi::trigger_wifi_rescan_async(wifi_snap.interface.clone());
-                                                self.wifi_status_msg = Some(("NetworkManager Wi-Fi scan requested...".to_string(), false, Instant::now()));
-                                                self.trigger_wifi_query(Some(ui.ctx().clone()));
+                                                self.queue_wifi_action(Some(wifi_snap.interface.clone()), ui.ctx().clone());
                                             }
 
                                             // Security Badge
@@ -14736,10 +14758,7 @@ impl LauncherApp {
                                         ui.painter().rect_filled(flush_rect, Rounding::same(3.0), f_bg);
                                         ui.painter().text(flush_rect.center(), egui::Align2::CENTER_CENTER, "Flush", egui::FontId::monospace(8.0), Color32::from_rgb(203, 213, 225));
                                         if flush_resp.clicked() && !is_remote {
-                                            match crate::wifi::trigger_flush_dns() {
-                                                Ok(msg) => self.wifi_status_msg = Some((msg, false, Instant::now())),
-                                                Err(err) => self.wifi_status_msg = Some((err, true, Instant::now())),
-                                            }
+                                            self.queue_wifi_action(None, ui.ctx().clone());
                                         }
                                         flush_resp.on_hover_text(if is_remote { "Remote DNS flush unavailable" } else { "Flush system DNS cache" });
 

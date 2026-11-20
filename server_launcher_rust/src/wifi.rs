@@ -364,36 +364,44 @@ pub fn query_wifi_status(selected: Option<&str>) -> WifiSnapshot {
     snap
 }
 
-/// Spawns an asynchronous Wi-Fi rescan via `nmcli dev wifi rescan`.
-pub fn trigger_wifi_rescan_async(interface: String) {
-    std::thread::spawn(move || {
-        let _ = Command::new("nmcli")
-            .args(["dev", "wifi", "rescan", "ifname", &interface])
-            .output();
-    });
+fn command_result(success: bool, stderr: &str, operation: &str) -> Result<(), String> {
+    if success { Ok(()) } else if stderr.trim().is_empty() { Err(format!("{operation} failed")) } else { Err(format!("{operation} failed: {}", stderr.trim())) }
 }
 
-/// Flushes DNS caches using `resolvectl flush-caches` or `systemd-resolve --flush-caches`.
-pub fn trigger_flush_dns() -> Result<String, String> {
-    let out = Command::new("resolvectl")
-        .args(["flush-caches"])
-        .output();
+/// Request a NetworkManager scan on one selected interface.
+pub fn scan_wifi(interface: &str) -> Result<String, String> {
+    if interface.is_empty() || interface.len() > 15 || !interface.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')) {
+        return Err("Invalid Wi-Fi interface".into());
+    }
+    let output = Command::new("nmcli").args(["--wait", "15", "dev", "wifi", "rescan", "ifname", interface]).output()
+        .map_err(|error| format!("Could not start Wi-Fi scan: {error}"))?;
+    command_result(output.status.success(), &String::from_utf8_lossy(&output.stderr), "Wi-Fi scan")?;
+    Ok(format!("Wi-Fi scan requested for {interface}"))
+}
 
-    if let Ok(o) = out {
-        if o.status.success() {
-            return Ok("DNS resolver caches flushed successfully.".to_string());
+/// Flush the local resolver cache, preserving errors from the available tool.
+pub fn flush_dns() -> Result<String, String> {
+    for program in ["resolvectl", "systemd-resolve"] {
+        let argument = if program == "systemd-resolve" { "--flush-caches" } else { "flush-caches" };
+        match Command::new(program).arg(argument).output() {
+            Ok(output) => {
+                command_result(output.status.success(), &String::from_utf8_lossy(&output.stderr), "DNS cache flush")?;
+                return Ok("DNS resolver cache flushed".into());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("Could not start DNS cache flush: {error}")),
         }
     }
+    Err("DNS cache flush is unavailable: no supported resolver tool found".into())
+}
 
-    let out2 = Command::new("systemd-resolve")
-        .args(["--flush-caches"])
-        .output();
-
-    if let Ok(o) = out2 {
-        if o.status.success() {
-            return Ok("DNS caches flushed via systemd-resolve.".to_string());
-        }
+#[cfg(test)]
+mod wifi_action_tests {
+    #[test]
+    fn command_errors_and_invalid_interfaces_are_reported() {
+        assert!(super::command_result(false, "permission denied", "scan").unwrap_err().contains("permission denied"));
+        assert!(super::command_result(false, "", "scan").is_err());
+        assert!(super::command_result(true, "", "scan").is_ok());
+        assert!(super::scan_wifi("../bad").is_err());
     }
-
-    Ok("Flush command dispatched to resolver daemon.".to_string())
 }

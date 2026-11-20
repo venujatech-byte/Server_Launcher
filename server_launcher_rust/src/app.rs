@@ -601,7 +601,7 @@ pub struct LauncherApp {
     pub selected_disk_idx: usize,
     pub per_disk_write_history: std::collections::HashMap<String, VecDeque<f32>>,
     pub per_disk_read_history: std::collections::HashMap<String, VecDeque<f32>>,
-    pub last_telemetry_sample: Instant,
+    pub last_telemetry_sample: Option<Instant>,
 
     // Power & Battery State (matching Image 1)
     pub power_preset: usize, // 0: Eco, 1: Balanced, 2: Turbo
@@ -1075,7 +1075,7 @@ impl LauncherApp {
             selected_disk_idx: 0,
             per_disk_write_history: std::collections::HashMap::new(),
             per_disk_read_history: std::collections::HashMap::new(),
-            last_telemetry_sample: Instant::now(),
+            last_telemetry_sample: None,
             power_preset: crate::power::query_current_preset(),
             power_conservation: init_cons_on,
             power_rapid_charge: init_rapid,
@@ -1269,6 +1269,7 @@ impl LauncherApp {
                 }
                 Err(e) => {
                     errors_arc.lock().unwrap().insert(hid.clone(), e);
+                    last_fetch_arc.lock().unwrap().insert(hid.clone(), Instant::now());
                 }
             }
             in_flight_arc.lock().unwrap().remove(&hid);
@@ -5037,7 +5038,7 @@ fn draw_disk_waveform(
     painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 15, 29));
 
     // Grid lines: 100 MB/s, 50 MB/s, 0 MB/s
-    let levels = [(1.0_f32, "100 MB/s", "-60s"), (0.5_f32, "50 MB/s", "-30s"), (0.0_f32, "0 MB/s", "Now")];
+    let levels = [(1.0_f32, "100 MB/s", ""), (0.5_f32, "50 MB/s", ""), (0.0_f32, "0 MB/s", "Now")];
     for (pct, left_label, right_label) in levels {
         let y = rect.bottom() - 18.0 - (rect.height() - 32.0) * pct;
         painter.line_segment(
@@ -5271,6 +5272,36 @@ fn sensor_metric_history(ui: &Ui, host_id: Option<&str>, metric: &str, timestamp
         if let Some(timestamp) = timestamp { record_sensor_sample(history, timestamp, value); }
         if value.is_some_and(f32::is_finite) { history.iter().map(|sample| sample.1).collect() } else { Vec::new() }
     })
+}
+
+fn sensor_freshness(age: Option<Duration>, interval_secs: u32, failed: bool) -> &'static str {
+    if failed { return "ERROR"; }
+    if age.is_none() { return "LOADING"; }
+    if interval_secs == 0 { return "PAUSED"; }
+    if age.unwrap_or_default() > Duration::from_secs((interval_secs as u64 * 3).max(5)) { "STALE" } else { "LIVE" }
+}
+
+fn remote_sensor_due(age: Option<Duration>, interval_secs: u32, failed: bool) -> bool {
+    match age {
+        None => true,
+        Some(_) if interval_secs == 0 => false,
+        Some(age) => age >= Duration::from_secs(if failed { (interval_secs as u64).max(5) } else { interval_secs as u64 }),
+    }
+}
+
+#[cfg(test)]
+mod sensor_freshness_tests {
+    use std::time::Duration;
+    #[test]
+    fn distinguishes_paused_failed_stale_and_retries() {
+        assert_eq!(super::sensor_freshness(None, 1, false), "LOADING");
+        assert_eq!(super::sensor_freshness(Some(Duration::from_secs(1)), 0, false), "PAUSED");
+        assert_eq!(super::sensor_freshness(Some(Duration::from_secs(6)), 1, false), "STALE");
+        assert_eq!(super::sensor_freshness(Some(Duration::from_secs(1)), 1, true), "ERROR");
+        assert!(!super::remote_sensor_due(Some(Duration::from_secs(2)), 1, true));
+        assert!(super::remote_sensor_due(Some(Duration::from_secs(5)), 1, true));
+        assert!(!super::remote_sensor_due(Some(Duration::from_secs(50)), 0, true));
+    }
 }
 
 fn push_telemetry<T>(history: &mut VecDeque<T>, value: T, capacity: usize) {
@@ -6443,8 +6474,8 @@ fn draw_wifi_realtime_waveform(ui: &mut Ui, height: f32, rx_history: &VecDeque<f
 
     // Subtle horizontal grid lines at 100%, 50%, 0%
     let levels = [
-        (1.0_f32, format!("{:.1} MB/s", scale_max), "-60s"),
-        (0.5_f32, format!("{:.1} MB/s", scale_max * 0.5), "-30s"),
+        (1.0_f32, format!("{:.1} MB/s", scale_max), ""),
+        (0.5_f32, format!("{:.1} MB/s", scale_max * 0.5), ""),
         (0.0_f32, "0 B/s".to_string(), "Now"),
     ];
 
@@ -10762,7 +10793,7 @@ impl LauncherApp {
             .inner_margin(egui::Margin::symmetric(12.0, 4.5))
             .show(ui, |ui| {
                 let total_avail_w = ui.available_width();
-                let right_w = 76.0;
+                let right_w = 104.0;
                 let left_w = (total_avail_w - right_w - 6.0).max(30.0);
 
                 ui.horizontal(|ui| {
@@ -10848,17 +10879,21 @@ impl LauncherApp {
                             }
                         }
 
+                        let failed = host_id.is_some_and(|id| self.remote_sensors_errors.lock().unwrap().contains_key(id));
+                        let age = snap.timestamp.map(|timestamp| timestamp.elapsed());
+                        let state = sensor_freshness(age, self.sensors_refresh_interval, failed);
+                        let state_color = if state == "LIVE" { accent } else { p.text_muted };
                         Frame::none()
-                            .fill(accent_with_alpha(accent, 25))
+                            .fill(accent_with_alpha(state_color, 25))
                             .rounding(Rounding::same(999.0))
                             .inner_margin(egui::Margin::symmetric(7.0, 2.5))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 4.0;
-                                    ui.label(RichText::new("●").size(7.5).color(accent));
-                                    ui.label(RichText::new("LIVE").size(9.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                    ui.label(RichText::new("●").size(7.5).color(state_color));
+                                    ui.label(RichText::new(state).size(9.0).monospace().strong().color(p.text_primary));
                                 });
-                            });
+                            }).response.on_hover_text(age.map(|age| format!("Last updated {}s ago", age.as_secs())).unwrap_or_else(|| "No sensor snapshot received yet".into()));
                     });
                 });
             });
@@ -10884,14 +10919,9 @@ impl LauncherApp {
 
             // Fetch or refresh sensors snapshot asynchronously without blocking UI thread
             let _snap = if let Some(hid) = host_id {
-                let has_snap = self.remote_sensors_snapshots.lock().unwrap().contains_key(hid);
                 let last_fetch = self.remote_sensors_last_fetch.lock().unwrap().get(hid).copied();
-                let interval_passed = self.sensors_refresh_interval > 0
-                    && last_fetch
-                        .map(|t| t.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64))
-                        .unwrap_or(true);
-
-                if (!has_snap || interval_passed) && !is_fetching {
+                let failed = self.remote_sensors_errors.lock().unwrap().contains_key(hid);
+                if remote_sensor_due(last_fetch.map(|time| time.elapsed()), self.sensors_refresh_interval, failed) && !is_fetching {
                     if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
                         self.trigger_remote_sensors_query(host);
                     }
@@ -11050,14 +11080,9 @@ impl LauncherApp {
 
         // Auto-refresh timer logic (asynchronous for SSH hosts, never blocking UI thread)
         let snap = if let Some(hid) = host_id {
-            let has_snap = self.remote_sensors_snapshots.lock().unwrap().contains_key(hid);
             let last_fetch = self.remote_sensors_last_fetch.lock().unwrap().get(hid).copied();
-            let interval_passed = self.sensors_refresh_interval > 0
-                && last_fetch
-                    .map(|t| t.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64))
-                    .unwrap_or(true);
-
-            if (!has_snap || interval_passed) && !is_fetching {
+            let failed = self.remote_sensors_errors.lock().unwrap().contains_key(hid);
+            if remote_sensor_due(last_fetch.map(|time| time.elapsed()), self.sensors_refresh_interval, failed) && !is_fetching {
                 if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
                     self.trigger_remote_sensors_query(host);
                 }
@@ -11079,6 +11104,7 @@ impl LauncherApp {
         let cur_host_str = host_id.map(|s| s.to_string());
         if self.current_sensors_host != cur_host_str {
             self.current_sensors_host = cur_host_str.clone();
+            self.last_telemetry_sample = None;
             self.wifi_cached_host_id = cur_host_str;
             self.wifi_cached_raw_apps.clear();
             self.wifi_cached_app_list = Arc::new(Vec::new());
@@ -11103,9 +11129,9 @@ impl LauncherApp {
                 .map(|_| VecDeque::with_capacity(30)).collect();
         }
 
-        // Telemetry sampling (once per second)
-        if self.last_telemetry_sample.elapsed() >= Duration::from_millis(1000) {
-            self.last_telemetry_sample = Instant::now();
+        // Each collected snapshot contributes at most one history sample.
+        if snap.timestamp.is_some_and(|timestamp| self.last_telemetry_sample.is_none_or(|last| timestamp > last)) {
+            self.last_telemetry_sample = snap.timestamp;
             push_telemetry(&mut self.cpu_history, snap.cpu_global_usage, 60);
             if snap.cpu_global_usage > self.cpu_peak_usage {
                 self.cpu_peak_usage = snap.cpu_global_usage;
@@ -11680,7 +11706,7 @@ impl LauncherApp {
                                     ui.spacing_mut().item_spacing.x = 4.0;
                                     let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                     ui.painter().circle_filled(d_rect.center(), 2.8, accent);
-                                    ui.label(RichText::new("LIVE TELEMETRY").size(10.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                    ui.label(RichText::new("RECENT SAMPLES").size(10.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                 });
                             });
                         });
@@ -11689,12 +11715,12 @@ impl LauncherApp {
 
                         ui.add_space(4.0);
                         ui.columns(5, |cols| {
-                            cols[0].label(RichText::new("60s ago").size(9.5).monospace().color(p.text_muted));
-                            cols[1].centered_and_justified(|ui| { ui.label(RichText::new("45s").size(9.5).monospace().color(p.text_muted)); });
-                            cols[2].centered_and_justified(|ui| { ui.label(RichText::new("30s").size(9.5).monospace().color(p.text_muted)); });
-                            cols[3].centered_and_justified(|ui| { ui.label(RichText::new("15s").size(9.5).monospace().color(p.text_muted)); });
+                            cols[0].label(RichText::new("Earlier").size(9.5).monospace().color(p.text_muted));
+                            cols[1].centered_and_justified(|ui| { ui.label(RichText::new("").size(9.5).monospace().color(p.text_muted)); });
+                            cols[2].centered_and_justified(|ui| { ui.label(RichText::new("").size(9.5).monospace().color(p.text_muted)); });
+                            cols[3].centered_and_justified(|ui| { ui.label(RichText::new("").size(9.5).monospace().color(p.text_muted)); });
                             cols[4].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new("Real-time (0s)").size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                ui.label(RichText::new("Latest sample").size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                             });
                         });
                     });
@@ -12100,9 +12126,9 @@ impl LauncherApp {
 
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("60s ago").size(9.5).monospace().color(p.text_muted));
+                            ui.label(RichText::new("Earlier").size(9.5).monospace().color(p.text_muted));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new(format!("Live ({:.0}%)", used_pct)).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                ui.label(RichText::new(format!("Latest ({:.0}%)", used_pct)).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                             });
                         });
                     });

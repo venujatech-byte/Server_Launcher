@@ -339,42 +339,6 @@ pub fn detect_cpu_tdp_capability() -> CpuTdpProfile {
     }
 }
 
-/// Applies thermal, EC (Embedded Controller), and RAPL TDP power limits for the selected preset index:
-/// 0 = Quiet / Eco (powersave, low-power EC platform profile, clamped PL1)
-/// 1 = Balanced (schedutil, balanced EC platform profile, nominal PL1)
-/// 2 = Turbo Boost (performance, performance EC platform profile, peak PL2 burst)
-/// Apply a supported governor on every CPU policy and verify each result.
-pub fn apply_checked_governor(idx: usize, host: Option<&crate::config::SshRemoteHost>, password: Option<&str>) -> Result<String, String> {
-    let governor = match idx {
-        0 => "powersave",
-        1 => "schedutil",
-        2 => "performance",
-        _ => return Err("Invalid governor selection".into()),
-    };
-    let script = format!(r#"set -eu
-found=0
-for p in /sys/devices/system/cpu/cpufreq/policy*; do
-    [ -d "$p" ] || continue
-    found=1
-    case " $(cat "$p/scaling_available_governors") " in
-        *" {governor} "*) ;;
-        *) echo "Governor {governor} is not supported by $p" >&2; exit 1 ;;
-    esac
-done
-[ "$found" = 1 ] || {{ echo 'No CPU frequency policies are available' >&2; exit 1; }}
-for p in /sys/devices/system/cpu/cpufreq/policy*; do
-    [ -d "$p" ] || continue
-    printf '%s' '{governor}' > "$p/scaling_governor" || {{ echo "Failed to set $p; earlier policies may have changed" >&2; exit 1; }}
-    [ "$(cat "$p/scaling_governor")" = '{governor}' ] || {{ echo "Read-back failed for $p; policies may have changed" >&2; exit 1; }}
-done"#);
-    if let Some(host) = host {
-        crate::systemd::remote_script(host, &script, false, true, password)?;
-    } else {
-        crate::systemd::run_local("sh", &["-c", &script], true, password)?;
-    }
-    Ok(format!("CPU governor set to {} on all policies", governor))
-}
-
 /// Queries the current battery charge conservation threshold from sysfs or vendor platform drivers.
 /// Returns (is_active, ceiling_percentage).
 pub fn query_charge_conservation() -> (bool, u32) {
@@ -887,14 +851,5 @@ pub fn build_remote_power_command(action: &str, enabled: bool, val: u32) -> Stri
             )
         }
         _ => "true".to_string(),
-    }
-}
-
-
-#[cfg(test)]
-mod checked_governor_tests {
-    #[test]
-    fn rejects_invalid_preset_before_running_a_command() {
-        assert!(super::apply_checked_governor(3, None, None).is_err());
     }
 }

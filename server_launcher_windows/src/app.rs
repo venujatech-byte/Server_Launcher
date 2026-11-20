@@ -169,7 +169,6 @@ pub struct WifiAppNetItem {
 #[derive(Clone, Debug)]
 pub enum PendingSudoAction {
     UnlockSensorAccess,
-    SetCpuGovernor { idx: usize },
     ServiceAction { unit: String, action: &'static str, user_mode: bool },
     CreateService { def: crate::systemd::NewServiceDefinition },
     SaveUnitFile { path: String, content: String, user_mode: bool },
@@ -201,7 +200,6 @@ impl PendingSudoAction {
     fn key(&self, host_id: Option<&str>) -> String {
         let (kind, target, user_mode) = match self {
             Self::UnlockSensorAccess => ("hardware", "local", false),
-            Self::SetCpuGovernor { .. } => ("governor", "cpu", false),
             Self::ServiceAction { unit, user_mode, .. } => ("control", unit.as_str(), *user_mode),
             Self::CreateService { def } => ("create", def.name.as_str(), def.is_user),
             Self::SaveUnitFile { path, user_mode, .. } => ("save", path.as_str(), *user_mode),
@@ -9048,7 +9046,6 @@ impl LauncherApp {
                     if host.is_some() { Err("Protected sensor access applies to the local host only.".into()) }
                     else { sensor_collector.lock().unwrap().unlock_hardware_access(pass).map(SystemdActionValue::Message) }
                 },
-                PendingSudoAction::SetCpuGovernor { idx } => crate::power::apply_checked_governor(*idx, host.as_ref(), pass).map(SystemdActionValue::Message),
                 PendingSudoAction::ServiceAction { unit, action, user_mode } => {
                     if let Some(host) = &host { control_remote_service(host, unit, action, *user_mode, pass) }
                     else { control_local_service(unit, action, *user_mode, pass) }.map(SystemdActionValue::Message)
@@ -9108,7 +9105,7 @@ impl LauncherApp {
                 continue;
             };
             let action_scope = match &action {
-                PendingSudoAction::UnlockSensorAccess | PendingSudoAction::SetCpuGovernor { .. } => false,
+                PendingSudoAction::UnlockSensorAccess => false,
                 PendingSudoAction::CreateService { def } => def.is_user,
                 PendingSudoAction::ServiceAction { user_mode, .. } | PendingSudoAction::SaveUnitFile { user_mode, .. }
                 | PendingSudoAction::CreateDropIn { user_mode, .. } | PendingSudoAction::DeleteDropIn { user_mode, .. }
@@ -9127,7 +9124,6 @@ impl LauncherApp {
                         if result.host_id.is_some() { self.remote_journal_logs.lock().unwrap().insert(format!("{}:{}:{}", host_key, unit, scope), format!("Error: {}", error)); }
                         else { self.local_journal_logs.lock().unwrap().insert(format!("{}:{}", unit, scope), format!("Error: {}", error)); }
                     }
-                    if current_host && matches!(action, PendingSudoAction::SetCpuGovernor { .. }) { self.power_status_msg = Some((error.clone(), true, Instant::now())); }
                     if current_host { self.systemd_file_status_msg = Some((error.clone(), true)); }
                     if result.host_id.is_some() { *self.remote_service_action_msg.lock().unwrap() = Some(format!("Error: {}", error)); }
                     else { self.service_action_msg = Some(format!("Error: {}", error)); }
@@ -9186,7 +9182,6 @@ impl LauncherApp {
                             let mut refresh = None;
                             match &action {
                                 PendingSudoAction::UnlockSensorAccess => self.trigger_local_sensors_query(false, None),
-                                PendingSudoAction::SetCpuGovernor { .. } => { if current_host { self.power_status_msg = Some((message.clone(), false, Instant::now())); } },
                                 PendingSudoAction::ServiceAction { unit, user_mode, .. } => { refresh = Some((unit.clone(), *user_mode)); }
                                 PendingSudoAction::CreateService { def } => {
                                     if let Ok(unit) = crate::systemd::service_unit_name(def) { refresh = Some((unit, def.is_user)); }
@@ -9285,7 +9280,6 @@ impl LauncherApp {
                 if let Some(pending) = &self.sudo_popup.pending {
                     match pending {
                         PendingSudoAction::UnlockSensorAccess => { ui.label("Read-only access to CPU energy, Intel GPU counters and RAM inventory on this computer."); }
-                        PendingSudoAction::SetCpuGovernor { idx } => { ui.label(format!("Set CPU governor to {} on the selected host.", crate::power::preset_to_governor(*idx))); }
                         PendingSudoAction::ServiceAction { unit, action, .. } => {
                             let act_color = match *action {
                                 "start" => palette.success,
@@ -16328,8 +16322,6 @@ impl LauncherApp {
                 } else {
                     self.cpu_tdp_profile
                 };
-                let active_gov = snap.cpu_governor.as_deref().unwrap_or("Unavailable");
-                let active_preset_idx = snap.cpu_governor.as_deref().map(crate::power::governor_to_preset_index);
                 // Desktop panels must share a row; wrapping can push the entire right panel below the tall left column.
                 ui.allocate_ui_with_layout(egui::vec2(total_w, 0.0), panel_layout, |ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
@@ -16558,104 +16550,7 @@ impl LauncherApp {
                         }
                         ui.add_space(8.0);
 
-                        // Card 2: THERMAL & POWER GOVERNOR PRESET
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 6.0;
-                                    ui.label(RichText::new(crate::lucide::GAUGE).size(12.0).color(accent));
-                                    ui.label(RichText::new("CPU GOVERNOR").size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        Frame::none()
-                                            .fill(accent_with_alpha(accent, 18))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 4.0;
-                                                    let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
-                                                    ui.painter().circle_filled(d_rect.center(), 2.5, accent);
-                                                    ui.label(RichText::new(format!("ACTIVE: {}", active_gov)).size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                                });
-                                            });
-                                    });
-                                });
-
-                                ui.add_space(8.0);
-
-                                // 3 Presets in row
-                                ui.columns(3, |cols| {
-                                    let quiet_desc = "Power-saving governor request".to_string();
-                                    let balanced_desc = "Balanced governor request".to_string();
-                                    let turbo_desc = "Performance governor request".to_string();
-
-                                    let presets: [(&str, String, &str, usize); 3] = [
-                                        ("Quiet / Eco", quiet_desc, "powersave", 0),
-                                        ("Balanced", balanced_desc, "schedutil", 1),
-                                        ("Performance", turbo_desc, "performance", 2),
-                                    ];
-                                    for (name, desc, gov_name, idx) in &presets {
-                                        let idx = *idx;
-                                        let is_sel = active_preset_idx == Some(idx);
-                                        let border = if is_sel { Stroke::new(1.2_f32, accent) } else { Stroke::NONE };
-                                        let bg = if is_sel { accent_with_alpha(accent, 18) } else { Color32::from_rgb(10, 15, 29) };
-
-                                        let frame_resp = Frame::none()
-                                            .fill(bg)
-                                            .stroke(border)
-                                            .rounding(Rounding::same(6.0))
-                                            .inner_margin(egui::Margin::symmetric(10.0, 10.0))
-                                            .show(&mut cols[idx], |ui| {
-                                                ui.set_width(ui.available_width());
-                                                ui.horizontal(|ui| {
-                                                    let title_col = if is_sel { Color32::from_rgb(241, 245, 249) } else { Color32::from_rgb(203, 213, 225) };
-                                                    ui.label(RichText::new(*name).size(11.0).strong().color(title_col));
-
-                                                    if is_sel {
-                                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                            Frame::none()
-                                                                 .fill(accent_with_alpha(accent, 30))
-                                                                 .rounding(Rounding::same(3.0))
-                                                                 .inner_margin(egui::Margin::symmetric(5.0, 1.5))
-                                                                 .show(ui, |ui| {
-                                                                     ui.label(RichText::new("ACTIVE").size(7.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                                                 });
-                                                        });
-                                                    }
-                                                });
-                                                ui.add_space(4.0);
-                                                ui.label(RichText::new(desc).size(8.5).monospace().color(if is_sel { Color32::from_rgb(148, 163, 184) } else { p.text_muted }));
-                                                ui.add_space(6.0);
-                                                Frame::none()
-                                                    .fill(Color32::from_rgb(14, 20, 36))
-                                                    .rounding(Rounding::same(4.0))
-                                                    .inner_margin(egui::Margin::symmetric(6.0, 3.0))
-                                                    .show(ui, |ui| {
-                                                        ui.horizontal(|ui| {
-                                                            ui.label(RichText::new("GOV:").size(8.0).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                                            ui.label(RichText::new(*gov_name).size(9.0).monospace().strong().color(if is_sel { Color32::from_rgb(241, 245, 249) } else { Color32::from_rgb(203, 213, 225) }));
-                                                        });
-                                                    });
-                                            });
-
-                                        if frame_resp.response.interact(egui::Sense::click()).clicked() {
-                                            let host = host_id.and_then(|hid| self.ssh_hosts.iter().find(|h| h.id == hid)).cloned();
-                                            if host_id.is_none() || host.is_some() {
-                                                self.power_status_msg = Some(("Applying CPU governor…".into(), false, Instant::now()));
-                                                self.queue_systemd_action(PendingSudoAction::SetCpuGovernor { idx }, host.as_ref(), None);
-                                            } else {
-                                                self.power_status_msg = Some(("Selected host is unavailable".into(), true, Instant::now()));
-                                            }
-                                        }
-                                    }
-
-                                });
-                            });
                     });
 
                     ui.add_space(gap);

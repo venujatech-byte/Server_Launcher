@@ -66,35 +66,13 @@ pub fn query_bluetooth_status() -> BluetoothSnapshot {
         .arg("show")
         .output();
 
-    match show_output {
-        Ok(out) if out.status.success() => {
-            snap.available = true;
-            let text = String::from_utf8_lossy(&out.stdout);
-            snap.controller = parse_controller_show(&text);
-        }
-        _ => {
-            // Check fallback via rfkill
-            if let Ok(rf_out) = Command::new("rfkill").args(["list", "bluetooth"]).output() {
-                if rf_out.status.success() {
-                    let rf_text = String::from_utf8_lossy(&rf_out.stdout);
-                    let soft_blocked = rf_text.contains("Soft blocked: yes");
-                    let hard_blocked = rf_text.contains("Hard blocked: yes");
-                    snap.available = true;
-                    snap.controller = Some(BluetoothController {
-                        mac: "00:00:00:00:00:00".to_string(),
-                        name: "Bluetooth Controller".to_string(),
-                        alias: "hci0".to_string(),
-                        powered: !soft_blocked && !hard_blocked,
-                        discoverable: false,
-                        pairable: true,
-                        discovering: false,
-                        manufacturer: "Generic".to_string(),
-                        version: "BlueZ".to_string(),
-                    });
-                }
-            }
+    if let Ok(out) = show_output {
+        if out.status.success() {
+            snap.controller = parse_controller_show(&String::from_utf8_lossy(&out.stdout));
+            snap.available = snap.controller.is_some();
         }
     }
+    if !snap.available { return snap; }
 
     // 2. Query known paired/connected devices via `bluetoothctl devices`
     if let Ok(devices_out) = Command::new("bluetoothctl").arg("devices").output() {
@@ -134,6 +112,7 @@ pub fn query_bluetooth_status() -> BluetoothSnapshot {
 fn parse_controller_show(output: &str) -> Option<BluetoothController> {
     let mut ctrl = BluetoothController::default();
     let mut found = false;
+    let mut powered_reported = false;
 
     for line in output.lines() {
         let line = line.trim();
@@ -148,6 +127,7 @@ fn parse_controller_show(output: &str) -> Option<BluetoothController> {
         } else if let Some(stripped) = line.strip_prefix("Alias: ") {
             ctrl.alias = stripped.trim().to_string();
         } else if let Some(stripped) = line.strip_prefix("Powered: ") {
+            powered_reported = matches!(stripped.trim(), "yes" | "no");
             ctrl.powered = stripped.trim() == "yes";
         } else if let Some(stripped) = line.strip_prefix("Discoverable: ") {
             ctrl.discoverable = stripped.trim() == "yes";
@@ -162,10 +142,21 @@ fn parse_controller_show(output: &str) -> Option<BluetoothController> {
         }
     }
 
-    if found {
+    if found && powered_reported {
         Some(ctrl)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod controller_tests {
+    #[test]
+    fn controller_must_report_its_power_state() {
+        assert!(super::parse_controller_show("No default controller available").is_none());
+        assert!(super::parse_controller_show("Controller AA:BB:CC:DD:EE:FF\nName: adapter").is_none());
+        let controller = super::parse_controller_show("Controller AA:BB:CC:DD:EE:FF\nPowered: no").unwrap();
+        assert!(!controller.powered);
     }
 }
 

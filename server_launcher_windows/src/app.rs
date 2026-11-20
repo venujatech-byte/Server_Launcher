@@ -614,10 +614,6 @@ pub struct LauncherApp {
     // Bluetooth Control State (matching Image 3)
     pub bt_radio_on: bool,
     pub bt_discoverable: bool,
-    pub bt_rssi_floor: f32,
-    pub bt_audio_profile: usize, // 0: A2DP Sink, 1: HFP/HSP
-    pub bt_codec: usize, // 0: LDAC, 1: aptX HD, 2: AAC-LC
-    pub bt_auto_switch: bool,
     pub bluetooth_snapshot: Arc<Mutex<crate::bluetooth::BluetoothSnapshot>>,
     pub bluetooth_in_flight: Arc<std::sync::atomic::AtomicBool>,
     pub bluetooth_scanning: Arc<std::sync::atomic::AtomicBool>,
@@ -1073,12 +1069,8 @@ impl LauncherApp {
             fan_mode: 0, // Silent
             fan_full_blast: false,
             fan_test_start: None,
-            bt_radio_on: true,
+            bt_radio_on: false,
             bt_discoverable: false,
-            bt_rssi_floor: -80.0,
-            bt_audio_profile: 0, // A2DP Sink
-            bt_codec: 0, // LDAC
-            bt_auto_switch: true,
             bluetooth_snapshot: Arc::new(Mutex::new(crate::bluetooth::BluetoothSnapshot::default())),
             bluetooth_in_flight: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             bluetooth_scanning: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -16926,10 +16918,12 @@ impl LauncherApp {
                             let right_card_w = 210.0_f32;
                             let is_narrow = avail_w < 680.0;
 
-                            let (status_text, status_col) = if self.bt_radio_on {
-                                ("ACTIVE LINK", accent)
+                            let (status_text, status_col) = if !bt_snap.available {
+                                ("UNAVAILABLE", p.text_muted)
+                            } else if self.bt_radio_on {
+                                ("RADIO ON", accent)
                             } else {
-                                ("RADIO DISABLED", Color32::from_rgb(148, 163, 184))
+                                ("RADIO OFF", p.text_muted)
                             };
 
                             if is_narrow {
@@ -16966,7 +16960,7 @@ impl LauncherApp {
                                             });
                                             ui.add_space(10.0);
                                             let mut power_toggle = self.bt_radio_on;
-                                            if render_custom_toggle_switch(ui, &mut power_toggle, accent) {
+                                            if ui.add_enabled_ui(bt_snap.available, |ui| render_custom_toggle_switch(ui, &mut power_toggle, accent)).inner {
                                                 self.bt_radio_on = power_toggle;
                                                 let snap_arc = Arc::clone(&self.bluetooth_snapshot);
                                                 let ctx_clone = ui.ctx().clone();
@@ -17016,7 +17010,7 @@ impl LauncherApp {
                                                     });
                                                     ui.add_space(10.0);
                                                     let mut power_toggle = self.bt_radio_on;
-                                                    if render_custom_toggle_switch(ui, &mut power_toggle, accent) {
+                                                    if ui.add_enabled_ui(bt_snap.available, |ui| render_custom_toggle_switch(ui, &mut power_toggle, accent)).inner {
                                                         self.bt_radio_on = power_toggle;
                                                         let snap_arc = Arc::clone(&self.bluetooth_snapshot);
                                                         let ctx_clone = ui.ctx().clone();
@@ -17039,7 +17033,7 @@ impl LauncherApp {
 
                             // Row 3: Subtitle spanning the full card width underneath (Never collides or overlaps)
                             ui.horizontal_wrapped(|ui| {
-                                ui.label(RichText::new("Dual-band 2.4 GHz transceiver with LE Audio & aptX Adaptive pipelines").size(10.0).color(Color32::from_rgb(148, 163, 184)));
+                                ui.label(RichText::new("Bluetooth controller and device status reported by BlueZ").size(10.0).color(Color32::from_rgb(148, 163, 184)));
                             });
 
                             ui.add_space(2.0);
@@ -17049,7 +17043,7 @@ impl LauncherApp {
                                 let ctrl_desc = if let Some(ref ctrl) = bt_snap.controller {
                                     format!("CONTROLLER: {} ({}) • BlueZ • MAC: {}", ctrl.name, ctrl.alias, ctrl.mac)
                                 } else {
-                                    "CONTROLLER: Intel Wireless Bluetooth Adapter (hci0) • BlueZ".to_string()
+                                    "CONTROLLER: unavailable".to_string()
                                 };
                                 ui.label(RichText::new(ctrl_desc).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                             });
@@ -17069,20 +17063,21 @@ impl LauncherApp {
                             // Scan / Pair button
                             let is_scanning = self.bluetooth_scanning.load(std::sync::atomic::Ordering::SeqCst);
                             let btn_label = if is_scanning { "Scanning Nearby..." } else { "+ Scan for Devices" };
-                            let (pair_rect, pair_resp) = ui.allocate_exact_size(egui::vec2(140.0, 28.0), egui::Sense::click());
-                            let pair_bg = if is_scanning {
+                            let can_scan = !is_scanning && bt_snap.available && self.bt_radio_on;
+                            let (pair_rect, pair_resp) = ui.allocate_exact_size(egui::vec2(140.0, 28.0), if can_scan { egui::Sense::click() } else { egui::Sense::hover() });
+                            let pair_bg = if !can_scan {
                                 accent_with_alpha(accent, 28)
                             } else if pair_resp.hovered() {
                                 Color32::from_rgb(14, 165, 233)
                             } else {
                                 accent
                             };
-                            let pair_text_col = if is_scanning { Color32::from_rgb(226, 232, 240) } else { Color32::from_rgb(10, 14, 22) };
+                            let pair_text_col = if !can_scan { p.text_muted } else { Color32::from_rgb(10, 14, 22) };
 
                             ui.painter().rect_filled(pair_rect, Rounding::same(6.0), pair_bg);
                             ui.painter().text(pair_rect.center(), egui::Align2::CENTER_CENTER, btn_label, egui::FontId::monospace(10.0), pair_text_col);
 
-                            if pair_resp.clicked() && !is_scanning {
+                            if pair_resp.clicked() && can_scan {
                                 crate::bluetooth::trigger_discovery_async(Arc::clone(&self.bluetooth_snapshot), Arc::clone(&self.bluetooth_scanning));
                             }
 
@@ -17093,7 +17088,7 @@ impl LauncherApp {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 ui.label(RichText::new("Discoverable to nearby devices").size(10.5).color(p.text_primary));
                                 let mut disc_toggle = self.bt_discoverable;
-                                if render_custom_toggle_switch(ui, &mut disc_toggle, accent) {
+                                if ui.add_enabled_ui(bt_snap.available && self.bt_radio_on, |ui| render_custom_toggle_switch(ui, &mut disc_toggle, accent)).inner {
                                     self.bt_discoverable = disc_toggle;
                                     let snap_arc = Arc::clone(&self.bluetooth_snapshot);
                                     let ctx_clone = ui.ctx().clone();
@@ -17123,18 +17118,7 @@ impl LauncherApp {
                                 }
                             }
 
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 8.0;
-                                    let slider_resp = ui.add(
-                                        egui::Slider::new(&mut self.bt_rssi_floor, -100.0..=-40.0)
-                                            .step_by(1.0)
-                                            .show_value(false)
-                                    );
-                                    let _ = slider_resp;
-                                    ui.label(RichText::new(format!("RSSI FLOOR > {:.0} dBm", self.bt_rssi_floor)).size(9.5).monospace().strong().color(Color32::from_rgb(203, 213, 225)));
-                                });
-                            });
+
                         });
                     });
 
@@ -17145,7 +17129,7 @@ impl LauncherApp {
                 let paired_count = bt_snap.get_paired_count();
 
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(format!("ACTIVE MATRIX • {} CONNECTED, {} PAIRED", connected_count, paired_count)).size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                    ui.label(RichText::new(if bt_snap.available { format!("{} CONNECTED, {} PAIRED", connected_count, paired_count) } else { "BLUETOOTH CONTROLLER UNAVAILABLE".to_string() }).size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                 });
                 ui.add_space(4.0);
 
@@ -17160,9 +17144,9 @@ impl LauncherApp {
                             ui.vertical_centered(|ui| {
                                 ui.label(RichText::new(crate::lucide::BLUETOOTH).size(28.0).color(accent));
                                 ui.add_space(4.0);
-                                ui.label(RichText::new("No Paired Bluetooth Devices Found").size(13.0).strong().color(p.text_primary));
+                                ui.label(RichText::new(if bt_snap.available { "No paired Bluetooth devices found" } else { "Bluetooth controller unavailable" }).size(13.0).strong().color(p.text_primary));
                                 ui.add_space(2.0);
-                                ui.label(RichText::new("Turn on Bluetooth and click '+ Scan for Devices' to pair headphones, pointer devices, or gamepads.").size(10.0).color(Color32::from_rgb(148, 163, 184)));
+                                ui.label(RichText::new(if bt_snap.available { "Turn on Bluetooth and scan for devices to pair." } else { "Check that Bluetooth and BlueZ are available, then refresh." }).size(10.0).color(Color32::from_rgb(148, 163, 184)));
                             });
                         });
                 } else {

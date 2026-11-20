@@ -35,7 +35,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use sysinfo::System;
-use chrono::Datelike;
 
 const MACHINE_RAIL_WIDTH: f32 = 52.0;
 const WORKSPACE_SIDEBAR_WIDTH: f32 = 380.0;
@@ -111,58 +110,6 @@ pub enum SensorsSubTab {
     Power,
     Bluetooth,
     Temperature,
-}
-
-/// Timeframe selection for Application Network Data Usage accumulator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum WifiAppPeriod {
-    Daily,
-    Monthly,
-    Yearly,
-    Custom,
-}
-
-impl Default for WifiAppPeriod {
-    fn default() -> Self {
-        Self::Monthly
-    }
-}
-
-impl WifiAppPeriod {
-    #[allow(dead_code)]
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::Daily => "Daily (24h)",
-            Self::Monthly => "Monthly (30d)",
-            Self::Yearly => "Yearly (365d)",
-            Self::Custom => "Custom Range",
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn short_label(&self) -> &'static str {
-        match self {
-            Self::Daily => "Daily",
-            Self::Monthly => "Monthly",
-            Self::Yearly => "Yearly",
-            Self::Custom => "Custom",
-        }
-    }
-
-
-}
-
-/// Aggregated application network usage record for Wi-Fi telemetry page.
-#[derive(Clone, Debug)]
-pub struct WifiAppNetItem {
-    pub name: String,
-    pub pids: Vec<u32>,
-    pub rx_bytes: u64,
-    pub tx_bytes: u64,
-    pub total_bytes: u64,
-    pub rate_bps: f64,
-    pub has_socket: bool,
-    pub socket_port: Option<String>,
 }
 
 /// A service operation retained for an authenticated retry on its original host.
@@ -627,33 +574,6 @@ pub struct LauncherApp {
     pub wifi_status_msg: Option<(String, bool, Instant)>,
     pub wifi_action_in_flight: Arc<std::sync::atomic::AtomicBool>,
     pub wifi_action_results: Arc<Mutex<VecDeque<(String, bool, bool)>>>,
-    pub wifi_app_search_query: String,
-    pub wifi_app_sort: String,
-    pub wifi_app_sort_desc: bool,
-    pub wifi_app_period: WifiAppPeriod,
-    pub wifi_custom_start_date: (i32, u32, u32),
-    pub wifi_custom_end_date: (i32, u32, u32),
-    pub wifi_date_picker_open: bool,
-    pub wifi_app_requested_update: bool,
-    pub wifi_app_force_refresh: bool,
-    pub wifi_last_update_time: Option<Instant>,
-    pub wifi_cached_raw_apps: Vec<WifiAppNetItem>,
-    pub wifi_cached_custom_dates: ((i32, u32, u32), (i32, u32, u32)),
-
-    // Cached telemetry for Wi-Fi Application Network Data Usage (prevents high CPU usage from running every frame)
-    pub wifi_cached_app_list: Arc<Vec<WifiAppNetItem>>,
-    pub wifi_cached_host_id: Option<String>,
-    pub wifi_cached_snap_timestamp: Option<Instant>,
-    pub wifi_cached_period: WifiAppPeriod,
-    pub wifi_cached_search: String,
-    pub wifi_cached_sort: String,
-    pub wifi_cached_sort_desc: bool,
-    pub wifi_cached_max_data: u64,
-    pub wifi_cached_total_data: u64,
-    pub wifi_cached_total_rx: u64,
-    pub wifi_cached_total_tx: u64,
-    pub wifi_cached_total_rate: f64,
-
     // Power Subsystem Status Toast
     pub power_status_msg: Option<(String, bool, Instant)>,
 
@@ -1083,37 +1003,6 @@ impl LauncherApp {
             wifi_status_msg: None,
             wifi_action_in_flight: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             wifi_action_results: Arc::new(Mutex::new(VecDeque::new())),
-            wifi_app_search_query: String::new(),
-            wifi_app_sort: "data".to_string(),
-            wifi_app_sort_desc: true,
-            wifi_app_period: WifiAppPeriod::Monthly,
-            wifi_custom_start_date: {
-                let today = chrono::Local::now().date_naive();
-                let start = today.checked_sub_signed(chrono::Duration::days(29)).unwrap_or(today);
-                (start.year(), start.month(), start.day())
-            },
-            wifi_custom_end_date: {
-                let today = chrono::Local::now().date_naive();
-                (today.year(), today.month(), today.day())
-            },
-            wifi_date_picker_open: false,
-            wifi_app_requested_update: false,
-            wifi_app_force_refresh: false,
-            wifi_last_update_time: None,
-            wifi_cached_raw_apps: Vec::new(),
-            wifi_cached_custom_dates: ((0, 0, 0), (0, 0, 0)),
-            wifi_cached_app_list: Arc::new(Vec::new()),
-            wifi_cached_host_id: None,
-            wifi_cached_snap_timestamp: None,
-            wifi_cached_period: WifiAppPeriod::Monthly,
-            wifi_cached_search: String::new(),
-            wifi_cached_sort: "data".to_string(),
-            wifi_cached_sort_desc: true,
-            wifi_cached_max_data: 1,
-            wifi_cached_total_data: 0,
-            wifi_cached_total_rx: 0,
-            wifi_cached_total_tx: 0,
-            wifi_cached_total_rate: 0.0,
             power_status_msg: None,
             sensors_cached_apps_groups: Vec::new(),
             sensors_cached_bg_groups: Vec::new(),
@@ -11007,12 +10896,9 @@ impl LauncherApp {
             } else {
                 if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
                     let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited)
-                        || self.sensors_subtab == SensorsSubTab::Ram
-                        || self.sensors_subtab == SensorsSubTab::DataUsage
-                        || self.wifi_app_force_refresh;
+                        || self.sensors_subtab == SensorsSubTab::Ram;
                     self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
                     self.last_sensors_refresh = Instant::now();
-                    self.wifi_app_force_refresh = false;
                 }
                 Arc::clone(&self.sensors_snapshot)
             };
@@ -11038,12 +10924,9 @@ impl LauncherApp {
                                         }
                                     } else {
                                         let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited)
-                                            || self.sensors_subtab == SensorsSubTab::Ram
-                        || self.sensors_subtab == SensorsSubTab::DataUsage
-                                            || self.wifi_app_force_refresh;
+                                            || self.sensors_subtab == SensorsSubTab::Ram;
                                         self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
                                         self.last_sensors_refresh = Instant::now();
-                                        self.wifi_app_force_refresh = false;
                                     }
                                 }
 
@@ -11115,20 +10998,9 @@ impl LauncherApp {
                                         self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
                                         self.last_sensors_refresh = Instant::now();
                                     }
-                                } else if tab == SensorsSubTab::DataUsage {
-                                    if self.selected_machine == "local" && (self.sensors_snapshot.top_apps.is_empty() || self.wifi_cached_raw_apps.is_empty()) {
-                                        self.wifi_app_force_refresh = true;
-                                        self.wifi_app_requested_update = true;
-                                        self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
-                                        self.last_sensors_refresh = Instant::now();
-                                        self.wifi_app_force_refresh = false;
-                                    } else if let Some(hid) = host_id {
-                                        if self.wifi_cached_raw_apps.is_empty() {
-                                            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                                self.trigger_remote_sensors_query(host);
-                                            }
-                                        }
-                                    }
+                                } else if tab == SensorsSubTab::DataUsage && host_id.is_none() && self.sensors_snapshot.networks.is_empty() {
+                                    self.trigger_local_sensors_query(false, Some(ui.ctx().clone()));
+                                    self.last_sensors_refresh = Instant::now();
                                 } else if tab == SensorsSubTab::Wifi {
                                     // Wi-Fi hardware interface view
                                 }
@@ -11168,12 +11040,9 @@ impl LauncherApp {
         } else {
             if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
                 let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited)
-                    || self.sensors_subtab == SensorsSubTab::Ram
-                        || self.sensors_subtab == SensorsSubTab::DataUsage
-                    || self.wifi_app_force_refresh;
+                    || self.sensors_subtab == SensorsSubTab::Ram;
                 self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
                 self.last_sensors_refresh = Instant::now();
-                self.wifi_app_force_refresh = false;
             }
             Arc::clone(&self.sensors_snapshot)
         };
@@ -11182,10 +11051,6 @@ impl LauncherApp {
         if self.current_sensors_host != cur_host_str {
             self.current_sensors_host = cur_host_str.clone();
             self.last_telemetry_sample = None;
-            self.wifi_cached_host_id = cur_host_str;
-            self.wifi_cached_raw_apps.clear();
-            self.wifi_cached_app_list = Arc::new(Vec::new());
-            self.wifi_cached_snap_timestamp = None;
             self.cpu_history.clear();
             self.cpu_peak_usage = 0.0;
             self.ram_history.clear();

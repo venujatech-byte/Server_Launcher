@@ -305,8 +305,7 @@ pub struct SystemSensorsCollector {
     prev_net_rx: HashMap<String, u64>,
     prev_net_tx: HashMap<String, u64>,
     prev_net_time: Instant,
-    prev_disk_read: HashMap<String, u64>,
-    prev_disk_write: HashMap<String, u64>,
+    prev_disk_stats: HashMap<String, (u64, u64)>,
     prev_disk_time: Instant,
     prev_proc_disk: HashMap<(u32, u64), (u64, u64)>,
     prev_proc_disk_time: Option<Instant>,
@@ -343,8 +342,7 @@ impl SystemSensorsCollector {
             prev_net_rx: HashMap::new(),
             prev_net_tx: HashMap::new(),
             prev_net_time: now,
-            prev_disk_read: HashMap::new(),
-            prev_disk_write: HashMap::new(),
+            prev_disk_stats: HashMap::new(),
             prev_disk_time: now,
             prev_proc_disk: HashMap::new(),
             prev_proc_disk_time: None,
@@ -417,6 +415,8 @@ impl SystemSensorsCollector {
         // 4. Storage / Disks
         let disk_elapsed_secs = self.prev_disk_time.elapsed().as_secs_f64().max(0.001);
         let current_diskstats = collect_proc_diskstats();
+        let disk_rates = disk_stat_rates(&self.prev_disk_stats, &current_diskstats, disk_elapsed_secs);
+        self.prev_disk_stats = current_diskstats.clone();
 
         let mut disks = Vec::new();
         let mut total_disk_read_rate_bps = 0.0;
@@ -433,7 +433,9 @@ impl SystemSensorsCollector {
             };
 
             let raw_name = d.name().to_string_lossy().to_string();
-            let clean_dev = raw_name.trim_start_matches("/dev/").to_string();
+            let clean_dev = fs::canonicalize(&raw_name).ok()
+                .and_then(|p| p.file_name().map(|name| name.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| raw_name.trim_start_matches("/dev/").to_string());
             let fs_type = d.file_system().to_string_lossy().to_string();
             let mount_point = d.mount_point().to_string_lossy().to_string();
 
@@ -462,29 +464,8 @@ impl SystemSensorsCollector {
                 continue;
             }
 
-            // Match diskstats
-            let (read_bytes, write_bytes) = current_diskstats
-                .get(&clean_dev)
-                .copied()
-                .or_else(|| {
-                    current_diskstats.iter().find_map(|(k, v)| {
-                        if clean_dev.starts_with(k) || k.starts_with(&clean_dev) {
-                            Some(*v)
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .unwrap_or((0, 0));
-
-            let prev_read = *self.prev_disk_read.get(&clean_dev).unwrap_or(&read_bytes);
-            let prev_write = *self.prev_disk_write.get(&clean_dev).unwrap_or(&write_bytes);
-
-            let read_rate = (read_bytes.saturating_sub(prev_read) as f64) / disk_elapsed_secs;
-            let write_rate = (write_bytes.saturating_sub(prev_write) as f64) / disk_elapsed_secs;
-
-            self.prev_disk_read.insert(clean_dev.clone(), read_bytes);
-            self.prev_disk_write.insert(clean_dev.clone(), write_bytes);
+            let (read_bytes, write_bytes) = current_diskstats.get(&clean_dev).copied().unwrap_or_default();
+            let (read_rate, write_rate) = disk_rates.get(&clean_dev).copied().unwrap_or_default();
 
             disks.push(DiskInfo {
                 name: raw_name,
@@ -504,89 +485,26 @@ impl SystemSensorsCollector {
         disks.sort_by(|a, b| a.mount_point.cmp(&b.mount_point));
 
         let mut physical_disks = self.cached_physical_disks.clone();
-        if physical_disks.is_empty() && !disks.is_empty() {
-            let mut seen_names = std::collections::HashSet::new();
-            for d in &disks {
-                let clean_name = d.name.trim_start_matches("/dev/").to_string();
-                if seen_names.insert(clean_name.clone()) {
-                    let is_ssd = !clean_name.starts_with("hd");
-                    let model = if !d.fs_type.is_empty() {
-                        format!("{} Storage ({})", d.fs_type.to_uppercase(), d.mount_point)
-                    } else {
-                        format!("Storage Volume ({})", d.mount_point)
-                    };
-                    physical_disks.push(PhysicalDiskInfo {
-                        name: clean_name.clone(),
-                        model,
-                        bus_interface: String::new(),
-                        smart_status: String::new(),
-                        discard_supported: None,
-                        total_bytes: d.total_bytes,
-                        is_ssd,
-                        partition_count: 1,
-                        partitions: vec![DiskPartitionInfo {
-                            name: clean_name,
-                            size_bytes: d.total_bytes,
-                            partition_num: 1,
-                        }],
-                        read_rate_bps: d.read_rate_bps,
-                        write_rate_bps: d.write_rate_bps,
-                    });
-                }
-            }
-        }
-
-        // Calculate total physical disk read/write throughput rates across base devices
+        // Physical and mounted views share the rates computed above, without consuming baselines.
         let mut base_matched = false;
-        for (dev, &(r_bytes, w_bytes)) in &current_diskstats {
-            if is_base_physical_disk(dev) {
-                base_matched = true;
-                let prev_r = *self.prev_disk_read.get(dev).unwrap_or(&r_bytes);
-                let prev_w = *self.prev_disk_write.get(dev).unwrap_or(&w_bytes);
-                let dev_read_rate = (r_bytes.saturating_sub(prev_r) as f64) / disk_elapsed_secs;
-                let dev_write_rate = (w_bytes.saturating_sub(prev_w) as f64) / disk_elapsed_secs;
-                total_disk_read_rate_bps += dev_read_rate;
-                total_disk_write_rate_bps += dev_write_rate;
-                self.prev_disk_read.insert(dev.clone(), r_bytes);
-                self.prev_disk_write.insert(dev.clone(), w_bytes);
-
-                // Assign to matching physical disk
-                if let Some(p_disk) = physical_disks.iter_mut().find(|p| p.name == *dev) {
-                    p_disk.read_rate_bps = dev_read_rate;
-                    p_disk.write_rate_bps = dev_write_rate;
-                }
-            }
-        }
-
-        // Secondary check: for any physical disk with 0 rates, check partition stats and mounted filesystem mappings
         for p_disk in &mut physical_disks {
-            if p_disk.read_rate_bps == 0.0 && p_disk.write_rate_bps == 0.0 {
-                let mut sum_r = 0.0;
-                let mut sum_w = 0.0;
-                for (part_dev, &(pr, pw)) in &current_diskstats {
-                    if part_dev != &p_disk.name && part_dev.starts_with(&p_disk.name) {
-                        let prev_r = *self.prev_disk_read.get(part_dev).unwrap_or(&pr);
-                        let prev_w = *self.prev_disk_write.get(part_dev).unwrap_or(&pw);
-                        sum_r += (pr.saturating_sub(prev_r) as f64) / disk_elapsed_secs;
-                        sum_w += (pw.saturating_sub(prev_w) as f64) / disk_elapsed_secs;
-                        self.prev_disk_read.insert(part_dev.clone(), pr);
-                        self.prev_disk_write.insert(part_dev.clone(), pw);
-                    }
-                }
-                if sum_r > 0.0 || sum_w > 0.0 {
-                    p_disk.read_rate_bps = sum_r;
-                    p_disk.write_rate_bps = sum_w;
-                } else if let Some(m) = disks.iter().find(|d| d.name.contains(&p_disk.name) || p_disk.name.contains(d.name.trim_start_matches("/dev/"))) {
-                    p_disk.read_rate_bps = m.read_rate_bps;
-                    p_disk.write_rate_bps = m.write_rate_bps;
-                }
+            if let Some(&(read, write)) = disk_rates.get(&p_disk.name) {
+                base_matched = true;
+                p_disk.read_rate_bps = read;
+                p_disk.write_rate_bps = write;
+                total_disk_read_rate_bps += read;
+                total_disk_write_rate_bps += write;
             }
         }
 
         if !base_matched {
+            let mut seen = std::collections::HashSet::new();
             for d in &disks {
-                total_disk_read_rate_bps += d.read_rate_bps;
-                total_disk_write_rate_bps += d.write_rate_bps;
+                let device = fs::canonicalize(&d.name).unwrap_or_else(|_| std::path::PathBuf::from(&d.name));
+                if seen.insert(device) {
+                    total_disk_read_rate_bps += d.read_rate_bps;
+                    total_disk_write_rate_bps += d.write_rate_bps;
+                }
             }
         }
         self.prev_disk_time = now;
@@ -902,6 +820,28 @@ impl SystemSensorsCollector {
             hardware_access_error: None,
             timestamp: Some(now),
         }
+    }
+}
+
+fn disk_stat_rates(previous: &HashMap<String, (u64, u64)>, current: &HashMap<String, (u64, u64)>, elapsed: f64) -> HashMap<String, (f64, f64)> {
+    current.iter().map(|(device, &totals)| {
+        (device.clone(), process_disk_rates(previous.get(device).copied(), totals, elapsed))
+    }).collect()
+}
+
+#[cfg(test)]
+mod disk_stat_rate_tests {
+    use std::collections::HashMap;
+
+    #[test]
+    fn rates_keep_distinct_device_baselines_and_handle_new_devices() {
+        let previous = HashMap::from([("sda".into(), (100, 200)), ("sda1".into(), (50, 80)), ("sdaa".into(), (1, 1))]);
+        let current = HashMap::from([("sda".into(), (300, 400)), ("sda1".into(), (150, 180)), ("sdaa".into(), (21, 11)), ("sdb".into(), (900, 900))]);
+        let rates = super::disk_stat_rates(&previous, &current, 2.0);
+        assert_eq!(rates["sda"], (100.0, 100.0));
+        assert_eq!(rates["sda1"], (50.0, 50.0));
+        assert_eq!(rates["sdaa"], (10.0, 5.0));
+        assert_eq!(rates["sdb"], (0.0, 0.0));
     }
 }
 

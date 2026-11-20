@@ -3442,7 +3442,8 @@ mod tests {
             "memory":[{"size":"8192 MB","kind":"DDR4","speed":"2400 MT/s","locator":"DIMM A"}]
         }));
         assert_eq!(snapshot.cpu_power_watts, Some(3.25));
-        assert_eq!(snapshot.gpus[0].load_pct, Some(12.5));
+        assert_eq!(snapshot.gpus[0].load_pct, None);
+        assert!(snapshot.gpus[0].engine_loads.iter().any(|(name, load)| name == "Render/3D" && *load == 12.5));
         assert_eq!(snapshot.gpus[1].load_pct, None);
         assert_eq!(snapshot.gpus[0].mem_used_mb, None);
         let memory = snapshot.memory_hw.unwrap();
@@ -3957,7 +3958,6 @@ fn apply_protected_hardware(snapshot: &mut SystemSensorsSnapshot, data: &serde_j
             if let Some(gpu) = snapshot.gpus.iter_mut().find(|gpu| !gpu.device_path.is_empty() && gpu.device_path == device) {
                 gpu.engine_loads = reading["engines"].as_object().map(|engines| engines.iter().filter_map(|(name, value)|
                     reported(value).filter(|value| *value <= 100.0).map(|value| (name.clone(), value))).collect()).unwrap_or_default();
-                if let Some(load) = gpu.engine_loads.iter().map(|(_, load)| *load).reduce(f32::max) { gpu.load_pct = Some(load); }
                 if let Some(watts) = reported(&reading["watts"]) { gpu.power_watts = Some(watts); }
             }
         }

@@ -5305,6 +5305,29 @@ mod memory_quantity_tests {
     }
 }
 
+fn gpu_display_load(gpu: Option<&crate::sensors::GpuSensorInfo>) -> (Option<f32>, bool) {
+    let Some(gpu) = gpu else { return (None, false); };
+    if let Some(load) = gpu.load_pct.filter(|value| value.is_finite() && (0.0..=100.0).contains(value)) {
+        return (Some(load), false);
+    }
+    let busiest = gpu.engine_loads.iter().map(|(_, load)| *load)
+        .filter(|load| load.is_finite() && (0.0..=100.0).contains(load)).reduce(f32::max);
+    (busiest, busiest.is_some())
+}
+
+#[cfg(test)]
+mod gpu_display_tests {
+    #[test]
+    fn distinguishes_overall_load_from_busiest_engine() {
+        let mut gpu = crate::sensors::GpuSensorInfo::default();
+        assert_eq!(super::gpu_display_load(Some(&gpu)), (None, false));
+        gpu.engine_loads = vec![("Render".into(), 12.5), ("Copy".into(), 30.0)];
+        assert_eq!(super::gpu_display_load(Some(&gpu)), (Some(30.0), true));
+        gpu.load_pct = Some(21.0);
+        assert_eq!(super::gpu_display_load(Some(&gpu)), (Some(21.0), false));
+    }
+}
+
 fn mounted_storage_totals(disks: &[crate::sensors::DiskInfo]) -> (u64, u64, u64) {
     let mut seen_devices = std::collections::HashSet::new();
     disks.iter().filter(|disk| !disk.name.starts_with("/dev/") || seen_devices.insert(disk.name.as_str()))
@@ -12518,37 +12541,39 @@ impl LauncherApp {
                 let clock_val = gpu.and_then(|g| g.clock_mhz).unwrap_or(0);
                 let max_clk = clock_val.max(1);
                 let metric_key = format!("{}:{}", gpu.map(|gpu| gpu.device_path.as_str()).unwrap_or(""), self.selected_gpu_idx);
-                let gpu_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:load"), snap.timestamp, gpu.and_then(|gpu| gpu.load_pct));
+                let (display_load, is_engine_peak) = gpu_display_load(gpu);
+                let load_key = if is_engine_peak { "busiest_engine" } else { "load" };
+                let gpu_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:{load_key}"), snap.timestamp, display_load);
                 let render_load = gpu.and_then(|gpu| gpu.engine_loads.iter().filter(|(name, _)| name.to_lowercase().contains("render") || name.contains("3D")).map(|(_, load)| *load).reduce(f32::max));
                 let gpu_3d_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:render"), snap.timestamp, render_load);
                 let gpu_clock_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:clock"), snap.timestamp, gpu.and_then(|gpu| gpu.clock_mhz).map(|value| value as f32));
                 let gpu_vram_slice: Vec<f32> = Vec::new();
-                let (vram_val, vram_sub, vram_peak, vram_pwr, has_dedicated, total_vram_mb, used_vram_mb) =
+                let (vram_val, vram_sub, vram_peak, vram_pwr, total_vram_mb, used_vram_mb) =
                     if let Some((used, total)) = gpu.and_then(|g| g.mem_used_mb.zip(g.mem_total_mb)).filter(|(_, total)| *total > 0) {
                         let pct = used as f64 / total.max(1) as f64 * 100.0;
                         (format!("{:.1}", used as f64 / 1024.0), format!("/ {:.1} GB", total as f64 / 1024.0),
-                         format!("USED {:.0}%", pct), gpu.and_then(|g| g.power_watts).map(|w| format!("POWER {:.1}W", w)).unwrap_or_else(|| "Power unavailable".to_string()), true, total, used)
+                         format!("USED {:.0}%", pct), gpu.and_then(|g| g.power_watts).map(|w| format!("POWER {:.1}W", w)).unwrap_or_else(|| "Power unavailable".to_string()), total, used)
                     } else {
-                        ("—".to_string(), String::new(), "Unavailable from this collector".to_string(), String::new(), false, 0, 0)
+                        ("—".to_string(), String::new(), "Unavailable from this collector".to_string(), String::new(), 0, 0)
                     };
 
                 sensor_card_columns(ui, 4, |ui, column| match column {
                     0 => {
                     // Card 1: GPU CORE LOAD
                     let mode_lbl = "";
-                    let compute_array_lbl = "Reported GPU utilization";
+                    let compute_array_lbl = if is_engine_peak { "Busiest engine; overall GPU load unavailable" } else { "Reported GPU utilization" };
                     render_big_stat_card(
                         ui,
                         crate::lucide::GAUGE,
-                        "GPU CORE LOAD",
-                        &gpu.and_then(|g| g.load_pct).map(|v| format!("{:.1}", v)).unwrap_or_else(|| "—".to_string()),
+                        if is_engine_peak { "BUSIEST GPU ENGINE" } else { "GPU CORE LOAD" },
+                        &reported_sensor_value(display_load, 1),
                         "%",
                         compute_array_lbl,
                         mode_lbl,
                         "",
                         &gpu_slice,
                         100.0,
-                        gpu.and_then(|g| g.load_pct).map(|v| v / 100.0),
+                        display_load.map(|value| value / 100.0),
                         accent,
                         p.bg_card,
                         p.text_muted,
@@ -12736,13 +12761,13 @@ impl LauncherApp {
                                             ui.spacing_mut().item_spacing.x = 4.0;
                                             let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.5, 6.5), egui::Sense::hover());
                                             ui.painter().rect_filled(d_rect, Rounding::same(1.5), Color32::from_rgb(96, 165, 250));
-                                            ui.label(RichText::new(format!("Dynamic: {} MB", used_vram_mb)).size(9.0).monospace().color(p.text_muted));
+                                            ui.label(RichText::new(format!("Used: {} MB", used_vram_mb)).size(9.0).monospace().color(p.text_muted));
                                         });
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 4.0;
                                             let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.5, 6.5), egui::Sense::hover());
                                             ui.painter().rect_filled(d_rect, Rounding::same(1.5), accent);
-                                            ui.label(RichText::new(format!("VRAM: {} MB", ded_mb_val)).size(9.0).monospace().color(p.text_muted));
+                                            ui.label(RichText::new(format!("Total: {} MB", ded_mb_val)).size(9.0).monospace().color(p.text_muted));
                                         });
                                     }
                                 });
@@ -12777,7 +12802,7 @@ impl LauncherApp {
                                 ui.add_space(2.0);
                                 if total_vram_mb > 0 {
                                     ui.label(RichText::new(format!("{} MB", total_vram_mb)).size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                    ui.label(RichText::new(if has_dedicated { "GPU memory capacity" } else { "Shared system memory" }).size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new("GPU memory capacity").size(8.5).monospace().color(p.text_muted));
                                 } else {
                                     ui.label(RichText::new("—").size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                     ui.label(RichText::new("Unavailable").size(8.5).monospace().color(p.text_muted));
@@ -12793,7 +12818,7 @@ impl LauncherApp {
                                 ui.add_space(2.0);
                                 if total_vram_mb > 0 {
                                     ui.label(RichText::new(format!("{:.1} MB / {:.1} GB", used_vram_mb as f64, total_vram_mb as f64 / 1024.0)).size(14.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                    ui.label(RichText::new(if has_dedicated { "Reported GPU memory" } else { "System-wide memory use" }).size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new("Reported GPU memory").size(8.5).monospace().color(p.text_muted));
                                 } else {
                                     ui.label(RichText::new("—").size(14.0).strong().color(p.text_primary));
                                     ui.label(RichText::new("Unavailable").size(8.5).monospace().color(p.text_muted));
@@ -12860,7 +12885,7 @@ impl LauncherApp {
                                                 } else if is_remote && gpu.is_none() {
                                                     "Not reported".to_string()
                                                 } else {
-                                                    "No Display".to_string()
+                                                    "Not reported".to_string()
                                                 };
                                                 ui.label(RichText::new(disp_badge).size(9.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                             });
@@ -12881,11 +12906,11 @@ impl LauncherApp {
                                     ui.label(RichText::new(&d.bit_depth).size(10.0).monospace().color(p.text_muted));
                                 });
                             } else {
-                                ui.label(RichText::new("No Display").size(24.0).strong().color(p.text_primary));
+                                ui.label(RichText::new("Display unavailable").size(24.0).strong().color(p.text_primary));
                                 ui.add_space(2.0);
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 6.0;
-                                    ui.label(RichText::new("Headless").size(10.0).monospace().color(p.text_muted));
+                                    ui.label(RichText::new("Display details not reported").size(10.0).monospace().color(p.text_muted));
                                 });
                             }
 

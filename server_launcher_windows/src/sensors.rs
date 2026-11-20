@@ -522,28 +522,16 @@ impl SystemSensorsCollector {
 
         // 5. Networks
         let mut networks = Vec::new();
-        let mut total_rx_rate_bps = 0.0;
-        let mut total_tx_rate_bps = 0.0;
-        let mut total_rx_bytes = 0;
-        let mut total_tx_bytes = 0;
 
         for (name, net) in &self.networks {
             let rx = net.total_received();
             let tx = net.total_transmitted();
-            total_rx_bytes += rx;
-            total_tx_bytes += tx;
 
             let prev_rx = *self.prev_net_rx.get(name).unwrap_or(&rx);
             let prev_tx = *self.prev_net_tx.get(name).unwrap_or(&tx);
 
             let rx_rate = (rx.saturating_sub(prev_rx) as f64) / elapsed_secs;
             let tx_rate = (tx.saturating_sub(prev_tx) as f64) / elapsed_secs;
-
-            // Only track non-loopback or active interfaces in summary rate
-            if !name.starts_with("lo") {
-                total_rx_rate_bps += rx_rate;
-                total_tx_rate_bps += tx_rate;
-            }
 
             self.prev_net_rx.insert(name.clone(), rx);
             self.prev_net_tx.insert(name.clone(), tx);
@@ -553,7 +541,6 @@ impl SystemSensorsCollector {
                 {
                     Path::new(&format!("/sys/class/net/{}/wireless", name)).exists()
                         || Path::new(&format!("/sys/class/net/{}/phy80211", name)).exists()
-                        || name.starts_with("wl")
                 }
                 #[cfg(not(target_os = "linux"))]
                 false
@@ -569,6 +556,7 @@ impl SystemSensorsCollector {
             });
         }
         networks.sort_by(|a, b| a.name.cmp(&b.name));
+        let (total_rx_bytes, total_tx_bytes, total_rx_rate_bps, total_tx_rate_bps) = network_totals(&networks);
         self.prev_net_time = now;
 
         // 6. Temperature Sensors (sysinfo + hwmon / thermal fallback)
@@ -868,6 +856,27 @@ mod cpu_core_reading_tests {
         assert!(super::parse_cpu_core_usages(&serde_json::Value::Null).is_empty());
         assert!(super::parse_cpu_core_usages(&serde_json::json!([])).is_empty());
         assert_eq!(super::parse_cpu_core_usages(&serde_json::json!([0.0, 42.5, 150.0])), vec![0.0, 42.5]);
+    }
+}
+
+fn network_totals(networks: &[NetInterfaceInfo]) -> (u64, u64, f64, f64) {
+    networks.iter().fold((0_u64, 0_u64, 0.0, 0.0), |(rx, tx, rx_rate, tx_rate), net| (
+        rx.saturating_add(net.rx_bytes), tx.saturating_add(net.tx_bytes),
+        rx_rate + net.rx_rate_bps, tx_rate + net.tx_rate_bps,
+    ))
+}
+
+#[cfg(test)]
+mod network_total_tests {
+    use super::NetInterfaceInfo;
+    #[test]
+    fn counters_and_rates_include_the_same_interfaces() {
+        let networks = vec![
+            NetInterfaceInfo { name: "wlan0".into(), rx_bytes: 100, tx_bytes: 200, rx_rate_bps: 10.0, tx_rate_bps: 20.0, ..Default::default() },
+            NetInterfaceInfo { name: "lo".into(), rx_bytes: 30, tx_bytes: 30, rx_rate_bps: 3.0, tx_rate_bps: 3.0, ..Default::default() },
+            NetInterfaceInfo { name: "vpn0".into(), rx_bytes: 20, tx_bytes: 10, rx_rate_bps: 2.0, tx_rate_bps: 1.0, ..Default::default() },
+        ];
+        assert_eq!(super::network_totals(&networks), (150, 240, 15.0, 24.0));
     }
 }
 
@@ -2656,15 +2665,12 @@ networks = []
 total_rx_rate = 0.0
 total_tx_rate = 0.0
 for ifname, (rx2, tx2) in n2.items():
-    if ifname == "lo":
-        continue
     rx1, tx1 = n1.get(ifname, (rx2, tx2))
     rx_rate = max(0.0, (rx2 - rx1) / t_disk_elapsed)
     tx_rate = max(0.0, (tx2 - tx1) / t_disk_elapsed)
-    if not (ifname.startswith("docker") or ifname.startswith("veth") or ifname.startswith("br-")):
-        total_rx_rate += rx_rate
-        total_tx_rate += tx_rate
-    is_wl = os.path.exists("/sys/class/net/" + ifname + "/wireless") or os.path.exists("/sys/class/net/" + ifname + "/phy80211") or ifname.startswith(("wl", "wifi"))
+    total_rx_rate += rx_rate
+    total_tx_rate += tx_rate
+    is_wl = os.path.exists("/sys/class/net/" + ifname + "/wireless") or os.path.exists("/sys/class/net/" + ifname + "/phy80211")
     networks.append({
         "name": ifname,
         "rx_bytes": rx2,
@@ -3219,12 +3225,7 @@ print(json.dumps(data))
         }
     }
 
-    let total_rx_rate_bps = parsed["total_rx_rate"].as_f64().unwrap_or(0.0);
-    let total_tx_rate_bps = parsed["total_tx_rate"].as_f64().unwrap_or(0.0);
-
     let mut networks = Vec::new();
-    let mut total_rx_bytes = 0u64;
-    let mut total_tx_bytes = 0u64;
     if let Some(arr) = parsed["networks"].as_array() {
         for n in arr {
             let name = n["name"].as_str().unwrap_or("").to_string();
@@ -3232,8 +3233,6 @@ print(json.dumps(data))
             let tx = n["tx_bytes"].as_u64().unwrap_or(0);
             let rx_rate = n["rx_rate"].as_f64().unwrap_or(0.0);
             let tx_rate = n["tx_rate"].as_f64().unwrap_or(0.0);
-            total_rx_bytes += rx;
-            total_tx_bytes += tx;
             let is_wireless = n["is_wireless"].as_bool().unwrap_or(false);
             networks.push(NetInterfaceInfo {
                 name,
@@ -3245,6 +3244,8 @@ print(json.dumps(data))
             });
         }
     }
+
+    let (total_rx_bytes, total_tx_bytes, total_rx_rate_bps, total_tx_rate_bps) = network_totals(&networks);
 
     let mut top_apps = Vec::new();
     if let Some(arr) = parsed.get("top_apps").and_then(|v| v.as_array()) {
@@ -3656,16 +3657,13 @@ impl SystemSensorsCollector {
             let prev_tx = self.prev_net_tx.insert(name.clone(), tx).unwrap_or(tx);
             let rx_rate = rx.saturating_sub(prev_rx) as f64 / elapsed;
             let tx_rate = tx.saturating_sub(prev_tx) as f64 / elapsed;
-            snap.total_rx_bytes += rx;
-            snap.total_tx_bytes += tx;
-            snap.total_rx_rate_bps += rx_rate;
-            snap.total_tx_rate_bps += tx_rate;
             snap.networks.push(NetInterfaceInfo {
                 name: name.clone(), rx_bytes: rx, tx_bytes: tx,
                 rx_rate_bps: rx_rate, tx_rate_bps: tx_rate,
                 is_wireless: name.to_ascii_lowercase().contains("wi-fi"),
             });
         }
+        (snap.total_rx_bytes, snap.total_tx_bytes, snap.total_rx_rate_bps, snap.total_tx_rate_bps) = network_totals(&snap.networks);
         self.prev_net_time = now;
         if include_top_apps {
             self.sys.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All,

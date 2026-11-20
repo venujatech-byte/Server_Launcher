@@ -522,6 +522,7 @@ pub struct LauncherApp {
     #[allow(dead_code)]
     pub sensors_top_apps_normalize_cpu: bool,
     pub sensors_top_apps_status_msg: Option<(String, bool, Instant)>,
+    pub remote_process_results: Arc<Mutex<VecDeque<(String, bool)>>>,
     pub ram_status_msg: Option<(String, bool, Instant)>,
     pub sensors_subtab: SensorsSubTab,
     pub sensors_top_apps_visited: bool,
@@ -959,6 +960,7 @@ impl LauncherApp {
             sensors_top_apps_selected_pid: None,
             sensors_top_apps_normalize_cpu: true,
             sensors_top_apps_status_msg: None,
+            remote_process_results: Arc::new(Mutex::new(VecDeque::new())),
             ram_status_msg: None,
             sensors_subtab: SensorsSubTab::Overview,
             sensors_top_apps_visited: false,
@@ -16818,7 +16820,7 @@ impl LauncherApp {
 
 
 
-    fn execute_proc_signal(&mut self, pid: u32, sig: &str, action_desc: &str, host_id: Option<&str>) {
+    fn execute_proc_signal(&mut self, pid: u32, sig: &str, action_desc: &str, host_id: Option<&str>, ctx: &egui::Context) {
         if let Some(hid) = host_id {
             if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
                 let host_name = host.name.clone();
@@ -16827,9 +16829,18 @@ impl LauncherApp {
                 let snapshots_arc = self.remote_sensors_snapshots.clone();
                 let last_fetch_arc = self.remote_sensors_last_fetch.clone();
                 let errors_arc = self.remote_sensors_errors.clone();
+                let results = self.remote_process_results.clone();
+                let ctx = ctx.clone();
 
+                self.sensors_top_apps_status_msg = Some((format!("Sending signal to PID {} on {}…", pid, host_name), false, Instant::now()));
                 std::thread::spawn(move || {
-                    let _ = crate::procmgr::send_remote_signal(&host, pid, &sig_str);
+                    let result = crate::procmgr::send_remote_signal(&host, pid, &sig_str);
+                    let message = match result {
+                        Ok(()) => (format!("Sent SIG{} to remote process PID {} on {}", sig_str, pid, host_name), false),
+                        Err(error) => (format!("Failed to signal PID {} on {}: {}", pid, host_name, if error.trim().is_empty() { "remote command failed" } else { error.trim() }), true),
+                    };
+                    results.lock().unwrap().push_back(message);
+                    ctx.request_repaint();
                     std::thread::sleep(std::time::Duration::from_millis(400));
                     if let Ok(snap) = crate::sensors::query_remote_sensors(&host) {
                         snapshots_arc.lock().unwrap().insert(hid_clone.clone(), Arc::new(snap));
@@ -16837,7 +16848,6 @@ impl LauncherApp {
                         errors_arc.lock().unwrap().remove(&hid_clone);
                     }
                 });
-                self.sensors_top_apps_status_msg = Some((format!("{} remote process PID {} on {} (sudo)", action_desc, pid, host_name), false, Instant::now()));
             }
         } else {
             match crate::procmgr::send_local_signal(pid, sig) {
@@ -16857,6 +16867,9 @@ impl LauncherApp {
     }
 
     fn render_sensors_top_apps_tab(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
+        if let Some((message, is_error)) = self.remote_process_results.lock().unwrap().pop_front() {
+            self.sensors_top_apps_status_msg = Some((message, is_error, Instant::now()));
+        }
         let p = self.palette();
         let accent = self.sensors_accent_color(&p);
 
@@ -18125,16 +18138,16 @@ impl LauncherApp {
                     }
                 }
                 ProcAction::Stop { pid } => {
-                    self.execute_proc_signal(pid, "STOP", "Paused (SIGSTOP)", host_id);
+                    self.execute_proc_signal(pid, "STOP", "Paused (SIGSTOP)", host_id, ui.ctx());
                 }
                 ProcAction::Resume { pid } => {
-                    self.execute_proc_signal(pid, "CONT", "Resumed (SIGCONT)", host_id);
+                    self.execute_proc_signal(pid, "CONT", "Resumed (SIGCONT)", host_id, ui.ctx());
                 }
                 ProcAction::Terminate { pid } => {
-                    self.execute_proc_signal(pid, "TERM", "Terminated (SIGTERM)", host_id);
+                    self.execute_proc_signal(pid, "TERM", "Terminated (SIGTERM)", host_id, ui.ctx());
                 }
                 ProcAction::ForceStop { pid } => {
-                    self.execute_proc_signal(pid, "KILL", "Force stopped (SIGKILL)", host_id);
+                    self.execute_proc_signal(pid, "KILL", "Force stopped (SIGKILL)", host_id, ui.ctx());
                 }
             }
         }

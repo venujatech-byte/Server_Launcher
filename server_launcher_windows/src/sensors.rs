@@ -695,10 +695,6 @@ impl SystemSensorsCollector {
                     .then_with(|| (b.net_rx_bytes + b.net_tx_bytes).cmp(&(a.net_rx_bytes + a.net_tx_bytes)))
                     .then_with(|| b.memory_bytes.cmp(&a.memory_bytes))
             };
-            if top_apps.len() > 250 {
-                top_apps.select_nth_unstable_by(250, compare_apps);
-            }
-            top_apps.truncate(250);
             top_apps.sort_unstable_by(compare_apps);
         }
 
@@ -2282,7 +2278,7 @@ d1 = read_disk_stats()
 n1 = read_net_dev()
 init_pids = []
 try:
-    for line in os.popen("ps -eo pid --sort=-pcpu 2>/dev/null").read().strip().split("\n")[1:81]:
+    for line in os.popen("ps -eo pid --sort=-pcpu 2>/dev/null").read().strip().split("\n")[1:]:
         p = line.strip()
         if p.isdigit():
             init_pids.append(int(p))
@@ -2786,7 +2782,7 @@ except:
 
 top_apps = []
 try:
-    for line in os.popen("ps -eo pid,pcpu,pmem,rss,comm --sort=-pcpu 2>/dev/null").read().strip().split("\n")[1:81]:
+    for line in os.popen("ps -eo pid,pcpu,pmem,rss,comm --sort=-pcpu 2>/dev/null").read().strip().split("\n")[1:]:
         p = line.split()
         if len(p) >= 5:
             try:
@@ -3652,7 +3648,6 @@ impl SystemSensorsCollector {
             self.prev_proc_disk = current_proc_disk;
             self.prev_proc_disk_time = Some(proc_disk_now);
             snap.top_apps.sort_unstable_by(|a,b| b.cpu_usage.total_cmp(&a.cpu_usage).then(b.memory_bytes.cmp(&a.memory_bytes)));
-            snap.top_apps.truncate(250);
         }
         snap.os_name = System::name().unwrap_or_else(|| "Windows".into());
         snap.os_version = System::os_version().unwrap_or_default();

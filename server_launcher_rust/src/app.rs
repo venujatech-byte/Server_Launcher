@@ -276,6 +276,23 @@ pub struct ProcessGroupSummary {
     pub children: Vec<crate::sensors::ProcessSensorInfo>,
 }
 
+fn filtered_processes<'a>(apps: &'a [crate::sensors::ProcessSensorInfo], query: &str) -> Vec<&'a crate::sensors::ProcessSensorInfo> {
+    apps.iter().filter(|app| query.is_empty() || app.name.to_lowercase().contains(query)
+        || app.pid.to_string().contains(query) || app.status.to_lowercase().contains(query)).collect()
+}
+
+#[cfg(test)]
+mod process_filter_tests {
+    #[test]
+    fn search_includes_processes_beyond_the_old_limit() {
+        let apps: Vec<_> = (1..=300).map(|pid| crate::sensors::ProcessSensorInfo { pid, name: format!("process-{pid}"), ..Default::default() }).collect();
+        let found = super::filtered_processes(&apps, "process-300");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].pid, 300);
+        assert_eq!(super::filtered_processes(&apps, "").len(), 300);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SettingsTab {
     #[default]
@@ -18392,14 +18409,7 @@ impl LauncherApp {
                     && self.sensors_cached_sort_desc == self.sensors_top_apps_sort_desc;
 
                 if !cache_valid {
-                    let mut filtered_apps: Vec<&crate::sensors::ProcessSensorInfo> = snap.top_apps.iter().collect();
-                    if !search_q.is_empty() {
-                        filtered_apps.retain(|a| {
-                            a.name.to_lowercase().contains(&search_q)
-                                || a.pid.to_string().contains(&search_q)
-                                || a.status.to_lowercase().contains(&search_q)
-                        });
-                    }
+                    let filtered_apps = filtered_processes(&snap.top_apps, &search_q);
 
                     let is_foreground = |name_lower: &str| -> bool {
                         if name_lower.starts_with('[')
@@ -18661,10 +18671,24 @@ impl LauncherApp {
                                     .num_columns(7)
                                     .spacing(egui::vec2(COL_SPACING, 4.0))
                                     .show(ui, |ui| {
-                                        // Helper closure to render a process group
+                                        // Keep grid geometry for off-screen rows without building their widgets.
+                                        let skip_row = |ui: &mut Ui, height: f32| {
+                                            for width in [col_name_w, COL_CPU_W, COL_MEM_W, COL_DISK_W, COL_NET_W, COL_GPU_W, COL_POWER_W] {
+                                                ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+                                            }
+                                            ui.end_row();
+                                        };
                                         let mut render_group_row = |ui: &mut Ui, grp: &ProcessGroupSummary, is_app_sec: bool| {
                                             let is_multi = grp.children.len() > 1;
                                             let is_expanded = self.sensors_top_apps_expanded_groups.contains(&grp.key);
+                                            let children = if is_multi && is_expanded { grp.children.len() } else { 0 };
+                                            let height = 22.0 + children as f32 * 24.0;
+                                            let group_rect = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(row_w, height));
+                                            if !ui.is_rect_visible(group_rect) {
+                                                skip_row(ui, 22.0);
+                                                for _ in 0..children { skip_row(ui, 20.0); }
+                                                return;
+                                            }
                                             let is_group_selected = self.sensors_top_apps_selected_pid == Some(grp.pids[0])
                                                 || (!is_expanded && grp.pids.iter().any(|pid| self.sensors_top_apps_selected_pid == Some(*pid)));
 
@@ -18953,6 +18977,8 @@ impl LauncherApp {
                                             // Expanded children subprocesses
                                             if is_multi && is_expanded {
                                                 for child in &grp.children {
+                                                    let child_rect = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(row_w, 20.0));
+                                                    if !ui.is_rect_visible(child_rect) { skip_row(ui, 20.0); continue; }
                                                     let is_child_sel = self.sensors_top_apps_selected_pid == Some(child.pid);
                                                     let child_norm_cpu = child.cpu_usage / norm_factor;
                                                     let mut child_clicked = false;
@@ -19135,7 +19161,7 @@ impl LauncherApp {
                                             ui.end_row();
 
                                             if self.sensors_top_apps_section_apps_expanded {
-                                                for grp in apps_groups.iter().take(40) {
+                                                for grp in apps_groups {
                                                     render_group_row(ui, grp, true);
                                                 }
                                             }
@@ -19165,7 +19191,7 @@ impl LauncherApp {
                                             ui.end_row();
 
                                             if self.sensors_top_apps_section_bg_expanded {
-                                                for grp in bg_groups.iter().take(80) {
+                                                for grp in bg_groups {
                                                     render_group_row(ui, grp, false);
                                                 }
                                             }

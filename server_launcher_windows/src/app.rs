@@ -5358,6 +5358,27 @@ mod gpu_display_tests {
     }
 }
 
+fn matching_temperature_limit(sensors: &[crate::sensors::TempSensor], category: crate::sensors::SensorCategory, value: f32) -> Option<f32> {
+    if !value.is_finite() { return None; }
+    let mut matches = sensors.iter().filter(|sensor| sensor.category == category && sensor.temp == value);
+    let sensor = matches.next()?;
+    if matches.next().is_some() { return None; }
+    sensor.crit.filter(|limit| limit.is_finite() && *limit > 0.0)
+        .or_else(|| sensor.max.filter(|limit| limit.is_finite() && *limit > 0.0))
+}
+
+#[cfg(test)]
+mod temperature_limit_tests {
+    use crate::sensors::{SensorCategory, TempSensor};
+    #[test]
+    fn only_uses_a_limit_from_the_unambiguous_matching_reading() {
+        let sensor = TempSensor { category: SensorCategory::Storage, temp: 40.0, crit: Some(90.0), ..Default::default() };
+        assert_eq!(super::matching_temperature_limit(&[sensor.clone()], SensorCategory::Storage, 40.0), Some(90.0));
+        assert_eq!(super::matching_temperature_limit(&[sensor.clone()], SensorCategory::Cpu, 40.0), None);
+        assert_eq!(super::matching_temperature_limit(&[sensor.clone(), sensor], SensorCategory::Storage, 40.0), None);
+    }
+}
+
 fn mounted_storage_totals(disks: &[crate::sensors::DiskInfo]) -> (u64, u64, u64) {
     let mut seen_devices = std::collections::HashSet::new();
     disks.iter().filter(|disk| !disk.name.starts_with("/dev/") || seen_devices.insert(disk.name.as_str()))
@@ -17472,9 +17493,7 @@ impl LauncherApp {
         });
         let cpu_peak = history.iter().map(|sample| sample.1).filter(|value| value.is_finite()).reduce(f32::max);
         let gpu_peak = history.iter().map(|sample| sample.2).filter(|value| value.is_finite()).reduce(f32::max);
-        let sensor_limit = |words: &[&str]| snap.temp_sensors.iter()
-            .find(|sensor| words.iter().any(|word| sensor.name.to_lowercase().contains(word)))
-            .and_then(|sensor| sensor.crit.or(sensor.max)).filter(|limit| limit.is_finite() && *limit > 0.0).unwrap_or(f32::NAN);
+        let sensor_limit = |category, value| matching_temperature_limit(&snap.temp_sensors, category, value).unwrap_or(f32::NAN);
 
         ScrollArea::vertical()
             .id_salt("sensors_temp_scroll_v2")
@@ -17491,17 +17510,17 @@ impl LauncherApp {
                         ui.set_width(ui.available_width());
 
                         let tag_str = if is_remote {
-                            "THERMAL SUBSYSTEM • HWMON"
+                            "THERMAL SUBSYSTEM • REMOTE"
                         } else {
                             "THERMAL SUBSYSTEM"
                         };
                         let title_str = if is_remote {
                             format!("Hardware Thermal Sensors & Cooling • Host '{}'", self.host_display_name(host_id))
                         } else {
-                            "Hardware Thermal Sensors & Fan Control".to_string()
+                            "Hardware Thermal Sensors".to_string()
                         };
                         let sub_str = if is_remote {
-                            "Direct Linux hwmon sysfs endpoints, processor package temperatures, and chassis airflow."
+                            "Reported hardware temperatures • cooling controls unavailable"
                         } else {
                             "Reported hardware temperatures • cooling controls unavailable"
                         };
@@ -17524,7 +17543,7 @@ impl LauncherApp {
                                     .rounding(Rounding::same(4.0))
                                     .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                                     .show(ui, |ui| {
-                                        let badge = if snap.temp_sensors.is_empty() && !cpu_temp.is_finite() { "NO READINGS" } else { "SENSORS" };
+                                        let badge = if [cpu_temp, gpu_temp, ram_temp, nvme_temp, vrm_temp].iter().any(|value| value.is_finite()) { "SENSORS" } else { "NO READINGS" };
                                         ui.label(RichText::new(badge).size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                     });
                             });
@@ -17542,19 +17561,13 @@ impl LauncherApp {
 
                 // 2. Row of 5 Sensor Cards (CPU, GPU/Ambient, RAM, Storage, VRM)
                 let has_gpu = gpu_temp.is_finite();
-                let second_card_name = "GPU CORE";
-                let second_card_temp = gpu_temp;
-                let second_card_limit = sensor_limit(&["gpu"]);
-                let ram_card_name = if is_remote { "SYSTEM RAM" } else { "SODIMM RAM" };
-                let storage_card_name = if is_remote { "STORAGE DRIVE" } else { "NVME M.2 SSD" };
-
-                let cpu_tj = snap.cpu_tjunction_max.unwrap_or_else(|| sensor_limit(&["cpu", "package", "core"]));
+                use crate::sensors::SensorCategory;
                 let sensor_cards = [
-                    ("CPU PACKAGE", cpu_temp, cpu_tj, "", accent),
-                    (second_card_name, second_card_temp, second_card_limit, "", Color32::from_rgb(96, 165, 250)),
-                    (ram_card_name, ram_temp, sensor_limit(&["ram", "memory", "sodimm"]), "", accent),
-                    (storage_card_name, nvme_temp, sensor_limit(&["nvme", "ssd", "composite"]), "", Color32::from_rgb(96, 165, 250)),
-                    ("MOTHERBOARD VRM", vrm_temp, sensor_limit(&["vrm", "motherboard", "pch"]), "", Color32::from_rgb(203, 213, 225)),
+                    ("CPU TEMPERATURE", cpu_temp, sensor_limit(SensorCategory::Cpu, cpu_temp), "", accent),
+                    ("GPU TEMPERATURE", gpu_temp, if snap.gpus.first().and_then(|gpu| gpu.temp).is_some() { f32::NAN } else { sensor_limit(SensorCategory::Gpu, gpu_temp) }, "", Color32::from_rgb(96, 165, 250)),
+                    ("MEMORY", ram_temp, sensor_limit(SensorCategory::Memory, ram_temp), "", accent),
+                    ("STORAGE", nvme_temp, sensor_limit(SensorCategory::Storage, nvme_temp), "", Color32::from_rgb(96, 165, 250)),
+                    ("BOARD SENSOR", vrm_temp, sensor_limit(SensorCategory::System, vrm_temp), "", Color32::from_rgb(203, 213, 225)),
                 ];
 
                 sensor_card_columns(ui, sensor_cards.len(), |ui, i| {
@@ -17599,9 +17612,9 @@ impl LauncherApp {
                             ui.vertical(|ui| {
                                 ui.label(RichText::new("60-Second Thermal History Waveform").size(12.5).strong().color(p.text_primary));
                                 let sub_trace = if !has_gpu {
-                                    "CPU package • GPU unavailable".to_string()
+                                    "CPU temperature • GPU unavailable".to_string()
                                 } else {
-                                    "CPU package • GPU core • measured samples".to_string()
+                                    "CPU and GPU temperatures • measured samples".to_string()
                                 };
                                 ui.label(RichText::new(sub_trace).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                             });

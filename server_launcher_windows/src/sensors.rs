@@ -271,6 +271,8 @@ pub struct SystemSensorsSnapshot {
 
     pub hardware_access_unlocked: bool,
     pub hardware_access_error: Option<String>,
+    #[cfg(windows)]
+    pub windows_telemetry_error: Option<String>,
     pub timestamp: Option<Instant>,
 }
 
@@ -821,6 +823,8 @@ impl SystemSensorsCollector {
             active_sockets: Vec::new(),
             hardware_access_unlocked: false,
             hardware_access_error: None,
+            #[cfg(windows)]
+            windows_telemetry_error: None,
             timestamp: Some(now),
         }
     }
@@ -1431,7 +1435,7 @@ pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32
 }
 
 #[cfg(windows)]
-pub fn collect_power_supply() -> PowerSupplyInfo { collect_windows_hardware().power }
+pub fn collect_power_supply() -> PowerSupplyInfo { collect_windows_hardware(false).ok().map(|data| parse_windows_hardware(&data).power).unwrap_or_default() }
 
 #[cfg(not(windows))]
 pub fn collect_power_supply() -> PowerSupplyInfo {
@@ -3405,6 +3409,8 @@ print(json.dumps(data))
         active_sockets,
         hardware_access_unlocked: false,
             hardware_access_error: None,
+            #[cfg(windows)]
+            windows_telemetry_error: None,
             timestamp: Some(Instant::now()),
     })
 }
@@ -3572,13 +3578,36 @@ impl SystemSensorsCollector {
         self.disks.refresh();
         self.networks.refresh();
         let now = Instant::now();
-        if self.last_hardware_scan.elapsed() >= Duration::from_secs(30) {
+        let inventory_due = self.last_hardware_scan.elapsed() >= Duration::from_secs(30);
+        if inventory_due {
             self.disks.refresh_list();
             self.networks.refresh_list();
-            self.windows_hardware = collect_windows_hardware();
             self.last_hardware_scan = now;
         }
+        let sample = collect_windows_hardware(inventory_due);
+        if inventory_due {
+            if let Ok(data) = &sample {
+                update_windows_inventory(&mut self.windows_hardware, data);
+                let errors: Vec<&str> = ["gpu_error", "ram_error"].iter().filter_map(|key| data[*key].as_str()).collect();
+                self.windows_hardware.windows_telemetry_error = (!errors.is_empty()).then(|| errors.join(" • "));
+            } else {
+                self.windows_hardware.windows_telemetry_error = Some("Hardware inventory refresh failed; previous inventory retained".into());
+            }
+        }
         let mut snap = self.windows_hardware.clone();
+        match sample {
+            Ok(data) => {
+                let live = parse_windows_hardware(&data);
+                snap.power = live.power;
+                snap.cpu_temp = live.cpu_temp;
+                snap.storage_temp = live.storage_temp;
+                snap.temp_sensors = live.temp_sensors;
+                let mut errors: Vec<String> = snap.windows_telemetry_error.take().into_iter().collect();
+                errors.extend(["battery_error", "temp_error"].iter().filter_map(|key| data[*key].as_str()).map(str::to_owned));
+                snap.windows_telemetry_error = (!errors.is_empty()).then(|| errors.join(" • "));
+            }
+            Err(error) => { snap.windows_telemetry_error = Some(error); }
+        }
         snap.cpu_brand = self.sys.cpus().first().map(|c| c.brand().to_owned()).unwrap_or_default();
         snap.cpu_cores_physical = self.sys.physical_core_count().unwrap_or(1);
         snap.cpu_cores_logical = self.sys.cpus().len();
@@ -3652,7 +3681,7 @@ impl SystemSensorsCollector {
         snap.os_name = System::name().unwrap_or_else(|| "Windows".into());
         snap.os_version = System::os_version().unwrap_or_default();
         snap.uptime_secs = System::uptime();
-        snap.timestamp = Some(now);
+        snap.timestamp = Some(Instant::now());
         snap
     }
 }
@@ -3663,22 +3692,25 @@ fn percentage(used: u64, total: u64) -> f32 {
 }
 
 #[cfg(windows)]
-fn collect_windows_hardware() -> SystemSensorsSnapshot {
+fn collect_windows_hardware(inventory: bool) -> Result<serde_json::Value, String> {
     use std::os::windows::process::CommandExt;
     use std::io::Read;
     // shortcut: temperature telemetry needs LibreHardwareMonitor's WMI provider; add a native driver only if required.
-    let script = r#"$ErrorActionPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new();
-$gpu=@(Get-CimInstance Win32_VideoController | Select-Object Name,DriverVersion);
-$ram=@(Get-CimInstance Win32_PhysicalMemory | Select-Object Manufacturer,Capacity,Speed,SMBIOSMemoryType,FormFactor);
-$battery=@(Get-CimInstance Win32_Battery | Select-Object Name,EstimatedChargeRemaining,BatteryStatus);
-$temp=@(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor | Where-Object SensorType -eq Temperature | Select-Object Name,Value,Identifier);
-@{gpu=$gpu;ram=$ram;battery=$battery;temp=$temp}|ConvertTo-Json -Depth 4 -Compress"#;
-    let Ok(mut child) = Command::new("powershell.exe")
-        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script])
+    let script = r#"$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new();
+$result=@{gpu=@();ram=@();battery=@();temp=@()};
+if (__INVENTORY__) {
+  try { $result.gpu=@(Get-CimInstance Win32_VideoController -ErrorAction Stop | Select-Object Name,DriverVersion) } catch { $result.gpu_error='GPU inventory unavailable' }
+  try { $result.ram=@(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop | Select-Object Manufacturer,Capacity,Speed,SMBIOSMemoryType,FormFactor) } catch { $result.ram_error='RAM inventory unavailable' }
+}
+try { $result.battery=@(Get-CimInstance Win32_Battery -ErrorAction Stop | Select-Object Name,EstimatedChargeRemaining,BatteryStatus) } catch { $result.battery_error='Battery telemetry unavailable' }
+try { $result.temp=@(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor -ErrorAction Stop | Where-Object SensorType -eq Temperature | Select-Object Name,Value,Identifier) } catch { $result.temp_error='Temperature readings require the LibreHardwareMonitor WMI provider' }
+$result | ConvertTo-Json -Depth 4 -Compress"#;
+    let script = script.replace("__INVENTORY__", if inventory { "$true" } else { "$false" });
+    let mut child = Command::new("powershell.exe")
+        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", &script])
         .creation_flags(0x08000000).stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn() else {
-            return SystemSensorsSnapshot::default();
-        };
+        .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn()
+        .map_err(|error| format!("Could not start Windows sensor query: {error}"))?;
     // Drain output concurrently so a large inventory cannot block on a full pipe.
     let stdout = child.stdout.take();
     let reader = std::thread::spawn(move || {
@@ -3690,16 +3722,24 @@ $temp=@(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor |
     loop {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => break,
-            Ok(Some(_)) | Err(_) => return SystemSensorsSnapshot::default(),
+            Ok(Some(status)) => return Err(format!("Windows sensor query failed ({status})")),
+            Err(error) => return Err(format!("Windows sensor query failed: {error}")),
             _ if started.elapsed() > Duration::from_secs(8) => {
                 let _ = child.kill(); let _ = child.wait();
-                return SystemSensorsSnapshot::default();
+                return Err("Windows sensor query timed out".into());
             }
             _ => std::thread::sleep(Duration::from_millis(50)),
         }
     }
-    reader.join().ok().and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .map(|data| parse_windows_hardware(&data)).unwrap_or_default()
+    let bytes = reader.join().map_err(|_| "Could not read Windows sensor query output".to_string())?;
+    serde_json::from_slice(&bytes).map_err(|error| format!("Invalid Windows sensor data: {error}"))
+}
+
+#[cfg(any(windows, test))]
+fn update_windows_inventory(cached: &mut SystemSensorsSnapshot, data: &serde_json::Value) {
+    let inventory = parse_windows_hardware(data);
+    if data["gpu_error"].is_null() { cached.gpus = inventory.gpus; }
+    if data["ram_error"].is_null() { cached.memory_hw = inventory.memory_hw; }
 }
 
 #[cfg(any(windows, test))]
@@ -3758,6 +3798,23 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
 #[cfg(test)]
 mod windows_sensor_tests {
     use super::*;
+    #[test]
+    fn failed_inventory_does_not_erase_previous_devices() {
+        let mut cached = parse_windows_hardware(&serde_json::json!({"gpu": [{"Name":"Existing GPU"}]}));
+        update_windows_inventory(&mut cached, &serde_json::json!({"gpu_error":"unavailable"}));
+        assert_eq!(cached.gpus[0].name, "Existing GPU");
+        update_windows_inventory(&mut cached, &serde_json::json!({"gpu":[]}));
+        assert!(cached.gpus.is_empty());
+    }
+    #[test]
+    fn live_battery_samples_are_independent_of_inventory() {
+        let cached = parse_windows_hardware(&serde_json::json!({"gpu": [{"Name":"GPU"}]}));
+        let first = parse_windows_hardware(&serde_json::json!({"battery": [{"EstimatedChargeRemaining":72}]}));
+        let second = parse_windows_hardware(&serde_json::json!({"battery": [{"EstimatedChargeRemaining":71}]}));
+        assert_eq!(cached.gpus[0].name, "GPU");
+        assert_eq!(first.power.total_battery_pct, Some(72.0));
+        assert_eq!(second.power.total_battery_pct, Some(71.0));
+    }
     #[test]
     fn missing_hardware_stays_unavailable_and_invalid_temperatures_are_rejected() {
         let empty = parse_windows_hardware(&serde_json::json!({}));

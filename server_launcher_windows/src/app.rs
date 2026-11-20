@@ -11201,6 +11201,14 @@ impl LauncherApp {
                 ui.label("Windows telemetry: hardware inventory refreshes every 30 seconds. Device disk throughput, SMART, socket counts and per-process network counters are unavailable; their zero fields do not indicate measured inactivity.");
             }
 
+            #[cfg(windows)]
+            if host_id.is_none() {
+                if let Some(error) = &snap.windows_telemetry_error {
+                    ui.label(RichText::new(error).size(10.5).color(p.text_secondary));
+                    ui.add_space(4.0);
+                }
+            }
+
             // Remote host error notification (if query failed)
             if let Some(hid) = host_id {
                 if let Some(err_msg) = self.remote_sensors_errors.lock().unwrap().get(hid) {

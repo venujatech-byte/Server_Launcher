@@ -169,6 +169,7 @@ pub struct WifiAppNetItem {
 #[derive(Clone, Debug)]
 pub enum PendingSudoAction {
     UnlockSensorAccess,
+    DropLinuxCaches,
     SetChargeLimit { battery: String, limit: u32 },
     ServiceAction { unit: String, action: &'static str, user_mode: bool },
     CreateService { def: crate::systemd::NewServiceDefinition },
@@ -201,6 +202,7 @@ impl PendingSudoAction {
     fn key(&self, host_id: Option<&str>) -> String {
         let (kind, target, user_mode) = match self {
             Self::UnlockSensorAccess => ("hardware", "local", false),
+            Self::DropLinuxCaches => ("drop-caches", "system", false),
             Self::SetChargeLimit { battery, .. } => ("charge-limit", battery.as_str(), false),
             Self::ServiceAction { unit, user_mode, .. } => ("control", unit.as_str(), *user_mode),
             Self::CreateService { def } => ("create", def.name.as_str(), def.is_user),
@@ -9048,6 +9050,7 @@ impl LauncherApp {
                     if host.is_some() { Err("Protected sensor access applies to the local host only.".into()) }
                     else { sensor_collector.lock().unwrap().unlock_hardware_access(pass).map(SystemdActionValue::Message) }
                 },
+                PendingSudoAction::DropLinuxCaches => crate::sensors::drop_linux_caches(host.as_ref(), pass).map(SystemdActionValue::Message),
                 PendingSudoAction::SetChargeLimit { battery, limit } => crate::power::set_charge_limit(battery, *limit, host.as_ref(), pass).map(SystemdActionValue::Message),
                 PendingSudoAction::ServiceAction { unit, action, user_mode } => {
                     if let Some(host) = &host { control_remote_service(host, unit, action, *user_mode, pass) }
@@ -9108,7 +9111,7 @@ impl LauncherApp {
                 continue;
             };
             let action_scope = match &action {
-                PendingSudoAction::UnlockSensorAccess | PendingSudoAction::SetChargeLimit { .. } => false,
+                PendingSudoAction::UnlockSensorAccess | PendingSudoAction::DropLinuxCaches | PendingSudoAction::SetChargeLimit { .. } => false,
                 PendingSudoAction::CreateService { def } => def.is_user,
                 PendingSudoAction::ServiceAction { user_mode, .. } | PendingSudoAction::SaveUnitFile { user_mode, .. }
                 | PendingSudoAction::CreateDropIn { user_mode, .. } | PendingSudoAction::DeleteDropIn { user_mode, .. }
@@ -9127,6 +9130,7 @@ impl LauncherApp {
                         if result.host_id.is_some() { self.remote_journal_logs.lock().unwrap().insert(format!("{}:{}:{}", host_key, unit, scope), format!("Error: {}", error)); }
                         else { self.local_journal_logs.lock().unwrap().insert(format!("{}:{}", unit, scope), format!("Error: {}", error)); }
                     }
+                    if current_host && matches!(action, PendingSudoAction::DropLinuxCaches) { self.ram_status_msg = Some((error.clone(), true, Instant::now())); }
                     if current_host && matches!(action, PendingSudoAction::SetChargeLimit { .. }) { self.power_status_msg = Some((error.clone(), true, Instant::now())); }
                     if current_host { self.systemd_file_status_msg = Some((error.clone(), true)); }
                     if result.host_id.is_some() { *self.remote_service_action_msg.lock().unwrap() = Some(format!("Error: {}", error)); }
@@ -9186,6 +9190,7 @@ impl LauncherApp {
                             let mut refresh = None;
                             match &action {
                                 PendingSudoAction::UnlockSensorAccess => self.trigger_local_sensors_query(false, None),
+                                PendingSudoAction::DropLinuxCaches => { if current_host { self.ram_status_msg = Some((message.clone(), false, Instant::now())); if let Some(host) = host.clone() { self.trigger_remote_sensors_query(host); } else { self.trigger_local_sensors_query(false, None); } } },
                                 PendingSudoAction::SetChargeLimit { .. } => { if current_host { self.power_status_msg = Some((message.clone(), false, Instant::now())); if let Some(host) = host.clone() { self.trigger_remote_sensors_query(host); } else { self.trigger_local_sensors_query(false, None); } } },
                                 PendingSudoAction::ServiceAction { unit, user_mode, .. } => { refresh = Some((unit.clone(), *user_mode)); }
                                 PendingSudoAction::CreateService { def } => {
@@ -9285,6 +9290,7 @@ impl LauncherApp {
                 if let Some(pending) = &self.sudo_popup.pending {
                     match pending {
                         PendingSudoAction::UnlockSensorAccess => { ui.label("Read-only access to CPU energy, Intel GPU counters and RAM inventory on this computer."); }
+                        PendingSudoAction::DropLinuxCaches => { ui.label("Drop clean Linux caches on the selected host after syncing dirty data."); }
                         PendingSudoAction::SetChargeLimit { battery, limit } => { ui.label(format!("Set battery {} charge limit to {}% on the selected host.", battery, limit)); }
                         PendingSudoAction::ServiceAction { unit, action, .. } => {
                             let act_color = match *action {
@@ -11898,63 +11904,7 @@ impl LauncherApp {
 
                             ui.add_space(3.0);
 
-                            // Row 2: Title on Left, Action Buttons on Right
-                            ui.horizontal(|ui| {
-                                let row_w = ui.available_width();
-                                let right_w = 260.0_f32;
-                                let left_w = (row_w - right_w - 8.0).max(80.0);
-
-                                ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new("System Memory (RAM) & Swap").size(16.0).strong().color(p.text_primary));
-                                });
-
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    // Drop Caches Pill Button (Cyan accent with dark text)
-                                    let btn_drop = egui::Button::new(RichText::new(format!("{} Drop Caches", crate::lucide::TRASH)).size(10.5).strong().color(Color32::from_rgb(10, 15, 29)))
-                                        .fill(Color32::from_rgb(112, 213, 228))
-                                        .rounding(Rounding::same(999.0));
-                                    if ui.add(btn_drop).on_hover_text("Flush kernel page cache, dentries, and compact memory").clicked() {
-                                        if let Some(hid) = host_id {
-                                            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                                std::thread::spawn(move || {
-                                                    let mut cmd = crate::remote::build_ssh_command(&host, "sync; echo 3 | sudo tee /proc/sys/vm/drop_caches 2>/dev/null || true");
-                                                    let _ = cmd.output();
-                                                });
-                                                self.ram_status_msg = Some(("Flushing remote caches via SSH...".to_string(), false, Instant::now()));
-                                            }
-                                        } else {
-                                            match crate::sensors::flush_system_memory() {
-                                                Ok(msg) => self.ram_status_msg = Some((msg, false, Instant::now())),
-                                                Err(err) => self.ram_status_msg = Some((err, true, Instant::now())),
-                                            }
-                                        }
-                                    }
-
-                                    ui.add_space(6.0);
-
-                                    // Flush Standby List Button (Dark pill)
-                                    let btn_flush = egui::Button::new(RichText::new(format!("{} Flush Standby List", crate::lucide::REFRESH_CW)).size(10.5).color(p.text_secondary))
-                                        .fill(Color32::from_rgb(26, 34, 48))
-                                        .rounding(Rounding::same(999.0));
-                                    if ui.add(btn_flush).on_hover_text("Flush reclaimable standby memory lists and dentries").clicked() {
-                                        if let Some(hid) = host_id {
-                                            if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                                std::thread::spawn(move || {
-                                                    let mut cmd = crate::remote::build_ssh_command(&host, "sync; echo 3 | sudo tee /proc/sys/vm/drop_caches 2>/dev/null || true");
-                                                    let _ = cmd.output();
-                                                });
-                                                self.ram_status_msg = Some(("Flushing remote standby list via SSH...".to_string(), false, Instant::now()));
-                                            }
-                                        } else {
-                                            match crate::sensors::flush_system_memory() {
-                                                Ok(msg) => self.ram_status_msg = Some((msg, false, Instant::now())),
-                                                Err(err) => self.ram_status_msg = Some((err, true, Instant::now())),
-                                            }
-                                        }
-                                    }
-                                });
-                            });
-
+                            ui.label(RichText::new("System Memory (RAM) & Swap").size(16.0).strong().color(p.text_primary));
                             ui.add_space(3.0);
 
                             // Row 3: Subtitle spanning the full card width underneath Row 2
@@ -11969,6 +11919,26 @@ impl LauncherApp {
                                 ui.label(RichText::new("Voltage unavailable").size(10.0).monospace().color(Color32::from_rgb(203, 213, 225)));
                             });
                         });
+                    });
+
+                ui.add_space(6.0);
+                egui::CollapsingHeader::new("Advanced memory maintenance")
+                    .id_salt("ram_advanced_maintenance")
+                    .show(ui, |ui| {
+                        ui.label(RichText::new("Drop clean Linux page cache, dentries and inodes after syncing dirty data.").size(11.0).color(p.text_muted));
+                        let available = host_id.is_some() || cfg!(target_os = "linux");
+                        let key = PendingSudoAction::DropLinuxCaches.key(host_id);
+                        let busy = self.systemd_actions_in_flight.lock().unwrap().contains(&key);
+                        if ui.add_enabled(available && !busy, egui::Button::new(if busy { "Dropping caches…" } else { "Drop Linux caches" })).clicked() {
+                            let host = host_id.and_then(|id| self.ssh_hosts.iter().find(|h| h.id == id)).cloned();
+                            if host_id.is_none() || host.is_some() {
+                                self.ram_status_msg = Some(("Dropping caches…".into(), false, Instant::now()));
+                                self.queue_systemd_action(PendingSudoAction::DropLinuxCaches, host.as_ref(), None);
+                            } else {
+                                self.ram_status_msg = Some(("Selected host is unavailable".into(), true, Instant::now()));
+                            }
+                        }
+                        if !available { ui.label(RichText::new("Unavailable on this operating system.").size(10.0).color(p.text_muted)); }
                     });
 
                 // Status message toast banner

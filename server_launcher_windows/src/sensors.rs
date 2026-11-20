@@ -1318,44 +1318,29 @@ pub fn detect_hardware_cpu_tjunction_max(temp_sensors: &[TempSensor]) -> Option<
     None
 }
 
-#[cfg(windows)]
-pub fn flush_system_memory() -> Result<String, String> {
-    Err("Windows manages standby memory automatically; cache flushing is unavailable.".into())
+const DROP_CACHES_COMMAND: &str = "sync && printf 3 > /proc/sys/vm/drop_caches";
+
+/// Drop clean Linux page cache, dentries, and inodes after syncing dirty data.
+pub fn drop_linux_caches(host: Option<&crate::config::SshRemoteHost>, password: Option<&str>) -> Result<String, String> {
+    if let Some(host) = host {
+        crate::systemd::remote_script(host, DROP_CACHES_COMMAND, false, true, password)?;
+    } else {
+        #[cfg(not(target_os = "linux"))]
+        return Err("Cache dropping is only available on Linux hosts.".into());
+        #[cfg(target_os = "linux")]
+        crate::systemd::run_local("sh", &["-c", DROP_CACHES_COMMAND], true, password)?;
+    }
+    Ok("Clean page cache, dentries and inodes dropped.".into())
 }
 
-#[cfg(not(windows))]
-pub fn flush_system_memory() -> Result<String, String> {
-    // 1. Flush dirty pages from cache to disk first
-    let _ = Command::new("sync").output();
-
-    // 2. Direct write if running with elevated privileges (root or CAP_SYS_ADMIN)
-    let wrote_drop = fs::write("/proc/sys/vm/drop_caches", "3").is_ok();
-    let _ = fs::write("/proc/sys/vm/compact_memory", "1");
-    if wrote_drop {
-        return Ok("System memory caches and standby lists flushed via kernel sysfs.".to_string());
+#[cfg(all(test, target_os = "linux"))]
+mod drop_cache_tests {
+    #[test]
+    fn failed_write_is_reported() {
+        let script = super::DROP_CACHES_COMMAND.replace("/proc/sys/vm/drop_caches", "/dev/null/nonexistent");
+        let result = std::process::Command::new("sh").args(["-c", &script]).status().unwrap();
+        assert!(!result.success());
     }
-
-    // 3. Try non-interactive sudo (if passwordless sudo is configured for drop_caches or all)
-    if let Ok(out) = Command::new("sudo")
-        .args(["-n", "sh", "-c", "sync && echo 3 > /proc/sys/vm/drop_caches && echo 1 > /proc/sys/vm/compact_memory 2>/dev/null || true"])
-        .output()
-    {
-        if out.status.success() {
-            return Ok("System memory caches and standby lists flushed via sudo.".to_string());
-        }
-    }
-
-    // 4. Try pkexec (prompts user graphically via PolicyKit auth dialog if needed)
-    if let Ok(out) = Command::new("pkexec")
-        .args(["sh", "-c", "sync && echo 3 > /proc/sys/vm/drop_caches && echo 1 > /proc/sys/vm/compact_memory 2>/dev/null || true"])
-        .output()
-    {
-        if out.status.success() {
-            return Ok("System memory caches and standby lists flushed via authorization agent.".to_string());
-        }
-    }
-
-    Err("Could not flush caches: Root or PolicyKit authorization required to write to /proc/sys/vm/drop_caches.".to_string())
 }
 
 /// Detects if the current system has any active physical fan controllers in hwmon.

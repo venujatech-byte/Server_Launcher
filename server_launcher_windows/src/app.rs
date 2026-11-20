@@ -626,6 +626,7 @@ pub struct LauncherApp {
     // Wi-Fi Control State (matching Image 4)
     pub wifi_rescan_anim: bool,
     pub wifi_snapshot: Arc<Mutex<crate::wifi::WifiSnapshot>>,
+    pub wifi_selected_interface: Option<String>,
     pub wifi_in_flight: Arc<std::sync::atomic::AtomicBool>,
     pub wifi_last_query: Instant,
     pub wifi_status_msg: Option<(String, bool, Instant)>,
@@ -1084,6 +1085,7 @@ impl LauncherApp {
             bluetooth_last_query: Instant::now() - std::time::Duration::from_secs(10), // trigger immediately
             wifi_rescan_anim: false,
             wifi_snapshot: Arc::new(Mutex::new(crate::wifi::WifiSnapshot::default())),
+            wifi_selected_interface: None,
             wifi_in_flight: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             wifi_last_query: Instant::now() - std::time::Duration::from_secs(10), // trigger immediately
             wifi_status_msg: None,
@@ -1327,9 +1329,10 @@ impl LauncherApp {
         self.wifi_last_query = Instant::now();
         let snap_arc = Arc::clone(&self.wifi_snapshot);
         let in_flight_arc = Arc::clone(&self.wifi_in_flight);
+        let selected = self.wifi_selected_interface.clone();
 
         std::thread::spawn(move || {
-            let snap = crate::wifi::query_wifi_status();
+            let snap = crate::wifi::query_wifi_status(selected.as_deref());
             if let Ok(mut lock) = snap_arc.lock() {
                 *lock = snap;
             }
@@ -13988,12 +13991,15 @@ impl LauncherApp {
             crate::wifi::WifiSnapshot::default()
         };
 
-        let primary_net = snap.networks.iter().find(|n| n.name != "lo" && (n.rx_bytes > 0 || n.tx_bytes > 0))
-            .or_else(|| snap.networks.iter().find(|n| n.name != "lo"))
-            .or_else(|| snap.networks.first());
+        let primary_net = if is_remote {
+            snap.networks.iter().find(|n| n.is_wireless)
+                .or_else(|| snap.networks.iter().find(|n| n.name != "lo"))
+        } else {
+            snap.networks.iter().find(|n| n.name == wifi_snap.interface)
+        };
         let iface_name = primary_net.map(|n| n.name.as_str()).unwrap_or("Unavailable");
-        let is_wireless = if is_remote { primary_net.map(|n| n.is_wireless).unwrap_or(false) } else { true };
-        let is_connected = if is_remote { primary_net.is_some() } else { wifi_snap.is_connected };
+        let is_wireless = if is_remote { primary_net.is_some_and(|n| n.is_wireless) } else { !wifi_snap.interface.is_empty() };
+        let is_connected = !is_remote && wifi_snap.is_connected;
 
         ScrollArea::vertical()
             .id_salt("sensors_wifi_scroll_v2")
@@ -14029,14 +14035,16 @@ impl LauncherApp {
                             let is_narrow = avail_w < 700.0;
 
                             let title = if is_remote && !is_wireless { "Network Subsystem & Host Interface" } else { "Wireless Network & Wi-Fi" };
-                            let (status_text, dot_col) = if is_connected {
-                                if is_remote && !is_wireless {
-                                    ("INTERFACE FOUND", accent)
-                                } else {
-                                    ("CONNECTED", accent)
-                                }
+                            let (status_text, dot_col) = if is_remote {
+                                if primary_net.is_some() { ("INTERFACE FOUND", accent) } else { ("UNAVAILABLE", p.text_muted) }
+                            } else if wifi_snap.interface.is_empty() {
+                                ("UNAVAILABLE", p.text_muted)
+                            } else if is_connected {
+                                ("CONNECTED", accent)
+                            } else if wifi_snap.state == "DISCONNECTED" {
+                                ("DISCONNECTED", p.text_muted)
                             } else {
-                                ("DISCONNECTED", Color32::from_rgb(148, 163, 184))
+                                ("STATE UNKNOWN", p.text_muted)
                             };
                             let status_text_col = if is_connected { Color32::from_rgb(226, 232, 240) } else { Color32::from_rgb(148, 163, 184) };
 
@@ -14071,10 +14079,10 @@ impl LauncherApp {
                                         ui.painter().rect_filled(rescan_rect, Rounding::same(6.0), bg);
                                         ui.painter().rect_stroke(rescan_rect, Rounding::same(6.0), Stroke::new(1.0_f32, accent_with_alpha(accent, 40)));
                                         ui.painter().text(rescan_rect.center(), egui::Align2::CENTER_CENTER, format!("{} Re-Scan", crate::lucide::REFRESH_CW), egui::FontId::monospace(9.0), Color32::from_rgb(226, 232, 240));
-                                        if rescan_resp.clicked() {
+                                        if rescan_resp.clicked() && !wifi_snap.interface.is_empty() {
                                             self.wifi_rescan_anim = true;
-                                            crate::wifi::trigger_wifi_rescan_async();
-                                            self.wifi_status_msg = Some(("NetworkManager Wi-Fi scan initiated...".to_string(), false, Instant::now()));
+                                            crate::wifi::trigger_wifi_rescan_async(wifi_snap.interface.clone());
+                                            self.wifi_status_msg = Some(("NetworkManager Wi-Fi scan requested...".to_string(), false, Instant::now()));
                                             self.trigger_wifi_query(Some(ui.ctx().clone()));
                                         }
 
@@ -14140,10 +14148,10 @@ impl LauncherApp {
                                             ui.painter().rect_filled(rescan_rect, Rounding::same(6.0), bg);
                                             ui.painter().rect_stroke(rescan_rect, Rounding::same(6.0), Stroke::new(1.0_f32, accent_with_alpha(accent, 40)));
                                             ui.painter().text(rescan_rect.center(), egui::Align2::CENTER_CENTER, format!("{} Re-Scan", crate::lucide::REFRESH_CW), egui::FontId::monospace(9.0), Color32::from_rgb(226, 232, 240));
-                                            if rescan_resp.clicked() {
+                                            if rescan_resp.clicked() && !wifi_snap.interface.is_empty() {
                                                 self.wifi_rescan_anim = true;
-                                                crate::wifi::trigger_wifi_rescan_async();
-                                                self.wifi_status_msg = Some(("NetworkManager Wi-Fi scan initiated...".to_string(), false, Instant::now()));
+                                                crate::wifi::trigger_wifi_rescan_async(wifi_snap.interface.clone());
+                                                self.wifi_status_msg = Some(("NetworkManager Wi-Fi scan requested...".to_string(), false, Instant::now()));
                                                 self.trigger_wifi_query(Some(ui.ctx().clone()));
                                             }
 
@@ -14207,6 +14215,19 @@ impl LauncherApp {
                                 }
                             });
 
+                            if !is_remote && wifi_snap.interfaces.len() > 1 {
+                                let current = self.wifi_selected_interface.as_ref().filter(|name| wifi_snap.interfaces.contains(name)).cloned().unwrap_or_else(|| wifi_snap.interface.clone());
+                                let mut selected = current.clone();
+                                egui::ComboBox::from_id_salt("wifi_interface_selector")
+                                    .selected_text(&selected).show_ui(ui, |ui| {
+                                        for name in &wifi_snap.interfaces { ui.selectable_value(&mut selected, name.clone(), name); }
+                                    });
+                                if selected != current {
+                                    self.wifi_selected_interface = Some(selected);
+                                    self.wifi_last_query = Instant::now() - Duration::from_secs(10);
+                                    self.trigger_wifi_query(Some(ui.ctx().clone()));
+                                }
+                            }
                             ui.add_space(2.0);
 
                             // Row 4: Device and hardware metadata spanning the full card width underneath (wrapped, never overlaps)
@@ -14337,14 +14358,11 @@ impl LauncherApp {
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         let qual_str = if is_remote {
-                                            if is_connected { "PRESENT" } else { "DOWN" }.to_string()
-                                        } else if wifi_snap.signal_pct >= 80 {
-                                            format!("EXC ({}%)", wifi_snap.signal_pct)
-                                        } else if wifi_snap.signal_pct >= 50 {
-                                            format!("GOOD ({}%)", wifi_snap.signal_pct)
-                                        } else {
-                                            format!("FAIR ({}%)", wifi_snap.signal_pct)
-                                        };
+                                            if primary_net.is_some() { "INTERFACE FOUND" } else { "UNAVAILABLE" }.to_string()
+                                        } else if let Some(signal) = wifi_snap.signal_pct {
+                                            let quality = if signal >= 80 { "EXC" } else if signal >= 50 { "GOOD" } else { "FAIR" };
+                                            format!("{quality} ({signal}%)")
+                                        } else { "SIGNAL UNAVAILABLE".to_string() };
                                         Frame::none()
                                             .fill(accent_with_alpha(accent, 16))
                                             .rounding(Rounding::same(4.0))
@@ -14367,12 +14385,13 @@ impl LauncherApp {
                                             ui.label(RichText::new(icon).size(20.0).color(accent));
                                             ui.add_space(6.0);
                                             ui.vertical(|ui| {
-                                                let main_lbl = if is_remote { format!("Interface /dev/{}", iface_name) } else { wifi_snap.ssid.clone() };
+                                                let main_lbl = if is_remote { format!("Interface {}", iface_name) } else if wifi_snap.ssid.is_empty() { "Access point unavailable".to_string() } else { wifi_snap.ssid.clone() };
                                                 ui.label(RichText::new(main_lbl).size(13.0).strong().color(p.text_primary));
                                                 let band_str = if is_remote {
-                                                    format!("State: {}", if is_connected { "UP" } else { "DOWN" })
+                                                    "Connection state unavailable".to_string()
                                                 } else {
-                                                    format!("{:.1} GHz • {} ({})", wifi_snap.frequency_mhz as f32 / 1000.0, wifi_snap.security, wifi_snap.driver)
+                                                    let frequency = if wifi_snap.frequency_mhz > 0 { format!("{:.1} GHz", wifi_snap.frequency_mhz as f32 / 1000.0) } else { "Frequency unavailable".into() };
+                                                    format!("{} • {} ({})", frequency, if wifi_snap.security.is_empty() { "Security unavailable" } else { &wifi_snap.security }, if wifi_snap.driver.is_empty() { "Driver unavailable" } else { &wifi_snap.driver })
                                                 };
                                                 ui.label(RichText::new(band_str).size(9.0).monospace().color(Color32::from_rgb(148, 163, 184)));
                                             });
@@ -14389,7 +14408,7 @@ impl LauncherApp {
                                                         let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 18.0), egui::Sense::hover());
                                                         let bar_w = 3.5_f32;
                                                         let gap = 2.5_f32;
-                                                        let active_bars = ((wifi_snap.signal_pct as f32 / 20.0).round() as usize).clamp(0, 5);
+                                                        let active_bars = ((wifi_snap.signal_pct.unwrap_or(0) as f32 / 20.0).round() as usize).clamp(0, 5);
                                                         for i in 0..5 {
                                                             let h = 4.0_f32 + (i as f32 + 1.0) * 2.8_f32;
                                                             let x = rect.left() + i as f32 * (bar_w + gap);
@@ -14398,7 +14417,7 @@ impl LauncherApp {
                                                             let col = if i < active_bars { accent } else { Color32::from_rgb(30, 41, 59) };
                                                             ui.painter().rect_filled(b_rect, Rounding::same(1.0), col);
                                                         }
-                                                        ui.label(RichText::new(if is_connected { format!("{}%", wifi_snap.signal_pct) } else { "—".to_string() }).size(12.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
+                                                        ui.label(RichText::new(wifi_snap.signal_pct.map_or_else(|| "—".to_string(), |signal| format!("{signal}%"))).size(12.0).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
                                                     }
                                                 });
                                             });
@@ -14409,8 +14428,8 @@ impl LauncherApp {
                                 ui.columns(3, |cols| {
                                     let ap_chips: [(&str, &str); 3] = if is_remote {
                                         [
-                                            ("TYPE", if is_wireless { "Wi-Fi" } else { "Ethernet" }),
-                                            ("CARRIER", if is_connected { "Up" } else { "Down" }),
+                                            ("TYPE", if is_wireless { "Wi-Fi" } else { "Network" }),
+                                            ("CARRIER", "Unavailable"),
                                             ("SOCKETS", "Active"),
                                         ]
                                     } else {
@@ -14565,7 +14584,7 @@ impl LauncherApp {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                     ui.painter().circle_filled(d_rect.center(), 2.8, accent);
-                    ui.label(RichText::new(if is_connected { "LINK: UP" } else { "LINK: DOWN" }).size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                    ui.label(RichText::new(if is_remote { "LINK: UNKNOWN" } else if is_connected { "LINK: UP" } else if wifi_snap.state == "DISCONNECTED" { "LINK: DOWN" } else { "LINK: UNKNOWN" }).size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                     ui.label(RichText::new("/").size(9.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                     ui.label(RichText::new(iface_display).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
 

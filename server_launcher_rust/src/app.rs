@@ -5291,6 +5291,27 @@ mod sensor_freshness_tests {
     }
 }
 
+fn mounted_storage_totals(disks: &[crate::sensors::DiskInfo]) -> (u64, u64, u64) {
+    let mut seen_devices = std::collections::HashSet::new();
+    disks.iter().filter(|disk| !disk.name.starts_with("/dev/") || seen_devices.insert(disk.name.as_str()))
+        .fold((0_u64, 0_u64, 0_u64), |(total, used, available), disk| (
+            total.saturating_add(disk.total_bytes), used.saturating_add(disk.used_bytes),
+            available.saturating_add(disk.available_bytes),
+        ))
+}
+
+#[cfg(test)]
+mod mounted_storage_tests {
+    use crate::sensors::DiskInfo;
+    #[test]
+    fn totals_use_mounted_filesystems_without_duplicate_devices() {
+        let disk = DiskInfo { name: "/dev/sda1".into(), total_bytes: 100, used_bytes: 60, available_bytes: 30, ..Default::default() };
+        let other = DiskInfo { name: "/dev/sdb1".into(), total_bytes: 200, used_bytes: 50, available_bytes: 140, ..Default::default() };
+        assert_eq!(super::mounted_storage_totals(&[disk.clone(), disk, other]), (300, 110, 170));
+        assert_eq!(super::mounted_storage_totals(&[]), (0, 0, 0));
+    }
+}
+
 fn push_telemetry<T>(history: &mut VecDeque<T>, value: T, capacity: usize) {
     if history.len() == capacity { history.pop_front(); }
     history.push_back(value);
@@ -10834,10 +10855,11 @@ impl LauncherApp {
 
                         // Storage brief info
                         let phys_disk: u64 = snap.physical_disks.iter().map(|d| d.total_bytes).sum();
-                        let total_disk = if phys_disk > 0 { phys_disk } else { snap.disks.iter().map(|d| d.total_bytes).sum() };
+                        let total_disk = if phys_disk > 0 { phys_disk } else { mounted_storage_totals(&snap.disks).0 };
                         if total_disk > 0 && ui.available_width() > 70.0 {
                             ui.label(RichText::new("•").size(9.5).color(p.border));
-                            ui.label(RichText::new(format!("{} {}", crate::lucide::STORAGE, crate::sensors::format_bytes(total_disk))).size(10.0).color(p.text_secondary));
+                            ui.label(RichText::new(format!("{} {}", crate::lucide::STORAGE, crate::sensors::format_bytes(total_disk))).size(10.0).color(p.text_secondary))
+                                .on_hover_text(if phys_disk > 0 { "Installed physical storage capacity" } else { "Mounted filesystem capacity" });
                         }
 
                         // System Uptime
@@ -11124,11 +11146,8 @@ impl LauncherApp {
                 self.cpu_peak_usage = snap.cpu_global_usage;
             }
             push_telemetry(&mut self.ram_history, (snap.mem_usage_pct, snap.swap_usage_pct), 60);
-            let phys_total: u64 = snap.physical_disks.iter().map(|d| d.total_bytes).sum();
-            let mounted_total: u64 = snap.disks.iter().map(|d| d.total_bytes).sum();
-            let total_storage = if phys_total > 0 { phys_total } else { mounted_total };
+            let (total_storage, used_storage, _) = mounted_storage_totals(&snap.disks);
             if total_storage > 0 {
-                let used_storage: u64 = snap.disks.iter().map(|d| d.used_bytes).sum();
                 push_telemetry(&mut self.storage_history, (used_storage as f64 / total_storage as f64 * 100.0) as f32, 60);
             }
 
@@ -11371,13 +11390,10 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 ui.label(RichText::new(crate::lucide::STORAGE).size(12.0).color(accent));
-                                ui.label(RichText::new("STORAGE").size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                                ui.label(RichText::new("MOUNTED STORAGE").size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                             });
                             ui.add_space(6.0);
-                            let phys_total: u64 = snap.physical_disks.iter().map(|d| d.total_bytes).sum();
-                            let mounted_total: u64 = snap.disks.iter().map(|d| d.total_bytes).sum();
-                            let total_bytes: u64 = if phys_total > 0 { phys_total } else { mounted_total };
-                            let used_bytes: u64 = snap.disks.iter().map(|d| d.used_bytes).sum();
+                            let (total_bytes, used_bytes, available_bytes) = mounted_storage_totals(&snap.disks);
                             let storage_pct = if total_bytes > 0 { Some((used_bytes as f64 / total_bytes as f64 * 100.0) as f32) } else { None };
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 2.0;
@@ -11389,7 +11405,7 @@ impl LauncherApp {
                             let tot_gb = total_bytes as f64 / 1e9;
                             ui.label(RichText::new(if total_bytes > 0 { format!("{used_gb:.2} / {tot_gb:.2} GB") } else { "—".to_string() }).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                             ui.add_space(8.0);
-                            let free_gb = (total_bytes.saturating_sub(used_bytes)) as f64 / 1e9;
+                            let free_gb = available_bytes as f64 / 1e9;
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(if total_bytes > 0 { format!("FREE {:.2} GB", free_gb) } else { "FREE —".to_string() }).size(8.5).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -13076,12 +13092,7 @@ impl LauncherApp {
                 ui.set_width(ui.available_width());
 
                 // Calculate storage metrics across physical disks and mounted filesystems
-                let mounted_total_bytes: u64 = snap.disks.iter().map(|d| d.total_bytes).sum();
-                let mounted_used_bytes: u64 = snap.disks.iter().map(|d| d.used_bytes).sum();
-                // Used and total capacity must come from the same mounted filesystems.
-                let total_bytes = mounted_total_bytes;
-                let used_bytes = mounted_used_bytes;
-                let free_bytes = total_bytes.saturating_sub(used_bytes);
+                let (total_bytes, used_bytes, free_bytes) = mounted_storage_totals(&snap.disks);
 
                 let total_gb = total_bytes as f64 / 1e9;
                 let used_gb = used_bytes as f64 / 1e9;
@@ -13169,7 +13180,7 @@ impl LauncherApp {
                     render_big_stat_card(
                         ui,
                         crate::lucide::STORAGE,
-                        "TOTAL STORAGE",
+                        "MOUNTED STORAGE",
                         &format!("{:.1}", total_gb),
                         "GB",
                         &format!("{:.1} GB Mounted ({:.1}%)", used_gb, st_pct),

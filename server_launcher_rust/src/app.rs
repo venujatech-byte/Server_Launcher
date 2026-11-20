@@ -16961,13 +16961,7 @@ impl LauncherApp {
             }
         };
 
-        let format_tm_disk = |rate: f64| -> String {
-            if rate < 50_000.0 {
-                "0 MB/s".to_string()
-            } else {
-                format!("{:.1} MB/s", rate / (1024.0 * 1024.0))
-            }
-        };
+        let format_tm_disk = crate::sensors::format_rate;
 
         let mut kill_target_pid = None;
         let mut toggle_group_expand = None;

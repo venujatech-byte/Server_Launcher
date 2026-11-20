@@ -274,6 +274,28 @@ pub struct SystemSensorsSnapshot {
     pub timestamp: Option<Instant>,
 }
 
+fn process_disk_rates(previous: Option<(u64, u64)>, current: (u64, u64), elapsed: f64) -> (f64, f64) {
+    if !elapsed.is_finite() || elapsed <= 0.0 { return (0.0, 0.0); }
+    match previous {
+        Some((read, written)) => (
+            current.0.saturating_sub(read) as f64 / elapsed,
+            current.1.saturating_sub(written) as f64 / elapsed,
+        ),
+        None => (0.0, 0.0),
+    }
+}
+
+#[cfg(test)]
+mod process_disk_rate_tests {
+    #[test]
+    fn handles_first_sample_interval_and_counter_reset() {
+        assert_eq!(super::process_disk_rates(None, (200, 400), 2.0), (0.0, 0.0));
+        assert_eq!(super::process_disk_rates(Some((100, 200)), (300, 500), 2.0), (100.0, 150.0));
+        assert_eq!(super::process_disk_rates(Some((300, 500)), (20, 600), 2.0), (0.0, 50.0));
+        assert_eq!(super::process_disk_rates(Some((100, 200)), (300, 500), 0.0), (0.0, 0.0));
+    }
+}
+
 pub struct SystemSensorsCollector {
     sys: System,
     disks: Disks,
@@ -288,7 +310,8 @@ pub struct SystemSensorsCollector {
     prev_disk_read: HashMap<String, u64>,
     prev_disk_write: HashMap<String, u64>,
     prev_disk_time: Instant,
-    prev_proc_disk: HashMap<u32, (u64, u64)>,
+    prev_proc_disk: HashMap<(u32, u64), (u64, u64)>,
+    prev_proc_disk_time: Option<Instant>,
     prev_proc_net: HashMap<u32, (u64, u64)>,
     prev_proc_net_time: Instant,
     protected_data: Option<serde_json::Value>,
@@ -328,6 +351,7 @@ impl SystemSensorsCollector {
             prev_disk_write: HashMap::new(),
             prev_disk_time: now,
             prev_proc_disk: HashMap::new(),
+            prev_proc_disk_time: None,
             prev_proc_net: HashMap::new(),
             prev_proc_net_time: now,
             protected_data: None,
@@ -688,6 +712,8 @@ impl SystemSensorsCollector {
                     .with_disk_usage()
                     .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
             );
+            let proc_disk_now = Instant::now();
+            let proc_disk_elapsed = self.prev_proc_disk_time.map(|time| proc_disk_now.duration_since(time).as_secs_f64()).unwrap_or(0.0);
             let mut current_proc_disk = HashMap::new();
 
             for (pid, proc) in self.sys.processes() {
@@ -708,14 +734,11 @@ impl SystemSensorsCollector {
                 let cpu_usage = proc.cpu_usage();
                 let memory_bytes = proc.memory();
                 let disk_usage = proc.disk_usage();
-                let read_b = disk_usage.read_bytes;
-                let written_b = disk_usage.written_bytes;
-
-                current_proc_disk.insert(pid_u32, (read_b, written_b));
-
-                let (prev_r, prev_w) = self.prev_proc_disk.get(&pid_u32).copied().unwrap_or((read_b, written_b));
-                let r_rate = (read_b.saturating_sub(prev_r) as f64) / disk_elapsed_secs;
-                let w_rate = (written_b.saturating_sub(prev_w) as f64) / disk_elapsed_secs;
+                let read_b = disk_usage.total_read_bytes;
+                let written_b = disk_usage.total_written_bytes;
+                let identity = (pid_u32, proc.start_time());
+                current_proc_disk.insert(identity, (read_b, written_b));
+                let (r_rate, w_rate) = process_disk_rates(self.prev_proc_disk.get(&identity).copied(), (read_b, written_b), proc_disk_elapsed);
                 let disk_rate_bps = r_rate + w_rate;
 
                 let (proc_net_rx, proc_net_tx) = current_proc_net.get(&pid_u32).copied().unwrap_or_default();
@@ -742,6 +765,7 @@ impl SystemSensorsCollector {
                 });
             }
             self.prev_proc_disk = current_proc_disk;
+            self.prev_proc_disk_time = Some(proc_disk_now);
             self.prev_proc_net = current_proc_net;
             self.prev_proc_net_time = now;
 
@@ -3668,14 +3692,15 @@ impl SystemSensorsCollector {
         if include_top_apps {
             self.sys.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All,
                 sysinfo::ProcessRefreshKind::new().with_cpu().with_memory().with_disk_usage());
-            let elapsed = now.duration_since(self.prev_disk_time).as_secs_f64().max(0.001);
+            let proc_disk_now = Instant::now();
+            let elapsed = self.prev_proc_disk_time.map(|time| proc_disk_now.duration_since(time).as_secs_f64()).unwrap_or(0.0);
+            let mut current_proc_disk = HashMap::new();
             for (pid, process) in self.sys.processes() {
                 let disk = process.disk_usage();
-                let (prev_r, prev_w) = self.prev_proc_disk.insert(pid.as_u32(),
-                    (disk.total_read_bytes, disk.total_written_bytes))
-                    .unwrap_or((disk.total_read_bytes, disk.total_written_bytes));
-                let read = disk.total_read_bytes.saturating_sub(prev_r) as f64 / elapsed;
-                let write = disk.total_written_bytes.saturating_sub(prev_w) as f64 / elapsed;
+                let identity = (pid.as_u32(), process.start_time());
+                let current = (disk.total_read_bytes, disk.total_written_bytes);
+                current_proc_disk.insert(identity, current);
+                let (read, write) = process_disk_rates(self.prev_proc_disk.get(&identity).copied(), current, elapsed);
                 snap.top_apps.push(ProcessSensorInfo {
                     pid: pid.as_u32(), name: process.name().to_string_lossy().into_owned(),
                     cpu_usage: process.cpu_usage(), memory_bytes: process.memory(),
@@ -3684,10 +3709,10 @@ impl SystemSensorsCollector {
                     status: format!("{:?}", process.status()), ..Default::default()
                 });
             }
-            self.prev_proc_disk.retain(|pid, _| self.sys.process(sysinfo::Pid::from_u32(*pid)).is_some());
+            self.prev_proc_disk = current_proc_disk;
+            self.prev_proc_disk_time = Some(proc_disk_now);
             snap.top_apps.sort_unstable_by(|a,b| b.cpu_usage.total_cmp(&a.cpu_usage).then(b.memory_bytes.cmp(&a.memory_bytes)));
             snap.top_apps.truncate(250);
-            self.prev_disk_time = now;
         }
         snap.os_name = System::name().unwrap_or_else(|| "Windows".into());
         snap.os_version = System::os_version().unwrap_or_default();

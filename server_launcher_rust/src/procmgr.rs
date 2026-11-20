@@ -1,6 +1,7 @@
 use crate::config::SshRemoteHost;
 use crate::remote::build_ssh_command;
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, Default)]
 pub struct ProcessDetails {
@@ -361,27 +362,7 @@ pub fn set_local_priority(pid: u32, nice: i32) -> Result<(), String> {
 }
 
 pub fn set_remote_priority(host: &SshRemoteHost, pid: u32, nice: i32) -> Result<(), String> {
-    let has_pass = !host.password.trim().is_empty();
-    let cmd_str = if has_pass {
-        let pass = host.password.trim();
-        format!(
-            "(echo '{}' | sudo -S renice -n {} -p {} 2>/dev/null) || (sudo -n renice -n {} -p {} 2>/dev/null) || (renice -n {} -p {} 2>/dev/null)",
-            pass, nice, pid, nice, pid, nice, pid
-        )
-    } else {
-        format!(
-            "(sudo -n renice -n {} -p {} 2>/dev/null) || (sudo renice -n {} -p {} 2>/dev/null) || (renice -n {} -p {} 2>/dev/null)",
-            nice, pid, nice, pid, nice, pid
-        )
-    };
-
-    let mut cmd = build_ssh_command(host, &cmd_str);
-    let out = cmd.output().map_err(|e| format!("SSH execution failed: {}", e))?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).to_string())
-    }
+    run_remote_process_command(host, &format!("renice -n {} -p {}", nice, pid))
 }
 
 pub fn get_local_affinity(pid: u32) -> Result<Vec<usize>, String> {
@@ -453,28 +434,8 @@ pub fn set_remote_affinity(host: &SshRemoteHost, pid: u32, cores: &[usize]) -> R
     if cores.is_empty() {
         return Err("Cannot set empty CPU affinity".to_string());
     }
-    let list_str = cores.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(",");
-    let has_pass = !host.password.trim().is_empty();
-    let cmd_str = if has_pass {
-        let pass = host.password.trim();
-        format!(
-            "(echo '{}' | sudo -S taskset -c -p {} {} 2>/dev/null) || (sudo -n taskset -c -p {} {} 2>/dev/null) || (taskset -c -p {} {} 2>/dev/null)",
-            pass, list_str, pid, list_str, pid, list_str, pid
-        )
-    } else {
-        format!(
-            "(sudo -n taskset -c -p {} {} 2>/dev/null) || (sudo taskset -c -p {} {} 2>/dev/null) || (taskset -c -p {} {} 2>/dev/null)",
-            list_str, pid, list_str, pid, list_str, pid
-        )
-    };
-
-    let mut cmd = build_ssh_command(host, &cmd_str);
-    let out = cmd.output().map_err(|e| format!("SSH execution failed: {}", e))?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).to_string())
-    }
+    let list = cores.iter().map(|core| core.to_string()).collect::<Vec<_>>().join(",");
+    run_remote_process_command(host, &format!("taskset -c -p {} {}", list, pid))
 }
 
 pub fn send_local_signal(pid: u32, sig: &str) -> Result<(), String> {
@@ -498,32 +459,48 @@ pub fn send_local_signal(pid: u32, sig: &str) -> Result<(), String> {
 }
 
 pub fn send_remote_signal(host: &SshRemoteHost, pid: u32, sig: &str) -> Result<(), String> {
-    let has_pass = !host.password.trim().is_empty();
-    let cmd_str = if has_pass {
-        let pass = host.password.trim();
-        format!(
-            "(echo '{}' | sudo -S kill -{} {} 2>/dev/null) || (sudo -n kill -{} {} 2>/dev/null) || (kill -{} {} 2>/dev/null)",
-            pass, sig, pid, sig, pid, sig, pid
-        )
-    } else {
-        format!(
-            "(sudo -n kill -{} {} 2>/dev/null) || (sudo kill -{} {} 2>/dev/null) || (kill -{} {} 2>/dev/null)",
-            sig, pid, sig, pid, sig, pid
-        )
-    };
+    if !valid_process_signal(sig) {
+        return Err("Unsupported process signal".to_string());
+    }
+    run_remote_process_command(host, &format!("kill -{} {}", sig, pid))
+}
 
-    let mut cmd = build_ssh_command(host, &cmd_str);
-    let out = cmd.output().map_err(|e| format!("SSH command failed: {}", e))?;
+fn valid_process_signal(sig: &str) -> bool {
+    matches!(sig, "STOP" | "CONT" | "TERM" | "KILL")
+}
+
+fn run_remote_process_command(host: &SshRemoteHost, command: &str) -> Result<(), String> {
+    let password = host.password.trim();
+    if password.contains(['\n', '\r']) {
+        return Err("Passwords containing line breaks are not supported for sudo".to_string());
+    }
+    let sudo = if password.is_empty() { "sudo -n" } else { "sudo -S -p ''" };
+    let script = format!("({command}) 2>/dev/null || {sudo} {command}");
+    let mut cmd = build_ssh_command(host, &script);
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|error| format!("SSH command failed: {error}"))?;
+    let write_error = child.stdin.take().and_then(|mut stdin| {
+        if password.is_empty() { None } else { writeln!(stdin, "{password}").err() }
+    });
+    let out = child.wait_with_output().map_err(|error| format!("SSH command failed: {error}"))?;
     if out.status.success() {
         Ok(())
     } else {
-        Err(String::from_utf8_lossy(&out.stderr).to_string())
+        let error = String::from_utf8_lossy(&out.stderr);
+        Err(if !error.trim().is_empty() { error.trim().to_string() } else if let Some(error) = write_error { format!("Could not send sudo password: {error}") } else { "Remote process command failed".to_string() })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_signals_reject_shell_input() {
+        assert!(valid_process_signal("TERM"));
+        assert!(!valid_process_signal("TERM; id"));
+        assert!(!valid_process_signal(""));
+    }
 
     #[test]
     fn test_parse_memory_maps() {

@@ -16245,8 +16245,9 @@ impl LauncherApp {
                 let total_w = ui.available_width();
                 let gap = 10.0_f32;
                 let side_by_side = total_w >= 620.0;
-                let left_w = if side_by_side { (total_w - gap) * 0.64 } else { total_w };
-                let right_w = if side_by_side { total_w - left_w - gap } else { total_w };
+                let left_w = if side_by_side { ((total_w - gap) * 0.64).floor() } else { total_w };
+                let right_w = if side_by_side { (total_w - left_w - gap).max(0.0) } else { total_w };
+                let panel_layout = if side_by_side { egui::Layout::left_to_right(egui::Align::Min) } else { egui::Layout::top_down(egui::Align::Min) };
 
                 let num_cores = snap.cpu_cores_physical.max(snap.cpu_cores_logical).max(1);
                 let profile = if is_remote {
@@ -16256,10 +16257,13 @@ impl LauncherApp {
                 };
                 let active_gov = snap.cpu_governor.as_deref().unwrap_or("Unavailable");
                 let active_preset_idx = snap.cpu_governor.as_deref().map(crate::power::governor_to_preset_index);
-                ui.allocate_ui_with_layout(egui::vec2(total_w, 0.0), egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true), |ui| {
+                // Desktop panels must share a row; wrapping can push the entire right panel below the tall left column.
+                ui.allocate_ui_with_layout(egui::vec2(total_w, 0.0), panel_layout, |ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     // Left Column
                     ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.set_width(left_w);
+                        ui.set_max_width(left_w);
                         ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
                         if has_battery {
 
@@ -16600,6 +16604,8 @@ impl LauncherApp {
                     });
                     // Right Column: ESTIMATED POWER
                     ui.allocate_ui_with_layout(egui::vec2(right_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.set_width(right_w);
+                        ui.set_max_width(right_w);
                         ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
                         Frame::none()
                             .fill(p.bg_card)

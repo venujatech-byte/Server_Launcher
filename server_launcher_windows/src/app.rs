@@ -4846,11 +4846,7 @@ fn draw_core_waveform(ui: &mut Ui, width: f32, height: f32, values: &[f32], stro
     let (response, painter) = ui.allocate_painter(egui::vec2(width, height), egui::Sense::hover());
     let rect = response.rect;
 
-    if values.len() < 2 {
-        let y = rect.bottom() - 3.0;
-        painter.line_segment([egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)], Stroke::new(1.5_f32, stroke_color));
-        return;
-    }
+    if values.len() < 2 { return; }
 
     let n = values.len();
     let step_x = rect.width() / (n - 1) as f32;
@@ -10879,7 +10875,7 @@ impl LauncherApp {
                                 cpu_clean
                             };
 
-                            let cores_label = format!("{}C/{}T", snap.cpu_cores_physical.max(1), snap.cpu_cores_logical.max(1));
+                            let cores_label = format!("{}C/{}T", if snap.cpu_cores_physical > 0 { snap.cpu_cores_physical.to_string() } else { "—".into() }, if snap.cpu_cores_logical > 0 { snap.cpu_cores_logical.to_string() } else { "—".into() });
                             ui.label(RichText::new(format!("{} {}", crate::lucide::CPU, cpu_disp)).size(10.0).color(p.text_secondary));
                             ui.label(RichText::new(cores_label).size(9.5).monospace().color(p.text_muted));
                         }
@@ -11230,11 +11226,9 @@ impl LauncherApp {
                 self.cpu_core_histories = (0..num_cores)
                     .map(|_| VecDeque::with_capacity(30))
                     .collect();
-            } else {
-                for (idx, q) in self.cpu_core_histories.iter_mut().enumerate() {
-                    let val = snap.cpu_core_usages.get(idx).copied().unwrap_or(0.0);
-                    push_telemetry(q, val, 30);
-                }
+            }
+            for (history, value) in self.cpu_core_histories.iter_mut().zip(&snap.cpu_core_usages) {
+                push_telemetry(history, *value, 30);
             }
 
 
@@ -11631,10 +11625,12 @@ impl LauncherApp {
             ScrollArea::vertical().id_salt("windows_cpu").show(ui, |ui| {
                 ui.heading("CPU");
                 ui.label(if snap.cpu_brand.is_empty() { "Waiting for processor telemetry" } else { &snap.cpu_brand });
-                ui.label(format!("{} physical cores · {} logical processors", snap.cpu_cores_physical, snap.cpu_cores_logical));
+                let physical = if snap.cpu_cores_physical > 0 { snap.cpu_cores_physical.to_string() } else { "—".into() };
+                let logical = if snap.cpu_cores_logical > 0 { snap.cpu_cores_logical.to_string() } else { "—".into() };
+                ui.label(format!("{} physical cores · {} logical processors", physical, logical));
                 ui.add_space(12.0);
                 ui.label(format!("Usage: {:.1}%", snap.cpu_global_usage));
-                ui.label(format!("Reported frequency: {} MHz", snap.cpu_frequency_mhz));
+                ui.label(if snap.cpu_frequency_mhz > 0 { format!("Reported frequency: {} MHz", snap.cpu_frequency_mhz) } else { "Frequency unavailable".into() });
                 ui.label(format!("Uptime: {}", format_uptime_hms(snap.uptime_secs)));
                 ui.label(snap.cpu_temp.map(|v| format!("Temperature: {v:.1} °C")).unwrap_or_else(|| "Temperature unavailable; LibreHardwareMonitor WMI provider required".into()));
                 ui.label("CPU package power, TDP limits, and junction limits are unavailable.");
@@ -11661,13 +11657,11 @@ impl LauncherApp {
 
                 let brand = if !snap.cpu_brand.is_empty() {
                     &snap.cpu_brand
-                } else if host_id.is_some() {
-                    "Remote Host Processor"
                 } else {
-                    "Intel(R) Pentium(R) Silver N5030 @ 1.10GHz (Turbo 3.10GHz)"
+                    "Processor model unavailable"
                 };
-                let phys = snap.cpu_cores_physical.max(1);
-                let log = snap.cpu_cores_logical.max(phys);
+                let phys = if snap.cpu_cores_physical > 0 { snap.cpu_cores_physical.to_string() } else { "—".into() };
+                let log = if snap.cpu_cores_logical > 0 { snap.cpu_cores_logical.to_string() } else { "—".into() };
 
                 // 1. Top Header Card
                 Frame::none()
@@ -11807,15 +11801,15 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 4. Per-Core Breakdown Grid (4 Columns row matching Image)
-                let num_cores = snap.cpu_core_usages.len().max(4);
+                let num_cores = snap.cpu_core_usages.len();
+                if num_cores == 0 { ui.label(RichText::new("Per-processor usage unavailable").size(11.0).color(p.text_muted)); }
                 for chunk in (0..num_cores).collect::<Vec<_>>().chunks(4) {
                     ui.columns(chunk.len(), |cols| {
                         for (col_idx, &core_idx) in chunk.iter().enumerate() {
                             let col_ui = &mut cols[col_idx];
-                            let usage = snap.cpu_core_usages.get(core_idx).copied().unwrap_or(8.0);
-                            let freq_mhz = snap.cpu_frequencies_mhz.get(core_idx).copied().unwrap_or(snap.cpu_frequency_mhz);
-                            let freq_ghz = freq_mhz as f64 / 1000.0;
-                            let freq_str = format!("{:.2}", if freq_ghz > 0.0 { freq_ghz } else { 2.25 });
+                            let usage = snap.cpu_core_usages[core_idx];
+                            let freq_str = snap.cpu_frequencies_mhz.get(core_idx).filter(|value| **value > 0)
+                                .map_or_else(|| "—".to_string(), |value| format!("{:.2}", *value as f64 / 1000.0));
 
                             let dot_color = if core_idx % 2 == 0 {
                                 Color32::from_rgb(96, 165, 250) // Soft Blue
@@ -11834,9 +11828,9 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 5.0;
                                         ui.label(RichText::new("●").size(8.0).color(dot_color));
-                                        ui.label(RichText::new(format!("Core {}", core_idx)).size(11.5).strong().color(p.text_primary));
+                                        ui.label(RichText::new(format!("Logical CPU {}", core_idx)).size(11.5).strong().color(p.text_primary));
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new(format!("Thread {}", core_idx)).size(10.0).monospace().color(p.text_muted));
+                                            ui.label(RichText::new("Processor").size(10.0).monospace().color(p.text_muted));
                                         });
                                     });
 
@@ -11859,15 +11853,7 @@ impl LauncherApp {
                                     ui.add_space(6.0);
 
                                     // Smooth wave sparkline across bottom of card
-                                    let hist = self.cpu_core_histories.get(core_idx).map(|q| q.iter().copied().collect::<Vec<_>>()).unwrap_or_else(|| {
-                                        let mut v = Vec::with_capacity(20);
-                                        for j in 0..20 {
-                                            let phase = j as f32 / 19.0;
-                                            let w = (phase * std::f32::consts::PI * 1.5 + core_idx as f32).sin() * 0.3 + 0.5;
-                                            v.push((usage * w).clamp(2.0, 95.0));
-                                        }
-                                        v
-                                    });
+                                    let hist = self.cpu_core_histories.get(core_idx).map(|q| q.iter().copied().collect::<Vec<_>>()).unwrap_or_default();
 
                                     let spark_w = ui.available_width();
                                     draw_core_waveform(ui, spark_w, 28.0, &hist, accent);
@@ -11894,7 +11880,7 @@ impl LauncherApp {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 5.0;
                                     ui.label(RichText::new(crate::lucide::SYSTEMD).size(10.5).color(accent));
-                                    let gov_label = snap.cpu_governor.as_deref().unwrap_or(if host_id.is_some() { "Linux Scheduler Active" } else { "G-Helper Micro-Governor Active" });
+                                    let gov_label = snap.cpu_governor.as_deref().unwrap_or("Governor unavailable");
                                     ui.label(RichText::new(gov_label).size(10.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                 });
                             });
@@ -11902,59 +11888,25 @@ impl LauncherApp {
 
                         ui.add_space(8.0);
 
-                        ui.columns(6, |cols| {
-                            cols[0].vertical(|ui| {
-                                ui.label(RichText::new("L1 CACHE").size(9.5).monospace().strong().color(p.text_muted));
-                                ui.add_space(2.0);
-                                let l1_str = if host_id.is_some() { "Unified" } else { "224 KB" };
-                                ui.label(RichText::new(l1_str).size(15.0).strong().color(p.text_primary));
-                                ui.add_space(1.0);
-                                let l1_sub = if host_id.is_some() { "Core L1D / L1I" } else { "32KB D + 24KB I" };
-                                ui.label(RichText::new(l1_sub).size(9.5).monospace().color(p.text_muted));
-                            });
-                            cols[1].vertical(|ui| {
-                                ui.label(RichText::new("L2 CACHE").size(9.5).monospace().strong().color(p.text_muted));
-                                ui.add_space(2.0);
-                                let l2_str = if host_id.is_some() { "Multi-MB" } else { "4.0 MB" };
-                                ui.label(RichText::new(l2_str).size(15.0).strong().color(p.text_primary));
-                                ui.add_space(1.0);
-                                ui.label(RichText::new("Shared Unified").size(9.5).monospace().color(p.text_muted));
-                            });
-                            cols[2].vertical(|ui| {
-                                ui.label(RichText::new("VIRTUALIZATION").size(9.5).monospace().strong().color(p.text_muted));
-                                ui.add_space(2.0);
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 4.0;
-                                    ui.label(RichText::new("●").size(8.0).color(accent));
-                                    ui.label(RichText::new("Enabled").size(14.5).strong().color(Color32::from_rgb(241, 245, 249)));
+                        let process_count = if snap.top_apps.is_empty() { "—".to_string() } else { snap.top_apps.len().to_string() };
+                        let values = [
+                            ("L1 CACHE", "—", "Not reported"),
+                            ("L2 CACHE", "—", "Not reported"),
+                            ("VIRTUALIZATION", "—", "Not reported"),
+                            ("PROCESSES", process_count.as_str(), "Collected processes"),
+                            ("THREADS", "—", "Not reported"),
+                            ("HANDLES", "—", "Not reported"),
+                        ];
+                        ui.columns(values.len(), |cols| {
+                            for (column, (title, value, detail)) in cols.iter_mut().zip(values) {
+                                column.vertical(|ui| {
+                                    ui.label(RichText::new(title).size(9.5).monospace().strong().color(p.text_muted));
+                                    ui.add_space(2.0);
+                                    ui.label(RichText::new(value).size(15.0).strong().color(p.text_primary));
+                                    ui.add_space(1.0);
+                                    ui.label(RichText::new(detail).size(9.5).monospace().color(p.text_muted));
                                 });
-                                ui.add_space(1.0);
-                                let virt_sub = if host_id.is_some() { "KVM / Hardware" } else { "Intel VT-x (SLAT)" };
-                                ui.label(RichText::new(virt_sub).size(9.5).monospace().color(p.text_muted));
-                            });
-                            cols[3].vertical(|ui| {
-                                ui.label(RichText::new("PROCESSES").size(9.5).monospace().strong().color(p.text_muted));
-                                ui.add_space(2.0);
-                                let proc_count = if !snap.top_apps.is_empty() { snap.top_apps.len() } else if host_id.is_some() { 0 } else { 220 };
-                                ui.label(RichText::new(format!("{}", proc_count)).size(15.0).strong().color(p.text_primary));
-                                ui.add_space(1.0);
-                                ui.label(RichText::new("Isolated Groups").size(9.5).monospace().color(p.text_muted));
-                            });
-                            cols[4].vertical(|ui| {
-                                ui.label(RichText::new("THREADS").size(9.5).monospace().strong().color(p.text_muted));
-                                ui.add_space(2.0);
-                                let thread_count = if !snap.top_apps.is_empty() { snap.top_apps.len() * 12 + 267 } else { 2907 };
-                                ui.label(RichText::new(format!("{:#}", thread_count)).size(15.0).strong().color(p.text_primary));
-                                ui.add_space(1.0);
-                                ui.label(RichText::new("POSIX Scheduler").size(9.5).monospace().color(p.text_muted));
-                            });
-                            cols[5].vertical(|ui| {
-                                ui.label(RichText::new("HANDLES").size(9.5).monospace().strong().color(p.text_muted));
-                                ui.add_space(2.0);
-                                ui.label(RichText::new("90,800").size(15.0).strong().color(p.text_primary));
-                                ui.add_space(1.0);
-                                ui.label(RichText::new("I/O Descriptors").size(9.5).monospace().color(p.text_muted));
-                            });
+                            }
                         });
                     });
 

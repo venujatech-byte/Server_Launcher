@@ -112,3 +112,11 @@ The probe samples package energy, Intel PMU engines/power, and installed RAM mod
 At the user's request, the animated power model is restored and clearly labelled **Estimated system power**, with an explicit statement that the animation is an illustration rather than measured history. Reported measurements stay separate. The animated estimate is also available in the native Windows power view.
 
 Verification: mocked Python probe fixture passed for energy deltas, Intel engines, adapter identity and RAM metadata. Rust regression fixtures cover matching and unknown values. Both crates are checked with `cargo check --locked --offline --tests`; tests are compiled, not run. Real authenticated GPU/RAPL and native Windows runtime validation remain pending.
+
+## Follow-up: restore the earlier Power layout
+
+Restored the previous three-card battery layout, voltage/chemistry footer, preset row, and full animated component-power column. Battery identity, health and cycles remain based on reported data; modelled total/component power is explicitly labelled estimated. Native Windows keeps its platform-safe power view.
+
+An authenticated read-only probe was executed successfully on the user's machine: CPU package power was approximately 5.6 W at that instant, Intel PMU engine counters were returned, and SMBIOS reported one 8 GiB DDR4-2400 SODIMM. The user also confirmed that accepting the password worked. The earlier no-sudo displays included CPU/GPU power models and guessed memory specifications; normal CPU/RAM usage does not require these protected reads.
+
+Unlock now reports which metric groups were actually read and fails clearly if none were usable. Launch sandbox restrictions (`NoNewPrivs`) receive an actionable error rather than a generic missing reading. The code does not remove or bypass the sandbox restriction.

@@ -5218,38 +5218,6 @@ fn draw_estimated_power_waveform(ui: &mut Ui, height: f32, watts: f32, accent: C
 }
 
 
-fn render_animated_power_estimate(ui: &mut Ui, snapshot: &crate::sensors::SystemSensorsSnapshot, accent: Color32) {
-    // This user-requested model is illustrative; it never enters measured sensor histories.
-    let profile = crate::power::tdp_profile_from_nominal_or_cpu(snapshot.cpu_tdp_watts, &snapshot.cpu_brand, snapshot.cpu_cores_physical.max(1));
-    let load = (snapshot.cpu_global_usage / 100.0).clamp(0.0, 1.0);
-    let cpu = snapshot.cpu_power_watts.unwrap_or_else(|| {
-        let idle = (profile.nominal_watts * 0.12).clamp(1.5, 20.0);
-        idle + (profile.nominal_watts - idle) * (0.35 * load + 0.65 * load.powf(1.35))
-    });
-    let gpu: f32 = snapshot.gpus.iter().map(|gpu| gpu.power_watts.unwrap_or_else(|| {
-        let limit = gpu.power_limit_watts.unwrap_or(15.0);
-        limit * (0.08 + 0.92 * (gpu.load_pct.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0))
-    })).sum();
-    let disk_mb = (snapshot.total_disk_read_rate_bps + snapshot.total_disk_write_rate_bps) as f32 / 1_000_000.0;
-    let storage = snapshot.physical_disks.iter().map(|disk| if disk.is_ssd { 0.5 } else { 2.2 }).sum::<f32>() + (disk_mb * 0.04).clamp(0.0, 4.0);
-    let memory_gb = snapshot.mem_total_bytes as f32 / (1024.0 * 1024.0 * 1024.0);
-    let motherboard = 1.0 + memory_gb / 8.0 * (0.35 + snapshot.mem_usage_pct / 100.0 * 0.55);
-    let display = if snapshot.power.batteries.is_empty() { 0.0 } else { 1.0 + snapshot.power.backlight_ratio.unwrap_or(0.4) * 2.8 };
-    let components = [("CPU package", cpu), ("Graphics", gpu), ("Storage", storage), ("Motherboard & RAM", motherboard), ("Display", display), ("USB & peripherals", snapshot.power.usb_power_watts.map(|value| value.0).unwrap_or(0.45)), ("Keyboard & lights", snapshot.power.kbd_lights_watts.unwrap_or(0.25))];
-    let total = components.iter().map(|(_, watts)| watts).sum::<f32>();
-    ui.add_space(12.0);
-    ui.label(RichText::new("Estimated system power").size(12.0).strong());
-    ui.label(RichText::new(format!("{total:.1} W · MODEL")).size(22.0).strong());
-    ui.label(RichText::new("Animated illustration, not measured history. Component values are estimates.").size(11.0).color(ui.visuals().weak_text_color()));
-    draw_estimated_power_waveform(ui, 90.0, total, accent);
-    for (name, watts) in components {
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(name).size(11.0));
-            ui.label(RichText::new(format!("{watts:.1} W estimated")).size(11.0).color(ui.visuals().weak_text_color()));
-        });
-    }
-}
-
 fn battery_capacity_retention(battery: &crate::sensors::BatteryInfo) -> Option<f32> {
     battery.health_pct.filter(|value| value.is_finite() && (0.0..=100.0).contains(value)).or_else(|| {
         let full = battery.energy_full_wh?;
@@ -11554,12 +11522,12 @@ impl LauncherApp {
         let key = PendingSudoAction::UnlockSensorAccess.key(None);
         let busy = self.systemd_actions_in_flight.lock().unwrap().contains(&key);
         ui.horizontal_wrapped(|ui| {
-            if ui.add_enabled(!busy, egui::Button::new(if self.sensors_snapshot.hardware_access_unlocked { "Refresh protected sensors" } else { "Unlock hardware sensors" })).on_hover_text("Read-only sudo probe: CPU energy counters, Intel GPU PMU and installed RAM modules. No hardware settings are changed.").clicked() {
+            if ui.add_enabled(!busy, egui::Button::new(if self.sensors_snapshot.hardware_access_unlocked { "Refresh protected sensors" } else { "Unlock hardware sensors" })).on_hover_text("Extra metrics only: CPU and RAM usage do not need sudo. This read-only probe reads protected CPU energy, Intel GPU counters and RAM module details; it changes no hardware settings.").clicked() {
                 self.service_action_msg = None;
                 self.queue_systemd_action(PendingSudoAction::UnlockSensorAccess, None, None);
             }
             if busy { ui.spinner(); }
-            ui.label(RichText::new("Protected hardware readings may require your sudo password.").size(11.0).color(p.text_muted));
+            ui.label(RichText::new("Extra CPU power, Intel GPU engine and RAM module details require authorization.").size(11.0).color(p.text_muted));
         });
         if let Some(message) = self.service_action_msg.as_ref().filter(|message| message.starts_with("Read-only hardware") || message.starts_with("Error: Hardware probe") || message.starts_with("Error: Could not start hardware")) {
             ui.label(RichText::new(message).size(11.0).color(p.text_muted));
@@ -16151,13 +16119,18 @@ impl LauncherApp {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
 
+                let ac_online = snap.power.ac_online == Some(true);
+                let bat_pct = bat.and_then(|battery| battery.capacity_pct).unwrap_or(f32::NAN);
+                let full_wh = bat.and_then(|battery| battery.energy_full_wh).unwrap_or(f32::NAN);
+                let remaining_wh = bat.and_then(|battery| battery.energy_wh).unwrap_or(f32::NAN);
+                let bat_health = bat.and_then(battery_capacity_retention).unwrap_or(f32::NAN);
                 let reported_status = bat.map(|battery| battery.status.trim()).filter(|status| !status.is_empty()).unwrap_or("Battery state unavailable");
                 let status_str = if has_battery { reported_status.to_string() } else {
                     match snap.power.ac_online { Some(true) => "External power connected", Some(false) => "External power disconnected", None => "Power-source status unavailable" }.to_string()
                 };
                 let status_col = p.text_secondary;
                 let status_bg = p.bg_button;
-                let est_time_str = "Runtime estimate unavailable";
+                let est_time_str = if reported_status.eq_ignore_ascii_case("full") || reported_status.eq_ignore_ascii_case("fully charged") { "Fully charged" } else { "Unavailable" };
 
                 // 1. Top Header Banner
                 Frame::none()
@@ -16288,52 +16261,224 @@ impl LauncherApp {
                     // Left Column
                     ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                         ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
-                        Frame::none().fill(p.bg_card).rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 12.0)).show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.label(RichText::new("Reported battery information").size(12.0).strong().color(p.text_primary));
-                                if let Some(battery) = bat {
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.label(RichText::new(&battery.name).size(11.0).color(p.text_secondary));
-                                        for text in [&battery.manufacturer, &battery.model_name] {
-                                            if !text.trim().is_empty() { ui.label(RichText::new(text).size(11.0).color(p.text_muted)); }
+                        if has_battery {
+
+                            // Primary Battery Telemetry Card (Local PC or Remote Laptop with detected battery)
+                            Frame::none()
+                                .fill(p.bg_card)
+                                .rounding(Rounding::same(8.0))
+                                .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 6.0;
+                                        ui.label(RichText::new(crate::lucide::BATTERY).size(12.0).color(accent));
+                                        let bat_name = bat.map(|b| b.name.as_str()).unwrap_or("Battery");
+                                        let bat_mfg = bat.map(|b| b.manufacturer.trim()).filter(|s| !s.is_empty()).unwrap_or("Unknown manufacturer");
+                                        let bat_model = bat.map(|b| b.model_name.trim()).filter(|s| !s.is_empty()).unwrap_or("Unknown model");
+                                        let bat_hdr = format!("PRIMARY CELL TELEMETRY // {} ({} {})", bat_name, bat_mfg, bat_model);
+                                        ui.label(RichText::new(bat_hdr).size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            Frame::none()
+                                                .fill(accent_with_alpha(accent, 20))
+                                                .rounding(Rounding::same(4.0))
+                                                .inner_margin(egui::Margin::symmetric(7.0, 2.5))
+                                                .show(ui, |ui| {
+                                                    ui.horizontal(|ui| {
+                                                        ui.spacing_mut().item_spacing.x = 4.0;
+                                                        let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
+                                                        ui.painter().circle_filled(d_rect.center(), 2.5, accent);
+                                                        ui.label(RichText::new(if bat_health.is_finite() { format!("Capacity {}%", reported_sensor_value(Some(bat_health), 0)) } else { "Health unavailable".into() }).size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                                    });
+                                                });
+                                        });
+                                    });
+
+                                    ui.add_space(10.0);
+
+                                    // 3 Metric Cards in row (Equal Height Synced)
+                                    let card_height_id = ui.make_persistent_id("power_top_metric_cards_h");
+                                    let target_card_h: f32 = ui.data(|d| d.get_temp::<f32>(card_height_id)).unwrap_or(118.0).max(118.0);
+                                    let mut observed_max_inner_h: f32 = 98.0;
+                                    let needed_inner_h = (target_card_h - 20.0).max(98.0);
+
+                                    let render_card_meta_row = |ui: &mut egui::Ui, label: &str, val: &str, val_col: Color32| {
+                                        ui.horizontal(|ui| {
+                                            let avail = ui.available_width();
+                                            let left_w = (avail * 0.40).clamp(28.0, 55.0);
+                                            let right_w = (avail - left_w - 4.0).max(10.0);
+                                            ui.allocate_ui_with_layout(egui::vec2(left_w, 14.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                ui.add(egui::Label::new(RichText::new(label).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184))).truncate());
+                                            });
+                                            ui.allocate_ui_with_layout(egui::vec2(right_w, 14.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.add(egui::Label::new(RichText::new(val).size(8.5).monospace().strong().color(val_col)).truncate());
+                                            });
+                                        });
+                                    };
+
+                                    ui.columns(3, |cols| {
+                                        // Card 1: State of Charge
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(10, 15, 29))
+                                            .stroke(Stroke::NONE)
+                                            .rounding(Rounding::same(6.0))
+                                            .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                                            .show(&mut cols[0], |ui| {
+                                                ui.set_width(ui.available_width());
+                                                let content_start_y = ui.cursor().min.y;
+
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 5.0;
+                                                    ui.label(RichText::new(crate::lucide::BATTERY_CHARGING).size(11.0).color(accent));
+                                                    ui.label(RichText::new("State of Charge").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                });
+                                                ui.add_space(4.0);
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 2.0;
+                                                    ui.label(RichText::new(format!("{}", reported_sensor_value(Some(bat_pct), 0))).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                                    ui.label(RichText::new("%").size(12.0).color(Color32::from_rgb(148, 163, 184)));
+                                                });
+                                                ui.add_space(8.0);
+                                                let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
+                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
+                                                let fill_w = bar_r.width() * ((if bat_pct.is_finite() { bat_pct } else { 0.0 }) / 100.0).clamp(0.0, 1.0);
+                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(2.0), accent);
+                                                ui.add_space(8.0);
+
+                                                let delivery_str = reported_status;
+                                                render_card_meta_row(ui, "Mode", delivery_str, Color32::from_rgb(203, 213, 225));
+                                                ui.add_space(3.0);
+                                                render_card_meta_row(ui, "Time", &est_time_str, accent);
+
+                                                let inner_h = ui.cursor().min.y - content_start_y;
+                                                observed_max_inner_h = observed_max_inner_h.max(inner_h);
+                                                if inner_h < needed_inner_h {
+                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
+                                                }
+                                            });
+
+                                        // Card 2: Remaining vs Design
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(10, 15, 29))
+                                            .stroke(Stroke::NONE)
+                                            .rounding(Rounding::same(6.0))
+                                            .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                                            .show(&mut cols[1], |ui| {
+                                                ui.set_width(ui.available_width());
+                                                let content_start_y = ui.cursor().min.y;
+
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 5.0;
+                                                    ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(accent));
+                                                    ui.label(RichText::new("Remaining vs Design").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                });
+                                                ui.add_space(4.0);
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 2.0;
+                                                    ui.label(RichText::new(format!("{}", reported_sensor_value(Some(remaining_wh), 1))).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                                    ui.label(RichText::new(format!("/ {} Wh", reported_sensor_value(Some(full_wh), 1))).size(11.0).color(Color32::from_rgb(148, 163, 184)));
+                                                });
+                                                ui.add_space(8.0);
+                                                let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
+                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
+                                                let cap_ratio = if full_wh > 0.0 && remaining_wh.is_finite() { (remaining_wh / full_wh).clamp(0.0, 1.0) } else { 0.0 };
+                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * cap_ratio, bar_r.height())), Rounding::same(2.0), accent);
+                                                ui.add_space(8.0);
+
+                                                let design_wh = bat.and_then(|b| b.energy_design_wh).unwrap_or(f32::NAN);
+                                                render_card_meta_row(ui, "Health", &format!("{}%", reported_sensor_value(Some(bat_health), 1)), Color32::from_rgb(203, 213, 225));
+                                                ui.add_space(3.0);
+                                                render_card_meta_row(ui, "Design", &format!("{} Wh", reported_sensor_value(Some(design_wh), 1)), Color32::from_rgb(148, 163, 184));
+
+                                                let inner_h = ui.cursor().min.y - content_start_y;
+                                                observed_max_inner_h = observed_max_inner_h.max(inner_h);
+                                                if inner_h < needed_inner_h {
+                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
+                                                }
+                                            });
+
+                                        // Card 3: Lifecycle Endurance
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(10, 15, 29))
+                                            .stroke(Stroke::NONE)
+                                            .rounding(Rounding::same(6.0))
+                                            .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                                            .show(&mut cols[2], |ui| {
+                                                ui.set_width(ui.available_width());
+                                                let content_start_y = ui.cursor().min.y;
+
+                                                let cycles_val = bat.and_then(|b| b.cycle_count).unwrap_or(0);
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 5.0;
+                                                    ui.label(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(accent));
+                                                    ui.label(RichText::new("Lifecycle Endurance").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                });
+                                                ui.add_space(4.0);
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 2.0;
+                                                    if bat.and_then(|battery| battery.cycle_count).is_some() {
+                                                        ui.label(RichText::new(format!("{}", cycles_val)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                                        ui.label(RichText::new("cycles").size(11.0).color(Color32::from_rgb(148, 163, 184)));
+                                                    } else {
+                                                        ui.label(RichText::new("—").size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                                        ui.label(RichText::new("unavailable").size(11.0).color(Color32::from_rgb(148, 163, 184)));
+                                                    }
+                                                });
+                                                ui.add_space(8.0);
+                                                let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
+                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
+                                                let cycle_ratio = 0.0; // No universal cycle-life limit is reported.
+                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * cycle_ratio, bar_r.height())), Rounding::same(2.0), accent);
+                                                ui.add_space(8.0);
+
+                                                let life_label = "Not reported";
+                                                let cond_label = bat.map(|battery| battery.status.as_str()).unwrap_or("Unavailable");
+                                                render_card_meta_row(ui, "Lifespan", life_label, Color32::from_rgb(203, 213, 225));
+                                                ui.add_space(3.0);
+                                                render_card_meta_row(ui, "Condition", cond_label, Color32::from_rgb(148, 163, 184));
+
+                                                let inner_h = ui.cursor().min.y - content_start_y;
+                                                observed_max_inner_h = observed_max_inner_h.max(inner_h);
+                                                if inner_h < needed_inner_h {
+                                                    ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
+                                                }
+                                            });
+                                    });
+
+                                    ui.data_mut(|d| d.insert_temp(card_height_id, observed_max_inner_h + 20.0));
+
+                                    ui.add_space(12.0);
+
+                                    // Row of 4 Sub-chips (Fits cleanly on 1 line without wrapping)
+                                    ui.columns(4, |cols| {
+                                        let volts_val = bat.and_then(|b| b.voltage_volts).unwrap_or(f32::NAN);
+                                        let chem_str = bat.map(|b| b.technology.trim()).filter(|s| !s.is_empty()).unwrap_or("Unavailable");
+
+                                        let ac_status = match snap.power.ac_online { Some(true) => "Connected", Some(false) => "Disconnected", None => "Unavailable" };
+                                        let chips = [
+                                            ("Terminal Potential", format!("{} V", reported_sensor_value(Some(volts_val), 2)), Color32::from_rgb(241, 245, 249)),
+                                            ("Chemistry Stack", chem_str.to_string(), Color32::from_rgb(241, 245, 249)),
+                                            ("Battery Temp", "Unavailable".to_string(), Color32::from_rgb(203, 213, 225)),
+                                            ("AC Adapter State", ac_status.to_string(), Color32::from_rgb(203, 213, 225)),
+                                        ];
+                                        for (i, (title, val, val_col)) in chips.into_iter().enumerate() {
+                                            Frame::none()
+                                                .fill(Color32::from_rgb(10, 15, 29))
+                                                .rounding(Rounding::same(6.0))
+                                                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                                .show(&mut cols[i], |ui| {
+                                                    ui.set_width(ui.available_width());
+                                                    ui.label(RichText::new(title).size(8.0).monospace().color(p.text_muted));
+                                                    ui.add_space(2.0);
+                                                    ui.label(RichText::new(val).size(9.5).monospace().strong().color(val_col));
+                                                });
                                         }
                                     });
-                                    ui.add_space(8.0);
-                                    let health = battery_capacity_retention(battery);
-                                    sensor_card_columns(ui, 3, |ui, index| {
-                                        let (label, value, unit) = match index {
-                                            0 => ("State of charge", reported_sensor_value(battery.capacity_pct, 0), "%"),
-                                            1 => ("Capacity retention", reported_sensor_value(health, 1), "%"),
-                                            _ => ("Cycle count", battery.cycle_count.map(|value| value.to_string()).unwrap_or_else(|| "—".into()), ""),
-                                        };
-                                        ui.label(RichText::new(label).size(11.0).color(p.text_muted));
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new(&value).size(22.0).strong().color(p.text_primary));
-                                            if value != "—" { ui.label(RichText::new(unit).size(11.0).color(p.text_secondary)); }
-                                        });
-                                    });
-                                    ui.add_space(10.0);
-                                    for (label, value) in [
-                                        ("Remaining energy", battery.energy_wh.map(|value| format!("{value:.1} Wh"))),
-                                        ("Full-charge capacity", battery.energy_full_wh.map(|value| format!("{value:.1} Wh"))),
-                                        ("Design capacity", battery.energy_design_wh.map(|value| format!("{value:.1} Wh"))),
-                                        ("Voltage", battery.voltage_volts.map(|value| format!("{value:.2} V"))),
-                                        ("Chemistry", (!battery.technology.trim().is_empty()).then(|| battery.technology.clone())),
-                                    ] {
-                                        ui.horizontal_wrapped(|ui| {
-                                            ui.label(RichText::new(label).size(11.0).color(p.text_muted));
-                                            ui.label(RichText::new(value.unwrap_or_else(|| "Unavailable".into())).size(11.0).color(p.text_primary));
-                                        });
-                                    }
-                                    ui.add_space(6.0);
-                                    ui.label(RichText::new("Capacity retention compares full-charge capacity with design capacity. Cycle life and charging bypass are not inferred.").size(11.0).color(p.text_muted));
-                                } else {
-                                    ui.label(RichText::new("No battery information was reported by this host.").size(11.0).color(p.text_muted));
-                                }
-                            });
-
-
+                                });
+                                                } else {
+                            ui.label(RichText::new("No battery information was reported by this host.").size(11.0).color(p.text_muted));
+                        }
                         ui.add_space(8.0);
 
                         // Card 2: THERMAL & POWER GOVERNOR PRESET
@@ -16448,40 +16593,225 @@ impl LauncherApp {
 
                     ui.add_space(gap);
 
-                    // Reported power domains remain separate; they are not a measured wall-power total.
+                    let cpu_load = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
+                    let raw_cpu = snap.cpu_power_watts.unwrap_or_else(|| {
+                        let idle = (profile.nominal_watts * 0.12).clamp(1.5, 20.0);
+                        idle + (profile.nominal_watts - idle) * (0.35 * cpu_load + 0.65 * cpu_load.powf(1.35))
+                    });
+                    // Right Column: ESTIMATED POWER
                     ui.allocate_ui_with_layout(egui::vec2(right_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        Frame::none().fill(p.bg_card).rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 12.0)).show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
+                        Frame::none()
+                            .fill(p.bg_card)
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+                            .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
-                                let (label, reading) = if has_battery {
-                                    ("Reported battery power", snap.power.total_power_watts.or_else(|| bat.and_then(|battery| battery.power_watts)))
-                                } else { ("Reported CPU package power", snap.cpu_power_watts) };
-                                ui.label(RichText::new(label).size(12.0).strong().color(p.text_primary));
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new(reported_sensor_value(reading, 1)).size(26.0).strong().color(p.text_primary));
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(accent));
+                                    ui.label(RichText::new("ESTIMATED POWER").size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                                        ui.painter().circle_filled(d_rect.center(), 3.0, accent);
+                                    });
+                                });
+
+                                ui.add_space(10.0);
+
+                                // User-requested component power model; allocations are estimates.
+                                let disk_mb_s = ((snap.total_disk_read_rate_bps + snap.total_disk_write_rate_bps) / (1024.0 * 1024.0)) as f32;
+                                let net_mb_s = ((snap.total_rx_rate_bps + snap.total_tx_rate_bps) / (1024.0 * 1024.0)) as f32;
+                                let mem_ratio = (snap.mem_usage_pct / 100.0).clamp(0.0, 1.0);
+
+                                let is_discharging = !ac_online || bat.map(|b| b.status.eq_ignore_ascii_case("discharging")).unwrap_or(false);
+                                let is_charging = ac_online && bat.map(|b| b.status.eq_ignore_ascii_case("charging")).unwrap_or(false);
+
+                                let (badge_str, badge_col) = ("Estimated model".to_string(), accent);
+
+                                // GPU telemetry
+                                let (raw_gpu, gpu_cap) = if !snap.gpus.is_empty() {
+                                    let mut total_g_w = 0.0_f32;
+                                    let mut total_g_cap = 0.0_f32;
+                                    for g in &snap.gpus {
+                                        let limit = g.power_limit_watts.unwrap_or(if is_remote { 75.0 } else { 35.0 });
+                                        let g_load = (g.load_pct.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0);
+                                        let w = g.power_watts.unwrap_or_else(|| {
+                                            (limit * 0.08).max(0.5) + (limit * 0.92) * g_load
+                                        });
+                                        total_g_w += w;
+                                        total_g_cap += limit.max(w * 1.25);
+                                    }
+                                    (total_g_w, total_g_cap.max(total_g_w * 1.25))
+                                } else {
+                                    let g_tdp = (profile.nominal_watts * 0.30).clamp(3.0, 35.0);
+                                    let g_load = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
+                                    let igpu_w = (g_tdp * 0.06).max(0.3) + (g_tdp * 0.40) * (g_load * 0.5);
+                                    (igpu_w, g_tdp)
+                                };
+
+                                // Storage subsystem
+                                let (num_rotational, num_ssd) = {
+                                    let mut rot = 0;
+                                    let mut ssd = 0;
+                                    for d in &snap.physical_disks {
+                                        if d.is_ssd { ssd += 1; } else { rot += 1; }
+                                    }
+                                    if rot == 0 && ssd == 0 {
+                                        if snap.disks.is_empty() { (0, 1) } else { (0, snap.disks.len()) }
+                                    } else {
+                                        (rot, ssd)
+                                    }
+                                };
+                                let hdd_draw = (num_rotational as f32 * 2.2) + (disk_mb_s * 0.10).clamp(0.0, 8.0);
+                                let ssd_draw = (num_ssd.max(1) as f32 * 0.5) + (disk_mb_s * 0.04).clamp(0.0, 4.0);
+                                let raw_storage = (hdd_draw + ssd_draw).clamp(0.5, 50.0);
+                                let storage_cap = (num_rotational as f32 * 7.0 + num_ssd as f32 * 3.5).clamp(5.0, 60.0);
+
+                                // Motherboard chipset & memory
+                                let mem_gb = (snap.mem_total_bytes as f32 / (1024.0 * 1024.0 * 1024.0)).max(4.0);
+                                let ram_draw = (mem_gb / 8.0) * (0.35 + mem_ratio * 0.55);
+                                let chipset_draw = if has_battery { 1.0 } else if num_cores >= 16 { 5.0 } else { 2.2 };
+                                let raw_mb = (chipset_draw + ram_draw).clamp(1.2, 35.0);
+                                let mb_cap = (chipset_draw * 2.0 + (mem_gb / 8.0) * 1.8).clamp(6.0, 40.0);
+
+                                // Network PHY & bus
+                                let raw_net = (0.4 + (net_mb_s * 0.06)).clamp(0.4, 20.0);
+                                let net_cap = 15.0_f32;
+
+                                // USB & Peripherals
+                                let (base_usb_w, usb_device_count) = snap.power.usb_power_watts.unwrap_or((0.45, 0));
+                                let usb_cap = (usb_device_count as f32 * 4.5 + 5.0).clamp(8.0, 30.0);
+
+                                // CPU cap
+                                let cpu_cap = profile.turbo_pl2_watts.max(raw_cpu * 1.25);
+
+                                let (watts_val, components): (f32, Vec<(&'static str, f32, f32)>) = if has_battery {
+                                    let br = snap.power.backlight_ratio.unwrap_or(0.40);
+                                    let raw_display = 1.0 + br * 2.8;
+                                    let disp_cap = 6.0_f32;
+                                    let raw_kbd_lights = snap.power.kbd_lights_watts.unwrap_or(0.25);
+                                    let kbd_cap = 4.0_f32;
+
+                                    let bat_power = snap.power.total_power_watts.filter(|&w| w > 0.1);
+
+                                    let (final_watts, c_cpu, c_gpu, c_disp, c_storage, c_usb, c_kbd_lights, c_mb) = if is_discharging && bat_power.is_some() {
+                                        let total = bat_power.unwrap();
+                                        let base_internal = raw_cpu + raw_gpu + raw_display + raw_storage + raw_kbd_lights + raw_mb + base_usb_w;
+                                        let c_usb_raw = if total > base_internal {
+                                            base_usb_w.max(total - base_internal)
+                                        } else {
+                                            base_usb_w
+                                        };
+                                        let non_cpu_sum = (raw_display + raw_storage + c_usb_raw + raw_kbd_lights + raw_mb).max(0.1);
+                                        let target_non_cpu = (total - raw_cpu - raw_gpu).max(0.1);
+                                        let scale = (target_non_cpu / non_cpu_sum).clamp(0.4, 1.8);
+
+                                        (
+                                            total,
+                                            raw_cpu,
+                                            raw_gpu,
+                                            raw_display * scale,
+                                            raw_storage * scale,
+                                            c_usb_raw * scale,
+                                            raw_kbd_lights * scale,
+                                            raw_mb * scale,
+                                        )
+                                    } else if is_charging && bat_power.is_some() {
+                                        let sys_draw = raw_cpu + raw_gpu + raw_display + raw_storage + base_usb_w + raw_kbd_lights + raw_mb;
+                                        let total = sys_draw + bat_power.unwrap();
+                                        (total, raw_cpu, raw_gpu, raw_display, raw_storage, base_usb_w, raw_kbd_lights, raw_mb)
+                                    } else {
+                                        let total = (raw_cpu + raw_gpu + raw_display + raw_storage + base_usb_w + raw_kbd_lights + raw_mb).max(2.5);
+                                        (total, raw_cpu, raw_gpu, raw_display, raw_storage, base_usb_w, raw_kbd_lights, raw_mb)
+                                    };
+
+                                    let mut comps = vec![
+                                        ("CPU Package (PL0/1)", c_cpu, cpu_cap),
+                                    ];
+                                    if !snap.gpus.is_empty() {
+                                        comps.push(("Graphics Subsystem (GPU)", c_gpu, gpu_cap));
+                                    } else {
+                                        comps.push(("Integrated GPU (iGPU)", c_gpu, gpu_cap));
+                                    }
+                                    comps.push(("eDP Panel & Backlight", c_disp, disp_cap));
+                                    comps.push(("Drives & Storage (HDD/NVMe)", c_storage, storage_cap));
+                                    comps.push(("USB Ports & Peripherals", c_usb, usb_cap));
+                                    comps.push(("Keyboard & System Lights", c_kbd_lights, kbd_cap));
+                                    comps.push(("Motherboard Logic & RAM", c_mb, mb_cap));
+
+                                    (final_watts, comps)
+                                } else {
+                                    let fan_draw = ((snap.cpu_temp.unwrap_or(35.0) - 30.0) / 40.0).clamp(0.0, 1.0) * 5.0 + 1.2;
+                                    let fan_cap = 15.0_f32;
+                                    let total = raw_cpu + (if !snap.gpus.is_empty() { raw_gpu } else { 0.0 }) + raw_storage + raw_net + raw_mb + base_usb_w + fan_draw;
+
+                                    let mut comps = vec![
+                                        ("CPU Package & Cores", raw_cpu, cpu_cap),
+                                    ];
+                                    if !snap.gpus.is_empty() {
+                                        comps.push(("Graphics Subsystem (GPU)", raw_gpu, gpu_cap));
+                                    }
+                                    comps.push(("Storage Subsystem (HDD/NVMe)", raw_storage, storage_cap));
+                                    comps.push(("Network PHY & Interface", raw_net, net_cap));
+                                    comps.push(("Motherboard Logic & RAM", raw_mb, mb_cap));
+                                    comps.push(("Chassis Cooling & Fans", fan_draw, fan_cap));
+                                    comps.push(("USB & System Peripherals", base_usb_w, usb_cap));
+
+                                    (total, comps)
+                                };
+
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("Estimated System Draw").size(9.5).monospace().color(p.text_muted));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        Frame::none()
+                                            .fill(Color32::from_rgb(18, 28, 42))
+                                            .rounding(Rounding::same(4.0))
+                                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new(&badge_str).size(8.5).monospace().color(badge_col));
+                                            });
+                                    });
+                                });
+
+                                ui.add_space(2.0);
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 3.0;
+                                    ui.label(RichText::new(format!("{:.1}", watts_val)).size(26.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                     ui.label(RichText::new("W").size(12.0).color(p.text_muted));
                                 });
-                                let history = sensor_metric_history(ui, host_id, label, snap.timestamp, reading);
-                                if history.len() >= 2 {
-                                    let maximum = history.iter().copied().reduce(f32::max).unwrap_or(1.0).max(1.0);
-                                    draw_card_sparkline(ui, 68.0, &history, maximum * 1.1, None, accent);
-                                } else {
-                                    ui.label(RichText::new(if reading.is_some() { "Waiting for measured samples…" } else { "Power telemetry is unavailable from this collector." }).size(11.0).color(p.text_muted));
-                                }
+
+                                ui.add_space(8.0);
+
+                                // Smooth realtime animated waveform canvas
+                                draw_estimated_power_waveform(ui, 68.0, watts_val, accent);
+                                ui.label(RichText::new("Animated model; the curve and component allocations are estimates, not measured history.").size(11.0).color(p.text_muted));
+
                                 ui.add_space(10.0);
-                                ui.label(RichText::new("Reported power domains").size(11.0).strong().color(p.text_secondary));
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.label(RichText::new("CPU package").size(11.0).color(p.text_muted));
-                                    ui.label(RichText::new(format!("{} W", reported_sensor_value(snap.cpu_power_watts, 1))).size(11.0).color(p.text_primary));
-                                });
-                                for gpu in &snap.gpus {
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.label(RichText::new(&gpu.name).size(11.0).color(p.text_muted));
-                                        ui.label(RichText::new(format!("{} W", reported_sensor_value(gpu.power_watts, 1))).size(11.0).color(p.text_primary));
+
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("LOAD ALLOCATION").size(8.0).monospace().strong().color(Color32::from_rgb(100, 116, 139)));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(RichText::new("ESTIMATED").size(7.5).monospace().color(Color32::from_rgb(71, 85, 105)));
                                     });
+                                });
+                                ui.add_space(4.0);
+
+                                for &(c_name, c_watts, c_max) in &components {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(c_name).size(8.5).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            ui.label(RichText::new(format!("{:.1} W", c_watts)).size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                        });
+                                    });
+                                    ui.add_space(2.0);
+                                    let (br, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
+                                    ui.painter().rect_filled(br, Rounding::same(2.0), Color32::from_rgb(14, 20, 36));
+                                    let fill_w = br.width() * (c_watts / c_max).clamp(0.04, 1.0);
+                                    ui.painter().rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(fill_w, br.height())), Rounding::same(2.0), accent);
+                                    ui.add_space(3.0);
                                 }
-                                ui.label(RichText::new("Reported domains may overlap and are not added into a measured system total.").size(11.0).color(p.text_muted));
-                                render_animated_power_estimate(ui, snap, accent);
                             });
                     });
                 });

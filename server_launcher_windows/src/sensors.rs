@@ -1683,8 +1683,13 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
     let usb_power_watts = None;
     let kbd_lights_watts = None;
 
-    let (cons_active, limit_val) = crate::power::query_charge_conservation();
-    let charge_limit = if cons_active { Some(limit_val) } else { None };
+    #[cfg(target_os = "linux")]
+    let charge_limit = if batteries.len() == 1 {
+        fs::read_to_string(format!("/sys/class/power_supply/{}/charge_control_end_threshold", batteries[0].name))
+            .ok().and_then(|s| s.trim().parse::<u32>().ok()).filter(|v| (1..=100).contains(v))
+    } else { None };
+    #[cfg(not(target_os = "linux"))]
+    let charge_limit = None;
 
     PowerSupplyInfo {
         ac_online,
@@ -2636,7 +2641,7 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
         if os.path.exists(ps + "/charge_control_end_threshold"):
             try:
                 cl = int(open(ps + "/charge_control_end_threshold").read().strip())
-                if 40 <= cl <= 100: charge_limit = cl
+                if 1 <= cl <= 100: charge_limit = cl
             except: pass
         
         batteries.append({
@@ -2655,14 +2660,6 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
             "manufacturer": mfg if mfg else "OEM"
         })
 
-if charge_limit is None:
-    for lp in ["/sys/bus/platform/drivers/ideapad_laptop/VPC2004:00/conservation_mode", "/sys/bus/platform/devices/VPC2004:00/conservation_mode"]:
-        if os.path.exists(lp):
-            try:
-                if open(lp).read().strip() == "1":
-                    charge_limit = 80
-                    break
-            except: pass
 
 if ac_online is None:
     if not batteries:

@@ -432,161 +432,29 @@ pub fn query_charge_conservation() -> (bool, u32) {
     (false, 80)
 }
 
-/// Applies the battery charge conservation threshold to hardware/EC across PC vendors (Lenovo, ASUS, Dell, LG, Samsung, Framework, System76, etc.).
-pub fn apply_charge_conservation(enabled: bool, ceiling_pct: u32) -> Result<String, String> {
-    let target = if enabled { ceiling_pct.clamp(50, 95) } else { 100 };
-
-    // 1. Standard Linux kernel ACPI charge_control_end_threshold
-    let mut found_sysfs_bat = false;
-    let mut wrote_sysfs_direct = false;
-    let mut bat_threshold_files = Vec::new();
-
-    if let Ok(entries) = fs::read_dir("/sys/class/power_supply") {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            let lname = fname.to_lowercase();
-            if lname.contains("bat") || lname.contains("macsmc") {
-                let thresh_file = path.join("charge_control_end_threshold");
-                if thresh_file.exists() {
-                    found_sysfs_bat = true;
-                    if fs::write(&thresh_file, format!("{}", target)).is_ok() {
-                        wrote_sysfs_direct = true;
-                    }
-                    bat_threshold_files.push(thresh_file);
-                }
-            }
-        }
+/// Set the kernel-reported charge limit for one explicitly selected battery.
+pub fn set_charge_limit(battery: &str, limit: u32, host: Option<&crate::config::SshRemoteHost>, password: Option<&str>) -> Result<String, String> {
+    if battery.is_empty() || !battery.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-') || !(1..=100).contains(&limit) {
+        return Err("Invalid battery or charge limit".into());
     }
+    let script = format!(r#"set -eu
+p='/sys/class/power_supply/{battery}'
+[ "$(cat "$p/type")" = Battery ] || {{ echo 'Battery is no longer available' >&2; exit 1; }}
+f="$p/charge_control_end_threshold"
+[ -f "$f" ] || {{ echo 'Charge limit is unsupported by this battery' >&2; exit 1; }}
+printf '%s' '{limit}' > "$f"
+[ "$(cat "$f")" = '{limit}' ] || {{ echo 'Charge limit read-back did not match' >&2; exit 1; }}"#);
+    if let Some(host) = host { crate::systemd::remote_script(host, &script, false, true, password)?; }
+    else { crate::systemd::run_local("sh", &["-c", &script], true, password)?; }
+    Ok(format!("{} charge limit set to {}%", battery, limit))
+}
 
-    // ASUS sysfs
-    let asus_path = "/sys/devices/platform/asus-nb-wmi/charge_control_end_threshold";
-    if Path::new(asus_path).exists() {
-        found_sysfs_bat = true;
-        if fs::write(asus_path, format!("{}", target)).is_ok() {
-            wrote_sysfs_direct = true;
-        }
-        bat_threshold_files.push(std::path::PathBuf::from(asus_path));
-    }
-
-    if wrote_sysfs_direct {
-        return Ok(format!("Battery charge ceiling set to {}% via kernel ACPI", target));
-    }
-
-    if found_sysfs_bat && !bat_threshold_files.is_empty() {
-        let files = bat_threshold_files;
-        std::thread::spawn(move || {
-            for f in files {
-                let cmd = format!("echo {} | tee \"{}\"", target, f.display());
-                let _ = Command::new("pkexec").args(["sh", "-c", &cmd]).output();
-            }
-        });
-        return Ok(format!("Requested charge ceiling of {}% via sysfs authorization", target));
-    }
-
-    // 2. Lenovo IdeaPad / Legion / Yoga
-    for lenovo_path in [
-        "/sys/bus/platform/drivers/ideapad_laptop/VPC2004:00/conservation_mode",
-        "/sys/bus/platform/devices/VPC2004:00/conservation_mode",
-    ] {
-        if Path::new(lenovo_path).exists() {
-            let val_str = if enabled { "1" } else { "0" };
-            if fs::write(lenovo_path, val_str).is_ok() {
-                return Ok(format!("Lenovo Conservation Mode {}", if enabled { "enabled (80% ceiling)" } else { "disabled" }));
-            }
-            let val_string = val_str.to_string();
-            let lp = lenovo_path.to_string();
-            std::thread::spawn(move || {
-                let cmd = format!("echo {} | tee {}", val_string, lp);
-                let _ = Command::new("pkexec").args(["sh", "-c", &cmd]).output();
-            });
-            return Ok("Requested Lenovo Conservation Mode via authorization".to_string());
-        }
-    }
-
-    // 3. LG Gram
-    let lg_path = "/sys/devices/platform/lg-laptop/battery_care_limit";
-    if Path::new(lg_path).exists() {
-        let val = if enabled { "80" } else { "100" };
-        if fs::write(lg_path, val).is_ok() {
-            return Ok(format!("LG Battery Care Limit set to {}%", val));
-        }
-        let val_s = val.to_string();
-        std::thread::spawn(move || {
-            let cmd = format!("echo {} | tee {}", val_s, lg_path);
-            let _ = Command::new("pkexec").args(["sh", "-c", &cmd]).output();
-        });
-        return Ok("Requested LG Battery Care Limit via authorization".to_string());
-    }
-
-    // 4. Samsung
-    for samsung_path in [
-        "/sys/devices/platform/samsung-laptop/battery_life_extender",
-        "/sys/devices/platform/samsung/battery_life_extender",
-    ] {
-        if Path::new(samsung_path).exists() {
-            let val = if enabled { "1" } else { "0" };
-            let _ = fs::write(samsung_path, val);
-            return Ok(format!("Samsung Battery Life Extender {}", if enabled { "enabled" } else { "disabled" }));
-        }
-    }
-
-    // 5. Dell Command | Configure (cctk) or Dell smbios-battery-ctl
-    let cctk_path = Command::new("which").arg("cctk").output();
-    if let Ok(out) = cctk_path {
-        if out.status.success() {
-            let arg = if enabled {
-                format!("--PrimaryBattChargeCfg=Custom:50-{}", target)
-            } else {
-                "--PrimaryBattChargeCfg=Standard".to_string()
-            };
-            std::thread::spawn(move || {
-                let _ = Command::new("pkexec").args(["cctk", &arg]).output();
-            });
-            return Ok(format!("Dell Charge Configuration set to {}%", target));
-        }
-    }
-    let smbios_ctl = Command::new("which").arg("smbios-battery-ctl").output();
-    if let Ok(out) = smbios_ctl {
-        if out.status.success() {
-            let arg = if enabled {
-                format!("--set-custom-charge-interval=50,{}", target)
-            } else {
-                "--set-charging-mode=standard".to_string()
-            };
-            std::thread::spawn(move || {
-                let _ = Command::new("pkexec").args(["smbios-battery-ctl", &arg]).output();
-            });
-            return Ok(format!("Dell SMBIOS charge threshold set to {}%", target));
-        }
-    }
-
-    // 6. Huawei
-    for huawei_path in [
-        "/sys/devices/platform/huawei-wmi/charge_control_thresholds",
-        "/sys/devices/platform/huawei-wmi/charge_thresholds",
-    ] {
-        if Path::new(huawei_path).exists() {
-            let val = if enabled { format!("0 {}", target) } else { "0 100".to_string() };
-            let _ = fs::write(huawei_path, &val);
-            return Ok(format!("Huawei charge threshold set to {}%", target));
-        }
-    }
-
-    // 7. Sony
-    let sony_path = "/sys/devices/platform/sony-laptop/battery_care_limiter";
-    if Path::new(sony_path).exists() {
-        let val = if enabled { target.to_string() } else { "0".to_string() };
-        let _ = fs::write(sony_path, &val);
-        return Ok(format!("Sony battery care limit set to {}%", target));
-    }
-
-    // 8. Universal Software Longevity Protection Guard
-    // When the PC's EC doesn't expose a hardware register, activate software threshold guard
-    if enabled {
-        Ok(format!("Longevity Protection active: Software battery threshold guard armed at {}%", target))
-    } else {
-        Ok("Battery conservation threshold disabled".to_string())
+#[cfg(test)]
+mod charge_limit_tests {
+    #[test]
+    fn rejects_unsafe_battery_names_and_limits() {
+        assert!(super::set_charge_limit("../BAT0", 80, None, None).is_err());
+        assert!(super::set_charge_limit("BAT0", 101, None, None).is_err());
     }
 }
 

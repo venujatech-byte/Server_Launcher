@@ -169,6 +169,7 @@ pub struct WifiAppNetItem {
 #[derive(Clone, Debug)]
 pub enum PendingSudoAction {
     UnlockSensorAccess,
+    SetChargeLimit { battery: String, limit: u32 },
     ServiceAction { unit: String, action: &'static str, user_mode: bool },
     CreateService { def: crate::systemd::NewServiceDefinition },
     SaveUnitFile { path: String, content: String, user_mode: bool },
@@ -200,6 +201,7 @@ impl PendingSudoAction {
     fn key(&self, host_id: Option<&str>) -> String {
         let (kind, target, user_mode) = match self {
             Self::UnlockSensorAccess => ("hardware", "local", false),
+            Self::SetChargeLimit { battery, .. } => ("charge-limit", battery.as_str(), false),
             Self::ServiceAction { unit, user_mode, .. } => ("control", unit.as_str(), *user_mode),
             Self::CreateService { def } => ("create", def.name.as_str(), def.is_user),
             Self::SaveUnitFile { path, user_mode, .. } => ("save", path.as_str(), *user_mode),
@@ -9046,6 +9048,7 @@ impl LauncherApp {
                     if host.is_some() { Err("Protected sensor access applies to the local host only.".into()) }
                     else { sensor_collector.lock().unwrap().unlock_hardware_access(pass).map(SystemdActionValue::Message) }
                 },
+                PendingSudoAction::SetChargeLimit { battery, limit } => crate::power::set_charge_limit(battery, *limit, host.as_ref(), pass).map(SystemdActionValue::Message),
                 PendingSudoAction::ServiceAction { unit, action, user_mode } => {
                     if let Some(host) = &host { control_remote_service(host, unit, action, *user_mode, pass) }
                     else { control_local_service(unit, action, *user_mode, pass) }.map(SystemdActionValue::Message)
@@ -9105,7 +9108,7 @@ impl LauncherApp {
                 continue;
             };
             let action_scope = match &action {
-                PendingSudoAction::UnlockSensorAccess => false,
+                PendingSudoAction::UnlockSensorAccess | PendingSudoAction::SetChargeLimit { .. } => false,
                 PendingSudoAction::CreateService { def } => def.is_user,
                 PendingSudoAction::ServiceAction { user_mode, .. } | PendingSudoAction::SaveUnitFile { user_mode, .. }
                 | PendingSudoAction::CreateDropIn { user_mode, .. } | PendingSudoAction::DeleteDropIn { user_mode, .. }
@@ -9124,6 +9127,7 @@ impl LauncherApp {
                         if result.host_id.is_some() { self.remote_journal_logs.lock().unwrap().insert(format!("{}:{}:{}", host_key, unit, scope), format!("Error: {}", error)); }
                         else { self.local_journal_logs.lock().unwrap().insert(format!("{}:{}", unit, scope), format!("Error: {}", error)); }
                     }
+                    if current_host && matches!(action, PendingSudoAction::SetChargeLimit { .. }) { self.power_status_msg = Some((error.clone(), true, Instant::now())); }
                     if current_host { self.systemd_file_status_msg = Some((error.clone(), true)); }
                     if result.host_id.is_some() { *self.remote_service_action_msg.lock().unwrap() = Some(format!("Error: {}", error)); }
                     else { self.service_action_msg = Some(format!("Error: {}", error)); }
@@ -9182,6 +9186,7 @@ impl LauncherApp {
                             let mut refresh = None;
                             match &action {
                                 PendingSudoAction::UnlockSensorAccess => self.trigger_local_sensors_query(false, None),
+                                PendingSudoAction::SetChargeLimit { .. } => { if current_host { self.power_status_msg = Some((message.clone(), false, Instant::now())); if let Some(host) = host.clone() { self.trigger_remote_sensors_query(host); } else { self.trigger_local_sensors_query(false, None); } } },
                                 PendingSudoAction::ServiceAction { unit, user_mode, .. } => { refresh = Some((unit.clone(), *user_mode)); }
                                 PendingSudoAction::CreateService { def } => {
                                     if let Ok(unit) = crate::systemd::service_unit_name(def) { refresh = Some((unit, def.is_user)); }
@@ -9280,6 +9285,7 @@ impl LauncherApp {
                 if let Some(pending) = &self.sudo_popup.pending {
                     match pending {
                         PendingSudoAction::UnlockSensorAccess => { ui.label("Read-only access to CPU energy, Intel GPU counters and RAM inventory on this computer."); }
+                        PendingSudoAction::SetChargeLimit { battery, limit } => { ui.label(format!("Set battery {} charge limit to {}% on the selected host.", battery, limit)); }
                         PendingSudoAction::ServiceAction { unit, action, .. } => {
                             let act_color = match *action {
                                 "start" => palette.success,
@@ -11137,30 +11143,7 @@ impl LauncherApp {
                 }
             }
 
-            // Universal Software Battery Longevity Guard Check
-            if cfg!(target_os = "linux") && self.power_conservation && host_id.is_none() {
-                if let Some(true) = snap.power.ac_online {
-                    if let Some(bat_pct) = snap.power.total_battery_pct {
-                        if bat_pct >= self.power_ceiling {
-                            let should_warn = self.last_conservation_warn.map_or(true, |t| t.elapsed() >= Duration::from_secs(300));
-                            if should_warn {
-                                self.last_conservation_warn = Some(Instant::now());
-                                let ceil = self.power_ceiling;
-                                std::thread::spawn(move || {
-                                    let _ = std::process::Command::new("notify-send")
-                                        .args([
-                                            "-u", "normal",
-                                            "-i", "battery-full",
-                                            "Battery Conservation Alert",
-                                            &format!("Battery reached {:.0}% ceiling. Unplug AC to preserve cell longevity.", ceil)
-                                        ])
-                                        .output();
-                                });
-                            }
-                        }
-                    }
-                }
-            }
+
         }
 
         ui.vertical(|ui| {
@@ -16782,266 +16765,34 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 3. Bottom Card: Conservation & Longevity Circuit (Battery) or Platform Governance (AC Continuous)
                 if has_battery {
-                    if is_remote {
-                        if ui.ctx().dragged_id().is_none() {
-                            if let Some(limit) = snap.power.charge_limit {
-                                if limit < 100 {
-                                    self.power_conservation = true;
-                                    self.power_ceiling = limit as f32;
-                                } else {
-                                    self.power_conservation = false;
-                                    self.power_ceiling = 100.0;
-                                }
-                            }
-                        }
-                    }
-
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .stroke(Stroke::NONE)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                        .show(ui, |ui| {
+                    Frame::none().fill(p.bg_card).rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(14.0, 12.0)).show(ui, |ui| {
                             ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(crate::lucide::SLIDERS).size(12.0).color(accent));
-                                ui.label(RichText::new("BATTERY CONSERVATION & CHARGE GOVERNANCE").size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
-
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    Frame::none()
-                                        .fill(accent_with_alpha(accent, 18))
-                                        .stroke(Stroke::NONE)
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.spacing_mut().item_spacing.x = 4.0;
-                                                ui.label(RichText::new(crate::lucide::SHIELD).size(10.0).color(accent));
-                                                ui.label(RichText::new("PROTECTION ACTIVE").size(8.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                            });
-                                        });
+                            ui.label(RichText::new("BATTERY CHARGE LIMIT").size(10.0).monospace().strong().color(p.text_secondary));
+                            ui.add_space(6.0);
+                            if snap.power.batteries.len() != 1 {
+                                ui.label(RichText::new("Charge control is unavailable for multiple batteries.").size(11.0).color(p.text_muted));
+                            } else if let Some(limit) = snap.power.charge_limit {
+                                let battery = &snap.power.batteries[0].name;
+                                ui.label(RichText::new(format!("{} · Current limit: {}%", battery, limit)).size(11.0).color(p.text_secondary));
+                                ui.horizontal(|ui| {
+                                    ui.add(egui::Slider::new(&mut self.power_ceiling, 1.0..=100.0).integer().suffix("%"));
+                                    if ui.button("Apply limit").clicked() {
+                                        let host = host_id.and_then(|id| self.ssh_hosts.iter().find(|h| h.id == id)).cloned();
+                                        if host_id.is_none() || host.is_some() {
+                                            self.power_status_msg = Some(("Applying charge limit…".into(), false, Instant::now()));
+                                            self.queue_systemd_action(PendingSudoAction::SetChargeLimit { battery: battery.clone(), limit: self.power_ceiling as u32 }, host.as_ref(), None);
+                                        } else {
+                                            self.power_status_msg = Some(("Selected host is unavailable".into(), true, Instant::now()));
+                                        }
+                                    }
                                 });
-                            });
-
-                            ui.add_space(10.0);
-
-                            // 3 Equal-Sized Conservation Circuit Cards
-                            let card_height_id = ui.make_persistent_id("conservation_circuit_card_h");
-                            let target_card_h: f32 = ui.data(|d| d.get_temp::<f32>(card_height_id)).unwrap_or(84.0);
-                            let mut observed_max_inner_h: f32 = 64.0;
-                            let needed_inner_h = (target_card_h - 20.0).max(64.0);
-
-                            ui.columns(3, |cols| {
-                                // Col 1: Conservation Threshold
-                                Frame::none()
-                                    .fill(Color32::from_rgb(10, 15, 29))
-                                    .stroke(Stroke::NONE)
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(10.0, 10.0))
-                                    .show(&mut cols[0], |ui| {
-                                        ui.set_width(ui.available_width());
-                                        let content_start_y = ui.cursor().min.y;
-                                        let mut cons_changed = false;
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Conservation Threshold").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                if render_custom_toggle_switch(ui, &mut self.power_conservation, accent) {
-                                                    cons_changed = true;
-                                                }
-                                            });
-                                        });
-                                        ui.add_space(8.0);
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Max Capacity Ceiling").size(8.5).monospace().color(p.text_muted));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.label(RichText::new(format!("{:.0}%", self.power_ceiling)).size(9.5).monospace().strong().color(Color32::from_rgb(241, 245, 249)));
-                                            });
-                                        });
-                                        ui.add_space(4.0);
-                                        let (bar_r, bar_resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 6.0), egui::Sense::click_and_drag());
-                                        let prev_ceiling = self.power_ceiling;
-                                        if bar_resp.dragged() || bar_resp.clicked() {
-                                            if let Some(pos) = bar_resp.interact_pointer_pos() {
-                                                let ratio = ((pos.x - bar_r.left()) / bar_r.width()).clamp(0.5, 0.95);
-                                                self.power_ceiling = (ratio * 100.0).round();
-                                            }
-                                        }
-                                        if (bar_resp.drag_stopped() || (bar_resp.clicked() && (prev_ceiling - self.power_ceiling).abs() >= 1.0)) && self.power_conservation {
-                                            cons_changed = true;
-                                        }
-                                        if cons_changed {
-                                            let enabled = self.power_conservation;
-                                            let ceiling = self.power_ceiling as u32;
-                                            if let Some(hid) = host_id {
-                                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                                    let host_name = host.name.clone();
-                                                    let cmd_str = crate::power::build_remote_power_command("conservation", enabled, ceiling);
-                                                    std::thread::spawn(move || {
-                                                        let mut cmd = crate::remote::build_ssh_command(&host, &cmd_str);
-                                                        let _ = cmd.output();
-                                                    });
-                                                    self.power_status_msg = Some((format!("Applied conservation threshold ({:.0}%) to remote host {}", ceiling, host_name), false, Instant::now()));
-                                                }
-                                            } else {
-                                                match crate::power::apply_charge_conservation(enabled, ceiling) {
-                                                    Ok(msg) => self.power_status_msg = Some((msg, false, Instant::now())),
-                                                    Err(err) => self.power_status_msg = Some((err, true, Instant::now())),
-                                                }
-                                            }
-                                        }
-                                        ui.painter().rect_filled(bar_r, Rounding::same(3.0), Color32::from_rgb(14, 20, 36));
-                                        let fill_w = bar_r.width() * (self.power_ceiling / 100.0).clamp(0.1, 1.0);
-                                        ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(3.0), accent);
-
-                                        let inner_h = ui.cursor().min.y - content_start_y;
-                                        observed_max_inner_h = observed_max_inner_h.max(inner_h);
-                                        if inner_h < needed_inner_h {
-                                            ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
-                                        }
-                                    });
-
-                                // Col 2: Rapid Charge Rate
-                                Frame::none()
-                                    .fill(Color32::from_rgb(10, 15, 29))
-                                    .stroke(Stroke::NONE)
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(10.0, 10.0))
-                                    .show(&mut cols[1], |ui| {
-                                        ui.set_width(ui.available_width());
-                                        let content_start_y = ui.cursor().min.y;
-                                        let mut rapid_changed = false;
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Rapid Charge Rate").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                if render_custom_toggle_switch(ui, &mut self.power_rapid_charge, accent) {
-                                                    rapid_changed = true;
-                                                }
-                                            });
-                                        });
-                                        if rapid_changed {
-                                            let enabled = self.power_rapid_charge;
-                                            if let Some(hid) = host_id {
-                                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                                    let host_name = host.name.clone();
-                                                    let cmd_str = crate::power::build_remote_power_command("rapid_charge", enabled, 0);
-                                                    std::thread::spawn(move || {
-                                                        let mut cmd = crate::remote::build_ssh_command(&host, &cmd_str);
-                                                        let _ = cmd.output();
-                                                    });
-                                                    self.power_status_msg = Some((format!("Applied rapid charge setting to remote host {}", host_name), false, Instant::now()));
-                                                }
-                                            } else {
-                                                match crate::power::apply_rapid_charge(enabled) {
-                                                    Ok(msg) => self.power_status_msg = Some((msg, false, Instant::now())),
-                                                    Err(err) => self.power_status_msg = Some((err, true, Instant::now())),
-                                                }
-                                            }
-                                        }
-                                        ui.add_space(8.0);
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Delivery Rate").size(8.5).monospace().color(p.text_muted));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                let rate_text = if self.power_rapid_charge {
-                                                    "65W EXPRESS"
-                                                } else {
-                                                    "45W STANDARD"
-                                                };
-                                                ui.label(RichText::new(rate_text).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                            });
-                                        });
-                                        ui.add_space(4.0);
-                                        let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 6.0), egui::Sense::hover());
-                                        ui.painter().rect_filled(bar_r, Rounding::same(3.0), Color32::from_rgb(14, 20, 36));
-                                        let (fill_pct, bar_color) = if self.power_rapid_charge {
-                                            (0.95_f32, Color32::from_rgb(251, 146, 60))
-                                        } else {
-                                            (0.60_f32, accent)
-                                        };
-                                        let fill_w = bar_r.width() * fill_pct;
-                                        ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(3.0), bar_color);
-
-                                        let inner_h = ui.cursor().min.y - content_start_y;
-                                        observed_max_inner_h = observed_max_inner_h.max(inner_h);
-                                        if inner_h < needed_inner_h {
-                                            ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
-                                        }
-                                    });
-
-                                // Col 3: USB Always-On Standby
-                                Frame::none()
-                                    .fill(Color32::from_rgb(10, 15, 29))
-                                    .stroke(Stroke::NONE)
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(10.0, 10.0))
-                                    .show(&mut cols[2], |ui| {
-                                        ui.set_width(ui.available_width());
-                                        let content_start_y = ui.cursor().min.y;
-                                        let mut usb_changed = false;
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("USB Always-On Standby").size(11.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                if render_custom_toggle_switch(ui, &mut self.power_usb_always_on, accent) {
-                                                    usb_changed = true;
-                                                }
-                                            });
-                                        });
-                                        if usb_changed {
-                                            let enabled = self.power_usb_always_on;
-                                            if let Some(hid) = host_id {
-                                                if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                                                    let host_name = host.name.clone();
-                                                    let cmd_str = crate::power::build_remote_power_command("usb_always_on", enabled, 0);
-                                                    std::thread::spawn(move || {
-                                                        let mut cmd = crate::remote::build_ssh_command(&host, &cmd_str);
-                                                        let _ = cmd.output();
-                                                    });
-                                                    self.power_status_msg = Some((format!("Applied USB standby setting to remote host {}", host_name), false, Instant::now()));
-                                                }
-                                            } else {
-                                                match crate::power::apply_usb_always_on(enabled) {
-                                                    Ok(msg) => self.power_status_msg = Some((msg, false, Instant::now())),
-                                                    Err(err) => self.power_status_msg = Some((err, true, Instant::now())),
-                                                }
-                                            }
-                                        }
-                                        ui.add_space(8.0);
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Port Capability").size(8.5).monospace().color(p.text_muted));
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                let cap_text = if self.power_usb_always_on {
-                                                    "5.0V @ 1.5A (7.5W)"
-                                                } else {
-                                                    "PORT SUSPENDED"
-                                                };
-                                                ui.label(RichText::new(cap_text).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                            });
-                                        });
-                                        ui.add_space(4.0);
-                                        let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 6.0), egui::Sense::hover());
-                                        ui.painter().rect_filled(bar_r, Rounding::same(3.0), Color32::from_rgb(14, 20, 36));
-                                        let (fill_pct, bar_color) = if self.power_usb_always_on {
-                                            (0.75_f32, accent)
-                                        } else {
-                                            (0.0_f32, Color32::from_rgb(100, 116, 139))
-                                        };
-                                        let fill_w = bar_r.width() * fill_pct;
-                                        if fill_w > 0.0 {
-                                            ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(3.0), bar_color);
-                                        }
-
-                                        let inner_h = ui.cursor().min.y - content_start_y;
-                                        observed_max_inner_h = observed_max_inner_h.max(inner_h);
-                                        if inner_h < needed_inner_h {
-                                            ui.allocate_space(egui::vec2(ui.available_width(), needed_inner_h - inner_h));
-                                        }
-                                    });
-                            });
-
-
-                            ui.data_mut(|d| d.insert_temp(card_height_id, observed_max_inner_h + 20.0));
+                            } else {
+                                ui.label(RichText::new("Charge-limit control is not reported by this battery.").size(11.0).color(p.text_muted));
+                            }
+                            ui.add_space(6.0);
+                            ui.label(RichText::new("Rapid charging and USB standby controls are unavailable pending hardware support checks.").size(10.0).color(p.text_muted));
                         });
                 }
 

@@ -1486,12 +1486,35 @@ pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32
     (freqs, cpu_power_watts, cpu_tdp_watts)
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn combine_ac_states(states: &[Option<bool>]) -> Option<bool> {
+    if states.contains(&Some(true)) { Some(true) }
+    else if !states.is_empty() && states.iter().all(|state| *state == Some(false)) { Some(false) }
+    else { None }
+}
+
+#[cfg(test)]
+mod ac_state_tests {
+    #[test]
+    fn combines_connected_disconnected_and_unknown_adapters() {
+        assert_eq!(super::combine_ac_states(&[]), None);
+        assert_eq!(super::combine_ac_states(&[Some(false), Some(true)]), Some(true));
+        assert_eq!(super::combine_ac_states(&[Some(false), Some(false)]), Some(false));
+        assert_eq!(super::combine_ac_states(&[Some(false), None]), None);
+        assert_eq!(super::combine_ac_states(&[Some(true), None]), Some(true));
+    }
+}
+
 pub fn collect_power_supply() -> PowerSupplyInfo {
-    let mut ac_online = None;
+    #[cfg(target_os = "linux")]
+    let ac_online;
+    #[cfg(not(target_os = "linux"))]
+    let ac_online = None;
     let mut batteries = Vec::new();
 
     #[cfg(target_os = "linux")]
     {
+        let mut ac_states = Vec::new();
         let ps_dir = Path::new("/sys/class/power_supply");
         if ps_dir.exists() {
             if let Ok(entries) = fs::read_dir(ps_dir) {
@@ -1502,12 +1525,13 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
                     let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
                     let type_str = fs::read_to_string(p.join("type")).unwrap_or_default().trim().to_lowercase();
 
-                    if type_str == "mains" || type_str == "ac" || type_str == "adp" || name.to_lowercase().starts_with("ac") {
-                        if let Ok(on_str) = fs::read_to_string(p.join("online")) {
-                            if let Ok(val) = on_str.trim().parse::<i32>() {
-                                ac_online = Some(val == 1);
-                            }
-                        }
+                    if type_str == "mains" || type_str == "ac" || type_str == "adp" || (type_str != "battery" && name.to_lowercase().starts_with("ac")) {
+                        let state = fs::read_to_string(p.join("online")).ok().and_then(|value| match value.trim() {
+                            "1" => Some(true),
+                            "0" => Some(false),
+                            _ => None,
+                        });
+                        ac_states.push(state);
                     } else if type_str == "battery" || name.to_lowercase().starts_with("bat") {
                         let present = fs::read_to_string(p.join("present"))
                             .map(|s| s.trim() == "1")
@@ -1655,6 +1679,7 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
                 }
             }
         }
+        ac_online = combine_ac_states(&ac_states);
     }
 
     let total_battery_pct = reported_battery_charge(&batteries);
@@ -2591,17 +2616,16 @@ def read_power_text(path):
         return None
 
 ac_online = None
+ac_states = []
 batteries = []
 charge_limit = None
 for ps in sorted(glob.glob("/sys/class/power_supply/*")):
     t = (read_power_text(ps + "/type") or "").lower()
-    if t in ["mains", "ac", "adp"] or "ac" in os.path.basename(ps).lower():
-        if os.path.exists(ps + "/online"):
-            try:
-                ac_online = int(open(ps + "/online").read().strip()) == 1
-            except:
-                pass
-    elif t == "battery" or "bat" in os.path.basename(ps).lower():
+    name = os.path.basename(ps).lower()
+    if t in ["mains", "ac", "adp"] or (t != "battery" and name.startswith("ac")):
+        value = read_power_text(ps + "/online")
+        ac_states.append(True if value == "1" else False if value == "0" else None)
+    elif t == "battery" or name.startswith("bat"):
         if read_power_text(ps + "/present") == "0":
             continue
         status = read_power_text(ps + "/status") or "Unknown"
@@ -2715,6 +2739,10 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
         })
 
 
+if True in ac_states:
+    ac_online = True
+elif ac_states and all(state is False for state in ac_states):
+    ac_online = False
 
 t_elapsed = time.time() - t_start
 if t_elapsed < 0.12:

@@ -13233,10 +13233,6 @@ impl LauncherApp {
 
                 // 3. Drives Grid (Storage 1, Storage 2, Storage 3... in 2-column paired layout)
                 let d1_phys = snap.physical_disks.get(self.selected_disk_idx).or_else(|| snap.physical_disks.first());
-                let root_mount = snap.disks.iter().find(|d| d.mount_point == "/").or_else(|| snap.disks.first());
-                let d1_used = root_mount.map(|d| d.used_bytes as f64 / 1e9).unwrap_or(used_gb);
-                let d1_tot = root_mount.map(|d| d.total_bytes as f64 / 1e9).unwrap_or(total_gb);
-                let d1_fs = root_mount.map(|d| d.fs_type.as_str()).unwrap_or("Unknown");
 
                 let drives_list: Vec<(String, String, u64, bool, usize, f64, f64)> = if !snap.physical_disks.is_empty() {
                     snap.physical_disks
@@ -13329,10 +13325,8 @@ impl LauncherApp {
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             let (tag_lbl, tag_bg, tag_col) = if is_selected {
                                                 ("ACTIVE MONITOR", accent_with_alpha(accent, 40), Color32::from_rgb(226, 232, 240))
-                                            } else if idx == 0 {
-                                                ("PRIMARY OS", accent_with_alpha(accent, 25), Color32::from_rgb(226, 232, 240))
                                             } else {
-                                                ("DATA STORAGE", Color32::from_rgba_unmultiplied(148, 163, 184, 20), Color32::from_rgb(203, 213, 225))
+                                                ("STORAGE", Color32::from_rgba_unmultiplied(148, 163, 184, 20), Color32::from_rgb(203, 213, 225))
                                             };
                                             Frame::none()
                                                 .fill(tag_bg)
@@ -13829,11 +13823,9 @@ impl LauncherApp {
                                     }
                                 }
                             }
-                        } else if is_remote {
-                            // If remote sysfs hasn't populated partitions, render primary rootfs bar
-                            part_p.rect_filled(pr, Rounding::same(3.0), accent);
-                            part_p.text(egui::pos2(pr.left() + 10.0, pr.center().y), egui::Align2::LEFT_CENTER, format!("/ (Primary Rootfs - {})", d1_fs), egui::FontId::monospace(9.0), Color32::from_rgb(10, 15, 29));
-                            part_p.text(egui::pos2(pr.right() - 10.0, pr.center().y), egui::Align2::RIGHT_CENTER, format!("{:.1} GB USED / {:.1} GB", d1_used, d1_tot), egui::FontId::monospace(9.0), Color32::from_rgb(10, 15, 29));
+                        }
+                        if d1_phys.map_or(true, |disk| disk.partitions.is_empty()) {
+                            part_p.text(pr.center(), egui::Align2::CENTER_CENTER, "Partition information unavailable", egui::FontId::monospace(9.0), p.text_muted);
                         }
 
                         ui.add_space(8.0);

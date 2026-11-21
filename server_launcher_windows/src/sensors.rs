@@ -49,6 +49,7 @@ impl SensorCategory {
 #[derive(Debug, Clone, Default)]
 pub struct ProcessSensorInfo {
     pub pid: u32,
+    pub start_marker: Option<u64>,
     pub name: String,
     pub cpu_usage: f32,
     pub memory_bytes: u64,
@@ -660,6 +661,7 @@ impl SystemSensorsCollector {
 
                 top_apps.push(ProcessSensorInfo {
                     pid: pid_u32,
+                    start_marker: Some(proc.start_time()),
                     name,
                     cpu_usage,
                     memory_bytes,
@@ -2842,8 +2844,14 @@ try:
                     disk_rate = dr_rate + dw_rate
 
                 port = proc_ports.get(pid)
+                try:
+                    with open("/proc/" + str(pid) + "/stat") as stat_file:
+                        start_marker = int(stat_file.read().rsplit(")", 1)[1].split()[19])
+                except (OSError, ValueError, IndexError):
+                    start_marker = None
                 top_apps.append({
                     "pid": pid,
+                    "start_marker": start_marker,
                     "cpu": cpu,
                     "mem_bytes": rss_bytes,
                     "name": comm,
@@ -3265,6 +3273,7 @@ print(json.dumps(data))
             let disk_rate_bps = a["disk_rate"].as_f64().unwrap_or(0.0);
             top_apps.push(ProcessSensorInfo {
                 pid,
+                start_marker: a["start_marker"].as_u64(),
                 name,
                 cpu_usage,
                 memory_bytes,
@@ -3678,7 +3687,7 @@ impl SystemSensorsCollector {
                 current_proc_disk.insert(identity, current);
                 let (read, write) = process_disk_rates(self.prev_proc_disk.get(&identity).copied(), current, elapsed);
                 snap.top_apps.push(ProcessSensorInfo {
-                    pid: pid.as_u32(), name: process.name().to_string_lossy().into_owned(),
+                    pid: pid.as_u32(), start_marker: Some(process.start_time()), name: process.name().to_string_lossy().into_owned(),
                     cpu_usage: process.cpu_usage(), memory_bytes: process.memory(),
                     disk_read_bytes: disk.total_read_bytes, disk_written_bytes: disk.total_written_bytes,
                     disk_read_rate_bps: read, disk_write_rate_bps: write, disk_rate_bps: read + write,

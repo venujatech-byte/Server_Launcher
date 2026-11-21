@@ -228,8 +228,20 @@ fn filtered_processes<'a>(apps: &'a [crate::sensors::ProcessSensorInfo], query: 
         || app.pid.to_string().contains(query) || app.status.to_lowercase().contains(query)).collect()
 }
 
+fn selected_process_present(apps: &[crate::sensors::ProcessSensorInfo], pid: u32, start: Option<u64>) -> bool {
+    start.is_some() && apps.iter().any(|process| process.pid == pid && process.start_marker == start)
+}
+
 #[cfg(test)]
 mod process_filter_tests {
+    #[test]
+    fn selection_requires_same_process_start() {
+        let apps = [crate::sensors::ProcessSensorInfo { pid: 42, start_marker: Some(100), ..Default::default() }];
+        assert!(super::selected_process_present(&apps, 42, Some(100)));
+        assert!(!super::selected_process_present(&apps, 42, Some(99)));
+        assert!(!super::selected_process_present(&apps, 42, None));
+    }
+
     #[test]
     fn search_includes_processes_beyond_the_old_limit() {
         let apps: Vec<_> = (1..=300).map(|pid| crate::sensors::ProcessSensorInfo { pid, name: format!("process-{pid}"), ..Default::default() }).collect();
@@ -518,6 +530,7 @@ pub struct LauncherApp {
     pub sensors_top_apps_group_by_app: bool,
     pub sensors_top_apps_expanded_groups: HashSet<String>,
     pub sensors_top_apps_selected_pid: Option<u32>,
+    pub sensors_top_apps_selected_start: Option<u64>,
     #[allow(dead_code)]
     pub sensors_top_apps_normalize_cpu: bool,
     pub sensors_top_apps_status_msg: Option<(String, bool, Instant)>,
@@ -957,6 +970,7 @@ impl LauncherApp {
             sensors_top_apps_group_by_app: true,
             sensors_top_apps_expanded_groups: HashSet::new(),
             sensors_top_apps_selected_pid: None,
+            sensors_top_apps_selected_start: None,
             sensors_top_apps_normalize_cpu: true,
             sensors_top_apps_status_msg: None,
             remote_process_results: Arc::new(Mutex::new(VecDeque::new())),
@@ -16954,8 +16968,11 @@ impl LauncherApp {
     }
 
     fn render_sensors_top_apps_tab(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
-        if self.sensors_top_apps_selected_pid.is_some_and(|pid| !snap.top_apps.iter().any(|process| process.pid == pid)) {
+        if self.sensors_top_apps_selected_pid.is_some_and(|pid| {
+            !selected_process_present(&snap.top_apps, pid, self.sensors_top_apps_selected_start)
+        }) {
             self.sensors_top_apps_selected_pid = None;
+            self.sensors_top_apps_selected_start = None;
         }
         if let Some((message, is_error)) = self.remote_process_results.lock().unwrap().pop_front() {
             self.sensors_top_apps_status_msg = Some((message, is_error, Instant::now()));
@@ -18061,6 +18078,10 @@ impl LauncherApp {
             } else {
                 self.sensors_top_apps_selected_pid = Some(pid);
             }
+        }
+
+        if right_clicked_pid.is_some() || select_target_pid.is_some() {
+            self.sensors_top_apps_selected_start = self.sensors_top_apps_selected_pid.and_then(|pid| snap.top_apps.iter().find(|process| process.pid == pid).and_then(|process| process.start_marker));
         }
 
         if let Some(pid) = kill_target_pid {

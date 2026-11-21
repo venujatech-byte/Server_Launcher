@@ -47,6 +47,7 @@ impl SensorCategory {
 #[derive(Debug, Clone, Default)]
 pub struct ProcessSensorInfo {
     pub pid: u32,
+    pub start_marker: Option<u64>,
     pub name: String,
     pub cpu_usage: f32,
     pub memory_bytes: u64,
@@ -651,6 +652,7 @@ impl SystemSensorsCollector {
 
                 top_apps.push(ProcessSensorInfo {
                     pid: pid_u32,
+                    start_marker: Some(proc.start_time()),
                     name,
                     cpu_usage,
                     memory_bytes,
@@ -2820,8 +2822,14 @@ try:
                     disk_rate = dr_rate + dw_rate
 
                 port = proc_ports.get(pid)
+                try:
+                    with open("/proc/" + str(pid) + "/stat") as stat_file:
+                        start_marker = int(stat_file.read().rsplit(")", 1)[1].split()[19])
+                except (OSError, ValueError, IndexError):
+                    start_marker = None
                 top_apps.append({
                     "pid": pid,
+                    "start_marker": start_marker,
                     "cpu": cpu,
                     "mem_bytes": rss_bytes,
                     "name": comm,
@@ -3243,6 +3251,7 @@ print(json.dumps(data))
             let disk_rate_bps = a["disk_rate"].as_f64().unwrap_or(0.0);
             top_apps.push(ProcessSensorInfo {
                 pid,
+                start_marker: a["start_marker"].as_u64(),
                 name,
                 cpu_usage,
                 memory_bytes,

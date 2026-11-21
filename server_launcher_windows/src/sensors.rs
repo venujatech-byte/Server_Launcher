@@ -200,10 +200,18 @@ pub struct BatteryInfo {
 }
 
 fn reported_battery_charge(batteries: &[BatteryInfo]) -> Option<f32> {
-    if batteries.is_empty() { return None; }
-    let mut total = 0.0;
-    for battery in batteries { total += battery.capacity_pct?; }
-    Some(total / batteries.len() as f32)
+    if batteries.len() == 1 {
+        return batteries[0].capacity_pct.filter(|value| value.is_finite() && (0.0..=100.0).contains(value));
+    }
+    let mut weighted = 0.0_f64;
+    let mut capacity = 0.0_f64;
+    for battery in batteries {
+        let percent = battery.capacity_pct.filter(|value| value.is_finite() && (0.0..=100.0).contains(value))? as f64;
+        let full = battery.energy_full_wh.filter(|value| value.is_finite() && *value > 0.0)? as f64;
+        weighted += percent * full;
+        capacity += full;
+    }
+    (capacity > 0.0).then(|| (weighted / capacity) as f32)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -3604,6 +3612,14 @@ mod tests {
         assert!(memory.topology.contains("unavailable"));
     }
 
+
+    #[test]
+    fn multiple_battery_charge_is_capacity_weighted() {
+        let first = BatteryInfo { capacity_pct: Some(100.0), energy_full_wh: Some(80.0), ..Default::default() };
+        let second = BatteryInfo { capacity_pct: Some(0.0), energy_full_wh: Some(20.0), ..Default::default() };
+        assert_eq!(reported_battery_charge(&[first.clone(), second.clone()]), Some(80.0));
+        assert_eq!(reported_battery_charge(&[first, BatteryInfo { energy_full_wh: None, ..second }]), None);
+    }
 
     #[test]
     fn unknown_battery_charge_is_distinct_from_empty() {

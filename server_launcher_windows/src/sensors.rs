@@ -2306,8 +2306,9 @@ def read_proc_io_map(pids):
                 for l in f:
                     if l.startswith("read_bytes:"): dr = int(l.split()[1])
                     elif l.startswith("write_bytes:"): dw = int(l.split()[1])
+            sampled_at = time.monotonic()
             if start is not None and start == read_proc_start_marker(pid):
-                pio[pid] = (start, dr, dw)
+                pio[pid] = (start, dr, dw, sampled_at)
         except:
             pass
     return pio
@@ -2863,11 +2864,13 @@ try:
                 rx2, tx2 = network[1:] if network and network[0] == start_marker else (0, 0)
                 dr2 = 0
                 dw2 = 0
+                io_sampled_at = None
                 try:
                     with open("/proc/" + str(pid) + "/io") as fio:
                         for ioline in fio:
                             if ioline.startswith("read_bytes:"): dr2 = int(ioline.split()[1])
                             elif ioline.startswith("write_bytes:"): dw2 = int(ioline.split()[1])
+                    io_sampled_at = time.monotonic()
                 except:
                     pass
 
@@ -2883,10 +2886,11 @@ try:
                 disk_rate = 0.0
                 prior_io = p1_io.get(pid)
                 if (start_marker is not None and start_marker == read_proc_start_marker(pid)
-                        and prior_io is not None and prior_io[0] == start_marker):
-                    _, dr1, dw1 = prior_io
-                    dr_rate = max(0.0, (dr2 - dr1) / t_disk_elapsed)
-                    dw_rate = max(0.0, (dw2 - dw1) / t_disk_elapsed)
+                        and io_sampled_at is not None and prior_io is not None and prior_io[0] == start_marker):
+                    _, dr1, dw1, previous_io_at = prior_io
+                    io_elapsed = max(io_sampled_at - previous_io_at, 0.001)
+                    dr_rate = max(0.0, (dr2 - dr1) / io_elapsed)
+                    dw_rate = max(0.0, (dw2 - dw1) / io_elapsed)
                     disk_rate = dr_rate + dw_rate
 
                 port = proc_ports.get(pid)

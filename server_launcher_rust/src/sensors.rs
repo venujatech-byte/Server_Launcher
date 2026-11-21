@@ -411,16 +411,29 @@ impl SystemSensorsCollector {
         let cpu_cores_physical = self.sys.physical_core_count().unwrap_or(0);
         let cpu_cores_logical = self.sys.cpus().len();
         let cpu_global_usage = self.sys.global_cpu_usage();
-        let cpu_core_usages: Vec<Option<f32>> = self.sys.cpus().iter().map(|c| Some(c.cpu_usage())).collect();
+        #[cfg(target_os = "linux")]
+        let cpu_core_usages: Vec<Option<f32>> = {
+            let mut values = Vec::new();
+            for cpu in self.sys.cpus() {
+                if let Some(index) = linux_cpu_index(cpu.name()) {
+                    if values.len() <= index { values.resize(index + 1, None); }
+                    values[index] = Some(cpu.cpu_usage());
+                }
+            }
+            values
+        };
+        #[cfg(not(target_os = "linux"))]
+        let cpu_core_usages: Vec<Option<f32>> = self.sys.cpus().iter().map(|cpu| Some(cpu.cpu_usage())).collect();
         let (mut cpu_frequencies_mhz, cpu_power_watts, cpu_tdp_watts) = collect_cpu_frequencies_and_power();
         if cpu_frequencies_mhz.is_empty() {
-            cpu_frequencies_mhz = self.sys.cpus().iter().map(|c| c.frequency()).collect();
+            #[cfg(target_os = "linux")]
+            for cpu in self.sys.cpus() {
+                if let Some(index) = linux_cpu_index(cpu.name()) { insert_cpu_frequency(&mut cpu_frequencies_mhz, index, cpu.frequency()); }
+            }
+            #[cfg(not(target_os = "linux"))]
+            { cpu_frequencies_mhz = self.sys.cpus().iter().map(|cpu| cpu.frequency()).collect(); }
         }
-        let cpu_frequency_mhz = if !cpu_frequencies_mhz.is_empty() {
-            (cpu_frequencies_mhz.iter().sum::<u64>() / cpu_frequencies_mhz.len() as u64).max(1)
-        } else {
-            self.sys.cpus().first().map(|c| c.frequency()).unwrap_or(0)
-        };
+        let cpu_frequency_mhz = average_cpu_frequency(&cpu_frequencies_mhz);
 
         // 3. Memory
         let mem_total_bytes = self.sys.total_memory();
@@ -1405,6 +1418,46 @@ pub fn detect_active_fans() -> bool {
     false
 }
 
+fn average_cpu_frequency(frequencies: &[u64]) -> u64 {
+    let (sum, count) = frequencies.iter().filter(|value| **value > 0)
+        .fold((0_u128, 0_u128), |(sum, count), value| (sum + *value as u128, count + 1));
+    if count == 0 { 0 } else { (sum / count) as u64 }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_cpu_index(name: &str) -> Option<usize> {
+    let suffix = name.strip_prefix("cpu")?;
+    if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) { return None; }
+    suffix.parse().ok()
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn insert_cpu_frequency(frequencies: &mut Vec<u64>, index: usize, mhz: u64) {
+    if mhz == 0 { return; }
+    if frequencies.len() <= index { frequencies.resize(index + 1, 0); }
+    if frequencies[index] == 0 { frequencies[index] = mhz; }
+}
+
+#[cfg(test)]
+mod cpu_frequency_tests {
+    #[test]
+    fn processor_slots_and_average_ignore_missing_readings() {
+        let mut frequencies = Vec::new();
+        super::insert_cpu_frequency(&mut frequencies, 10, 3000);
+        super::insert_cpu_frequency(&mut frequencies, 2, 2000);
+        super::insert_cpu_frequency(&mut frequencies, 0, 1000);
+        super::insert_cpu_frequency(&mut frequencies, 2, 9000);
+        assert_eq!(frequencies[2], 2000);
+        assert_eq!(frequencies[1], 0);
+        assert_eq!(frequencies[10], 3000);
+        assert_eq!(super::average_cpu_frequency(&frequencies), 2000);
+        assert_eq!(super::average_cpu_frequency(&[0, 0]), 0);
+        assert_eq!(super::linux_cpu_index("cpu10"), Some(10));
+        assert_eq!(super::linux_cpu_index("cpu"), None);
+        assert_eq!(super::linux_cpu_index("cpuidle"), None);
+    }
+}
+
 pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32>) {
     let mut freqs = Vec::new();
     let mut cpu_power_watts = None;
@@ -1412,39 +1465,36 @@ pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32
 
     #[cfg(target_os = "linux")]
     {
-        // 1. Read per-core frequencies from cpufreq (scaling_cur_freq or cpuinfo_cur_freq)
-        let mut core_idx = 0;
-        loop {
-            let p_scaling = format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", core_idx);
-            let p_cur = format!("/sys/devices/system/cpu/cpu{}/cpufreq/cpuinfo_cur_freq", core_idx);
-
-            let khz_opt = fs::read_to_string(&p_scaling)
-                .or_else(|_| fs::read_to_string(&p_cur))
-                .ok()
-                .and_then(|s| s.trim().parse::<u64>().ok());
-
-            if let Some(khz) = khz_opt {
-                freqs.push(khz / 1000);
-            } else if core_idx > 0 || !Path::new(&format!("/sys/devices/system/cpu/cpu{}", core_idx)).exists() {
-                break;
-            }
-            core_idx += 1;
-            if core_idx > 128 {
-                break;
+        // Keep Linux CPU numbers as indices, even when a frequency file is absent.
+        if let Ok(entries) = fs::read_dir("/sys/devices/system/cpu") {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else { continue; };
+                let Some(index) = linux_cpu_index(name) else { continue; };
+                let cpufreq = entry.path().join("cpufreq");
+                let mhz = ["scaling_cur_freq", "cpuinfo_cur_freq"].iter()
+                    .filter_map(|file| fs::read_to_string(cpufreq.join(file)).ok())
+                    .filter_map(|value| value.trim().parse::<u64>().ok())
+                    .map(|khz| khz / 1000).find(|mhz| *mhz > 0);
+                if let Some(mhz) = mhz { insert_cpu_frequency(&mut freqs, index, mhz); }
             }
         }
 
-        // Fallback: Read cpu MHz from /proc/cpuinfo if cpufreq is unavailable (VMs, VPS, containers)
-        if freqs.is_empty() {
-            if let Ok(cpuinfo) = fs::read_to_string("/proc/cpuinfo") {
-                for line in cpuinfo.lines() {
-                    if line.starts_with("cpu MHz") {
-                        if let Some(val_str) = line.split(':').nth(1) {
-                            if let Ok(mhz) = val_str.trim().parse::<f64>() {
-                                freqs.push(mhz as u64);
+        // Fill missing CPU slots from cpuinfo when it reports per-processor MHz.
+        if let Ok(cpuinfo) = fs::read_to_string("/proc/cpuinfo") {
+            let mut processor = None;
+            for line in cpuinfo.lines() {
+                let Some((key, value)) = line.split_once(':') else { continue; };
+                match key.trim() {
+                    "processor" => processor = value.trim().parse::<usize>().ok(),
+                    "cpu MHz" => {
+                        if let (Some(index), Ok(mhz)) = (processor, value.trim().parse::<f64>()) {
+                            if mhz.is_finite() && mhz > 0.0 && mhz <= u64::MAX as f64 {
+                                insert_cpu_frequency(&mut freqs, index, mhz as u64);
                             }
                         }
                     }
+                    _ => {}
                 }
             }
         }
@@ -3263,12 +3313,7 @@ print(json.dumps(data))
             }
         }
     }
-    let valid_frequencies: Vec<_> = cpu_frequencies_mhz.iter().copied().filter(|value| *value > 0).collect();
-    let cpu_frequency_mhz = if valid_frequencies.is_empty() {
-        0
-    } else {
-        (valid_frequencies.iter().map(|value| *value as u128).sum::<u128>() / valid_frequencies.len() as u128) as u64
-    };
+    let cpu_frequency_mhz = average_cpu_frequency(&cpu_frequencies_mhz);
 
     let cpu_tdp_watts = parsed["cpu_tdp"].as_f64().map(|v| v as f32);
     let cpu_power_watts = parsed["cpu_power"].as_f64().map(|v| v as f32)

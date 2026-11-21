@@ -280,6 +280,7 @@ pub struct SystemSensorsSnapshot {
 
     // Top Applications & Processes
     pub top_apps: Vec<ProcessSensorInfo>,
+    pub process_network_collected: bool,
 
     // OS info
     pub os_name: String,
@@ -848,6 +849,7 @@ impl SystemSensorsCollector {
             total_tx_bytes,
             temp_sensors,
             top_apps,
+            process_network_collected: include_top_apps && include_process_network,
             os_name: System::name().unwrap_or_default(),
             os_version: System::os_version().unwrap_or_default(),
             cpu_governor,
@@ -2335,9 +2337,23 @@ pub fn temp_color(temp: f32) -> Color32 {
     }
 }
 
-pub fn query_remote_sensors(host: &SshRemoteHost) -> Result<SystemSensorsSnapshot, String> {
+fn remote_sensor_command(script: &str, include_process_network: bool) -> String {
+    format!("{} {}", script.trim_end(), if include_process_network { "1" } else { "0" })
+}
+
+#[cfg(test)]
+mod remote_sensor_command_tests {
+    #[test]
+    fn scan_flag_is_an_argument_to_the_python_command() {
+        assert_eq!(super::remote_sensor_command("python3 -c 'pass'\n", true), "python3 -c 'pass' 1");
+        assert_eq!(super::remote_sensor_command("python3 -c 'pass'\n", false), "python3 -c 'pass' 0");
+    }
+}
+
+pub fn query_remote_sensors(host: &SshRemoteHost, include_process_network: bool) -> Result<SystemSensorsSnapshot, String> {
     let script = r#"python3 -c '
-import os, glob, json, time
+import os, glob, json, time, sys
+collect_process_network = len(sys.argv) > 1 and sys.argv[1] == "1"
 
 def read_cpu_stats():
     cpus = {}
@@ -2491,7 +2507,7 @@ try:
         cpu_ticks_per_second = None
 except (OSError, ValueError):
     cpu_ticks_per_second = None
-p1_net = read_proc_net_map()
+p1_net = read_proc_net_map() if collect_process_network else {}
 p1_net_at = time.monotonic()
 rapl_sources = []
 rapl_e1 = {}
@@ -2875,7 +2891,7 @@ n2 = read_net_dev()
 n2_at = time.monotonic()
 t_disk_elapsed = max(d2_at - d1_at, 0.001)
 t_net_elapsed = max(n2_at - n1_at, 0.001)
-p2_net = read_proc_net_map()
+p2_net = read_proc_net_map() if collect_process_network else {}
 p2_net_at = time.monotonic()
 proc_net_elapsed = max(p2_net_at - p1_net_at, 0.001)
 
@@ -3288,7 +3304,8 @@ print(json.dumps(data))
 '
 "#;
 
-    let mut cmd = build_ssh_command(host, script);
+    let script = remote_sensor_command(script, include_process_network);
+    let mut cmd = build_ssh_command(host, &script);
     let out = cmd.output().map_err(|e| format!("SSH command execution error: {}", e))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
@@ -3664,6 +3681,7 @@ print(json.dumps(data))
         total_tx_bytes,
         temp_sensors,
         top_apps,
+        process_network_collected: include_process_network,
         os_name: parsed["os_name"].as_str().unwrap_or("").to_string(),
         os_version: parsed["os_version"].as_str().unwrap_or("").to_string(),
         cpu_governor,

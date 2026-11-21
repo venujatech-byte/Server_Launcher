@@ -1147,12 +1147,13 @@ impl LauncherApp {
         }
 
         let snapshots_arc = self.remote_sensors_snapshots.clone();
+        let include_process_network = self.sensors_subtab == SensorsSubTab::TopApps;
         let in_flight_arc = self.remote_sensors_in_flight.clone();
         let last_fetch_arc = self.remote_sensors_last_fetch.clone();
         let errors_arc = self.remote_sensors_errors.clone();
 
         std::thread::spawn(move || {
-            match crate::sensors::query_remote_sensors(&host) {
+            match crate::sensors::query_remote_sensors(&host, include_process_network) {
                 Ok(snap) => {
                     snapshots_arc.lock().unwrap().insert(hid.clone(), Arc::new(snap));
                     last_fetch_arc.lock().unwrap().insert(hid.clone(), Instant::now());
@@ -11038,6 +11039,10 @@ impl LauncherApp {
                                     if self.selected_machine == "local" && self.sensors_snapshot.top_apps.is_empty() {
                                         self.trigger_local_sensors_query(true, Some(ui.ctx().clone()));
                                         self.last_sensors_refresh = Instant::now();
+                                    } else if let Some(hid) = host_id {
+                                        if let Some(host) = self.ssh_hosts.iter().find(|host| host.id == hid).cloned() {
+                                            self.trigger_remote_sensors_query(host);
+                                        }
                                     }
                                 } else if tab == SensorsSubTab::DataUsage && host_id.is_none() && self.sensors_snapshot.networks.is_empty() {
                                     self.trigger_local_sensors_query(false, Some(ui.ctx().clone()));
@@ -11087,6 +11092,16 @@ impl LauncherApp {
             }
             Arc::clone(&self.sensors_snapshot)
         };
+        if let Some(hid) = host_id {
+            if self.sensors_subtab == SensorsSubTab::TopApps && snap.timestamp.is_some()
+                && !snap.process_network_collected && !is_fetching
+                && !self.remote_sensors_errors.lock().unwrap().contains_key(hid)
+            {
+                if let Some(host) = self.ssh_hosts.iter().find(|host| host.id == hid).cloned() {
+                    self.trigger_remote_sensors_query(host);
+                }
+            }
+        }
         // Reset telemetry histories when switching between local host and remote SSH targets
         let cur_host_str = host_id.map(|s| s.to_string());
         if self.current_sensors_host != cur_host_str {
@@ -16906,7 +16921,7 @@ impl LauncherApp {
                     results.lock().unwrap().push_back(message);
                     ctx.request_repaint();
                     std::thread::sleep(std::time::Duration::from_millis(400));
-                    if let Ok(snap) = crate::sensors::query_remote_sensors(&host) {
+                    if let Ok(snap) = crate::sensors::query_remote_sensors(&host, true) {
                         snapshots_arc.lock().unwrap().insert(hid_clone.clone(), Arc::new(snap));
                         last_fetch_arc.lock().unwrap().insert(hid_clone.clone(), Instant::now());
                         errors_arc.lock().unwrap().remove(&hid_clone);

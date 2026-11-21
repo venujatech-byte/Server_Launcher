@@ -13277,8 +13277,6 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 3. Drives Grid (Storage 1, Storage 2, Storage 3... in 2-column paired layout)
-                let d1_phys = snap.physical_disks.get(self.selected_disk_idx).or_else(|| snap.physical_disks.first());
-
                 let drives_list: Vec<(String, String, u64, bool, usize, f64, f64)> = if !snap.physical_disks.is_empty() {
                     snap.physical_disks
                         .iter()
@@ -13304,9 +13302,10 @@ impl LauncherApp {
                     Vec::new()
                 };
 
-                if !drives_list.is_empty() && self.selected_disk_idx >= drives_list.len() {
+                if self.selected_disk_idx >= drives_list.len() {
                     self.selected_disk_idx = 0;
                 }
+                let d1_phys = snap.physical_disks.get(self.selected_disk_idx);
                 let primary_drive_name = drives_list.first().map(|d| d.0.clone()).unwrap_or_else(|| "Unavailable".to_string());
 
                 let current_selected_idx = self.selected_disk_idx;

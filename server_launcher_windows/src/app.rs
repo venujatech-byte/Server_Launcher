@@ -11102,9 +11102,11 @@ impl LauncherApp {
         // Each collected snapshot contributes at most one history sample.
         if snap.timestamp.is_some_and(|timestamp| self.last_telemetry_sample.is_none_or(|last| timestamp > last)) {
             self.last_telemetry_sample = snap.timestamp;
-            push_telemetry(&mut self.cpu_history, snap.cpu_global_usage, 60);
-            if snap.cpu_global_usage > self.cpu_peak_usage {
-                self.cpu_peak_usage = snap.cpu_global_usage;
+            if snap.cpu_usage_available {
+                push_telemetry(&mut self.cpu_history, snap.cpu_global_usage, 60);
+                if snap.cpu_global_usage > self.cpu_peak_usage {
+                    self.cpu_peak_usage = snap.cpu_global_usage;
+                }
             }
             push_telemetry(&mut self.ram_history, (snap.mem_usage_pct, snap.swap_usage_pct), 60);
             let (total_storage, used_storage, _) = mounted_storage_totals(&snap.disks);
@@ -11246,7 +11248,7 @@ impl LauncherApp {
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new(format!("{:.1}", snap.cpu_global_usage)).size(29.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                ui.label(RichText::new(reported_sensor_value(snap.cpu_usage_available.then_some(snap.cpu_global_usage), 1)).size(29.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                 ui.label(RichText::new("%").size(12.0).color(p.text_muted));
                             });
                             ui.add_space(2.0);
@@ -11555,7 +11557,7 @@ impl LauncherApp {
                 let logical = if snap.cpu_cores_logical > 0 { snap.cpu_cores_logical.to_string() } else { "—".into() };
                 ui.label(format!("{} physical cores · {} logical processors", physical, logical));
                 ui.add_space(12.0);
-                ui.label(format!("Usage: {:.1}%", snap.cpu_global_usage));
+                ui.label(snap.cpu_usage_available.then(|| format!("Usage: {:.1}%", snap.cpu_global_usage)).unwrap_or_else(|| "Usage unavailable".into()));
                 ui.label(if snap.cpu_frequency_mhz > 0 { format!("Reported frequency: {} MHz", snap.cpu_frequency_mhz) } else { "Frequency unavailable".into() });
                 ui.label(format!("Uptime: {}", format_uptime_hms(snap.uptime_secs)));
                 ui.label(snap.cpu_temp.map(|v| format!("Temperature: {v:.1} °C")).unwrap_or_else(|| "Temperature unavailable; LibreHardwareMonitor WMI provider required".into()));
@@ -11658,7 +11660,7 @@ impl LauncherApp {
 
                 // 2. Row of 4 Big Metric Cards (matching Overview page architecture)
                 let readings = [
-                    Some(snap.cpu_global_usage).filter(|_| snap.timestamp.is_some()),
+                    snap.cpu_usage_available.then_some(snap.cpu_global_usage).filter(|_| snap.timestamp.is_some()),
                     (snap.cpu_frequency_mhz > 0).then_some(snap.cpu_frequency_mhz as f32 / 1000.0),
                     snap.cpu_power_watts,
                     snap.cpu_temp,
@@ -17438,7 +17440,7 @@ impl LauncherApp {
                 let mut header_x = header_rect.left();
                 for (width, title, key, total) in [
                             (col_name_w, "Name", "name", String::new()),
-                            (COL_CPU_W, "CPU", "cpu", format!("{:.0}%", snap.cpu_global_usage)),
+                            (COL_CPU_W, "CPU", "cpu", snap.cpu_usage_available.then(|| format!("{:.0}%", snap.cpu_global_usage)).unwrap_or_else(|| "—".to_string())),
                             (COL_MEM_W, "Memory", "mem", format!("{:.0}%", mem_total_pct)),
                             (COL_DISK_W, "Disk", "disk", format_tm_disk(total_disk_mb_s * 1024.0 * 1024.0)),
                             (COL_NET_W, "Network", "net", crate::sensors::format_rate(snap.total_rx_rate_bps + snap.total_tx_rate_bps)),

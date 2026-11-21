@@ -222,6 +222,7 @@ pub struct SystemSensorsSnapshot {
     pub cpu_cores_physical: usize,
     pub cpu_cores_logical: usize,
     pub cpu_global_usage: f32,
+    pub cpu_usage_available: bool,
     pub cpu_core_usages: Vec<f32>,
     pub cpu_frequency_mhz: u64,
     pub cpu_frequencies_mhz: Vec<u64>,
@@ -789,6 +790,7 @@ impl SystemSensorsCollector {
             cpu_cores_physical,
             cpu_cores_logical,
             cpu_global_usage,
+            cpu_usage_available: true,
             cpu_core_usages,
             cpu_frequency_mhz,
             cpu_frequencies_mhz,
@@ -859,6 +861,10 @@ mod disk_stat_rate_tests {
     }
 }
 
+fn parse_cpu_usage(value: &serde_json::Value) -> Option<f32> {
+    value.as_f64().filter(|value| value.is_finite() && (0.0..=100.0).contains(value)).map(|value| value as f32)
+}
+
 fn parse_cpu_core_usages(value: &serde_json::Value) -> Vec<f32> {
     value.as_array().into_iter().flatten().filter_map(|value| value.as_f64())
         .filter(|value| value.is_finite() && (0.0..=100.0).contains(value)).map(|value| value as f32).collect()
@@ -866,6 +872,13 @@ fn parse_cpu_core_usages(value: &serde_json::Value) -> Vec<f32> {
 
 #[cfg(test)]
 mod cpu_core_reading_tests {
+    #[test]
+    fn global_cpu_distinguishes_zero_from_unavailable() {
+        assert_eq!(super::parse_cpu_usage(&serde_json::json!(0.0)), Some(0.0));
+        assert_eq!(super::parse_cpu_usage(&serde_json::Value::Null), None);
+        assert_eq!(super::parse_cpu_usage(&serde_json::json!(101.0)), None);
+    }
+
     #[test]
     fn missing_core_data_is_not_replaced_by_global_usage() {
         assert!(super::parse_cpu_core_usages(&serde_json::Value::Null).is_empty());
@@ -2783,7 +2796,7 @@ def mounted_disk_totals(mounts, rates):
 if not base_found:
     tot_disk_read_rate, tot_disk_write_rate = mounted_disk_totals(disks, disk_rates)
 
-cpu_usage = 0.0
+cpu_usage = None
 if "cpu" in c1 and "cpu" in c2:
     td = c2["cpu"][0] - c1["cpu"][0]
     id_d = c2["cpu"][1] - c1["cpu"][1]
@@ -3089,7 +3102,8 @@ print(json.dumps(data))
 
     let cpu_brand = parsed["cpu_model"].as_str().unwrap_or("Remote CPU").to_string();
     let cpu_cores = parsed["cores"].as_u64().unwrap_or(1) as usize;
-    let cpu_global_usage = parsed["cpu_usage"].as_f64().unwrap_or(0.0) as f32;
+    let cpu_usage = parse_cpu_usage(&parsed["cpu_usage"]);
+    let cpu_global_usage = cpu_usage.unwrap_or(0.0);
     let cpu_core_usages = parse_cpu_core_usages(&parsed["cpu_core_usages"]);
 
     let mut cpu_frequencies_mhz = Vec::new();
@@ -3418,6 +3432,7 @@ print(json.dumps(data))
         cpu_cores_physical: 0,
         cpu_cores_logical: cpu_cores,
         cpu_global_usage,
+        cpu_usage_available: cpu_usage.is_some(),
         cpu_core_usages,
         cpu_frequency_mhz,
         cpu_frequencies_mhz,

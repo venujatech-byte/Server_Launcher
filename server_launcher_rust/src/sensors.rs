@@ -44,6 +44,21 @@ impl SensorCategory {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn parse_proc_start_marker(stat: &str) -> Option<u64> {
+    stat.rsplit_once(')')?.1.split_whitespace().nth(19)?.parse().ok()
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod process_start_marker_tests {
+    #[test]
+    fn parses_process_name_with_spaces_and_parentheses() {
+        let stat = format!("42 (worker ) task) S {} 123456 0", "0 ".repeat(18));
+        assert_eq!(super::parse_proc_start_marker(&stat), Some(123456));
+        assert_eq!(super::parse_proc_start_marker("42 (incomplete) S"), None);
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ProcessSensorInfo {
     pub pid: u32,
@@ -652,7 +667,12 @@ impl SystemSensorsCollector {
 
                 top_apps.push(ProcessSensorInfo {
                     pid: pid_u32,
-                    start_marker: Some(proc.start_time()),
+                    start_marker: {
+                        #[cfg(target_os = "linux")]
+                        { fs::read_to_string(format!("/proc/{pid_u32}/stat")).ok().and_then(|stat| parse_proc_start_marker(&stat)) }
+                        #[cfg(not(target_os = "linux"))]
+                        { Some(proc.start_time()) }
+                    },
                     name,
                     cpu_usage,
                     memory_bytes,

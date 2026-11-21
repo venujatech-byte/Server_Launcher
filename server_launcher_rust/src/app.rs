@@ -13104,7 +13104,7 @@ impl LauncherApp {
                                                 ui.spacing_mut().item_spacing.x = 5.0;
                                                 let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                                 ui.painter().circle_filled(dot_rect.center(), 2.8, accent);
-                                                ui.label(RichText::new(format!("{} Disks Active", drive_count)).size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                                ui.label(RichText::new(format!("{} Disks Detected", drive_count)).size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
                                             });
                                         });
                                 });

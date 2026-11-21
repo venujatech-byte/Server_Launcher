@@ -225,7 +225,7 @@ pub struct SystemSensorsSnapshot {
     pub cpu_cores_logical: usize,
     pub cpu_global_usage: f32,
     pub cpu_usage_available: bool,
-    pub cpu_core_usages: Vec<f32>,
+    pub cpu_core_usages: Vec<Option<f32>>,
     pub cpu_frequency_mhz: u64,
     pub cpu_frequencies_mhz: Vec<u64>,
     pub cpu_power_watts: Option<f32>,
@@ -410,7 +410,7 @@ impl SystemSensorsCollector {
         let cpu_cores_physical = self.sys.physical_core_count().unwrap_or(0);
         let cpu_cores_logical = self.sys.cpus().len();
         let cpu_global_usage = self.sys.global_cpu_usage();
-        let cpu_core_usages: Vec<f32> = self.sys.cpus().iter().map(|c| c.cpu_usage()).collect();
+        let cpu_core_usages: Vec<Option<f32>> = self.sys.cpus().iter().map(|c| Some(c.cpu_usage())).collect();
         let (mut cpu_frequencies_mhz, cpu_power_watts, cpu_tdp_watts) = collect_cpu_frequencies_and_power();
         if cpu_frequencies_mhz.is_empty() {
             cpu_frequencies_mhz = self.sys.cpus().iter().map(|c| c.frequency()).collect();
@@ -877,9 +877,8 @@ fn parse_cpu_usage(value: &serde_json::Value) -> Option<f32> {
     value.as_f64().filter(|value| value.is_finite() && (0.0..=100.0).contains(value)).map(|value| value as f32)
 }
 
-fn parse_cpu_core_usages(value: &serde_json::Value) -> Vec<f32> {
-    value.as_array().into_iter().flatten().filter_map(|value| value.as_f64())
-        .filter(|value| value.is_finite() && (0.0..=100.0).contains(value)).map(|value| value as f32).collect()
+fn parse_cpu_core_usages(value: &serde_json::Value) -> Vec<Option<f32>> {
+    value.as_array().into_iter().flatten().map(parse_cpu_usage).collect()
 }
 
 #[cfg(test)]
@@ -895,7 +894,7 @@ mod cpu_core_reading_tests {
     fn missing_core_data_is_not_replaced_by_global_usage() {
         assert!(super::parse_cpu_core_usages(&serde_json::Value::Null).is_empty());
         assert!(super::parse_cpu_core_usages(&serde_json::json!([])).is_empty());
-        assert_eq!(super::parse_cpu_core_usages(&serde_json::json!([0.0, 42.5, 150.0])), vec![0.0, 42.5]);
+        assert_eq!(super::parse_cpu_core_usages(&serde_json::json!([0.0, 42.5, 150.0])), vec![Some(0.0), Some(42.5), None]);
     }
 }
 
@@ -2833,7 +2832,7 @@ while f"cpu{idx}" in c1 and f"cpu{idx}" in c2:
     if td > 0:
         cpu_core_usages.append(max(0.0, min(100.0, round(100.0 * (1.0 - id_d / td), 1))))
     else:
-        cpu_core_usages.append(0.0)
+        cpu_core_usages.append(None)
     idx += 1
 
 active_sockets = []
@@ -3703,7 +3702,7 @@ impl SystemSensorsCollector {
         snap.cpu_cores_logical = self.sys.cpus().len();
         snap.cpu_global_usage = self.sys.global_cpu_usage();
         snap.cpu_usage_available = true;
-        snap.cpu_core_usages = self.sys.cpus().iter().map(|c| c.cpu_usage()).collect();
+        snap.cpu_core_usages = self.sys.cpus().iter().map(|c| Some(c.cpu_usage())).collect();
         snap.cpu_frequencies_mhz = self.sys.cpus().iter().map(|c| c.frequency()).collect();
         snap.cpu_frequency_mhz = snap.cpu_frequencies_mhz.iter().sum::<u64>() / snap.cpu_cores_logical.max(1) as u64;
         snap.mem_total_bytes = self.sys.total_memory();

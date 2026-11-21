@@ -11156,7 +11156,7 @@ impl LauncherApp {
                     .collect();
             }
             for (history, value) in self.cpu_core_histories.iter_mut().zip(&snap.cpu_core_usages) {
-                push_telemetry(history, *value, 30);
+                if let Some(value) = value { push_telemetry(history, *value, 30); }
             }
 
 
@@ -11567,7 +11567,11 @@ impl LauncherApp {
                 for (idx, usage) in snap.cpu_core_usages.iter().enumerate() {
                     ui.horizontal(|ui| {
                         ui.label(format!("Logical processor {}", idx));
-                        ui.add(egui::ProgressBar::new(*usage / 100.0).text(format!("{usage:.1}%")));
+                        if let Some(usage) = usage {
+                            ui.add(egui::ProgressBar::new(*usage / 100.0).text(format!("{usage:.1}%")));
+                        } else {
+                            ui.label("Unavailable");
+                        }
                     });
                 }
             });
@@ -11772,7 +11776,7 @@ impl LauncherApp {
                                         });
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                                             ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-                                                ui.label(RichText::new(format!("{:.0}%", usage)).size(20.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                                ui.label(RichText::new(usage.map(|value| format!("{value:.0}%")).unwrap_or_else(|| "—".into())).size(20.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                                 ui.label(RichText::new("LOAD").size(9.0).monospace().color(p.text_muted));
                                             });
                                         });

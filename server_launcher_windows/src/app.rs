@@ -18100,14 +18100,10 @@ impl LauncherApp {
                         });
                     }
                     ProcAction::Terminate { pid } => {
-                        use std::os::windows::process::CommandExt;
-                        let mut command = std::process::Command::new("taskkill.exe");
-                        command.args(["/PID", &pid.to_string()]);
-                        let result = command.creation_flags(0x08000000).output();
-                        self.sensors_top_apps_status_msg = Some(match result {
-                            Ok(out) if out.status.success() => (format!("Stopped process {pid}"), false, Instant::now()),
-                            Ok(out) => (String::from_utf8_lossy(&out.stderr).trim().to_owned(), true, Instant::now()),
-                            Err(err) => (err.to_string(), true, Instant::now()),
+                        let start = snap.top_apps.iter().find(|process| process.pid == pid).and_then(|process| process.start_marker);
+                        self.sensors_top_apps_status_msg = Some(match crate::procmgr::graceful_stop_windows_process(pid, start) {
+                            Ok(()) => (format!("Stop requested for process {pid}"), false, Instant::now()),
+                            Err(error) => (format!("Failed to stop process {pid}: {error}"), true, Instant::now()),
                         });
                     }
                     _ => self.sensors_top_apps_status_msg = Some(("Linux process inspection, affinity, priority and pause actions are unavailable locally. Use Windows Task Manager.".into(), true, Instant::now())),

@@ -583,6 +583,23 @@ mod windows_process {
         creation(&open(pid, QUERY).ok()?).ok()
     }
 
+    pub(super) fn graceful_stop(pid: u32, expected: Option<u64>) -> Result<(), String> {
+        use std::os::windows::process::CommandExt;
+        let expected = expected.ok_or("Process identity is unavailable; refresh the list")?;
+        let handle = open(pid, QUERY)?;
+        if creation(&handle)? != expected { return Err("Process changed or exited; refresh the list".into()); }
+        // Keep the handle open until taskkill exits so Windows cannot reuse the PID.
+        let result = std::process::Command::new("taskkill.exe")
+            .args(["/PID", &pid.to_string()]).creation_flags(0x08000000).output();
+        drop(handle);
+        let output = result.map_err(|error| error.to_string())?;
+        if output.status.success() { return Ok(()); }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() };
+        Err(if detail.is_empty() { "taskkill failed".into() } else { detail.into() })
+    }
+
     pub(super) fn force_stop(pid: u32, expected: Option<u64>) -> Result<(), String> {
         let expected = expected.ok_or("Process identity is unavailable; refresh the list")?;
         let handle = open(pid, QUERY | TERMINATE)?;
@@ -598,11 +615,23 @@ mod windows_process {
 pub(crate) fn windows_process_start_marker(pid: u32) -> Option<u64> { windows_process::start_marker(pid) }
 
 #[cfg(windows)]
+pub(crate) fn graceful_stop_windows_process(pid: u32, expected: Option<u64>) -> Result<(), String> { windows_process::graceful_stop(pid, expected) }
+
+#[cfg(windows)]
 pub(crate) fn force_stop_windows_process(pid: u32, expected: Option<u64>) -> Result<(), String> { windows_process::force_stop(pid, expected) }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn graceful_stop_rejects_a_changed_process_identity() {
+        let pid = std::process::id();
+        let marker = super::windows_process_start_marker(pid).unwrap();
+        let error = super::graceful_stop_windows_process(pid, Some(marker.wrapping_add(1))).unwrap_err();
+        assert!(error.contains("changed or exited"), "{error}");
+    }
 
     #[cfg(windows)]
     #[test]

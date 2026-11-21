@@ -15052,8 +15052,6 @@ impl LauncherApp {
         let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
-        let bat = snap.power.batteries.first();
-        let has_battery = bat.is_some();
 
         ScrollArea::vertical()
             .id_salt("sensors_power_scroll")
@@ -15061,6 +15059,27 @@ impl LauncherApp {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
 
+                let battery_id = egui::Id::new(("power_selected_battery", host_id));
+                let mut selected = ui.ctx().data(|data| data.get_temp::<String>(battery_id))
+                    .filter(|name| snap.power.batteries.iter().any(|battery| &battery.name == name))
+                    .or_else(|| snap.power.batteries.first().map(|battery| battery.name.clone()));
+                if snap.power.batteries.len() > 1 {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Battery").size(11.0).color(p.text_muted));
+                        egui::ComboBox::from_id_salt(("power_battery_selector", host_id))
+                            .selected_text(selected.as_deref().unwrap_or("Battery"))
+                            .width(180.0)
+                            .show_ui(ui, |ui| {
+                                for battery in &snap.power.batteries {
+                                    ui.selectable_value(&mut selected, Some(battery.name.clone()), &battery.name);
+                                }
+                            });
+                    });
+                    ui.add_space(6.0);
+                }
+                if let Some(name) = &selected { ui.ctx().data_mut(|data| data.insert_temp(battery_id, name.clone())); }
+                let bat = selected.as_ref().and_then(|name| snap.power.batteries.iter().find(|battery| &battery.name == name));
+                let has_battery = bat.is_some();
                 let ac_online = snap.power.ac_online == Some(true);
                 let bat_pct = bat.and_then(|battery| battery.capacity_pct).unwrap_or(f32::NAN);
                 let full_wh = bat.and_then(|battery| battery.energy_full_wh).unwrap_or(f32::NAN);
@@ -15220,7 +15239,7 @@ impl LauncherApp {
                                         let bat_name = bat.map(|b| b.name.as_str()).unwrap_or("Battery");
                                         let bat_mfg = bat.map(|b| b.manufacturer.trim()).filter(|s| !s.is_empty()).unwrap_or("Unknown manufacturer");
                                         let bat_model = bat.map(|b| b.model_name.trim()).filter(|s| !s.is_empty()).unwrap_or("Unknown model");
-                                        let bat_hdr = format!("PRIMARY CELL TELEMETRY // {} ({} {})", bat_name, bat_mfg, bat_model);
+                                        let bat_hdr = format!("CELL TELEMETRY // {} ({} {})", bat_name, bat_mfg, bat_model);
                                         ui.label(RichText::new(bat_hdr).size(10.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
 
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

@@ -638,6 +638,7 @@ pub struct LauncherApp {
 
     pub proc_affinity_modal_open: bool,
     pub proc_affinity_pid: u32,
+    pub proc_affinity_start_marker: Option<u64>,
     pub proc_affinity_name: String,
     pub proc_affinity_host_id: Option<String>,
     pub proc_affinity_cores: Vec<bool>,
@@ -1059,6 +1060,7 @@ impl LauncherApp {
 
             proc_affinity_modal_open: false,
             proc_affinity_pid: 0,
+            proc_affinity_start_marker: None,
             proc_affinity_name: String::new(),
             proc_affinity_host_id: None,
             proc_affinity_cores: Vec::new(),
@@ -10700,6 +10702,7 @@ impl LauncherApp {
                 self.proc_affinity_error = Some("At least one CPU core must be selected".to_string());
             } else {
                 let pid = self.proc_affinity_pid;
+                let expected_start = self.proc_affinity_start_marker;
                 if let Some(ref hid) = self.proc_affinity_host_id {
                     if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == *hid).cloned() {
                         let host_name = host.name.clone();
@@ -10708,7 +10711,7 @@ impl LauncherApp {
                         let ctx = ctx.clone();
                         self.sensors_top_apps_status_msg = Some((format!("Setting CPU affinity for PID {} on {}…", pid, host_name), false, Instant::now()));
                         std::thread::spawn(move || {
-                            let result = crate::procmgr::set_remote_affinity(&host, pid, &cores_clone);
+                            let result = crate::procmgr::set_remote_affinity(&host, pid, &cores_clone, expected_start);
                             let message = match result {
                                 Ok(()) => (format!("Applied CPU affinity for PID {} on {}", pid, host_name), false),
                                 Err(error) => (format!("Failed to set CPU affinity for PID {} on {}: {}", pid, host_name, error), true),
@@ -10718,7 +10721,7 @@ impl LauncherApp {
                         });
                     }
                 } else {
-                    match crate::procmgr::set_local_affinity(pid, &sel_cores) {
+                    match crate::procmgr::set_local_affinity(pid, &sel_cores, expected_start) {
                         Ok(_) => {
                             self.sensors_top_apps_status_msg = Some((format!("Applied CPU affinity for PID {}", pid), false, Instant::now()));
                         }
@@ -18208,6 +18211,7 @@ impl LauncherApp {
                     }
                 }
                 ProcAction::SetPriority { pid, nice } => {
+                    let expected_start = snap.top_apps.iter().find(|process| process.pid == pid).and_then(|process| process.start_marker);
                     if let Some(hid) = host_id {
                         if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
                             let host_name = host.name.clone();
@@ -18215,7 +18219,7 @@ impl LauncherApp {
                             let ctx = ui.ctx().clone();
                             self.sensors_top_apps_status_msg = Some((format!("Setting priority for PID {} on {}…", pid, host_name), false, Instant::now()));
                             std::thread::spawn(move || {
-                                let result = crate::procmgr::set_remote_priority(&host, pid, nice);
+                                let result = crate::procmgr::set_remote_priority(&host, pid, nice, expected_start);
                                 let message = match result {
                                     Ok(()) => (format!("Set priority (nice {}) for PID {} on {}", nice, pid, host_name), false),
                                     Err(error) => (format!("Failed to set priority for PID {} on {}: {}", pid, host_name, error), true),
@@ -18225,7 +18229,7 @@ impl LauncherApp {
                             });
                         }
                     } else {
-                        match crate::procmgr::set_local_priority(pid, nice) {
+                        match crate::procmgr::set_local_priority(pid, nice, expected_start) {
                             Ok(_) => {
                                 self.sensors_top_apps_status_msg = Some((format!("Set priority (nice {}) for PID {}", nice, pid), false, Instant::now()));
                             }
@@ -18239,6 +18243,7 @@ impl LauncherApp {
                     let total_cores = snap.cpu_cores_logical.max(1);
                     self.proc_affinity_modal_open = true;
                     self.proc_affinity_pid = pid;
+                    self.proc_affinity_start_marker = snap.top_apps.iter().find(|process| process.pid == pid).and_then(|process| process.start_marker);
                     self.proc_affinity_name = name;
                     self.proc_affinity_host_id = host_id.map(|s| s.to_string());
                     self.proc_affinity_total_cores = total_cores;

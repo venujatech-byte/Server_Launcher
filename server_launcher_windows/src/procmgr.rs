@@ -341,7 +341,8 @@ pub fn fetch_remote_open_files(host: &SshRemoteHost, pid: u32) -> Result<Vec<Ope
     Ok(parse_open_files(&content))
 }
 
-pub fn set_local_priority(pid: u32, nice: i32) -> Result<(), String> {
+pub fn set_local_priority(pid: u32, nice: i32, expected_start: Option<u64>) -> Result<(), String> {
+    verify_local_process(pid, expected_start)?;
     let out = Command::new("renice")
         .args(["-n", &nice.to_string(), "-p", &pid.to_string()])
         .output();
@@ -349,6 +350,7 @@ pub fn set_local_priority(pid: u32, nice: i32) -> Result<(), String> {
     match out {
         Ok(o) if o.status.success() => Ok(()),
         _ => {
+            verify_local_process(pid, expected_start)?;
             let sudo_out = Command::new("sudo")
                 .args(["-n", "renice", "-n", &nice.to_string(), "-p", &pid.to_string()])
                 .output();
@@ -361,8 +363,9 @@ pub fn set_local_priority(pid: u32, nice: i32) -> Result<(), String> {
     }
 }
 
-pub fn set_remote_priority(host: &SshRemoteHost, pid: u32, nice: i32) -> Result<(), String> {
-    run_remote_process_command(host, &format!("renice -n {} -p {}", nice, pid))
+pub fn set_remote_priority(host: &SshRemoteHost, pid: u32, nice: i32, expected_start: Option<u64>) -> Result<(), String> {
+    let command = guarded_remote_process_command(pid, expected_start, &format!("renice -n {} -p {}", nice, pid))?;
+    run_remote_process_command(host, &command)
 }
 
 pub fn get_local_affinity(pid: u32) -> Result<Vec<usize>, String> {
@@ -406,7 +409,8 @@ fn parse_affinity_list(stdout: &str) -> Result<Vec<usize>, String> {
     }
 }
 
-pub fn set_local_affinity(pid: u32, cores: &[usize]) -> Result<(), String> {
+pub fn set_local_affinity(pid: u32, cores: &[usize], expected_start: Option<u64>) -> Result<(), String> {
+    verify_local_process(pid, expected_start)?;
     if cores.is_empty() {
         return Err("Cannot set empty CPU affinity".to_string());
     }
@@ -418,6 +422,7 @@ pub fn set_local_affinity(pid: u32, cores: &[usize]) -> Result<(), String> {
     match out {
         Ok(o) if o.status.success() => Ok(()),
         _ => {
+            verify_local_process(pid, expected_start)?;
             let sudo_out = Command::new("sudo")
                 .args(["-n", "taskset", "-c", "-p", &list_str, &pid.to_string()])
                 .output();
@@ -430,12 +435,40 @@ pub fn set_local_affinity(pid: u32, cores: &[usize]) -> Result<(), String> {
     }
 }
 
-pub fn set_remote_affinity(host: &SshRemoteHost, pid: u32, cores: &[usize]) -> Result<(), String> {
+pub fn set_remote_affinity(host: &SshRemoteHost, pid: u32, cores: &[usize], expected_start: Option<u64>) -> Result<(), String> {
     if cores.is_empty() {
         return Err("Cannot set empty CPU affinity".to_string());
     }
     let list = cores.iter().map(|core| core.to_string()).collect::<Vec<_>>().join(",");
-    run_remote_process_command(host, &format!("taskset -c -p {} {}", list, pid))
+    let command = guarded_remote_process_command(pid, expected_start, &format!("taskset -c -p {} {}", list, pid))?;
+    run_remote_process_command(host, &command)
+}
+
+// shortcut: PID-based scheduling calls can race after validation; use a kernel handle API if one becomes available.
+#[cfg(target_os = "linux")]
+fn verify_local_process(pid: u32, expected_start: Option<u64>) -> Result<(), String> {
+    let expected = expected_start.ok_or("Process identity is unavailable; refresh the list")?;
+    let actual = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()
+        .and_then(|stat| crate::sensors::parse_proc_start_marker(&stat));
+    if actual == Some(expected) { Ok(()) } else { Err("Process changed or exited; refresh the list".into()) }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn verify_local_process(_pid: u32, _expected_start: Option<u64>) -> Result<(), String> {
+    Err("Process scheduling controls are unavailable on this platform".into())
+}
+
+fn guarded_remote_process_command(pid: u32, expected_start: Option<u64>, command: &str) -> Result<String, String> {
+    let expected = expected_start.ok_or("Process identity is unavailable; refresh the list")?;
+    let script = r#"import os, sys
+pid, expected = map(int, sys.argv[1:3])
+with open('/proc/%d/stat' % pid) as f:
+    actual = int(f.read().rsplit(')', 1)[1].split()[19])
+if actual != expected:
+    sys.exit('Process changed or exited; refresh the list')
+os.execvp(sys.argv[3], sys.argv[3:])
+"#;
+    Ok(format!("python3 -c {} {} {} {}", crate::remote::shell_quote(script), pid, expected, command))
 }
 
 #[cfg(target_os = "linux")]
@@ -650,6 +683,22 @@ mod tests {
         let marker = crate::sensors::parse_proc_start_marker(&stat).unwrap();
         let error = super::send_local_signal(pid, "TERM", Some(marker.wrapping_add(1))).unwrap_err();
         assert!(error.contains("changed or exited"), "{error}");
+    }
+
+    #[test]
+    fn scheduling_commands_require_a_process_identity() {
+        assert!(super::guarded_remote_process_command(42, None, "renice -n 0 -p 42").is_err());
+        assert!(super::guarded_remote_process_command(42, Some(100), "renice -n 0 -p 42").unwrap().ends_with(" 42 100 renice -n 0 -p 42"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn scheduling_rejects_a_changed_process_identity() {
+        let pid = std::process::id();
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+        let marker = crate::sensors::parse_proc_start_marker(&stat).unwrap();
+        assert!(super::verify_local_process(pid, Some(marker)).is_ok());
+        assert!(super::verify_local_process(pid, Some(marker.wrapping_add(1))).is_err());
     }
 
     #[test]

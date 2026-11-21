@@ -2591,25 +2591,30 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
         cap = float(open(ps + "/capacity").read().strip()) if os.path.exists(ps + "/capacity") else None
         
         volt = None
-        for vf in ["voltage_now", "voltage_min_design", "voltage_design", "voltage_nominal"]:
-            if os.path.exists(ps + "/" + vf):
-                try:
-                    v_val = int(open(ps + "/" + vf).read().strip()) / 1e6
-                    if v_val > 2.0:
-                        volt = round(v_val, 2)
-                        break
-                except:
-                    pass
-        nominal_volt = volt
+        try:
+            value = int(open(ps + "/voltage_now").read().strip()) / 1e6
+            if value > 0:
+                volt = value
+        except:
+            pass
+        nominal_volt = None
+        for vf in ["voltage_min_design", "voltage_design", "voltage_nominal"]:
+            try:
+                value = int(open(ps + "/" + vf).read().strip()) / 1e6
+                if value > 0:
+                    nominal_volt = value
+                    break
+            except:
+                pass
             
         p_watts = None
         if os.path.exists(ps + "/power_now"):
             try: p_watts = round(int(open(ps + "/power_now").read().strip()) / 1e6, 2)
             except: pass
-        elif os.path.exists(ps + "/current_now"):
+        elif volt is not None and os.path.exists(ps + "/current_now"):
             try:
                 curr = int(open(ps + "/current_now").read().strip()) / 1e6
-                p_watts = round(curr * nominal_volt, 2)
+                p_watts = round(curr * volt, 2)
             except: pass
             
         energy_wh = None
@@ -2618,21 +2623,21 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
         if os.path.exists(ps + "/energy_now"):
             try: energy_wh = round(int(open(ps + "/energy_now").read().strip()) / 1e6, 2)
             except: pass
-        elif os.path.exists(ps + "/charge_now"):
+        elif nominal_volt is not None and os.path.exists(ps + "/charge_now"):
             try: energy_wh = round((int(open(ps + "/charge_now").read().strip()) / 1e6) * nominal_volt, 2)
             except: pass
             
         if os.path.exists(ps + "/energy_full"):
             try: energy_full_wh = round(int(open(ps + "/energy_full").read().strip()) / 1e6, 2)
             except: pass
-        elif os.path.exists(ps + "/charge_full"):
+        elif nominal_volt is not None and os.path.exists(ps + "/charge_full"):
             try: energy_full_wh = round((int(open(ps + "/charge_full").read().strip()) / 1e6) * nominal_volt, 2)
             except: pass
             
         if os.path.exists(ps + "/energy_full_design"):
             try: energy_design_wh = round(int(open(ps + "/energy_full_design").read().strip()) / 1e6, 2)
             except: pass
-        elif os.path.exists(ps + "/charge_full_design"):
+        elif nominal_volt is not None and os.path.exists(ps + "/charge_full_design"):
             try: energy_design_wh = round((int(open(ps + "/charge_full_design").read().strip()) / 1e6) * nominal_volt, 2)
             except: pass
 

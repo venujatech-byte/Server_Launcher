@@ -1147,13 +1147,14 @@ impl LauncherApp {
         }
 
         let snapshots_arc = self.remote_sensors_snapshots.clone();
+        let include_processes = matches!(self.sensors_subtab, SensorsSubTab::TopApps | SensorsSubTab::Ram | SensorsSubTab::Cpu);
         let include_process_network = self.sensors_subtab == SensorsSubTab::TopApps;
         let in_flight_arc = self.remote_sensors_in_flight.clone();
         let last_fetch_arc = self.remote_sensors_last_fetch.clone();
         let errors_arc = self.remote_sensors_errors.clone();
 
         std::thread::spawn(move || {
-            match crate::sensors::query_remote_sensors(&host, include_process_network) {
+            match crate::sensors::query_remote_sensors(&host, include_processes, include_process_network) {
                 Ok(snap) => {
                     snapshots_arc.lock().unwrap().insert(hid.clone(), Arc::new(snap));
                     last_fetch_arc.lock().unwrap().insert(hid.clone(), Instant::now());
@@ -11044,6 +11045,10 @@ impl LauncherApp {
                                             self.trigger_remote_sensors_query(host);
                                         }
                                     }
+                                } else if matches!(tab, SensorsSubTab::Ram | SensorsSubTab::Cpu) && host_id.is_some() {
+                                    if let Some(host) = self.ssh_hosts.iter().find(|host| Some(host.id.as_str()) == host_id).cloned() {
+                                        self.trigger_remote_sensors_query(host);
+                                    }
                                 } else if tab == SensorsSubTab::DataUsage && host_id.is_none() && self.sensors_snapshot.networks.is_empty() {
                                     self.trigger_local_sensors_query(false, Some(ui.ctx().clone()));
                                     self.last_sensors_refresh = Instant::now();
@@ -11093,8 +11098,10 @@ impl LauncherApp {
             Arc::clone(&self.sensors_snapshot)
         };
         if let Some(hid) = host_id {
-            if self.sensors_subtab == SensorsSubTab::TopApps && snap.timestamp.is_some()
-                && !snap.process_network_collected && !is_fetching
+            let needs_processes = matches!(self.sensors_subtab, SensorsSubTab::TopApps | SensorsSubTab::Ram | SensorsSubTab::Cpu);
+            let needs_network = self.sensors_subtab == SensorsSubTab::TopApps;
+            if snap.timestamp.is_some() && !is_fetching
+                && ((needs_processes && !snap.processes_collected) || (needs_network && !snap.process_network_collected))
                 && !self.remote_sensors_errors.lock().unwrap().contains_key(hid)
             {
                 if let Some(host) = self.ssh_hosts.iter().find(|host| host.id == hid).cloned() {
@@ -16921,7 +16928,7 @@ impl LauncherApp {
                     results.lock().unwrap().push_back(message);
                     ctx.request_repaint();
                     std::thread::sleep(std::time::Duration::from_millis(400));
-                    if let Ok(snap) = crate::sensors::query_remote_sensors(&host, true) {
+                    if let Ok(snap) = crate::sensors::query_remote_sensors(&host, true, true) {
                         snapshots_arc.lock().unwrap().insert(hid_clone.clone(), Arc::new(snap));
                         last_fetch_arc.lock().unwrap().insert(hid_clone.clone(), Instant::now());
                         errors_arc.lock().unwrap().remove(&hid_clone);

@@ -280,6 +280,7 @@ pub struct SystemSensorsSnapshot {
 
     // Top Applications & Processes
     pub top_apps: Vec<ProcessSensorInfo>,
+    pub processes_collected: bool,
     pub process_network_collected: bool,
 
     // OS info
@@ -849,6 +850,7 @@ impl SystemSensorsCollector {
             total_tx_bytes,
             temp_sensors,
             top_apps,
+            processes_collected: include_top_apps,
             process_network_collected: include_top_apps && include_process_network,
             os_name: System::name().unwrap_or_default(),
             os_version: System::os_version().unwrap_or_default(),
@@ -2337,23 +2339,24 @@ pub fn temp_color(temp: f32) -> Color32 {
     }
 }
 
-fn remote_sensor_command(script: &str, include_process_network: bool) -> String {
-    format!("{} {}", script.trim_end(), if include_process_network { "1" } else { "0" })
+fn remote_sensor_command(script: &str, include_processes: bool, include_process_network: bool) -> String {
+    format!("{} {} {}", script.trim_end(), if include_processes { "1" } else { "0" }, if include_processes && include_process_network { "1" } else { "0" })
 }
 
 #[cfg(test)]
 mod remote_sensor_command_tests {
     #[test]
     fn scan_flag_is_an_argument_to_the_python_command() {
-        assert_eq!(super::remote_sensor_command("python3 -c 'pass'\n", true), "python3 -c 'pass' 1");
-        assert_eq!(super::remote_sensor_command("python3 -c 'pass'\n", false), "python3 -c 'pass' 0");
+        assert_eq!(super::remote_sensor_command("python3 -c 'pass'\n", true, true), "python3 -c 'pass' 1 1");
+        assert_eq!(super::remote_sensor_command("python3 -c 'pass'\n", false, true), "python3 -c 'pass' 0 0");
     }
 }
 
-pub fn query_remote_sensors(host: &SshRemoteHost, include_process_network: bool) -> Result<SystemSensorsSnapshot, String> {
+pub fn query_remote_sensors(host: &SshRemoteHost, include_processes: bool, include_process_network: bool) -> Result<SystemSensorsSnapshot, String> {
     let script = r#"python3 -c '
 import os, glob, json, time, sys
-collect_process_network = len(sys.argv) > 1 and sys.argv[1] == "1"
+collect_processes = len(sys.argv) > 1 and sys.argv[1] == "1"
+collect_process_network = collect_processes and len(sys.argv) > 2 and sys.argv[2] == "1"
 
 def read_cpu_stats():
     cpus = {}
@@ -2488,13 +2491,14 @@ d1_at = time.monotonic()
 n1 = read_net_dev()
 n1_at = time.monotonic()
 init_pids = []
-try:
-    for line in os.popen("ps -eo pid --sort=-pcpu 2>/dev/null").read().strip().split("\n")[1:]:
-        p = line.strip()
-        if p.isdigit():
-            init_pids.append(int(p))
-except:
-    pass
+if collect_processes:
+    try:
+        for line in os.popen("ps -eo pid --sort=-pcpu 2>/dev/null").read().strip().split("\n")[1:]:
+            p = line.strip()
+            if p.isdigit():
+                init_pids.append(int(p))
+    except:
+        pass
 p1_io = read_proc_io_map(init_pids)
 p1_cpu = {}
 for pid in init_pids:
@@ -3060,75 +3064,76 @@ except:
     pass
 
 top_apps = []
-try:
-    for line in os.popen("ps -eo pid,pcpu,pmem,rss,comm --sort=-pcpu 2>/dev/null").read().strip().split("\n")[1:]:
-        p = line.split()
-        if len(p) >= 5:
-            try:
-                pid = int(p[0])
-                cpu = None
-                rss_bytes = int(p[3]) * 1024
-                comm = " ".join(p[4:])
-
-                cpu_sample = read_proc_cpu_sample(pid)
-                start_marker = cpu_sample[0] if cpu_sample is not None else read_proc_start_marker(pid)
-                network = p2_net.get(pid)
-                rx2, tx2 = network[1:] if network and network[0] == start_marker else (0, 0)
-                dr2 = 0
-                dw2 = 0
-                io_sampled_at = None
+if collect_processes:
+    try:
+        for line in os.popen("ps -eo pid,pcpu,pmem,rss,comm --sort=-pcpu 2>/dev/null").read().strip().split("\n")[1:]:
+            p = line.split()
+            if len(p) >= 5:
                 try:
-                    with open("/proc/" + str(pid) + "/io") as fio:
-                        for ioline in fio:
-                            if ioline.startswith("read_bytes:"): dr2 = int(ioline.split()[1])
-                            elif ioline.startswith("write_bytes:"): dw2 = int(ioline.split()[1])
-                    io_sampled_at = time.monotonic()
+                    pid = int(p[0])
+                    cpu = None
+                    rss_bytes = int(p[3]) * 1024
+                    comm = " ".join(p[4:])
+
+                    cpu_sample = read_proc_cpu_sample(pid)
+                    start_marker = cpu_sample[0] if cpu_sample is not None else read_proc_start_marker(pid)
+                    network = p2_net.get(pid)
+                    rx2, tx2 = network[1:] if network and network[0] == start_marker else (0, 0)
+                    dr2 = 0
+                    dw2 = 0
+                    io_sampled_at = None
+                    try:
+                        with open("/proc/" + str(pid) + "/io") as fio:
+                            for ioline in fio:
+                                if ioline.startswith("read_bytes:"): dr2 = int(ioline.split()[1])
+                                elif ioline.startswith("write_bytes:"): dw2 = int(ioline.split()[1])
+                        io_sampled_at = time.monotonic()
+                    except:
+                        pass
+
+                    previous_network = p1_net.get(pid)
+                    if (start_marker is not None and network and network[0] == start_marker
+                            and previous_network and previous_network[0] == start_marker):
+                        _, rx1, tx1 = previous_network
+                        net_rate = (max(0, rx2 - rx1) + max(0, tx2 - tx1)) / proc_net_elapsed
+                    else:
+                        net_rate = 0.0
+                    dr_rate = 0.0
+                    dw_rate = 0.0
+                    disk_rate = 0.0
+                    current_start = read_proc_start_marker(pid)
+                    cpu = process_cpu_rate(p1_cpu.get(pid), cpu_sample, current_start, cpu_ticks_per_second)
+                    prior_io = p1_io.get(pid)
+                    if (start_marker is not None and start_marker == current_start
+                            and io_sampled_at is not None and prior_io is not None and prior_io[0] == start_marker):
+                        _, dr1, dw1, previous_io_at = prior_io
+                        io_elapsed = max(io_sampled_at - previous_io_at, 0.001)
+                        dr_rate = max(0.0, (dr2 - dr1) / io_elapsed)
+                        dw_rate = max(0.0, (dw2 - dw1) / io_elapsed)
+                        disk_rate = dr_rate + dw_rate
+
+                    port = proc_ports.get(pid)
+                    top_apps.append({
+                        "pid": pid,
+                        "start_marker": start_marker,
+                        "cpu": cpu,
+                        "mem_bytes": rss_bytes,
+                        "name": comm,
+                        "status": process_state_label(cpu_sample[3]) if cpu_sample is not None and start_marker == current_start else "Unknown",
+                        "net_rx_bytes": rx2,
+                        "net_tx_bytes": tx2,
+                        "net_rate": net_rate,
+                        "disk_read_bytes": dr2,
+                        "disk_write_bytes": dw2,
+                        "disk_read_rate": dr_rate,
+                        "disk_write_rate": dw_rate,
+                        "disk_rate": disk_rate,
+                        "port": port
+                    })
                 except:
                     pass
-
-                previous_network = p1_net.get(pid)
-                if (start_marker is not None and network and network[0] == start_marker
-                        and previous_network and previous_network[0] == start_marker):
-                    _, rx1, tx1 = previous_network
-                    net_rate = (max(0, rx2 - rx1) + max(0, tx2 - tx1)) / proc_net_elapsed
-                else:
-                    net_rate = 0.0
-                dr_rate = 0.0
-                dw_rate = 0.0
-                disk_rate = 0.0
-                current_start = read_proc_start_marker(pid)
-                cpu = process_cpu_rate(p1_cpu.get(pid), cpu_sample, current_start, cpu_ticks_per_second)
-                prior_io = p1_io.get(pid)
-                if (start_marker is not None and start_marker == current_start
-                        and io_sampled_at is not None and prior_io is not None and prior_io[0] == start_marker):
-                    _, dr1, dw1, previous_io_at = prior_io
-                    io_elapsed = max(io_sampled_at - previous_io_at, 0.001)
-                    dr_rate = max(0.0, (dr2 - dr1) / io_elapsed)
-                    dw_rate = max(0.0, (dw2 - dw1) / io_elapsed)
-                    disk_rate = dr_rate + dw_rate
-
-                port = proc_ports.get(pid)
-                top_apps.append({
-                    "pid": pid,
-                    "start_marker": start_marker,
-                    "cpu": cpu,
-                    "mem_bytes": rss_bytes,
-                    "name": comm,
-                    "status": process_state_label(cpu_sample[3]) if cpu_sample is not None and start_marker == current_start else "Unknown",
-                    "net_rx_bytes": rx2,
-                    "net_tx_bytes": tx2,
-                    "net_rate": net_rate,
-                    "disk_read_bytes": dr2,
-                    "disk_write_bytes": dw2,
-                    "disk_read_rate": dr_rate,
-                    "disk_write_rate": dw_rate,
-                    "disk_rate": disk_rate,
-                    "port": port
-                })
-            except:
-                pass
-except:
-    pass
+    except:
+        pass
 
 os_name = ""
 os_version = ""
@@ -3304,7 +3309,7 @@ print(json.dumps(data))
 '
 "#;
 
-    let script = remote_sensor_command(script, include_process_network);
+    let script = remote_sensor_command(script, include_processes, include_process_network);
     let mut cmd = build_ssh_command(host, &script);
     let out = cmd.output().map_err(|e| format!("SSH command execution error: {}", e))?;
     if !out.status.success() {
@@ -3681,7 +3686,8 @@ print(json.dumps(data))
         total_tx_bytes,
         temp_sensors,
         top_apps,
-        process_network_collected: include_process_network,
+        processes_collected: include_processes,
+        process_network_collected: include_processes && include_process_network,
         os_name: parsed["os_name"].as_str().unwrap_or("").to_string(),
         os_version: parsed["os_version"].as_str().unwrap_or("").to_string(),
         cpu_governor,

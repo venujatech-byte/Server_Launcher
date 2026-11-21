@@ -13830,10 +13830,12 @@ impl LauncherApp {
 
                         ui.add_space(8.0);
 
-                        // Keep the four summary columns, populated from reported mounts on either host.
                         ui.columns(4, |cols| {
-                            for (i, col) in cols.iter_mut().enumerate() {
-                                if let Some(mount) = snap.disks.get(i) {
+                            let mut mounts = snap.disks.iter().filter(|mount| {
+                                d1_phys.map_or(false, |disk| disk_owns_mount(&disk.name, &disk.partitions, &mount.name))
+                            });
+                            for col in cols.iter_mut() {
+                                if let Some(mount) = mounts.next() {
                                     col.add(egui::Label::new(RichText::new(format!("MOUNT: {}", mount.mount_point)).size(9.0).monospace().color(p.text_muted)).truncate())
                                         .on_hover_text(&mount.mount_point);
                                     col.add_space(2.0);

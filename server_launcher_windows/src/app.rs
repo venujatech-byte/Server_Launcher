@@ -13624,13 +13624,14 @@ impl LauncherApp {
                         });
 
                         ui.add_space(8.0);
-                        let fallback_w = self.disk_write_history.clone();
-                        let fallback_r = self.disk_read_history.clone();
-                        let (w_hist, r_hist) = if let Some(w) = self.per_disk_write_history.get(&active_disk_name) {
-                            let r = self.per_disk_read_history.get(&active_disk_name).unwrap_or(&fallback_r);
-                            (w, r)
+                        let empty_history = VecDeque::new();
+                        let (w_hist, r_hist) = if drives_list.is_empty() {
+                            (&self.disk_write_history, &self.disk_read_history)
                         } else {
-                            (&fallback_w, &fallback_r)
+                            (
+                                self.per_disk_write_history.get(&active_disk_name).unwrap_or(&empty_history),
+                                self.per_disk_read_history.get(&active_disk_name).unwrap_or(&empty_history),
+                            )
                         };
                         draw_disk_waveform(ui, 130.0, w_hist, r_hist, accent);
 

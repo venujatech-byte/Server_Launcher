@@ -2477,26 +2477,44 @@ try:
 except:
     pass
 
-cpu_freqs = []
-for p in sorted(glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq")):
+def read_cpu_frequencies():
+    by_cpu = {}
+    for attribute in ("scaling_cur_freq", "cpuinfo_cur_freq"):
+        for path in glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq/" + attribute):
+            try:
+                name = path.split("/")[-3]
+                if not name.startswith("cpu") or not name[3:].isdigit():
+                    continue
+                index = int(name[3:])
+                if index in by_cpu:
+                    continue
+                mhz = int(open(path).read().strip()) // 1000
+                if mhz > 0:
+                    by_cpu[index] = mhz
+            except (OSError, ValueError, IndexError):
+                pass
     try:
-        cpu_freqs.append(int(open(p).read().strip()) // 1000)
-    except:
-        pass
-if not cpu_freqs:
-    for p in sorted(glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq/cpuinfo_cur_freq")):
-        try:
-            cpu_freqs.append(int(open(p).read().strip()) // 1000)
-        except:
-            pass
-if not cpu_freqs:
-    try:
+        processor = None
         with open("/proc/cpuinfo") as f:
             for line in f:
-                if "cpu MHz" in line:
-                    cpu_freqs.append(int(float(line.split(":")[1].strip())))
-    except:
+                key, sep, value = line.partition(":")
+                if not sep:
+                    continue
+                key, value = key.strip(), value.strip()
+                if key == "processor":
+                    processor = int(value) if value.isdigit() else None
+                elif key == "cpu MHz" and processor is not None and processor not in by_cpu:
+                    try:
+                        mhz = int(float(value))
+                        if mhz > 0:
+                            by_cpu[processor] = mhz
+                    except (ValueError, OverflowError):
+                        pass
+    except OSError:
         pass
+    return [by_cpu.get(index, 0) for index in range(max(by_cpu, default=-1) + 1)]
+
+cpu_freqs = read_cpu_frequencies()
 
 cpu_tdp = None
 for p in glob.glob("/sys/class/powercap/intel-rapl*/constraint_0_power_limit_uw") + glob.glob("/sys/class/powercap/intel-rapl*/*/constraint_0_power_limit_uw"):
@@ -3245,10 +3263,11 @@ print(json.dumps(data))
             }
         }
     }
-    let cpu_frequency_mhz = if !cpu_frequencies_mhz.is_empty() {
-        cpu_frequencies_mhz.iter().sum::<u64>() / cpu_frequencies_mhz.len() as u64
-    } else {
+    let valid_frequencies: Vec<_> = cpu_frequencies_mhz.iter().copied().filter(|value| *value > 0).collect();
+    let cpu_frequency_mhz = if valid_frequencies.is_empty() {
         0
+    } else {
+        (valid_frequencies.iter().map(|value| *value as u128).sum::<u128>() / valid_frequencies.len() as u128) as u64
     };
 
     let cpu_tdp_watts = parsed["cpu_tdp"].as_f64().map(|v| v as f32);

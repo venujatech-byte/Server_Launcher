@@ -499,11 +499,26 @@ pub fn send_local_signal(pid: u32, sig: &str, _expected_start: Option<u64>) -> R
     }
 }
 
-pub fn send_remote_signal(host: &SshRemoteHost, pid: u32, sig: &str) -> Result<(), String> {
+pub fn send_remote_signal(host: &SshRemoteHost, pid: u32, sig: &str, expected_start: Option<u64>) -> Result<(), String> {
+    let command = remote_signal_command(pid, sig, expected_start)?;
+    run_remote_process_command(host, &command)
+}
+
+fn remote_signal_command(pid: u32, sig: &str, expected_start: Option<u64>) -> Result<String, String> {
     if !valid_process_signal(sig) {
         return Err("Unsupported process signal".to_string());
     }
-    run_remote_process_command(host, &format!("kill -{} {}", sig, pid))
+    let expected = expected_start.ok_or("Process identity is unavailable; refresh the list")?;
+    let script = r#"import os, signal, sys
+pid, expected = map(int, sys.argv[1:3])
+fd = os.pidfd_open(pid)
+with open('/proc/%d/stat' % pid) as f:
+    actual = int(f.read().rsplit(')', 1)[1].split()[19])
+if actual != expected:
+    sys.exit('Process changed or exited; refresh the list')
+signal.pidfd_send_signal(fd, getattr(signal, 'SIG' + sys.argv[3]))
+"#;
+    Ok(format!("python3 -c {} {} {} {}", crate::remote::shell_quote(script), pid, expected, sig))
 }
 
 fn valid_process_signal(sig: &str) -> bool {
@@ -544,6 +559,13 @@ mod tests {
         let marker = crate::sensors::parse_proc_start_marker(&stat).unwrap();
         let error = super::send_local_signal(pid, "TERM", Some(marker.wrapping_add(1))).unwrap_err();
         assert!(error.contains("changed or exited"), "{error}");
+    }
+
+    #[test]
+    fn remote_signal_requires_identity_and_valid_signal() {
+        assert!(super::remote_signal_command(42, "TERM", None).is_err());
+        assert!(super::remote_signal_command(42, "TERM; id", Some(100)).is_err());
+        assert!(super::remote_signal_command(42, "TERM", Some(100)).unwrap().ends_with(" 42 100 TERM"));
     }
 
     #[test]

@@ -16857,7 +16857,7 @@ impl LauncherApp {
 
                 self.sensors_top_apps_status_msg = Some((format!("Sending signal to PID {} on {}…", pid, host_name), false, Instant::now()));
                 std::thread::spawn(move || {
-                    let result = crate::procmgr::send_remote_signal(&host, pid, &sig_str);
+                    let result = crate::procmgr::send_remote_signal(&host, pid, &sig_str, expected_start);
                     let message = match result {
                         Ok(()) => (format!("Sent SIG{} to remote process PID {} on {}", sig_str, pid, host_name), false),
                         Err(error) => (format!("Failed to signal PID {} on {}: {}", pid, host_name, if error.trim().is_empty() { "remote command failed" } else { error.trim() }), true),

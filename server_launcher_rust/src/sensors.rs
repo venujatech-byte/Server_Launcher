@@ -382,10 +382,10 @@ impl SystemSensorsCollector {
     }
 
     pub fn collect(&mut self) -> SystemSensorsSnapshot {
-        self.collect_with_top_apps(true)
+        self.collect_with_top_apps(true, true)
     }
 
-    pub fn collect_with_top_apps(&mut self, include_top_apps: bool) -> SystemSensorsSnapshot {
+    pub fn collect_with_top_apps(&mut self, include_top_apps: bool, include_process_network: bool) -> SystemSensorsSnapshot {
         // 1. Refresh System
         self.sys.refresh_cpu_all();
         self.sys.refresh_memory();
@@ -644,7 +644,7 @@ impl SystemSensorsCollector {
         let mut top_apps = Vec::new();
         if include_top_apps {
             let proc_net_elapsed_secs = (now - self.prev_proc_net_time).as_secs_f64().max(0.1);
-            let current_proc_net = collect_process_tcp_counters();
+            let current_proc_net = if include_process_network { collect_process_tcp_counters() } else { HashMap::new() };
             self.sys.refresh_processes_specifics(
                 sysinfo::ProcessesToUpdate::All,
                 sysinfo::ProcessRefreshKind::new()
@@ -690,7 +690,7 @@ impl SystemSensorsCollector {
                     { Some(proc.start_time()) }
                 };
                 let (proc_net_rx, proc_net_tx) = current_proc_net.get(&pid_u32).copied().unwrap_or_default();
-                let previous = start_marker.and_then(|start| {
+                let previous = start_marker.filter(|_| include_process_network).and_then(|start| {
                     current_identified_net.insert((pid_u32, start), (proc_net_rx, proc_net_tx));
                     self.prev_proc_net.get(&(pid_u32, start)).copied()
                 });

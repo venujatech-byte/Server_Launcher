@@ -13257,28 +13257,8 @@ impl LauncherApp {
                     let d_phys_gb = d_bytes as f64 / 1e9;
                     let d_mount = snap.disks.iter().find(|d| d.name.contains(d_name) || d_name.contains(d.name.trim_start_matches("/dev/")));
 
-                    let r_rate = if d_read_bps > 0.0 {
-                        d_read_bps
-                    } else if let Some(m) = d_mount {
-                        m.read_rate_bps
-                    } else if idx == 0 {
-                        snap.total_disk_read_rate_bps
-                    } else {
-                        0.0
-                    };
-
-                    let w_rate = if d_write_bps > 0.0 {
-                        d_write_bps
-                    } else if let Some(m) = d_mount {
-                        m.write_rate_bps
-                    } else if idx == 0 {
-                        snap.total_disk_write_rate_bps
-                    } else {
-                        0.0
-                    };
-
-                    let d_read_str = crate::sensors::format_rate(r_rate);
-                    let d_write_str = crate::sensors::format_rate(w_rate);
+                    let d_read_str = crate::sensors::format_rate(d_read_bps);
+                    let d_write_str = crate::sensors::format_rate(d_write_bps);
 
                     let (d_used, d_tot, d_pct, d_fs, is_mounted, mount_pt) = if let Some(m) = d_mount {
                         let u = m.used_bytes as f64 / 1e9;

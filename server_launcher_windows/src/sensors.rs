@@ -2379,7 +2379,7 @@ p1_net_at = time.monotonic()
 rapl_e1 = {}
 for p in glob.glob("/sys/class/powercap/intel-rapl*/energy_uj") + glob.glob("/sys/class/powercap/intel-rapl*/*/energy_uj"):
     try:
-        rapl_e1[p] = int(open(p).read().strip())
+        rapl_e1[p] = (int(open(p).read().strip()), time.monotonic())
     except:
         pass
 
@@ -2745,10 +2745,10 @@ for ifname, (rx2, tx2) in n2.items():
     })
 
 if rapl_e1:
-    for p, e1 in rapl_e1.items():
+    for p, (e1, sampled_at) in rapl_e1.items():
         try:
             e2 = int(open(p).read().strip())
-            dt = time.time() - t_start
+            dt = time.monotonic() - sampled_at
             if dt > 0.05 and e2 >= e1:
                 w = (e2 - e1) / 1e6 / dt
                 if 0.5 <= w <= 800.0:

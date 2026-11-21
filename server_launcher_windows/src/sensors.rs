@@ -2790,13 +2790,6 @@ while f"cpu{idx}" in c1 and f"cpu{idx}" in c2:
         cpu_core_usages.append(0.0)
     idx += 1
 
-if cpu_usage == 0.0 and os.path.exists("/proc/loadavg"):
-    try:
-        lavg = float(open("/proc/loadavg").read().split()[0])
-        cpu_usage = max(0.0, min(100.0, round((lavg / max(cores, 1)) * 100.0, 1)))
-    except:
-        pass
-
 active_sockets = []
 proc_ports = {}
 try:

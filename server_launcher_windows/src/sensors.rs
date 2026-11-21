@@ -2362,7 +2362,9 @@ def read_proc_net_map():
 t_start = time.time()
 c1 = read_cpu_stats()
 d1 = read_disk_stats()
+d1_at = time.monotonic()
 n1 = read_net_dev()
+n1_at = time.monotonic()
 init_pids = []
 try:
     for line in os.popen("ps -eo pid --sort=-pcpu 2>/dev/null").read().strip().split("\n")[1:]:
@@ -2714,8 +2716,11 @@ if t_elapsed < 0.12:
     time.sleep(0.12 - t_elapsed)
 c2 = read_cpu_stats()
 d2 = read_disk_stats()
+d2_at = time.monotonic()
 n2 = read_net_dev()
-t_disk_elapsed = max(time.time() - t_start, 0.05)
+n2_at = time.monotonic()
+t_disk_elapsed = max(d2_at - d1_at, 0.001)
+t_net_elapsed = max(n2_at - n1_at, 0.001)
 p2_net = read_proc_net_map()
 p2_net_at = time.monotonic()
 proc_net_elapsed = max(p2_net_at - p1_net_at, 0.001)
@@ -2725,8 +2730,8 @@ total_rx_rate = 0.0
 total_tx_rate = 0.0
 for ifname, (rx2, tx2) in n2.items():
     rx1, tx1 = n1.get(ifname, (rx2, tx2))
-    rx_rate = max(0.0, (rx2 - rx1) / t_disk_elapsed)
-    tx_rate = max(0.0, (tx2 - tx1) / t_disk_elapsed)
+    rx_rate = max(0.0, (rx2 - rx1) / t_net_elapsed)
+    tx_rate = max(0.0, (tx2 - tx1) / t_net_elapsed)
     total_rx_rate += rx_rate
     total_tx_rate += tx_rate
     is_wl = os.path.exists("/sys/class/net/" + ifname + "/wireless") or os.path.exists("/sys/class/net/" + ifname + "/phy80211")

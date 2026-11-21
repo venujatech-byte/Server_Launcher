@@ -2691,25 +2691,11 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
             "health_pct": health,
             "cycle_count": cycles,
             "technology": tech,
-            "model_name": model if model else "Standard Pack",
-            "manufacturer": mfg if mfg else "OEM"
+            "model_name": model,
+            "manufacturer": mfg
         })
 
 
-if ac_online is None:
-    if not batteries:
-        ac_online = True
-    else:
-        for b in batteries:
-            st = b.get("status", "").lower()
-            if "charg" in st or "full" in st:
-                ac_online = True
-                break
-            elif "discharg" in st:
-                ac_online = False
-                break
-        if ac_online is None:
-            ac_online = True
 
 t_elapsed = time.time() - t_start
 if t_elapsed < 0.12:

@@ -2793,10 +2793,17 @@ for dev, (r_rate, w_rate, _, _) in disk_rates.items():
             tot_disk_read_rate += r_rate
             tot_disk_write_rate += w_rate
 
+def mounted_disk_totals(mounts, rates):
+    devices = set()
+    for mount in mounts:
+        source = mount["name"]
+        if source.startswith("/dev/"):
+            devices.add(os.path.basename(os.path.realpath(source)))
+    return (sum(rates[device][0] for device in devices if device in rates),
+            sum(rates[device][1] for device in devices if device in rates))
+
 if not base_found:
-    for d in disks:
-        tot_disk_read_rate += d.get("read_rate", 0.0)
-        tot_disk_write_rate += d.get("write_rate", 0.0)
+    tot_disk_read_rate, tot_disk_write_rate = mounted_disk_totals(disks, disk_rates)
 
 cpu_usage = 0.0
 if "cpu" in c1 and "cpu" in c2:

@@ -18092,12 +18092,17 @@ impl LauncherApp {
             #[cfg(windows)]
             if host_id.is_none() {
                 match action {
-                    ProcAction::Terminate { pid } | ProcAction::ForceStop { pid } => {
+                    ProcAction::ForceStop { pid } => {
+                        let start = snap.top_apps.iter().find(|process| process.pid == pid).and_then(|process| process.start_marker);
+                        self.sensors_top_apps_status_msg = Some(match crate::procmgr::force_stop_windows_process(pid, start) {
+                            Ok(()) => (format!("Stopped process {pid}"), false, Instant::now()),
+                            Err(error) => (format!("Failed to stop process {pid}: {error}"), true, Instant::now()),
+                        });
+                    }
+                    ProcAction::Terminate { pid } => {
                         use std::os::windows::process::CommandExt;
-                        let force = matches!(action, ProcAction::ForceStop { .. });
                         let mut command = std::process::Command::new("taskkill.exe");
                         command.args(["/PID", &pid.to_string()]);
-                        if force { command.arg("/F"); }
                         let result = command.creation_flags(0x08000000).output();
                         self.sensors_top_apps_status_msg = Some(match result {
                             Ok(out) if out.status.success() => (format!("Stopped process {pid}"), false, Instant::now()),

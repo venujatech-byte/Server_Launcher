@@ -547,9 +547,71 @@ fn run_remote_process_command(host: &SshRemoteHost, command: &str) -> Result<(),
     }
 }
 
+#[cfg(windows)]
+mod windows_process {
+    use std::ffi::c_void;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileTime { low: u32, high: u32 }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
+        fn GetProcessTimes(handle: *mut c_void, creation: *mut FileTime, exit: *mut FileTime, kernel: *mut FileTime, user: *mut FileTime) -> i32;
+        fn TerminateProcess(handle: *mut c_void, exit_code: u32) -> i32;
+    }
+
+    const QUERY: u32 = 0x1000;
+    const TERMINATE: u32 = 0x0001;
+
+    fn open(pid: u32, access: u32) -> Result<OwnedHandle, String> {
+        let handle = unsafe { OpenProcess(access, 0, pid) };
+        if handle.is_null() { return Err(std::io::Error::last_os_error().to_string()); }
+        Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
+    }
+
+    fn creation(handle: &OwnedHandle) -> Result<u64, String> {
+        let (mut start, mut exit, mut kernel, mut user) = (FileTime::default(), FileTime::default(), FileTime::default(), FileTime::default());
+        let ok = unsafe { GetProcessTimes(handle.as_raw_handle(), &mut start, &mut exit, &mut kernel, &mut user) };
+        if ok == 0 { return Err(std::io::Error::last_os_error().to_string()); }
+        Ok(((start.high as u64) << 32) | start.low as u64)
+    }
+
+    pub(super) fn start_marker(pid: u32) -> Option<u64> {
+        creation(&open(pid, QUERY).ok()?).ok()
+    }
+
+    pub(super) fn force_stop(pid: u32, expected: Option<u64>) -> Result<(), String> {
+        let expected = expected.ok_or("Process identity is unavailable; refresh the list")?;
+        let handle = open(pid, QUERY | TERMINATE)?;
+        if creation(&handle)? != expected { return Err("Process changed or exited; refresh the list".into()); }
+        if unsafe { TerminateProcess(handle.as_raw_handle(), 1) } == 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn windows_process_start_marker(pid: u32) -> Option<u64> { windows_process::start_marker(pid) }
+
+#[cfg(windows)]
+pub(crate) fn force_stop_windows_process(pid: u32, expected: Option<u64>) -> Result<(), String> { windows_process::force_stop(pid, expected) }
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn force_stop_rejects_a_changed_process_identity() {
+        let pid = std::process::id();
+        let marker = super::windows_process_start_marker(pid).unwrap();
+        let error = super::force_stop_windows_process(pid, Some(marker.wrapping_add(1))).unwrap_err();
+        assert!(error.contains("changed or exited"), "{error}");
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

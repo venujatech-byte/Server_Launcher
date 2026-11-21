@@ -3707,7 +3707,7 @@ impl SystemSensorsCollector {
                 current_proc_disk.insert(identity, current);
                 let (read, write) = process_disk_rates(self.prev_proc_disk.get(&identity).copied(), current, elapsed);
                 snap.top_apps.push(ProcessSensorInfo {
-                    pid: pid.as_u32(), start_marker: Some(process.start_time()), name: process.name().to_string_lossy().into_owned(),
+                    pid: pid.as_u32(), start_marker: crate::procmgr::windows_process_start_marker(pid.as_u32()), name: process.name().to_string_lossy().into_owned(),
                     cpu_usage: process.cpu_usage(), memory_bytes: process.memory(),
                     disk_read_bytes: disk.total_read_bytes, disk_written_bytes: disk.total_written_bytes,
                     disk_read_rate_bps: read, disk_write_rate_bps: write, disk_rate_bps: read + write,

@@ -2348,9 +2348,14 @@ def read_proc_cpu_sample(pid):
     try:
         with open("/proc/" + str(pid) + "/stat") as stat_file:
             fields = stat_file.read().rsplit(")", 1)[1].split()
-        return (int(fields[19]), int(fields[11]) + int(fields[12]), time.monotonic())
+        return (int(fields[19]), int(fields[11]) + int(fields[12]), time.monotonic(), fields[0])
     except (OSError, ValueError, IndexError):
         return None
+
+def process_state_label(state):
+    return {"R": "Running", "S": "Sleeping", "D": "Uninterruptible sleep",
+            "T": "Stopped", "t": "Tracing stop", "Z": "Zombie",
+            "X": "Dead", "x": "Dead", "I": "Idle", "P": "Parked"}.get(state, "Unknown")
 
 def process_cpu_rate(previous, current, final_start, ticks_per_second):
     if (ticks_per_second is None or ticks_per_second <= 0 or previous is None or current is None or final_start is None
@@ -3022,7 +3027,7 @@ try:
                     "cpu": cpu,
                     "mem_bytes": rss_bytes,
                     "name": comm,
-                    "status": "Running",
+                    "status": process_state_label(cpu_sample[3]) if cpu_sample is not None and start_marker == current_start else "Unknown",
                     "net_rx_bytes": rx2,
                     "net_tx_bytes": tx2,
                     "net_rate": net_rate,
@@ -3432,7 +3437,7 @@ print(json.dumps(data))
             let cpu_reading = parse_process_cpu_usage(&a["cpu"]);
             let cpu_usage = cpu_reading.unwrap_or(0.0);
             let memory_bytes = a["mem_bytes"].as_u64().unwrap_or(0);
-            let status = a["status"].as_str().unwrap_or("Running").to_string();
+            let status = a["status"].as_str().unwrap_or("Unknown").to_string();
             let net_rx_bytes = a["net_rx_bytes"].as_u64().unwrap_or(0);
             let net_tx_bytes = a["net_tx_bytes"].as_u64().unwrap_or(0);
             let net_rate_bps = a["net_rate"].as_f64().unwrap_or(0.0);

@@ -2765,13 +2765,14 @@ for dev, (r2, w2) in d2.items():
     else:
         disk_rates[dev] = (0.0, 0.0, r2, w2)
 
+def disk_rate_for_source(source, rates):
+    if not source.startswith("/dev/"):
+        return None
+    device = os.path.basename(os.path.realpath(source))
+    return rates.get(device)
+
 for d in disks:
-    dev_name = os.path.basename(d["name"])
-    st = disk_rates.get(dev_name)
-    if not st:
-        for k, v in disk_rates.items():
-            if dev_name.startswith(k) or k.startswith(dev_name):
-                st = v; break
+    st = disk_rate_for_source(d["name"], disk_rates)
     d["read_rate"] = st[0] if st else 0.0
     d["write_rate"] = st[1] if st else 0.0
     d["total_read"] = st[2] if st else 0

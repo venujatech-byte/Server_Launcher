@@ -2605,11 +2605,18 @@ if not gpus:
                     })
             except: pass
 
+def read_power_text(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except (OSError, UnicodeError):
+        return None
+
 ac_online = None
 batteries = []
 charge_limit = None
 for ps in sorted(glob.glob("/sys/class/power_supply/*")):
-    t = open(ps + "/type").read().strip().lower() if os.path.exists(ps + "/type") else ""
+    t = (read_power_text(ps + "/type") or "").lower()
     if t in ["mains", "ac", "adp"] or "ac" in os.path.basename(ps).lower():
         if os.path.exists(ps + "/online"):
             try:
@@ -2617,11 +2624,16 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
             except:
                 pass
     elif t == "battery" or "bat" in os.path.basename(ps).lower():
-        present = open(ps + "/present").read().strip() == "1" if os.path.exists(ps + "/present") else True
-        if not present:
+        if read_power_text(ps + "/present") == "0":
             continue
-        status = open(ps + "/status").read().strip() if os.path.exists(ps + "/status") else "Unknown"
-        cap = float(open(ps + "/capacity").read().strip()) if os.path.exists(ps + "/capacity") else None
+        status = read_power_text(ps + "/status") or "Unknown"
+        cap = None
+        try:
+            value = float(read_power_text(ps + "/capacity"))
+            if 0.0 <= value <= 100.0:
+                cap = value
+        except (TypeError, ValueError, OverflowError):
+            pass
         
         volt = None
         try:
@@ -2698,9 +2710,9 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
                 if c >= 0: cycles = c
             except: pass
             
-        tech = open(ps + "/technology").read().strip() if os.path.exists(ps + "/technology") else ""
-        model = open(ps + "/model_name").read().strip() if os.path.exists(ps + "/model_name") else ""
-        mfg = open(ps + "/manufacturer").read().strip() if os.path.exists(ps + "/manufacturer") else ""
+        tech = read_power_text(ps + "/technology") or ""
+        model = read_power_text(ps + "/model_name") or ""
+        mfg = read_power_text(ps + "/manufacturer") or ""
         if os.path.exists(ps + "/charge_control_end_threshold"):
             try:
                 cl = int(open(ps + "/charge_control_end_threshold").read().strip())

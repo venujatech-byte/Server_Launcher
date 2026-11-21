@@ -2262,16 +2262,25 @@ def read_net_dev():
         pass
     return nets
 
+def read_proc_start_marker(pid):
+    try:
+        with open("/proc/" + str(pid) + "/stat") as stat_file:
+            return int(stat_file.read().rsplit(")", 1)[1].split()[19])
+    except (OSError, ValueError, IndexError):
+        return None
+
 def read_proc_io_map(pids):
     pio = {}
     for pid in pids:
         try:
+            start = read_proc_start_marker(pid)
             with open("/proc/" + str(pid) + "/io") as f:
                 dr = 0; dw = 0
                 for l in f:
                     if l.startswith("read_bytes:"): dr = int(l.split()[1])
                     elif l.startswith("write_bytes:"): dw = int(l.split()[1])
-                pio[pid] = (dr, dw)
+            if start is not None and start == read_proc_start_marker(pid):
+                pio[pid] = (start, dr, dw)
         except:
             pass
     return pio
@@ -2812,6 +2821,7 @@ try:
                 rss_bytes = int(p[3]) * 1024
                 comm = " ".join(p[4:])
 
+                start_marker = read_proc_start_marker(pid)
                 rx2, tx2 = p2_net.get(pid, (0, 0))
                 dr2 = 0
                 dw2 = 0
@@ -2828,18 +2838,15 @@ try:
                 dr_rate = 0.0
                 dw_rate = 0.0
                 disk_rate = 0.0
-                if pid in p1_io:
-                    dr1, dw1 = p1_io[pid]
+                prior_io = p1_io.get(pid)
+                if (start_marker is not None and start_marker == read_proc_start_marker(pid)
+                        and prior_io is not None and prior_io[0] == start_marker):
+                    _, dr1, dw1 = prior_io
                     dr_rate = max(0.0, (dr2 - dr1) / t_disk_elapsed)
                     dw_rate = max(0.0, (dw2 - dw1) / t_disk_elapsed)
                     disk_rate = dr_rate + dw_rate
 
                 port = proc_ports.get(pid)
-                try:
-                    with open("/proc/" + str(pid) + "/stat") as stat_file:
-                        start_marker = int(stat_file.read().rsplit(")", 1)[1].split()[19])
-                except (OSError, ValueError, IndexError):
-                    start_marker = None
                 top_apps.append({
                     "pid": pid,
                     "start_marker": start_marker,

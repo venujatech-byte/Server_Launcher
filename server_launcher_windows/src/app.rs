@@ -212,6 +212,7 @@ pub struct ProcessGroupSummary {
     pub key: String,
     pub display_name: String,
     pub sum_cpu: f32,
+    pub cpu_usage_available: bool,
     pub sum_mem: u64,
     pub sum_disk_rate: f64,
     pub sum_net_rate: f64,
@@ -10153,7 +10154,7 @@ impl LauncherApp {
                                         };
                                         prop_row("Parent Process (PPID)", &details.ppid.map_or("-".to_string(), |p| p.to_string()));
                                         prop_row("Priority (Nice)", &details.nice.to_string());
-                                        prop_row("CPU Usage", &format!("{:.1}%", details.cpu_usage));
+                                        prop_row("CPU Usage", &format!("{}%", reported_sensor_value(Some(details.cpu_usage), 1)));
                                         prop_row("Memory (RSS)", &crate::sensors::format_bytes(details.rss_bytes));
                                         if details.vsz_bytes > 0 {
                                             prop_row("Virtual Memory (VSZ)", &crate::sensors::format_bytes(details.vsz_bytes));
@@ -12307,7 +12308,7 @@ impl LauncherApp {
                                 for app in apps.iter().take(4) {
                                     let mem_str = crate::sensors::format_bytes(app.memory_bytes);
                                     let ico = get_app_icon(&app.name);
-                                    let desc = format!("{}% CPU", (app.cpu_usage).clamp(0.0, 100.0).round());
+                                    let desc = if app.cpu_usage_available { format!("{}% CPU", (app.cpu_usage).clamp(0.0, 100.0).round()) } else { "CPU unavailable".into() };
                                     render_proc_row(ui, &app.name, app.pid, &desc, app.memory_bytes, &mem_str, ico);
                                     ui.add_space(3.0);
                                 }
@@ -17344,6 +17345,7 @@ impl LauncherApp {
                                 .then_with(|| a.pid.cmp(&b.pid))
                         });
                         let sum_cpu: f32 = list.iter().map(|p| p.cpu_usage).sum();
+                        let cpu_usage_available = list.iter().all(|process| process.cpu_usage_available);
                         let sum_mem: u64 = list.iter().map(|p| p.memory_bytes).sum();
                         let sum_disk_rate: f64 = list.iter().map(|p| p.disk_rate_bps).sum();
                         let sum_net_rate: f64 = list.iter().map(|p| p.net_rate_bps).sum();
@@ -17356,6 +17358,7 @@ impl LauncherApp {
                             key,
                             display_name: disp_name,
                             sum_cpu,
+                            cpu_usage_available,
                             sum_mem,
                             sum_disk_rate,
                             sum_net_rate,
@@ -17565,7 +17568,7 @@ impl LauncherApp {
                                                 || (!is_expanded && grp.pids.iter().any(|pid| self.sensors_top_apps_selected_pid == Some(*pid)));
 
                                             let norm_cpu = grp.sum_cpu / norm_factor;
-                                            let cpu_fill = get_tm_cpu_bg(norm_cpu);
+                                            let cpu_fill = if grp.cpu_usage_available { get_tm_cpu_bg(norm_cpu) } else { Color32::TRANSPARENT };
                                             let mem_fill = get_tm_mem_bg(grp.sum_mem);
                                             let disk_fill = get_tm_disk_bg(grp.sum_disk_rate);
 
@@ -17684,7 +17687,7 @@ impl LauncherApp {
                                             if cpu_fill != Color32::TRANSPARENT {
                                                 ui.painter().rect_filled(cpu_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, cpu_fill);
                                             }
-                                            let cpu_txt = format_tm_cpu(norm_cpu);
+                                            let cpu_txt = if grp.cpu_usage_available { format_tm_cpu(norm_cpu) } else { "—".to_string() };
                                             let cpu_color = if cpu_fill != Color32::TRANSPARENT {
                                                 Color32::from_rgb(245, 245, 250)
                                             } else {
@@ -17697,7 +17700,7 @@ impl LauncherApp {
                                                 egui::FontId::monospace(11.0),
                                                 cpu_color,
                                             );
-                                            let _ = cpu_resp.on_hover_text(format!("{:.1}% Total System CPU ({:.1}% single-core raw)", norm_cpu, grp.sum_cpu));
+                                            let _ = cpu_resp.on_hover_text(if grp.cpu_usage_available { format!("{:.1}% Total System CPU ({:.1}% single-core raw)", norm_cpu, grp.sum_cpu) } else { "CPU usage unavailable for one or more processes".into() });
 
                                             // 3. Memory (Heatmap tinted cell, strictly bounded, right aligned)
                                             let (mem_rect, _mem_resp) = ui.allocate_exact_size(egui::vec2(COL_MEM_W, 22.0), egui::Sense::hover());
@@ -17838,7 +17841,7 @@ impl LauncherApp {
                                                 right_clicked_pid = Some(grp.pids[0]);
                                             }
                                             row_resp.context_menu(|ui| {
-                                                render_process_context_menu(ui, grp.pids[0], &grp.display_name, norm_cpu, grp.sum_mem, &mut proc_action, &p);
+                                                render_process_context_menu(ui, grp.pids[0], &grp.display_name, if grp.cpu_usage_available { norm_cpu } else { f32::NAN }, grp.sum_mem, &mut proc_action, &p);
                                             });
 
                                             if row_clicked {
@@ -17901,7 +17904,7 @@ impl LauncherApp {
                                                     ui.painter().text(
                                                         egui::pos2(c_cpu_rect.right() - 8.0, c_cpu_rect.center().y),
                                                         egui::Align2::RIGHT_CENTER,
-                                                        format_tm_cpu(child_norm_cpu),
+                                                        if child.cpu_usage_available { format_tm_cpu(child_norm_cpu) } else { "—".to_string() },
                                                         egui::FontId::monospace(10.5),
                                                         Color32::from_rgb(160, 165, 175),
                                                     );
@@ -17998,7 +18001,7 @@ impl LauncherApp {
                                                         right_clicked_pid = Some(child.pid);
                                                     }
                                                     c_row_resp.context_menu(|ui| {
-                                                        render_process_context_menu(ui, child.pid, &grp.display_name, child_norm_cpu, child.memory_bytes, &mut proc_action, &p);
+                                                        render_process_context_menu(ui, child.pid, &grp.display_name, if child.cpu_usage_available { child_norm_cpu } else { f32::NAN }, child.memory_bytes, &mut proc_action, &p);
                                                     });
 
                                                     if child_clicked {
@@ -18081,7 +18084,7 @@ impl LauncherApp {
                 let ctrl = ui.ctx().input(|i| i.modifiers.ctrl || i.modifiers.command);
                 let sel_proc = snap.top_apps.iter().find(|p| p.pid == sel_pid);
                 let sel_name = sel_proc.map(|p| p.name.clone()).unwrap_or_else(|| format!("PID {}", sel_pid));
-                let sel_cpu = sel_proc.map(|p| p.cpu_usage).unwrap_or(0.0);
+                let sel_cpu = sel_proc.filter(|p| p.cpu_usage_available).map(|p| p.cpu_usage).unwrap_or(f32::NAN);
                 let sel_mem = sel_proc.map(|p| p.memory_bytes).unwrap_or(0);
 
                 if alt && ui.ctx().input(|i| i.key_pressed(Key::Enter)) {

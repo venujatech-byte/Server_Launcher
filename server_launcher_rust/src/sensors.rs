@@ -65,6 +65,7 @@ pub struct ProcessSensorInfo {
     pub start_marker: Option<u64>,
     pub name: String,
     pub cpu_usage: f32,
+    pub cpu_usage_available: bool,
     pub memory_bytes: u64,
     pub disk_read_bytes: u64,
     pub disk_written_bytes: u64,
@@ -690,6 +691,7 @@ impl SystemSensorsCollector {
                     start_marker,
                     name,
                     cpu_usage,
+                    cpu_usage_available: true,
                     memory_bytes,
                     disk_read_bytes: read_b,
                     disk_written_bytes: written_b,
@@ -874,12 +876,24 @@ fn parse_cpu_usage(value: &serde_json::Value) -> Option<f32> {
     value.as_f64().filter(|value| value.is_finite() && (0.0..=100.0).contains(value)).map(|value| value as f32)
 }
 
+fn parse_process_cpu_usage(value: &serde_json::Value) -> Option<f32> {
+    value.as_f64().filter(|value| value.is_finite() && *value >= 0.0 && *value <= f32::MAX as f64).map(|value| value as f32)
+}
+
 fn parse_cpu_core_usages(value: &serde_json::Value) -> Vec<Option<f32>> {
     value.as_array().into_iter().flatten().map(parse_cpu_usage).collect()
 }
 
 #[cfg(test)]
 mod cpu_core_reading_tests {
+    #[test]
+    fn process_cpu_preserves_multicore_and_unavailable_values() {
+        assert_eq!(super::parse_process_cpu_usage(&serde_json::json!(150.0)), Some(150.0));
+        assert_eq!(super::parse_process_cpu_usage(&serde_json::json!(0.0)), Some(0.0));
+        assert_eq!(super::parse_process_cpu_usage(&serde_json::Value::Null), None);
+        assert_eq!(super::parse_process_cpu_usage(&serde_json::json!(-1.0)), None);
+    }
+
     #[test]
     fn global_cpu_distinguishes_zero_from_unavailable() {
         assert_eq!(super::parse_cpu_usage(&serde_json::json!(0.0)), Some(0.0));
@@ -2330,6 +2344,21 @@ def read_proc_start_marker(pid):
     except (OSError, ValueError, IndexError):
         return None
 
+def read_proc_cpu_sample(pid):
+    try:
+        with open("/proc/" + str(pid) + "/stat") as stat_file:
+            fields = stat_file.read().rsplit(")", 1)[1].split()
+        return (int(fields[19]), int(fields[11]) + int(fields[12]), time.monotonic())
+    except (OSError, ValueError, IndexError):
+        return None
+
+def process_cpu_rate(previous, current, final_start, ticks_per_second):
+    if (ticks_per_second is None or ticks_per_second <= 0 or previous is None or current is None or final_start is None
+            or previous[0] != current[0] or current[0] != final_start
+            or current[1] < previous[1] or current[2] <= previous[2]):
+        return None
+    return 100.0 * (current[1] - previous[1]) / ticks_per_second / (current[2] - previous[2])
+
 def read_proc_io_map(pids):
     pio = {}
     for pid in pids:
@@ -2396,6 +2425,17 @@ try:
 except:
     pass
 p1_io = read_proc_io_map(init_pids)
+p1_cpu = {}
+for pid in init_pids:
+    sample = read_proc_cpu_sample(pid)
+    if sample is not None:
+        p1_cpu[pid] = sample
+try:
+    cpu_ticks_per_second = os.sysconf("SC_CLK_TCK")
+    if cpu_ticks_per_second <= 0:
+        cpu_ticks_per_second = None
+except (OSError, ValueError):
+    cpu_ticks_per_second = None
 p1_net = read_proc_net_map()
 p1_net_at = time.monotonic()
 rapl_sources = []
@@ -2934,11 +2974,12 @@ try:
         if len(p) >= 5:
             try:
                 pid = int(p[0])
-                cpu = float(p[1])
+                cpu = None
                 rss_bytes = int(p[3]) * 1024
                 comm = " ".join(p[4:])
 
-                start_marker = read_proc_start_marker(pid)
+                cpu_sample = read_proc_cpu_sample(pid)
+                start_marker = cpu_sample[0] if cpu_sample is not None else read_proc_start_marker(pid)
                 network = p2_net.get(pid)
                 rx2, tx2 = network[1:] if network and network[0] == start_marker else (0, 0)
                 dr2 = 0
@@ -2963,8 +3004,10 @@ try:
                 dr_rate = 0.0
                 dw_rate = 0.0
                 disk_rate = 0.0
+                current_start = read_proc_start_marker(pid)
+                cpu = process_cpu_rate(p1_cpu.get(pid), cpu_sample, current_start, cpu_ticks_per_second)
                 prior_io = p1_io.get(pid)
-                if (start_marker is not None and start_marker == read_proc_start_marker(pid)
+                if (start_marker is not None and start_marker == current_start
                         and io_sampled_at is not None and prior_io is not None and prior_io[0] == start_marker):
                     _, dr1, dw1, previous_io_at = prior_io
                     io_elapsed = max(io_sampled_at - previous_io_at, 0.001)
@@ -3386,7 +3429,8 @@ print(json.dumps(data))
         for a in arr {
             let pid = a["pid"].as_u64().unwrap_or(0) as u32;
             let name = a["name"].as_str().unwrap_or("").to_string();
-            let cpu_usage = a["cpu"].as_f64().unwrap_or(0.0) as f32;
+            let cpu_reading = parse_process_cpu_usage(&a["cpu"]);
+            let cpu_usage = cpu_reading.unwrap_or(0.0);
             let memory_bytes = a["mem_bytes"].as_u64().unwrap_or(0);
             let status = a["status"].as_str().unwrap_or("Running").to_string();
             let net_rx_bytes = a["net_rx_bytes"].as_u64().unwrap_or(0);
@@ -3402,6 +3446,7 @@ print(json.dumps(data))
                 start_marker: a["start_marker"].as_u64(),
                 name,
                 cpu_usage,
+                cpu_usage_available: cpu_reading.is_some(),
                 memory_bytes,
                 disk_read_bytes,
                 disk_written_bytes,

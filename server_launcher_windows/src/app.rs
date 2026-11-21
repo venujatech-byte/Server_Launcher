@@ -5176,6 +5176,10 @@ fn render_animated_power_estimate(ui: &mut Ui, snapshot: &crate::sensors::System
     }
 }
 
+fn all_batteries_have_status(batteries: &[crate::sensors::BatteryInfo], status: &str) -> bool {
+    !batteries.is_empty() && batteries.iter().all(|battery| battery.status.trim().eq_ignore_ascii_case(status))
+}
+
 fn battery_capacity_retention(battery: &crate::sensors::BatteryInfo) -> Option<f32> {
     battery.health_pct.filter(|value| value.is_finite() && (0.0..=100.0).contains(value)).or_else(|| {
         let full = battery.energy_full_wh?;
@@ -5420,6 +5424,16 @@ fn sensor_card_columns(ui: &mut Ui, count: usize, mut render: impl FnMut(&mut Ui
 #[cfg(test)]
 mod layout_tests {
     use super::*;
+    #[test]
+    fn battery_flow_requires_a_uniform_reported_status() {
+        let charging = crate::sensors::BatteryInfo { status: "Charging".into(), ..Default::default() };
+        let discharging = crate::sensors::BatteryInfo { status: "Discharging".into(), ..Default::default() };
+        assert!(!all_batteries_have_status(&[], "charging"));
+        assert!(all_batteries_have_status(&[charging.clone()], "charging"));
+        assert!(!all_batteries_have_status(&[charging, discharging], "charging"));
+        assert!(!all_batteries_have_status(&[crate::sensors::BatteryInfo::default()], "discharging"));
+    }
+
     #[test]
     fn battery_capacity_retention_does_not_infer_new_or_healthy_batteries() {
         let mut battery = crate::sensors::BatteryInfo::default();
@@ -15152,7 +15166,6 @@ impl LauncherApp {
                 if let Some(name) = &selected { ui.ctx().data_mut(|data| data.insert_temp(battery_id, name.clone())); }
                 let bat = selected.as_ref().and_then(|name| snap.power.batteries.iter().find(|battery| &battery.name == name));
                 let has_battery = bat.is_some();
-                let ac_online = snap.power.ac_online == Some(true);
                 let bat_pct = bat.and_then(|battery| battery.capacity_pct).unwrap_or(f32::NAN);
                 let full_wh = bat.and_then(|battery| battery.energy_full_wh).unwrap_or(f32::NAN);
                 let remaining_wh = bat.and_then(|battery| battery.energy_wh).unwrap_or(f32::NAN);
@@ -15557,8 +15570,8 @@ impl LauncherApp {
                                 let net_mb_s = ((snap.total_rx_rate_bps + snap.total_tx_rate_bps) / (1024.0 * 1024.0)) as f32;
                                 let mem_ratio = (snap.mem_usage_pct / 100.0).clamp(0.0, 1.0);
 
-                                let is_discharging = !ac_online || bat.map(|b| b.status.eq_ignore_ascii_case("discharging")).unwrap_or(false);
-                                let is_charging = ac_online && bat.map(|b| b.status.eq_ignore_ascii_case("charging")).unwrap_or(false);
+                                let is_discharging = all_batteries_have_status(&snap.power.batteries, "discharging");
+                                let is_charging = all_batteries_have_status(&snap.power.batteries, "charging");
 
                                 let (badge_str, badge_col) = ("Estimated model".to_string(), accent);
 

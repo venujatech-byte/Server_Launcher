@@ -2929,15 +2929,18 @@ if "cpu" in c1 and "cpu" in c2:
         cpu_usage = max(0.0, min(100.0, round(100.0 * (1.0 - id_d / td), 1)))
 
 cpu_core_usages = []
-idx = 0
-while f"cpu{idx}" in c1 and f"cpu{idx}" in c2:
-    td = c2[f"cpu{idx}"][0] - c1[f"cpu{idx}"][0]
-    id_d = c2[f"cpu{idx}"][1] - c1[f"cpu{idx}"][1]
+core_indices = [int(key[3:]) for key in set(c1) | set(c2) if key.startswith("cpu") and key[3:].isdigit()]
+for idx in range(max(core_indices, default=-1) + 1):
+    key = f"cpu{idx}"
+    if key not in c1 or key not in c2:
+        cpu_core_usages.append(None)
+        continue
+    td = c2[key][0] - c1[key][0]
+    id_d = c2[key][1] - c1[key][1]
     if td > 0:
         cpu_core_usages.append(max(0.0, min(100.0, round(100.0 * (1.0 - id_d / td), 1))))
     else:
         cpu_core_usages.append(None)
-    idx += 1
 
 active_sockets = []
 proc_ports = {}

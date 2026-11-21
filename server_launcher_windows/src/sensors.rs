@@ -2376,9 +2376,14 @@ except:
 p1_io = read_proc_io_map(init_pids)
 p1_net = read_proc_net_map()
 p1_net_at = time.monotonic()
+rapl_sources = []
 rapl_e1 = {}
-for p in glob.glob("/sys/class/powercap/intel-rapl*/energy_uj") + glob.glob("/sys/class/powercap/intel-rapl*/*/energy_uj"):
+for p in sorted(set(glob.glob("/sys/class/powercap/intel-rapl*/energy_uj") + glob.glob("/sys/class/powercap/intel-rapl*/*/energy_uj"))):
     try:
+        name = open(os.path.join(os.path.dirname(p), "name")).read().strip().lower()
+        if name != "package" and not name.startswith("package-"):
+            continue
+        rapl_sources.append(p)
         rapl_e1[p] = (int(open(p).read().strip()), time.monotonic())
     except:
         pass
@@ -2730,32 +2735,40 @@ for ifname, (rx2, tx2) in n2.items():
         "is_wireless": is_wl
     })
 
-if rapl_e1:
+if rapl_sources and len(rapl_e1) == len(rapl_sources):
+    package_watts = []
     for p, (e1, sampled_at) in rapl_e1.items():
         try:
             e2 = int(open(p).read().strip())
             dt = time.monotonic() - sampled_at
-            if dt > 0.05 and e2 >= e1:
-                w = (e2 - e1) / 1e6 / dt
-                if 0.5 <= w <= 800.0:
-                    cpu_power = round(w, 2)
-                    break
+            if dt <= 0.05 or e2 < e1:
+                break
+            watts = (e2 - e1) / 1e6 / dt
+            if not 0.0 <= watts <= 800.0:
+                break
+            package_watts.append(watts)
         except:
-            pass
+            break
+    if len(package_watts) == len(rapl_sources):
+        cpu_power = round(sum(package_watts), 2)
 
-if not cpu_power:
+if cpu_power is None and len(rapl_sources) <= 1:
     for hw in glob.glob("/sys/class/hwmon/hwmon*"):
         name = open(hw + "/name").read().strip().lower() if os.path.exists(hw + "/name") else ""
         if any(k in name for k in ["coretemp", "k10temp", "zenpower", "cpu", "rapl", "fam15h", "acpitz"]):
             for pin in glob.glob(hw + "/power*_input") + glob.glob(hw + "/power*_average"):
                 try:
+                    label_path = pin.rsplit("_", 1)[0] + "_label"
+                    label = open(label_path).read().strip().lower()
+                    if not (label.startswith("package") or label.startswith("cpu package")):
+                        continue
                     v = int(open(pin).read().strip()) / 1e6
-                    if 0 < v < 1000:
+                    if 0 <= v < 1000:
                         cpu_power = round(v, 2)
                         break
                 except:
                     pass
-            if cpu_power:
+            if cpu_power is not None:
                 break
 
 disk_rates = {}

@@ -2360,6 +2360,7 @@ except:
     pass
 p1_io = read_proc_io_map(init_pids)
 p1_net = read_proc_net_map()
+p1_net_at = time.monotonic()
 rapl_e1 = {}
 for p in glob.glob("/sys/class/powercap/intel-rapl*/energy_uj") + glob.glob("/sys/class/powercap/intel-rapl*/*/energy_uj"):
     try:
@@ -2703,6 +2704,8 @@ d2 = read_disk_stats()
 n2 = read_net_dev()
 t_disk_elapsed = max(time.time() - t_start, 0.05)
 p2_net = read_proc_net_map()
+p2_net_at = time.monotonic()
+proc_net_elapsed = max(p2_net_at - p1_net_at, 0.001)
 
 networks = []
 total_rx_rate = 0.0
@@ -2872,7 +2875,7 @@ try:
                 if (start_marker is not None and network and network[0] == start_marker
                         and previous_network and previous_network[0] == start_marker):
                     _, rx1, tx1 = previous_network
-                    net_rate = (max(0, rx2 - rx1) + max(0, tx2 - tx1)) / t_disk_elapsed
+                    net_rate = (max(0, rx2 - rx1) + max(0, tx2 - tx1)) / proc_net_elapsed
                 else:
                     net_rate = 0.0
                 dr_rate = 0.0

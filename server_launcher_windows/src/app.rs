@@ -10690,10 +10690,18 @@ impl LauncherApp {
                     if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == *hid).cloned() {
                         let host_name = host.name.clone();
                         let cores_clone = sel_cores.clone();
+                        let results = self.remote_process_results.clone();
+                        let ctx = ctx.clone();
+                        self.sensors_top_apps_status_msg = Some((format!("Setting CPU affinity for PID {} on {}…", pid, host_name), false, Instant::now()));
                         std::thread::spawn(move || {
-                            let _ = crate::procmgr::set_remote_affinity(&host, pid, &cores_clone);
+                            let result = crate::procmgr::set_remote_affinity(&host, pid, &cores_clone);
+                            let message = match result {
+                                Ok(()) => (format!("Applied CPU affinity for PID {} on {}", pid, host_name), false),
+                                Err(error) => (format!("Failed to set CPU affinity for PID {} on {}: {}", pid, host_name, error), true),
+                            };
+                            results.lock().unwrap().push_back(message);
+                            ctx.request_repaint();
                         });
-                        self.sensors_top_apps_status_msg = Some((format!("Applied CPU affinity for PID {} on {}", pid, host_name), false, Instant::now()));
                     }
                 } else {
                     match crate::procmgr::set_local_affinity(pid, &sel_cores) {
@@ -18181,10 +18189,18 @@ impl LauncherApp {
                     if let Some(hid) = host_id {
                         if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
                             let host_name = host.name.clone();
+                            let results = self.remote_process_results.clone();
+                            let ctx = ui.ctx().clone();
+                            self.sensors_top_apps_status_msg = Some((format!("Setting priority for PID {} on {}…", pid, host_name), false, Instant::now()));
                             std::thread::spawn(move || {
-                                let _ = crate::procmgr::set_remote_priority(&host, pid, nice);
+                                let result = crate::procmgr::set_remote_priority(&host, pid, nice);
+                                let message = match result {
+                                    Ok(()) => (format!("Set priority (nice {}) for PID {} on {}", nice, pid, host_name), false),
+                                    Err(error) => (format!("Failed to set priority for PID {} on {}: {}", pid, host_name, error), true),
+                                };
+                                results.lock().unwrap().push_back(message);
+                                ctx.request_repaint();
                             });
-                            self.sensors_top_apps_status_msg = Some((format!("Set priority (nice {}) for PID {} on {} (sudo)", nice, pid, host_name), false, Instant::now()));
                         }
                     } else {
                         match crate::procmgr::set_local_priority(pid, nice) {

@@ -282,6 +282,7 @@ pub struct SystemSensorsSnapshot {
 
     // Top Applications & Processes
     pub top_apps: Vec<ProcessSensorInfo>,
+    pub process_count: Option<usize>,
     pub processes_collected: bool,
     pub process_network_collected: bool,
 
@@ -858,6 +859,7 @@ impl SystemSensorsCollector {
             total_rx_bytes,
             total_tx_bytes,
             temp_sensors,
+            process_count: include_top_apps.then_some(top_apps.len()),
             top_apps,
             processes_collected: include_top_apps,
             process_network_collected: include_top_apps && include_process_network,
@@ -2506,6 +2508,14 @@ def read_proc_net_map():
         pass
     return counters
 
+def count_visible_processes():
+    try:
+        with os.scandir("/proc") as entries:
+            return sum(1 for entry in entries if entry.name.isdigit())
+    except OSError:
+        return None
+
+process_count = count_visible_processes()
 t_start = time.time()
 c1 = read_cpu_stats()
 d1 = read_disk_stats()
@@ -3320,6 +3330,7 @@ data = {
         "charge_limit": charge_limit
     },
     "top_apps": top_apps,
+    "process_count": process_count,
     "os_name": os_name,
     "os_version": os_version,
     "uptime": uptime,
@@ -3707,6 +3718,7 @@ print(json.dumps(data))
         total_rx_bytes,
         total_tx_bytes,
         temp_sensors,
+        process_count: parsed["process_count"].as_u64().and_then(|value| usize::try_from(value).ok()),
         top_apps,
         processes_collected: include_processes,
         process_network_collected: include_processes && include_process_network,
@@ -3996,6 +4008,7 @@ impl SystemSensorsCollector {
             self.prev_proc_disk = current_proc_disk;
             self.prev_proc_disk_time = Some(proc_disk_now);
             snap.top_apps.sort_unstable_by(|a,b| b.cpu_usage.total_cmp(&a.cpu_usage).then(b.memory_bytes.cmp(&a.memory_bytes)));
+            snap.process_count = Some(snap.top_apps.len());
         }
         snap.os_name = System::name().unwrap_or_else(|| "Windows".into());
         snap.os_version = System::os_version().unwrap_or_default();

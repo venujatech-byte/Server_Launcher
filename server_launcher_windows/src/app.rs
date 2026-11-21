@@ -1146,7 +1146,7 @@ impl LauncherApp {
         }
 
         let snapshots_arc = self.remote_sensors_snapshots.clone();
-        let include_processes = matches!(self.sensors_subtab, SensorsSubTab::TopApps | SensorsSubTab::Ram | SensorsSubTab::Cpu);
+        let include_processes = matches!(self.sensors_subtab, SensorsSubTab::TopApps | SensorsSubTab::Ram);
         let include_process_network = self.sensors_subtab == SensorsSubTab::TopApps;
         let in_flight_arc = self.remote_sensors_in_flight.clone();
         let last_fetch_arc = self.remote_sensors_last_fetch.clone();
@@ -11047,7 +11047,7 @@ impl LauncherApp {
                                             self.trigger_remote_sensors_query(host);
                                         }
                                     }
-                                } else if matches!(tab, SensorsSubTab::Ram | SensorsSubTab::Cpu) && host_id.is_some() {
+                                } else if tab == SensorsSubTab::Ram && host_id.is_some() {
                                     if let Some(host) = self.ssh_hosts.iter().find(|host| Some(host.id.as_str()) == host_id).cloned() {
                                         self.trigger_remote_sensors_query(host);
                                     }
@@ -11100,7 +11100,7 @@ impl LauncherApp {
             Arc::clone(&self.sensors_snapshot)
         };
         if let Some(hid) = host_id {
-            let needs_processes = matches!(self.sensors_subtab, SensorsSubTab::TopApps | SensorsSubTab::Ram | SensorsSubTab::Cpu);
+            let needs_processes = matches!(self.sensors_subtab, SensorsSubTab::TopApps | SensorsSubTab::Ram);
             let needs_network = self.sensors_subtab == SensorsSubTab::TopApps;
             if snap.timestamp.is_some() && !is_fetching
                 && ((needs_processes && !snap.processes_collected) || (needs_network && !snap.process_network_collected))
@@ -11858,12 +11858,12 @@ impl LauncherApp {
 
                         ui.add_space(8.0);
 
-                        let process_count = if snap.top_apps.is_empty() { "—".to_string() } else { snap.top_apps.len().to_string() };
+                        let process_count = snap.process_count.map(|count| count.to_string()).unwrap_or_else(|| "—".to_string());
                         let values = [
                             ("L1 CACHE", "—", "Not reported"),
                             ("L2 CACHE", "—", "Not reported"),
                             ("VIRTUALIZATION", "—", "Not reported"),
-                            ("PROCESSES", process_count.as_str(), "Collected processes"),
+                            ("PROCESSES", process_count.as_str(), "Visible processes"),
                             ("THREADS", "—", "Not reported"),
                             ("HANDLES", "—", "Not reported"),
                         ];

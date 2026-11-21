@@ -15387,7 +15387,9 @@ impl LauncherApp {
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::ZAP).size(11.0).color(accent));
-                                                    ui.label(RichText::new("Remaining vs Design").size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
+                                                    let estimated = bat.is_some_and(|battery| battery.energy_estimated);
+                                                    ui.label(RichText::new(if estimated { "Energy (est.)" } else { "Remaining vs Design" }).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)))
+                                                        .on_hover_text(if estimated { "One or more energy values are estimated from reported charge and design voltage." } else { "Energy values reported by the battery, when available." });
                                                 });
                                                 ui.add_space(4.0);
                                                 ui.horizontal(|ui| {

@@ -191,6 +191,7 @@ pub struct BatteryInfo {
     pub energy_wh: Option<f32>,
     pub energy_full_wh: Option<f32>,
     pub energy_design_wh: Option<f32>,
+    pub energy_estimated: bool,
     pub health_pct: Option<f32>,
     pub cycle_count: Option<u32>,
     pub technology: String,
@@ -1562,15 +1563,22 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
                             }
                         }
 
+                        let nominal_voltage = ["voltage_min_design", "voltage_design", "voltage_nominal"].iter()
+                            .filter_map(|name| fs::read_to_string(p.join(name)).ok())
+                            .filter_map(|value| value.trim().parse::<f32>().ok())
+                            .find(|value| value.is_finite() && *value > 0.0)
+                            .map(|value| value / 1_000_000.0);
+                        let mut energy_estimated = false;
                         let mut energy_wh = fs::read_to_string(p.join("energy_now"))
                             .ok()
                             .and_then(|s| s.trim().parse::<f32>().ok())
                             .map(|uwh| uwh / 1_000_000.0);
 
                         if energy_wh.is_none() {
-                            if let (Some(v), Ok(c_str)) = (voltage_volts, fs::read_to_string(p.join("charge_now"))) {
+                            if let (Some(v), Ok(c_str)) = (nominal_voltage, fs::read_to_string(p.join("charge_now"))) {
                                 if let Ok(uah) = c_str.trim().parse::<f32>() {
                                     energy_wh = Some((uah / 1_000_000.0) * v);
+                                    energy_estimated = true;
                                 }
                             }
                         }
@@ -1581,9 +1589,10 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
                             .map(|uwh| uwh / 1_000_000.0);
 
                         if energy_full_wh.is_none() {
-                            if let (Some(v), Ok(c_str)) = (voltage_volts, fs::read_to_string(p.join("charge_full"))) {
+                            if let (Some(v), Ok(c_str)) = (nominal_voltage, fs::read_to_string(p.join("charge_full"))) {
                                 if let Ok(uah) = c_str.trim().parse::<f32>() {
                                     energy_full_wh = Some((uah / 1_000_000.0) * v);
+                                    energy_estimated = true;
                                 }
                             }
                         }
@@ -1594,9 +1603,10 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
                             .map(|uwh| uwh / 1_000_000.0);
 
                         if energy_design_wh.is_none() {
-                            if let (Some(v), Ok(c_str)) = (voltage_volts, fs::read_to_string(p.join("charge_full_design"))) {
+                            if let (Some(v), Ok(c_str)) = (nominal_voltage, fs::read_to_string(p.join("charge_full_design"))) {
                                 if let Ok(uah) = c_str.trim().parse::<f32>() {
                                     energy_design_wh = Some((uah / 1_000_000.0) * v);
+                                    energy_estimated = true;
                                 }
                             }
                         }
@@ -1653,6 +1663,7 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
                             energy_wh,
                             energy_full_wh,
                             energy_design_wh,
+                            energy_estimated,
                             health_pct,
                             cycle_count,
                             technology,
@@ -2642,25 +2653,32 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
         energy_wh = None
         energy_full_wh = None
         energy_design_wh = None
+        energy_estimated = False
         if os.path.exists(ps + "/energy_now"):
             try: energy_wh = round(int(open(ps + "/energy_now").read().strip()) / 1e6, 2)
             except: pass
         elif nominal_volt is not None and os.path.exists(ps + "/charge_now"):
-            try: energy_wh = round((int(open(ps + "/charge_now").read().strip()) / 1e6) * nominal_volt, 2)
+            try:
+                energy_wh = round((int(open(ps + "/charge_now").read().strip()) / 1e6) * nominal_volt, 2)
+                energy_estimated = True
             except: pass
             
         if os.path.exists(ps + "/energy_full"):
             try: energy_full_wh = round(int(open(ps + "/energy_full").read().strip()) / 1e6, 2)
             except: pass
         elif nominal_volt is not None and os.path.exists(ps + "/charge_full"):
-            try: energy_full_wh = round((int(open(ps + "/charge_full").read().strip()) / 1e6) * nominal_volt, 2)
+            try:
+                energy_full_wh = round((int(open(ps + "/charge_full").read().strip()) / 1e6) * nominal_volt, 2)
+                energy_estimated = True
             except: pass
             
         if os.path.exists(ps + "/energy_full_design"):
             try: energy_design_wh = round(int(open(ps + "/energy_full_design").read().strip()) / 1e6, 2)
             except: pass
         elif nominal_volt is not None and os.path.exists(ps + "/charge_full_design"):
-            try: energy_design_wh = round((int(open(ps + "/charge_full_design").read().strip()) / 1e6) * nominal_volt, 2)
+            try:
+                energy_design_wh = round((int(open(ps + "/charge_full_design").read().strip()) / 1e6) * nominal_volt, 2)
+                energy_estimated = True
             except: pass
 
         health = None
@@ -2698,6 +2716,7 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
             "energy_wh": energy_wh,
             "energy_full_wh": energy_full_wh,
             "energy_design_wh": energy_design_wh,
+            "energy_estimated": energy_estimated,
             "health_pct": health,
             "cycle_count": cycles,
             "technology": tech,
@@ -3237,6 +3256,7 @@ print(json.dumps(data))
                     energy_wh: b["energy_wh"].as_f64().map(|v| v as f32),
                     energy_full_wh: b["energy_full_wh"].as_f64().map(|v| v as f32),
                     energy_design_wh: b["energy_design_wh"].as_f64().map(|v| v as f32),
+                    energy_estimated: b["energy_estimated"].as_bool().unwrap_or(false),
                     health_pct: b["health_pct"].as_f64().map(|v| v as f32),
                     cycle_count: b["cycle_count"].as_u64().map(|v| v as u32),
                     technology: b["technology"].as_str().unwrap_or("").to_string(),

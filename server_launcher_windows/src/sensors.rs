@@ -2866,20 +2866,25 @@ for d in disks:
     d["total_read"] = st[2] if st else 0
     d["total_write"] = st[3] if st else 0
 
+def is_base_block_device(device):
+    if device.startswith(("loop", "ram", "zram", "dm-")):
+        return False
+    path = "/sys/class/block/" + device
+    if not os.path.isdir(path) or os.path.exists(path + "/partition"):
+        return False
+    try:
+        return not os.listdir(path + "/slaves")
+    except OSError:
+        return False
+
 tot_disk_read_rate = 0.0
 tot_disk_write_rate = 0.0
 base_found = False
 for dev, (r_rate, w_rate, _, _) in disk_rates.items():
-    if not (dev.startswith("loop") or dev.startswith("ram") or dev.startswith("zram") or dev.startswith("dm-")):
-        is_base = False
-        if any(dev.startswith(pfx) for pfx in ["sd", "vd", "hd", "xvd"]):
-            is_base = not dev[-1].isdigit()
-        elif dev.startswith("nvme") or dev.startswith("mmcblk"):
-            is_base = "p" not in dev
-        if is_base:
-            base_found = True
-            tot_disk_read_rate += r_rate
-            tot_disk_write_rate += w_rate
+    if is_base_block_device(dev):
+        base_found = True
+        tot_disk_read_rate += r_rate
+        tot_disk_write_rate += w_rate
 
 def mounted_disk_totals(mounts, rates):
     devices = set()

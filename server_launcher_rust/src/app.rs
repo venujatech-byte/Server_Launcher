@@ -5272,6 +5272,12 @@ mod temperature_limit_tests {
     }
 }
 
+fn disk_owns_mount(device: &str, partitions: &[crate::sensors::DiskPartitionInfo], source: &str) -> bool {
+    let device = device.strip_prefix("/dev/").unwrap_or(device);
+    let source = source.strip_prefix("/dev/").unwrap_or(source);
+    source == device || partitions.iter().any(|partition| source == partition.name.strip_prefix("/dev/").unwrap_or(&partition.name))
+}
+
 fn mounted_storage_totals(disks: &[crate::sensors::DiskInfo]) -> (u64, u64, u64) {
     let mut seen_devices = std::collections::HashSet::new();
     disks.iter().filter(|disk| !disk.name.starts_with("/dev/") || seen_devices.insert(disk.name.as_str()))
@@ -5284,6 +5290,18 @@ fn mounted_storage_totals(disks: &[crate::sensors::DiskInfo]) -> (u64, u64, u64)
 #[cfg(test)]
 mod mounted_storage_tests {
     use crate::sensors::DiskInfo;
+    #[test]
+    fn mounts_match_only_the_device_or_reported_partitions() {
+        use crate::sensors::DiskPartitionInfo;
+        let parts = [DiskPartitionInfo { name: "sda1".into(), ..Default::default() }];
+        assert!(super::disk_owns_mount("sda", &parts, "/dev/sda"));
+        assert!(super::disk_owns_mount("sda", &parts, "/dev/sda1"));
+        assert!(!super::disk_owns_mount("sda", &parts, "/dev/sdaa"));
+        assert!(!super::disk_owns_mount("sda", &parts, "/dev/sdaa1"));
+        assert!(!super::disk_owns_mount("sda", &parts, "/dev/mapper/root"));
+        assert!(super::disk_owns_mount("mapper/root", &[], "/dev/mapper/root"));
+    }
+
     #[test]
     fn totals_use_mounted_filesystems_without_duplicate_devices() {
         let disk = DiskInfo { name: "/dev/sda1".into(), total_bytes: 100, used_bytes: 60, available_bytes: 30, ..Default::default() };
@@ -13255,7 +13273,10 @@ impl LauncherApp {
 
                 let render_drive_card = |ui: &mut Ui, idx: usize, d_name: &str, d_model: &str, d_bytes: u64, d_is_ssd: bool, d_part_count: usize, d_read_bps: f64, d_write_bps: f64, is_selected: bool, clicked_slot: &mut Option<usize>| {
                     let d_phys_gb = d_bytes as f64 / 1e9;
-                    let d_mount = snap.disks.iter().find(|d| d.name.contains(d_name) || d_name.contains(d.name.trim_start_matches("/dev/")));
+                    let partitions = snap.physical_disks.iter()
+                        .find(|disk| disk.name.trim_start_matches("/dev/") == d_name.trim_start_matches("/dev/"))
+                        .map(|disk| disk.partitions.as_slice()).unwrap_or(&[]);
+                    let d_mount = snap.disks.iter().find(|disk| disk_owns_mount(d_name, partitions, &disk.name));
 
                     let d_read_str = crate::sensors::format_rate(d_read_bps);
                     let d_write_str = crate::sensors::format_rate(d_write_bps);

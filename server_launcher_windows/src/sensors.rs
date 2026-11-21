@@ -47,7 +47,7 @@ impl SensorCategory {
 }
 
 #[cfg(target_os = "linux")]
-fn parse_proc_start_marker(stat: &str) -> Option<u64> {
+pub(crate) fn parse_proc_start_marker(stat: &str) -> Option<u64> {
     stat.rsplit_once(')')?.1.split_whitespace().nth(19)?.parse().ok()
 }
 

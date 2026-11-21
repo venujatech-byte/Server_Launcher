@@ -16921,7 +16921,7 @@ impl LauncherApp {
 
 
 
-    fn execute_proc_signal(&mut self, pid: u32, sig: &str, action_desc: &str, host_id: Option<&str>, ctx: &egui::Context) {
+    fn execute_proc_signal(&mut self, pid: u32, sig: &str, action_desc: &str, host_id: Option<&str>, expected_start: Option<u64>, ctx: &egui::Context) {
         if let Some(hid) = host_id {
             if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
                 let host_name = host.name.clone();
@@ -16951,7 +16951,7 @@ impl LauncherApp {
                 });
             }
         } else {
-            match crate::procmgr::send_local_signal(pid, sig) {
+            match crate::procmgr::send_local_signal(pid, sig, expected_start) {
                 Ok(_) => {
                     self.sensors_top_apps_status_msg = Some((format!("{} process PID {}", action_desc, pid), false, Instant::now()));
                 }
@@ -18277,16 +18277,16 @@ impl LauncherApp {
                     }
                 }
                 ProcAction::Stop { pid } => {
-                    self.execute_proc_signal(pid, "STOP", "Paused (SIGSTOP)", host_id, ui.ctx());
+                    self.execute_proc_signal(pid, "STOP", "Sent SIGSTOP to", host_id, snap.top_apps.iter().find(|process| process.pid == pid).and_then(|process| process.start_marker), ui.ctx());
                 }
                 ProcAction::Resume { pid } => {
-                    self.execute_proc_signal(pid, "CONT", "Resumed (SIGCONT)", host_id, ui.ctx());
+                    self.execute_proc_signal(pid, "CONT", "Sent SIGCONT to", host_id, snap.top_apps.iter().find(|process| process.pid == pid).and_then(|process| process.start_marker), ui.ctx());
                 }
                 ProcAction::Terminate { pid } => {
-                    self.execute_proc_signal(pid, "TERM", "Terminated (SIGTERM)", host_id, ui.ctx());
+                    self.execute_proc_signal(pid, "TERM", "Sent SIGTERM to", host_id, snap.top_apps.iter().find(|process| process.pid == pid).and_then(|process| process.start_marker), ui.ctx());
                 }
                 ProcAction::ForceStop { pid } => {
-                    self.execute_proc_signal(pid, "KILL", "Force stopped (SIGKILL)", host_id, ui.ctx());
+                    self.execute_proc_signal(pid, "KILL", "Sent SIGKILL to", host_id, snap.top_apps.iter().find(|process| process.pid == pid).and_then(|process| process.start_marker), ui.ctx());
                 }
             }
         }

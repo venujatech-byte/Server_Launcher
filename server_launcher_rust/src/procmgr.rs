@@ -438,17 +438,58 @@ pub fn set_remote_affinity(host: &SshRemoteHost, pid: u32, cores: &[usize]) -> R
     run_remote_process_command(host, &format!("taskset -c -p {} {}", list, pid))
 }
 
-pub fn send_local_signal(pid: u32, sig: &str) -> Result<(), String> {
-    let out = Command::new("kill")
-        .args([&format!("-{}", sig), &pid.to_string()])
-        .output();
+#[cfg(target_os = "linux")]
+pub fn send_local_signal(pid: u32, sig: &str, expected_start: Option<u64>) -> Result<(), String> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    let signal = match sig {
+        "STOP" => libc::SIGSTOP,
+        "CONT" => libc::SIGCONT,
+        "TERM" => libc::SIGTERM,
+        "KILL" => libc::SIGKILL,
+        _ => return Err("Unsupported process signal".to_string()),
+    };
+    let expected = expected_start.ok_or("Process identity is unavailable; refresh the list")?;
+    let raw_fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+    if raw_fd < 0 {
+        return Err(format!("Cannot open process handle: {}", std::io::Error::last_os_error()));
+    }
+    let fd = unsafe { OwnedFd::from_raw_fd(raw_fd as i32) };
+    let actual = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok().and_then(|stat| crate::sensors::parse_proc_start_marker(&stat));
+    if actual != Some(expected) {
+        return Err("Process changed or exited; refresh the list".to_string());
+    }
+    let result = unsafe { libc::syscall(libc::SYS_pidfd_send_signal, fd.as_raw_fd(), signal, std::ptr::null::<libc::siginfo_t>(), 0) };
+    if result == 0 { return Ok(()); }
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() != Some(libc::EPERM) {
+        return Err(format!("Cannot send signal: {error}"));
+    }
+    let script = r#"import os, signal, sys
+pid, expected, sig = map(int, sys.argv[1:])
+fd = os.pidfd_open(pid)
+with open('/proc/%d/stat' % pid) as f:
+    actual = int(f.read().rsplit(')', 1)[1].split()[19])
+if actual != expected:
+    sys.exit('Process changed or exited; refresh the list')
+signal.pidfd_send_signal(fd, sig)
+"#;
+    let output = Command::new("sudo")
+        .args(["-n", "python3", "-c", script, &pid.to_string(), &expected.to_string(), &signal.to_string()])
+        .output().map_err(|error| format!("Cannot request elevated signal: {error}"))?;
+    if output.status.success() { Ok(()) } else {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        Err(format!("Cannot send signal with elevation: {}", detail.trim()))
+    }
+}
 
+#[cfg(not(target_os = "linux"))]
+pub fn send_local_signal(pid: u32, sig: &str, _expected_start: Option<u64>) -> Result<(), String> {
+    let out = Command::new("kill").args([&format!("-{}", sig), &pid.to_string()]).output();
     match out {
         Ok(o) if o.status.success() => Ok(()),
         _ => {
-            let sudo_out = Command::new("sudo")
-                .args(["-n", "kill", &format!("-{}", sig), &pid.to_string()])
-                .output();
+            let sudo_out = Command::new("sudo").args(["-n", "kill", &format!("-{}", sig), &pid.to_string()]).output();
             match sudo_out {
                 Ok(s) if s.status.success() => Ok(()),
                 Ok(s) => Err(String::from_utf8_lossy(&s.stderr).to_string()),
@@ -494,6 +535,16 @@ fn run_remote_process_command(host: &SshRemoteHost, command: &str) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn local_signal_rejects_a_changed_process_identity() {
+        let pid = std::process::id();
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+        let marker = crate::sensors::parse_proc_start_marker(&stat).unwrap();
+        let error = super::send_local_signal(pid, "TERM", Some(marker.wrapping_add(1))).unwrap_err();
+        assert!(error.contains("changed or exited"), "{error}");
+    }
 
     #[test]
     fn process_signals_reject_shell_input() {

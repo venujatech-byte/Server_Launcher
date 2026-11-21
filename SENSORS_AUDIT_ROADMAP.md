@@ -1,7 +1,7 @@
 # Sensors audit and proposed roadmap
 
 Date: 2026-11-19. Branch: `fix/ui-alignment`.
-Status: proposal awaiting approval; no application code changed for this audit.
+Status: the original audit was approved; implementation is in progress. See the progress notes below for completed work and remaining limits.
 
 ## Scope and evidence
 
@@ -91,17 +91,17 @@ Visual review should include 1366×768 (the supplied screenshots), 1920×1080, a
 - Microsoft Native Wi-Fi API: documented platform functions for wireless interfaces and profiles: https://learn.microsoft.com/en-us/windows/win32/nativewifi/about-the-native-wifi-api
 - Microsoft GPU telemetry explanation: Windows GPU metrics depend on driver support, including WDDM requirements: https://devblogs.microsoft.com/directx/gpus-in-the-task-manager/
 
-No implementation changes or commits were made for this proposal. Approval is required by the user's requested workflow before implementation starts.
+The findings and proposed sequence above describe the original audit; later implementation and verification are recorded below.
 
 ## Implementation progress
 
-Phase 1 in progress after approval:
+Initial implementation after approval:
 
 - `6c02d0f`: removed collector power estimates, guessed Linux RAM metadata and clock-derived GPU utilization; preserved actual reported counters.
 - `3528d44`: CPU cards use timestamped metric samples and observed extrema; GPU memory no longer displays host RAM as GPU allocation.
 - Battery/power display cleanup: removed fabricated identities, health/cycle-life claims, runtime guesses and component-power allocations; unknown battery charge is optional rather than zero. Removed the generated power animation.
 
-Both crates are checked with `cargo check --locked --offline --tests`. These checks compile tests; they do not execute them or validate Windows hardware. Phase 2 (checked configuration controls) remains outstanding.
+Both crates are checked with `cargo check --locked --offline --tests`. These checks compile tests; they do not execute them or validate Windows hardware. Several later controls have since been checked or removed; see the current status below.
 
 ## Review follow-up: protected readings and animated estimates
 
@@ -120,3 +120,22 @@ Restored the previous three-card battery layout, voltage/chemistry footer, prese
 An authenticated read-only probe was executed successfully on the user's machine: CPU package power was approximately 5.6 W at that instant, Intel PMU engine counters were returned, and SMBIOS reported one 8 GiB DDR4-2400 SODIMM. The user also confirmed that accepting the password worked. The earlier no-sudo displays included CPU/GPU power models and guessed memory specifications; normal CPU/RAM usage does not require these protected reads.
 
 Unlock now reports which metric groups were actually read and fails clearly if none were usable. Launch sandbox restrictions (`NoNewPrivs`) receive an actionable error rather than a generic missing reading. The code does not remove or bypass the sandbox restriction.
+
+
+## Current implementation status
+
+The changes have been made in focused commits on `fix/ui-alignment` in both application trees. The sections above are historical notes; this section records the current state as of the latest polling changes.
+
+- **CPU and process data:** Remote CPU usage is sampled from counter deltas, missing global and per-core readings remain unavailable, sparse CPU numbering and per-CPU frequency slots are preserved, and process state follows the remote kernel. Local Linux frequency collection also retains processor indices. Local and remote Linux signals use process handles and start identities; Windows force and graceful stop verify creation identity. Priority and affinity recheck identity but remain subject to a small PID race because the Linux scheduling operations are PID-based.
+- **Storage and network:** Process counter baselines include process identity. Remote process disk/network rates and device/interface rates use their own sampling intervals. Remote disk counters use resolved device names and Linux block topology, with duplicate mounted devices excluded from fallback totals. Per-process network data is limited to visible TCP sockets; collection is not atomic with process exit.
+- **Power and batteries:** Remote AC and battery data no longer substitute invented names or power-source states. Multiple recognized AC adapters are combined, multi-battery charge is capacity weighted when possible, and the Power page can select a battery. Charge-derived energy is labeled estimated. The user requested the animated power model; it is labeled as an estimate and is not measured history. Governor controls remain removed at the user’s request.
+- **Polling and controls:** Bluetooth and Wi-Fi actions report checked results. Local RAM avoids per-process TCP scans. Remote ordinary telemetry skips process sampling; CPU obtains a lightweight visible-process count; RAM collects processes without per-process TCP; Top Apps collects both. A pending lighter refresh is followed by the needed detailed refresh after a tab switch.
+- **Remote verification:** Read-only collectors and targeted fixtures have been checked against the user-provided VPS. Temporary processes created by the checks were used for signal, process-state and CPU sampling tests. The VPS is not a substitute for a remote laptop or desktop with real battery, GPU and wireless hardware.
+
+### Remaining work and validation
+
+- Complete native Windows build/CI and runtime validation. The full Windows cross-check in this workspace was blocked by the missing `x86_64-w64-mingw32-windres`; isolated Windows API code was checked separately. Windows hardware providers and unsupported devices still need real-machine coverage.
+- Validate remote and local readings against real multi-battery PCs, storage stacks, multiple GPUs and wireless adapters. Missing remote disk rate counters can still appear as zero; the collector needs an unavailable state for those counters.
+- Address the remaining PID race for priority/affinity where a safe platform mechanism is available. Verify permissions, authorization failure and cancellation on real hosts. Process network attribution is partial and depends on access to socket details.
+- Perform visual checks at the requested desktop size, narrow sizes and display scaling, including the multi-battery selector. Measure idle and scrolling CPU usage before claiming a performance improvement; scan reductions have been checked but not benchmarked end-to-end.
+- Rust verification follows the workspace rule: `cargo check --locked --offline --tests` only. This compiles tests but does not run them. Python fixtures and the explicitly described read-only/temporary-process VPS checks were run separately.

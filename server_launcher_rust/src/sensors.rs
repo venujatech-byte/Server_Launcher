@@ -289,7 +289,7 @@ pub struct SystemSensorsSnapshot {
     pub timestamp: Option<Instant>,
 }
 
-fn process_disk_rates(previous: Option<(u64, u64)>, current: (u64, u64), elapsed: f64) -> (f64, f64) {
+fn counter_rates(previous: Option<(u64, u64)>, current: (u64, u64), elapsed: f64) -> (f64, f64) {
     if !elapsed.is_finite() || elapsed <= 0.0 { return (0.0, 0.0); }
     match previous {
         Some((read, written)) => (
@@ -304,10 +304,10 @@ fn process_disk_rates(previous: Option<(u64, u64)>, current: (u64, u64), elapsed
 mod process_disk_rate_tests {
     #[test]
     fn handles_first_sample_interval_and_counter_reset() {
-        assert_eq!(super::process_disk_rates(None, (200, 400), 2.0), (0.0, 0.0));
-        assert_eq!(super::process_disk_rates(Some((100, 200)), (300, 500), 2.0), (100.0, 150.0));
-        assert_eq!(super::process_disk_rates(Some((300, 500)), (20, 600), 2.0), (0.0, 50.0));
-        assert_eq!(super::process_disk_rates(Some((100, 200)), (300, 500), 0.0), (0.0, 0.0));
+        assert_eq!(super::counter_rates(None, (200, 400), 2.0), (0.0, 0.0));
+        assert_eq!(super::counter_rates(Some((100, 200)), (300, 500), 2.0), (100.0, 150.0));
+        assert_eq!(super::counter_rates(Some((300, 500)), (20, 600), 2.0), (0.0, 50.0));
+        assert_eq!(super::counter_rates(Some((100, 200)), (300, 500), 0.0), (0.0, 0.0));
     }
 }
 
@@ -326,7 +326,7 @@ pub struct SystemSensorsCollector {
     prev_disk_time: Instant,
     prev_proc_disk: HashMap<(u32, u64), (u64, u64)>,
     prev_proc_disk_time: Option<Instant>,
-    prev_proc_net: HashMap<u32, (u64, u64)>,
+    prev_proc_net: HashMap<(u32, u64), (u64, u64)>,
     prev_proc_net_time: Instant,
     protected_data: Option<serde_json::Value>,
     last_protected_poll: Instant,
@@ -632,6 +632,7 @@ impl SystemSensorsCollector {
             let proc_disk_now = Instant::now();
             let proc_disk_elapsed = self.prev_proc_disk_time.map(|time| proc_disk_now.duration_since(time).as_secs_f64()).unwrap_or(0.0);
             let mut current_proc_disk = HashMap::new();
+            let mut current_identified_net = HashMap::new();
 
             for (pid, proc) in self.sys.processes() {
                 // Filter out OS-level threads so only actual processes are listed!
@@ -655,24 +656,28 @@ impl SystemSensorsCollector {
                 let written_b = disk_usage.total_written_bytes;
                 let identity = (pid_u32, proc.start_time());
                 current_proc_disk.insert(identity, (read_b, written_b));
-                let (r_rate, w_rate) = process_disk_rates(self.prev_proc_disk.get(&identity).copied(), (read_b, written_b), proc_disk_elapsed);
+                let (r_rate, w_rate) = counter_rates(self.prev_proc_disk.get(&identity).copied(), (read_b, written_b), proc_disk_elapsed);
                 let disk_rate_bps = r_rate + w_rate;
 
+                let start_marker = {
+                    #[cfg(target_os = "linux")]
+                    { fs::read_to_string(format!("/proc/{pid_u32}/stat")).ok().and_then(|stat| parse_proc_start_marker(&stat)) }
+                    #[cfg(not(target_os = "linux"))]
+                    { Some(proc.start_time()) }
+                };
                 let (proc_net_rx, proc_net_tx) = current_proc_net.get(&pid_u32).copied().unwrap_or_default();
-                let (prev_net_rx, prev_net_tx) = self.prev_proc_net.get(&pid_u32).copied().unwrap_or((proc_net_rx, proc_net_tx));
-                let net_rate_bps = (proc_net_rx.saturating_sub(prev_net_rx) + proc_net_tx.saturating_sub(prev_net_tx)) as f64
-                    / proc_net_elapsed_secs;
+                let previous = start_marker.and_then(|start| {
+                    current_identified_net.insert((pid_u32, start), (proc_net_rx, proc_net_tx));
+                    self.prev_proc_net.get(&(pid_u32, start)).copied()
+                });
+                let (rx_rate, tx_rate) = counter_rates(previous, (proc_net_rx, proc_net_tx), proc_net_elapsed_secs);
+                let net_rate_bps = rx_rate + tx_rate;
 
                 let status = format!("{:?}", proc.status());
 
                 top_apps.push(ProcessSensorInfo {
                     pid: pid_u32,
-                    start_marker: {
-                        #[cfg(target_os = "linux")]
-                        { fs::read_to_string(format!("/proc/{pid_u32}/stat")).ok().and_then(|stat| parse_proc_start_marker(&stat)) }
-                        #[cfg(not(target_os = "linux"))]
-                        { Some(proc.start_time()) }
-                    },
+                    start_marker,
                     name,
                     cpu_usage,
                     memory_bytes,
@@ -689,7 +694,7 @@ impl SystemSensorsCollector {
             }
             self.prev_proc_disk = current_proc_disk;
             self.prev_proc_disk_time = Some(proc_disk_now);
-            self.prev_proc_net = current_proc_net;
+            self.prev_proc_net = current_identified_net;
             self.prev_proc_net_time = now;
 
             // Sort by CPU usage descending by default, then network usage, then memory
@@ -834,7 +839,7 @@ impl SystemSensorsCollector {
 
 fn disk_stat_rates(previous: &HashMap<String, (u64, u64)>, current: &HashMap<String, (u64, u64)>, elapsed: f64) -> HashMap<String, (f64, f64)> {
     current.iter().map(|(device, &totals)| {
-        (device.clone(), process_disk_rates(previous.get(device).copied(), totals, elapsed))
+        (device.clone(), counter_rates(previous.get(device).copied(), totals, elapsed))
     }).collect()
 }
 
@@ -2306,8 +2311,15 @@ def read_proc_net_map():
                 pids.add(int(digits))
                 rest = rest[len(digits):]
             for pid in pids:
-                old_rx, old_tx = counters.get(pid, (0, 0))
-                counters[pid] = (old_rx + received, old_tx + sent)
+                start = read_proc_start_marker(pid)
+                if start is None:
+                    continue
+                previous = counters.get(pid)
+                if previous is not None and previous[0] != start:
+                    counters.pop(pid, None)
+                    continue
+                old_rx, old_tx = previous[1:] if previous else (0, 0)
+                counters[pid] = (start, old_rx + received, old_tx + sent)
     except:
         pass
     return counters
@@ -2822,7 +2834,8 @@ try:
                 comm = " ".join(p[4:])
 
                 start_marker = read_proc_start_marker(pid)
-                rx2, tx2 = p2_net.get(pid, (0, 0))
+                network = p2_net.get(pid)
+                rx2, tx2 = network[1:] if network and network[0] == start_marker else (0, 0)
                 dr2 = 0
                 dw2 = 0
                 try:
@@ -2833,8 +2846,13 @@ try:
                 except:
                     pass
 
-                rx1, tx1 = p1_net.get(pid, (rx2, tx2))
-                net_rate = max(0.0, (rx2 - rx1 + tx2 - tx1) / t_disk_elapsed)
+                previous_network = p1_net.get(pid)
+                if (start_marker is not None and network and network[0] == start_marker
+                        and previous_network and previous_network[0] == start_marker):
+                    _, rx1, tx1 = previous_network
+                    net_rate = (max(0, rx2 - rx1) + max(0, tx2 - tx1)) / t_disk_elapsed
+                else:
+                    net_rate = 0.0
                 dr_rate = 0.0
                 dw_rate = 0.0
                 disk_rate = 0.0

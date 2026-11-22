@@ -13268,9 +13268,9 @@ impl LauncherApp {
 
                 let render_drive_card = |ui: &mut Ui, idx: usize, d_name: &str, d_model: &str, d_bytes: u64, d_is_ssd: bool, d_part_count: usize, d_read_bps: f64, d_write_bps: f64, is_selected: bool, clicked_slot: &mut Option<usize>| {
                     let d_phys_gb = d_bytes as f64 / 1e9;
-                    let partitions = snap.physical_disks.iter()
-                        .find(|disk| disk.name.trim_start_matches("/dev/") == d_name.trim_start_matches("/dev/"))
-                        .map(|disk| disk.partitions.as_slice()).unwrap_or(&[]);
+                    let physical_disk = snap.physical_disks.iter()
+                        .find(|disk| disk.name.trim_start_matches("/dev/") == d_name.trim_start_matches("/dev/"));
+                    let partitions = physical_disk.map(|disk| disk.partitions.as_slice()).unwrap_or(&[]);
                     let d_mount = snap.disks.iter().find(|disk| disk_owns_mount(d_name, partitions, &disk.name));
 
                     let d_read_str = crate::sensors::format_rate(d_read_bps);
@@ -13406,8 +13406,8 @@ impl LauncherApp {
                                 });
                                 scols[2].vertical(|ui| {
                                     ui.label(RichText::new("BUS INTERFACE").size(8.5).monospace().color(p.text_muted));
-                                    let bus_str = "Not reported";
-                                    ui.label(RichText::new(bus_str).size(12.5).monospace().strong().color(p.text_primary));
+                                    let bus_str = physical_disk.map(|disk| disk.bus_interface.as_str()).filter(|bus| !bus.is_empty()).unwrap_or("Not reported");
+                                    ui.add(egui::Label::new(RichText::new(bus_str).size(12.5).monospace().strong().color(p.text_primary)).truncate()).on_hover_text(bus_str);
                                 });
                             });
                         });

@@ -14379,7 +14379,7 @@ impl LauncherApp {
                                         [
                                             ("TYPE", if is_wireless { "Wi-Fi" } else { "Network" }),
                                             ("CARRIER", "Unavailable"),
-                                            ("SOCKETS", "Active"),
+                                            ("SOCKETS", "Host-wide"),
                                         ]
                                     } else {
                                         [
@@ -14578,7 +14578,7 @@ impl LauncherApp {
                 let driver_str = if is_remote { "Unavailable" } else { wifi_snap.driver.as_str() };
                 let pci_str = if is_remote { "—" } else { wifi_snap.pci_slot.as_str() };
                 let mtu_val = if is_remote || wifi_snap.mtu == 0 { "—".to_string() } else { wifi_snap.mtu.to_string() };
-                let tx_bytes_val = if is_remote { snap.total_tx_bytes } else { wifi_snap.tx_bytes };
+                let tx_bytes_val = if is_remote { primary_net.map(|interface| interface.tx_bytes) } else { Some(wifi_snap.tx_bytes) };
                 let lease_time_str = if is_remote { "Unavailable" } else { wifi_snap.lease_time_remaining.as_str() };
                 let _kernel_str = if is_remote { snap.os_version.as_str() } else { wifi_snap.kernel_version.as_str() };
 
@@ -14627,7 +14627,7 @@ impl LauncherApp {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.vertical(|ui| {
                                             ui.label(RichText::new(format!("MTU {}", mtu_val)).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
-                                            let tx_gb_fmt = format!("TX: {:.1} GB", tx_bytes_val as f64 / 1e9);
+                                            let tx_gb_fmt = tx_bytes_val.map(|bytes| format!("TX: {:.1} GB", bytes as f64 / 1e9)).unwrap_or_else(|| "TX: —".to_string());
                                             ui.label(RichText::new(tx_gb_fmt).size(8.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                                         });
                                     });
@@ -14645,13 +14645,14 @@ impl LauncherApp {
                                     ui.label(RichText::new(cidr_str).size(13.5).monospace().color(Color32::from_rgb(100, 116, 139)));
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let (copy_rect, copy_resp) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::click());
-                                        let copy_col = if copy_resp.hovered() { accent } else { Color32::from_rgb(148, 163, 184) };
-                                        if copy_resp.hovered() {
+                                        let can_copy = ip_without_cidr.parse::<std::net::Ipv4Addr>().is_ok();
+                                        let (copy_rect, copy_resp) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), if can_copy { egui::Sense::click() } else { egui::Sense::hover() });
+                                        let copy_col = if can_copy && copy_resp.hovered() { accent } else { Color32::from_rgb(148, 163, 184) };
+                                        if can_copy && copy_resp.hovered() {
                                             ui.painter().rect_filled(copy_rect, Rounding::same(4.0), accent_with_alpha(accent, 20));
                                         }
                                         ui.painter().text(copy_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::COPY, egui::FontId::proportional(12.5), copy_col);
-                                        let copy_resp = copy_resp.on_hover_text("Copy IPv4 address to clipboard");
+                                        let copy_resp = copy_resp.on_hover_text(if can_copy { "Copy IPv4 address to clipboard" } else { "IPv4 address unavailable" });
                                         if copy_resp.clicked() {
                                             let text_to_copy = format!("{}{}", ip_without_cidr, cidr_str);
                                             ui.output_mut(|o| o.copied_text = text_to_copy.clone());
@@ -14687,23 +14688,16 @@ impl LauncherApp {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
 
-                                        // Flush DNS button
-                                        let (flush_rect, flush_resp) = ui.allocate_exact_size(egui::vec2(48.0, 18.0), egui::Sense::click());
-                                        let f_bg = if flush_resp.hovered() { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(20, 28, 44) };
-                                        ui.painter().rect_filled(flush_rect, Rounding::same(3.0), f_bg);
-                                        ui.painter().text(flush_rect.center(), egui::Align2::CENTER_CENTER, "Flush", egui::FontId::monospace(8.0), Color32::from_rgb(203, 213, 225));
-                                        if flush_resp.clicked() && !is_remote {
-                                            self.queue_wifi_action(None, ui.ctx().clone());
+                                        if !is_remote {
+                                            let (flush_rect, flush_resp) = ui.allocate_exact_size(egui::vec2(48.0, 18.0), egui::Sense::click());
+                                            let f_bg = if flush_resp.hovered() { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(20, 28, 44) };
+                                            ui.painter().rect_filled(flush_rect, Rounding::same(3.0), f_bg);
+                                            ui.painter().text(flush_rect.center(), egui::Align2::CENTER_CENTER, "Flush", egui::FontId::monospace(8.0), Color32::from_rgb(203, 213, 225));
+                                            if flush_resp.clicked() {
+                                                self.queue_wifi_action(None, ui.ctx().clone());
+                                            }
+                                            flush_resp.on_hover_text("Flush system DNS cache");
                                         }
-                                        flush_resp.on_hover_text(if is_remote { "Remote DNS flush unavailable" } else { "Flush system DNS cache" });
-
-                                        Frame::none()
-                                            .fill(Color32::from_rgb(20, 28, 44))
-                                            .rounding(Rounding::same(3.0))
-                                            .inner_margin(egui::Margin::symmetric(5.0, 2.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new("systemd").size(8.0).monospace().color(Color32::from_rgb(148, 163, 184)));
-                                            });
                                         let clean_dns = dns_resolvers_str.split(',').next().unwrap_or(dns_resolvers_str).trim();
                                         ui.label(RichText::new(clean_dns).size(9.5).monospace().color(Color32::from_rgb(226, 232, 240)));
                                     });
@@ -14715,13 +14709,14 @@ impl LauncherApp {
                                     ui.label(RichText::new("IPV6").size(9.0).monospace().color(Color32::from_rgb(100, 116, 139)));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.spacing_mut().item_spacing.x = 6.0;
-                                        let (copy_v6_rect, copy_v6_resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
-                                        let copy_v6_col = if copy_v6_resp.hovered() { accent } else { Color32::from_rgb(148, 163, 184) };
-                                        if copy_v6_resp.hovered() {
+                                        let can_copy = ip_v6_str.split('/').next().unwrap_or("").split('%').next().unwrap_or("").parse::<std::net::Ipv6Addr>().is_ok();
+                                        let (copy_v6_rect, copy_v6_resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), if can_copy { egui::Sense::click() } else { egui::Sense::hover() });
+                                        let copy_v6_col = if can_copy && copy_v6_resp.hovered() { accent } else { Color32::from_rgb(148, 163, 184) };
+                                        if can_copy && copy_v6_resp.hovered() {
                                             ui.painter().rect_filled(copy_v6_rect, Rounding::same(3.0), accent_with_alpha(accent, 20));
                                         }
                                         ui.painter().text(copy_v6_rect.center(), egui::Align2::CENTER_CENTER, crate::lucide::COPY, egui::FontId::proportional(11.0), copy_v6_col);
-                                        let copy_v6_resp = copy_v6_resp.on_hover_text("Copy IPv6 address to clipboard");
+                                        let copy_v6_resp = copy_v6_resp.on_hover_text(if can_copy { "Copy IPv6 address to clipboard" } else { "IPv6 address unavailable" });
                                         if copy_v6_resp.clicked() {
                                             ui.output_mut(|o| o.copied_text = ip_v6_str.to_string());
                                             self.wifi_status_msg = Some(("Copied IPv6 address to clipboard".to_string(), false, Instant::now()));

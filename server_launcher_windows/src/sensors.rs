@@ -2736,15 +2736,22 @@ try:
 except:
     pass
 
+def read_optional_text(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except (OSError, UnicodeError):
+        return None
+
 def millidegrees_to_celsius(value):
     return value / 1000.0
 
 temps = []
 for hw in glob.glob("/sys/class/hwmon/hwmon*"):
-    name = open(hw + "/name").read().strip() if os.path.exists(hw + "/name") else os.path.basename(hw)
+    name = read_optional_text(hw + "/name") or os.path.basename(hw)
     for inp in glob.glob(hw + "/temp*_input"):
         lbl_p = inp.replace("_input", "_label")
-        lbl = open(lbl_p).read().strip() if os.path.exists(lbl_p) else os.path.basename(inp)
+        lbl = read_optional_text(lbl_p) or os.path.basename(inp)
         crit_p = inp.replace("_input", "_crit")
         crit = None
         if os.path.exists(crit_p):
@@ -2828,12 +2835,15 @@ except:
 for card in sorted(glob.glob("/sys/class/drm/card[0-9]*")):
     if "-" not in os.path.basename(card):
         vendor_p = card + "/device/vendor"
-        v = open(vendor_p).read().strip().lower() if os.path.exists(vendor_p) else ""
+        v = (read_optional_text(vendor_p) or "").lower()
         address = normalize_pci_address(os.path.basename(os.path.realpath(card + "/device")))
         if v == "0x10de" and address in nvidia_devices:
             continue
         drv_p = card + "/device/driver"
-        drv_name = os.path.basename(os.readlink(drv_p)) if os.path.islink(drv_p) else ""
+        try:
+            drv_name = os.path.basename(os.readlink(drv_p))
+        except OSError:
+            drv_name = ""
         v_name = "Intel HD/UHD Graphics" if v == "0x8086" else ("AMD Radeon Graphics" if v == "0x1002" else ("VirtIO GPU" if v == "0x1af4" else ("VMware SVGA II" if v == "0x15ad" else ("QEMU Standard VGA" if v == "0x1234" else ("ASPEED Graphics (BMC)" if v == "0x1a03" else ("Integrated / Linux GPU" if not drv_name else drv_name.upper() + " GPU"))))))
         act_freq = None
         for f in ["gt_act_freq_mhz", "gt_cur_freq_mhz", "gt/gt0/rps_act_freq_mhz", "gt/gt0/rps_cur_freq_mhz"]:
@@ -2908,30 +2918,23 @@ if not gpus:
                     })
             except: pass
 
-def read_power_text(path):
-    try:
-        with open(path) as f:
-            return f.read().strip()
-    except (OSError, UnicodeError):
-        return None
-
 ac_online = None
 ac_states = []
 batteries = []
 charge_limit = None
 for ps in sorted(glob.glob("/sys/class/power_supply/*")):
-    t = (read_power_text(ps + "/type") or "").lower()
+    t = (read_optional_text(ps + "/type") or "").lower()
     name = os.path.basename(ps).lower()
     if t in ["mains", "ac", "adp"] or (t != "battery" and name.startswith("ac")):
-        value = read_power_text(ps + "/online")
+        value = read_optional_text(ps + "/online")
         ac_states.append(True if value == "1" else False if value == "0" else None)
     elif t == "battery" or name.startswith("bat"):
-        if read_power_text(ps + "/present") == "0":
+        if read_optional_text(ps + "/present") == "0":
             continue
-        status = read_power_text(ps + "/status") or "Unknown"
+        status = read_optional_text(ps + "/status") or "Unknown"
         cap = None
         try:
-            value = float(read_power_text(ps + "/capacity"))
+            value = float(read_optional_text(ps + "/capacity"))
             if 0.0 <= value <= 100.0:
                 cap = value
         except (TypeError, ValueError, OverflowError):
@@ -3012,9 +3015,9 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
                 if c >= 0: cycles = c
             except: pass
             
-        tech = read_power_text(ps + "/technology") or ""
-        model = read_power_text(ps + "/model_name") or ""
-        mfg = read_power_text(ps + "/manufacturer") or ""
+        tech = read_optional_text(ps + "/technology") or ""
+        model = read_optional_text(ps + "/model_name") or ""
+        mfg = read_optional_text(ps + "/manufacturer") or ""
         if os.path.exists(ps + "/charge_control_end_threshold"):
             try:
                 cl = int(open(ps + "/charge_control_end_threshold").read().strip())
@@ -3096,7 +3099,7 @@ if rapl_sources and len(rapl_e1) == len(rapl_sources):
 
 if cpu_power is None and len(rapl_sources) <= 1:
     for hw in glob.glob("/sys/class/hwmon/hwmon*"):
-        name = open(hw + "/name").read().strip().lower() if os.path.exists(hw + "/name") else ""
+        name = (read_optional_text(hw + "/name") or "").lower()
         if any(k in name for k in ["coretemp", "k10temp", "zenpower", "cpu", "rapl", "fam15h", "acpitz"]):
             for pin in glob.glob(hw + "/power*_input") + glob.glob(hw + "/power*_average"):
                 try:

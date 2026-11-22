@@ -4440,6 +4440,12 @@ fn windows_cpu_package_metric(hardware: &serde_json::Value, sensors: &serde_json
 }
 
 #[cfg(any(windows, test))]
+fn normalize_windows_hardware_name(name: &str) -> String {
+    name.to_ascii_lowercase().replace("(r)", "").replace("(tm)", "")
+        .chars().filter(|ch| ch.is_ascii_alphanumeric()).collect()
+}
+
+#[cfg(any(windows, test))]
 fn apply_windows_gpu_sensors(gpus: &mut [GpuSensorInfo], hardware: &serde_json::Value, sensors: &serde_json::Value) {
     for gpu in gpus.iter_mut() {
         gpu.device_path.clear();
@@ -4450,12 +4456,13 @@ fn apply_windows_gpu_sensors(gpus: &mut [GpuSensorInfo], hardware: &serde_json::
     }
     let Some(hardware) = hardware.as_array() else { return; };
     let Some(sensors) = sensors.as_array() else { return; };
-    let names: Vec<_> = gpus.iter().map(|gpu| gpu.name.to_ascii_lowercase()).collect();
+    let names: Vec<_> = gpus.iter().map(|gpu| normalize_windows_hardware_name(&gpu.name)).collect();
     for gpu in gpus {
         let name = gpu.name.trim();
-        if name.is_empty() || names.iter().filter(|candidate| candidate.trim().eq_ignore_ascii_case(name)).count() != 1 { continue; }
+        let normalized_name = normalize_windows_hardware_name(name);
+        if normalized_name.is_empty() || names.iter().filter(|candidate| **candidate == normalized_name).count() != 1 { continue; }
         let mut devices = hardware.iter().filter(|device| {
-            device["Name"].as_str().is_some_and(|candidate| candidate.trim().eq_ignore_ascii_case(name))
+            device["Name"].as_str().is_some_and(|candidate| normalize_windows_hardware_name(candidate) == normalized_name)
                 && device["HardwareType"].as_str().is_some_and(|kind| kind.starts_with("Gpu"))
         });
         let Some(device) = devices.next() else { continue; };
@@ -4817,6 +4824,19 @@ mod windows_sensor_tests {
         apply_windows_gpu_sensors(&mut gpu, &duplicate_hardware, &sensors);
         assert!(gpu[0].load_pct.is_none());
     }
+
+    #[test]
+    fn gpu_sensor_matching_ignores_windows_trademark_formatting() {
+        let mut gpus = vec![GpuSensorInfo { name: "Intel(R) UHD Graphics 605".into(), ..Default::default() }];
+        let hardware = serde_json::json!([{"Name":"Intel UHD Graphics 605", "Identifier":"/gpu/0", "HardwareType":"GpuIntel"}]);
+        let sensors = serde_json::json!([{"Parent":"/gpu/0", "SensorType":"Load", "Name":"GPU Core", "Value":12.5}]);
+
+        apply_windows_gpu_sensors(&mut gpus, &hardware, &sensors);
+
+        assert_eq!(gpus[0].load_pct, Some(12.5));
+        assert_eq!(gpus[0].device_path, "/gpu/0");
+    }
+
     #[test]
     fn disk_rates_distinguish_idle_from_missing_or_invalid_data() {
         let idle = parse_windows_hardware(&serde_json::json!({"disk": {"DiskReadBytesPerSec": 0, "DiskWriteBytesPerSec": 0}}));

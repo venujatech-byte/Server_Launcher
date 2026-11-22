@@ -16347,7 +16347,7 @@ impl LauncherApp {
             .or_else(|| snap.temp_sensors.iter().find(|s| s.category == crate::sensors::SensorCategory::Cpu).map(|s| s.temp))
             .unwrap_or(f32::NAN);
 
-        let gpu_temp = snap.gpus.first().and_then(|g| g.temp)
+        let gpu_temp = snap.gpus.get(self.selected_gpu_idx).and_then(|g| g.temp)
             .or_else(|| snap.temp_sensors.iter().find(|s| s.category == crate::sensors::SensorCategory::Gpu).map(|s| s.temp))
             .unwrap_or(f32::NAN);
 
@@ -16452,7 +16452,7 @@ impl LauncherApp {
                 use crate::sensors::SensorCategory;
                 let sensor_cards = [
                     ("CPU TEMPERATURE", cpu_temp, sensor_limit(SensorCategory::Cpu, cpu_temp), "", accent),
-                    ("GPU TEMPERATURE", gpu_temp, if snap.gpus.first().and_then(|gpu| gpu.temp).is_some() { f32::NAN } else { sensor_limit(SensorCategory::Gpu, gpu_temp) }, "", Color32::from_rgb(96, 165, 250)),
+                    ("GPU TEMPERATURE", gpu_temp, if snap.gpus.get(self.selected_gpu_idx).and_then(|gpu| gpu.temp).is_some() { f32::NAN } else { sensor_limit(SensorCategory::Gpu, gpu_temp) }, "", Color32::from_rgb(96, 165, 250)),
                     ("MEMORY", ram_temp, sensor_limit(SensorCategory::Memory, ram_temp), "", accent),
                     ("STORAGE", nvme_temp, sensor_limit(SensorCategory::Storage, nvme_temp), "", Color32::from_rgb(96, 165, 250)),
                     ("BOARD SENSOR", vrm_temp, sensor_limit(SensorCategory::System, vrm_temp), "", Color32::from_rgb(203, 213, 225)),

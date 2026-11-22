@@ -2597,20 +2597,28 @@ def read_disk_stats():
 
 def read_net_dev():
     nets = {}
+    valid = True
     try:
         with open("/proc/net/dev") as f:
             for line in f:
                 if ":" in line:
-                    p = line.split(":", 1)
-                    ifname = p[0].strip()
-                    fields = p[1].split()
-                    if len(fields) >= 9:
+                    ifname, counters = line.rsplit(":", 1)
+                    fields = counters.split()
+                    if not ifname.strip() or len(fields) < 9:
+                        valid = False
+                        continue
+                    try:
                         rx = int(fields[0])
                         tx = int(fields[8])
-                        nets[ifname] = (rx, tx)
-    except:
-        pass
-    return nets, bool(nets)
+                        if rx < 0 or tx < 0:
+                            valid = False
+                            continue
+                        nets[ifname.strip()] = (rx, tx)
+                    except ValueError:
+                        valid = False
+    except OSError:
+        valid = False
+    return nets, valid and bool(nets)
 
 def read_proc_start_marker(pid):
     try:

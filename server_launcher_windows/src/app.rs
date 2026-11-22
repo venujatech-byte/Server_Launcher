@@ -11203,9 +11203,7 @@ impl LauncherApp {
             self.last_telemetry_sample = snap.timestamp;
             if snap.cpu_usage_available {
                 push_telemetry(&mut self.cpu_history, snap.cpu_global_usage, 60);
-                if snap.cpu_global_usage > self.cpu_peak_usage {
-                    self.cpu_peak_usage = snap.cpu_global_usage;
-                }
+                self.cpu_peak_usage = self.cpu_history.iter().copied().fold(0.0_f32, f32::max);
             }
             push_telemetry(&mut self.ram_history, (snap.mem_usage_pct, snap.swap_usage_pct), 60);
             let (total_storage, used_storage, _) = mounted_storage_totals(&snap.disks);
@@ -11250,10 +11248,8 @@ impl LauncherApp {
             let cur_rx_mb = (snap.total_rx_rate_bps / 1_000_000.0) as f32;
             push_telemetry(&mut self.net_rx_history, cur_rx_mb, 60);
 
-            let max_cur = cur_tx_mb.max(cur_rx_mb);
-            if max_cur > self.net_peak_mb {
-                self.net_peak_mb = max_cur;
-            }
+            self.net_peak_mb = self.net_tx_history.iter().chain(&self.net_rx_history)
+                .copied().fold(0.0_f32, f32::max);
 
             let (cur_tcp, cur_udp) = (snap.socket_tcp as f32, snap.socket_udp as f32);
             push_telemetry(&mut self.socket_tcp_history, cur_tcp, 60);

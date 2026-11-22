@@ -11583,7 +11583,7 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.vertical(|ui| {
-                            // Row 1: Title & Governor on left, PL1 Limit & Tjunction Max on right
+                            // Row 1: CPU details on the left, reported limits on the right
                             ui.horizontal(|ui| {
                                 let row_w = ui.available_width();
                                 let right_w = 265.0_f32;
@@ -11607,7 +11607,7 @@ impl LauncherApp {
 
                                     ui.add_space(6.0);
 
-                                    // PL1 Limit badge
+                                    // Report only the power cap supplied by telemetry.
                                     Frame::none()
                                         .fill(accent_with_alpha(accent, 25))
                                         .rounding(Rounding::same(4.0))
@@ -11618,7 +11618,7 @@ impl LauncherApp {
                                                 let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                                 ui.painter().circle_filled(d_rect.center(), 2.8, accent);
                                                 let pl1 = reported_sensor_value(snap.cpu_tdp_watts, 1);
-                                                ui.label(RichText::new(format!("PL1 Limit: {} W", pl1)).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                                ui.label(RichText::new(format!("Reported power cap: {} W", pl1)).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                             });
                                         });
                                 });
@@ -11661,7 +11661,7 @@ impl LauncherApp {
                     let subtitle = match column {
                         0 => format!("{} Cores / {} Threads", phys, log),
                         1 => "Reported clock".to_string(),
-                        2 => snap.cpu_tdp_watts.map(|value| format!("Reported limit: {:.1} W", value)).unwrap_or_else(|| "Power limit unavailable".into()),
+                        2 => snap.cpu_tdp_watts.map(|value| format!("Reported power cap: {:.1} W", value)).unwrap_or_else(|| "Power cap unavailable".into()),
                         _ => snap.cpu_tjunction_max.map(|value| format!("Reported limit: {:.0}°C", value)).unwrap_or_else(|| "Temperature limit unavailable".into()),
                     };
                     let scale = if column == 0 { 100.0 } else { maximum.unwrap_or(1.0).max(1.0) * 1.1 };

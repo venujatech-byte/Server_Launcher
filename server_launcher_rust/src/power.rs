@@ -1,19 +1,18 @@
-//! Power subsystem: CPU scaling governor query/control, thermal power presets,
-//! and hardware battery longevity / charging controls across PC vendors.
+//! Power telemetry and battery charging controls across PC vendors.
 
 use std::fs;
 use std::path::Path;
 
-/// Real CPU TDP capabilities detected from hardware RAPL MSRs, ACPI EC interfaces, or CPU silicon classification.
+/// Power profile inputs for the illustrative system power estimate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CpuTdpProfile {
-    /// Nominal / Base processor TDP (Watts).
+    /// Reported package power cap or estimated nominal CPU power (Watts).
     pub nominal_watts: f32,
-    /// Quiet / Eco PL1 limit (Watts) — reduced thermal load & fan silence.
+    /// Estimated quiet-mode CPU power (Watts).
     pub quiet_pl1_watts: f32,
-    /// Balanced PL1 limit (Watts) — standard factory continuous power.
+    /// Estimated nominal CPU power (Watts).
     pub balanced_pl1_watts: f32,
-    /// Turbo Boost PL2 burst limit (Watts) — maximum transient silicon output.
+    /// Estimated peak CPU power (Watts).
     pub turbo_pl2_watts: f32,
     /// Whether Intel/AMD RAPL sysfs power capping interface was detected.
     pub has_rapl: bool,
@@ -136,8 +135,7 @@ pub fn calculate_turbo_tdp(nominal: f32) -> f32 {
     }
 }
 
-/// Constructs an accurate CpuTdpProfile for a target machine (local or remote)
-/// using detected RAPL constraint, CPU model name, and core count.
+/// Builds inputs for the illustrative power estimate from a reported cap or CPU model heuristic.
 pub fn tdp_profile_from_nominal_or_cpu(nominal_opt: Option<f32>, model_name: &str, core_count: usize) -> CpuTdpProfile {
     let nominal_watts = if let Some(n) = nominal_opt {
         let rounded = (n * 2.0).round() / 2.0;
@@ -171,9 +169,7 @@ pub fn tdp_profile_from_nominal_or_cpu(nominal_opt: Option<f32>, model_name: &st
     }
 }
 
-/// Queries the real processor TDP capabilities across Intel, AMD, and ARM architectures.
-/// Scans Intel/AMD RAPL (Running Average Power Limit) sysfs registers, ACPI EC platform profiles,
-/// hwmon power capping, or CPU classification heuristics.
+/// Reads Linux package power caps when available; otherwise estimates nominal power from CPU model.
 pub fn detect_cpu_tdp_capability() -> CpuTdpProfile {
     let mut detected_pl1: Option<f32> = None;
     let mut detected_pl2: Option<f32> = None;
@@ -249,7 +245,7 @@ pub fn detect_cpu_tdp_capability() -> CpuTdpProfile {
         classify_cpu_nominal_tdp()
     };
 
-    // Calculate real 3 TDP limits based on processor capability
+    // The preset values feed the estimate only; this app does not apply power limits.
     let quiet_pl1_watts = if nominal_watts <= 8.0 {
         ((nominal_watts * 0.75) * 2.0).round() / 2.0 // e.g. 6W -> 4.5W
     } else if nominal_watts <= 20.0 {

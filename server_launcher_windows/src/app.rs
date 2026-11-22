@@ -15133,7 +15133,7 @@ impl LauncherApp {
                         const TYPE_W: f32 = 90.0;
                         const VALUE_W: f32 = 130.0;
                         const RATE_W: f32 = 150.0;
-                        let max_total = interfaces.iter().map(|net| net.rx_bytes + net.tx_bytes).max().unwrap_or(1).max(1);
+                        let max_total = interfaces.iter().map(|net| net.rx_bytes.saturating_add(net.tx_bytes)).max().unwrap_or(1).max(1);
 
                         ScrollArea::horizontal()
                             .id_salt("data_usage_interfaces_h")
@@ -15178,7 +15178,7 @@ impl LauncherApp {
                                                 ui.painter().text(rect.right_center(), egui::Align2::RIGHT_CENTER, value, egui::FontId::monospace(11.0), p.text_secondary);
                                             }
 
-                                            let total = net.rx_bytes + net.tx_bytes;
+                                            let total = net.rx_bytes.saturating_add(net.tx_bytes);
                                             let (total_rect, _) = ui.allocate_exact_size(egui::vec2(VALUE_W, 28.0), egui::Sense::hover());
                                             let bar = egui::Rect::from_min_size(
                                                 egui::pos2(total_rect.left(), total_rect.center().y - 1.5),
@@ -17445,7 +17445,7 @@ impl LauncherApp {
                         let sum_mem: u64 = list.iter().map(|p| p.memory_bytes).sum();
                         let sum_disk_rate: f64 = list.iter().map(|p| p.disk_rate_bps).sum();
                         let sum_net_rate: f64 = list.iter().map(|p| p.net_rate_bps).sum();
-                        let sum_net_bytes: u64 = list.iter().map(|p| p.net_rx_bytes + p.net_tx_bytes).sum();
+                        let sum_net_bytes: u64 = list.iter().map(|p| p.net_rx_bytes.saturating_add(p.net_tx_bytes)).sum();
                         let pids: Vec<u32> = list.iter().map(|p| p.pid).collect();
                         // Linux does not expose per-process GPU attribution through this collector.
                         let sum_gpu = 0.0;
@@ -18039,7 +18039,7 @@ impl LauncherApp {
                                                         let bg_rect = egui::Rect::from_min_max(c_net_rect.min, egui::pos2(c_net_rect.max.x + COL_SPACING, c_net_rect.max.y));
                                                         ui.painter().rect_filled(bg_rect, Rounding::ZERO, c_row_bg);
                                                     }
-                                                    let c_net_txt = if child.net_rx_bytes + child.net_tx_bytes > 0 { crate::sensors::format_rate(child.net_rate_bps) } else { "—".to_string() };
+                                                    let c_net_txt = if child.net_rx_bytes.saturating_add(child.net_tx_bytes) > 0 { crate::sensors::format_rate(child.net_rate_bps) } else { "—".to_string() };
                                                     let c_net_color = if child.net_rate_bps > 1024.0 {
                                                         Color32::from_rgb(203, 213, 225)
                                                     } else {
@@ -18054,7 +18054,7 @@ impl LauncherApp {
                                                     );
                                                     let _ = c_net_resp.on_hover_text(format!(
                                                         "{} received + sent across visible TCP sockets",
-                                                        crate::sensors::format_bytes(child.net_rx_bytes + child.net_tx_bytes),
+                                                        crate::sensors::format_bytes(child.net_rx_bytes.saturating_add(child.net_tx_bytes)),
                                                     ));
 
                                                     // Child GPU

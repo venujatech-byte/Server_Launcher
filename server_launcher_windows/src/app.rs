@@ -6603,7 +6603,25 @@ fn draw_wifi_realtime_waveform(ui: &mut Ui, height: f32, rx_history: &VecDeque<f
     }
 }
 
-fn draw_thermal_dual_waveform(ui: &mut Ui, height: f32, samples: &VecDeque<(Instant, f32, f32)>, accent: Color32) {
+fn thermal_samples_connected(previous: Instant, current: Instant, interval_secs: u32) -> bool {
+    interval_secs > 0 && current.checked_duration_since(previous)
+        .is_some_and(|elapsed| elapsed <= Duration::from_secs((interval_secs as u64 * 3).max(5)))
+}
+
+#[cfg(test)]
+mod thermal_history_gap_tests {
+    use super::*;
+    #[test]
+    fn missed_and_manual_samples_do_not_form_continuous_lines() {
+        let now = Instant::now();
+        assert!(thermal_samples_connected(now, now + Duration::from_secs(2), 1));
+        assert!(!thermal_samples_connected(now, now + Duration::from_secs(6), 1));
+        assert!(!thermal_samples_connected(now, now + Duration::from_secs(2), 0));
+        assert!(!thermal_samples_connected(now, now - Duration::from_secs(1), 1));
+    }
+}
+
+fn draw_thermal_dual_waveform(ui: &mut Ui, height: f32, samples: &VecDeque<(Instant, f32, f32)>, accent: Color32, interval_secs: u32) {
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let rect = response.rect;
     painter.rect_filled(rect, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
@@ -6619,7 +6637,7 @@ fn draw_thermal_dual_waveform(ui: &mut Ui, height: f32, samples: &VecDeque<(Inst
     let ceiling = samples.iter().flat_map(|sample| [sample.1, sample.2]).filter(|value| value.is_finite()).fold(100.0_f32, f32::max) + 5.0;
     let mut any_reading = false;
     for (channel, color) in [(0, accent), (1, Color32::from_rgb(148, 163, 184))] {
-        let mut previous: Option<egui::Pos2> = None;
+        let mut previous: Option<(Instant, egui::Pos2)> = None;
         for &(timestamp, cpu, gpu) in samples {
             let value = if channel == 0 { cpu } else { gpu };
             if !value.is_finite() {
@@ -6629,7 +6647,7 @@ fn draw_thermal_dual_waveform(ui: &mut Ui, height: f32, samples: &VecDeque<(Inst
             any_reading = true;
             let age = latest.saturating_duration_since(timestamp).as_secs_f32();
             let point = egui::pos2(plot.right() - (age / 60.0).clamp(0.0, 1.0) * plot.width(), plot.bottom() - (value / ceiling).clamp(0.0, 1.0) * plot.height());
-            if let Some(last) = previous {
+            if let Some((_, last)) = previous.filter(|(last_time, _)| thermal_samples_connected(*last_time, timestamp, interval_secs)) {
                 if channel == 0 {
                     let mut mesh = egui::Mesh::default();
                     for (pos, color) in [(last, accent_with_alpha(color, 40)), (point, accent_with_alpha(color, 40)), (egui::pos2(point.x, plot.bottom()), accent_with_alpha(color, 2)), (egui::pos2(last.x, plot.bottom()), accent_with_alpha(color, 2))] {
@@ -6640,9 +6658,9 @@ fn draw_thermal_dual_waveform(ui: &mut Ui, height: f32, samples: &VecDeque<(Inst
                 }
                 painter.line_segment([last, point], Stroke::new(if channel == 0 { 2.2_f32 } else { 1.8_f32 }, color));
             }
-            previous = Some(point);
+            previous = Some((timestamp, point));
         }
-        if let Some(point) = previous {
+        if let Some((_, point)) = previous {
             painter.circle_filled(point, 3.0, color);
         }
     }
@@ -16683,7 +16701,7 @@ impl LauncherApp {
                         });
 
                         ui.add_space(8.0);
-                        draw_thermal_dual_waveform(ui, 110.0, &history, accent);
+                        draw_thermal_dual_waveform(ui, 110.0, &history, accent, self.sensors_refresh_interval);
                     });
 
                 ui.add_space(8.0);

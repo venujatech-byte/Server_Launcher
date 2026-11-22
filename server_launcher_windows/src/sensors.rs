@@ -3618,18 +3618,20 @@ print(json.dumps(data))
     let mut disks = Vec::new();
     if let Some(arr) = parsed["disks"].as_array() {
         for d in arr {
-            let total = d["total"].as_u64().unwrap_or(0);
-            let used = d["used"].as_u64().unwrap_or(0);
-            let avail = d["avail"].as_u64().unwrap_or(0);
-            let pct = if total > 0 { (used as f32 / total as f32) * 100.0 } else { 0.0 };
+            let (Some(name), Some(mount_point), Some(total), Some(used), Some(avail)) = (
+                d["name"].as_str(), d["mount"].as_str(), d["total"].as_u64(),
+                d["used"].as_u64(), d["avail"].as_u64(),
+            ) else { continue; };
+            if name.is_empty() || mount_point.is_empty() || total == 0 || used > total || avail > total { continue; }
+            let pct = (used as f32 / total as f32) * 100.0;
             let r_rate = d["read_rate"].as_f64().unwrap_or(0.0);
             let w_rate = d["write_rate"].as_f64().unwrap_or(0.0);
             let r_total = d["total_read"].as_u64().unwrap_or(0);
             let w_total = d["total_write"].as_u64().unwrap_or(0);
 
             disks.push(DiskInfo {
-                name: d["name"].as_str().unwrap_or("").to_string(),
-                mount_point: d["mount"].as_str().unwrap_or("").to_string(),
+                name: name.to_string(),
+                mount_point: mount_point.to_string(),
                 fs_type: String::new(),
                 total_bytes: total,
                 available_bytes: avail,

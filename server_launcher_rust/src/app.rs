@@ -15556,9 +15556,7 @@ impl LauncherApp {
 
                                     (final_watts, comps)
                                 } else {
-                                    let fan_draw = ((snap.cpu_temp.unwrap_or(35.0) - 30.0) / 40.0).clamp(0.0, 1.0) * 5.0 + 1.2;
-                                    let fan_cap = 15.0_f32;
-                                    let total = raw_cpu + (if !snap.gpus.is_empty() { raw_gpu } else { 0.0 }) + raw_storage + raw_net + raw_mb + base_usb_w + fan_draw;
+                                    let total = raw_cpu + (if !snap.gpus.is_empty() { raw_gpu } else { 0.0 }) + raw_storage + raw_net + raw_mb + base_usb_w;
 
                                     let mut comps = vec![
                                         ("CPU Package & Cores", raw_cpu, cpu_cap),
@@ -15569,7 +15567,6 @@ impl LauncherApp {
                                     comps.push(("Storage Subsystem (HDD/NVMe)", raw_storage, storage_cap));
                                     comps.push(("Network PHY & Interface", raw_net, net_cap));
                                     comps.push(("Motherboard Logic & RAM", raw_mb, mb_cap));
-                                    comps.push(("Chassis Cooling & Fans", fan_draw, fan_cap));
                                     comps.push(("USB & System Peripherals", base_usb_w, usb_cap));
 
                                     (total, comps)

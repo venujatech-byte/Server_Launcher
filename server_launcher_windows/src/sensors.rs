@@ -3706,7 +3706,8 @@ print(json.dumps(data))
         batteries.iter().map(|battery| battery.power_watts).sum::<Option<f32>>()
     };
 
-    let charge_limit = parsed.get("power").and_then(|p| p.get("charge_limit")).and_then(|v| v.as_u64()).map(|v| v as u32);
+    let charge_limit = parsed.get("power").and_then(|p| p.get("charge_limit")).and_then(|v| v.as_u64())
+        .and_then(|value| u32::try_from(value).ok()).filter(|value| (1..=100).contains(value));
     let power = PowerSupplyInfo {
         ac_online,
         batteries,
@@ -3747,8 +3748,8 @@ print(json.dumps(data))
                 _ => {}
             }
 
-            let crit = t.get("crit").and_then(|v| v.as_f64()).map(|v| v as f32);
-            let max = t.get("max").and_then(|v| v.as_f64()).map(|v| v as f32);
+            let crit = parse_reported_temperature(&t["crit"]);
+            let max = parse_reported_temperature(&t["max"]);
 
             temp_sensors.push(TempSensor {
                 name: label,

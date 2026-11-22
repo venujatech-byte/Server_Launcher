@@ -4388,7 +4388,7 @@ if (__INVENTORY__) {
 }
 try { $result.disk=Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -Filter "Name='_Total'" -ErrorAction Stop | Select-Object -First 1 DiskReadBytesPerSec,DiskWriteBytesPerSec } catch { $result.disk=$null }
 try { $result.logical_disks=@(Get-CimInstance Win32_PerfFormattedData_PerfDisk_LogicalDisk -ErrorAction Stop | Select-Object Name,DiskReadBytesPerSec,DiskWriteBytesPerSec) } catch { $result.logical_disks=@() }
-try { $result.battery=@(Get-CimInstance Win32_Battery -ErrorAction Stop | Select-Object Name,EstimatedChargeRemaining,BatteryStatus) } catch { $result.battery_error='Battery telemetry unavailable' }
+try { $result.battery=@(Get-CimInstance Win32_Battery -ErrorAction Stop | Select-Object Name,EstimatedChargeRemaining,BatteryStatus,DesignCapacity,FullChargeCapacity) } catch { $result.battery_error='Battery telemetry unavailable' }
 try {
   $sensors=@(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor -ErrorAction Stop | Select-Object Name,Value,Identifier,Parent,SensorType)
   $result.temp=@($sensors | Where-Object SensorType -eq Temperature)
@@ -4677,10 +4677,16 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
     if let Some(batteries) = data["battery"].as_array() {
         for b in batteries {
             let percent = b["EstimatedChargeRemaining"].as_f64().filter(|v| v.is_finite() && (0.0..=100.0).contains(v));
+            let energy_full_wh = b["FullChargeCapacity"].as_u64().filter(|value| *value > 0).map(|value| value as f32 / 1000.0);
+            let energy_design_wh = b["DesignCapacity"].as_u64().filter(|value| *value > 0).map(|value| value as f32 / 1000.0);
             snap.power.batteries.push(BatteryInfo {
                 name: b["Name"].as_str().unwrap_or("Battery").into(), present: true,
                 capacity_pct: percent.map(|value| value as f32),
                 status: windows_battery_status(b["BatteryStatus"].as_u64()).into(),
+                energy_wh: percent.zip(energy_full_wh).map(|(percent, full)| percent as f32 * full / 100.0),
+                energy_full_wh,
+                energy_design_wh,
+                energy_estimated: percent.is_some() && energy_full_wh.is_some(),
                 ..Default::default()
             });
         }
@@ -4848,6 +4854,20 @@ mod windows_sensor_tests {
 
         assert_eq!(snapshot.ram_temp, Some(43.0));
         assert_eq!(snapshot.temp_sensors[0].category, SensorCategory::Memory);
+    }
+
+    #[test]
+    fn windows_battery_capacity_uses_reported_wmi_design_and_full_charge() {
+        let snapshot = parse_windows_hardware(&serde_json::json!({"battery": [
+            {"Name":"Battery", "EstimatedChargeRemaining":50, "BatteryStatus":2,
+             "DesignCapacity":50000, "FullChargeCapacity":40000}
+        ]}));
+        let battery = &snapshot.power.batteries[0];
+
+        assert_eq!(battery.energy_design_wh, Some(50.0));
+        assert_eq!(battery.energy_full_wh, Some(40.0));
+        assert_eq!(battery.energy_wh, Some(20.0));
+        assert!(battery.energy_estimated);
     }
 
     #[test]

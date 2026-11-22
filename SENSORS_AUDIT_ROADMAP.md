@@ -162,6 +162,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Windows native title bar:** The Windows desktop app now uses OS window decorations and removes its custom 24-pixel title bar and hit targets. Linux keeps its existing title bar. Windows compile checks pass; visual confirmation on the target Windows machine remains pending.
 - **Windows GPU sensor matching:** Adapter names from Windows inventory and LibreHardwareMonitor are normalized for `(R)`/`(TM)` formatting before matching. Duplicate names still remain unavailable rather than attaching a sensor to the wrong adapter.
 - **Windows RAM temperature:** Temperature sensors whose label is generic but hardware identity reports RAM/DIMM are categorized as memory and the live value reaches the RAM sensor card. Missing RAM temperature remains unavailable.
+- **Windows battery capacity:** The native `Win32_Battery` query now includes reported design and full-charge capacities. These values populate the battery layout in Wh, and charge-derived remaining energy stays explicitly marked estimated; zero/unsupported capacity values remain unavailable.
 
 ### Remaining work and validation
 

@@ -4488,7 +4488,9 @@ fn apply_windows_gpu_sensors(gpus: &mut [GpuSensorInfo], hardware: &serde_json::
         };
         gpu.device_path = identifier.to_owned();
         gpu.load_pct = metric("Load", "GPU Core", 0.0, 100.0).map(|value| value as f32);
-        gpu.temp = metric("Temperature", "GPU Core", -50.0, 200.0).map(|value| value as f32);
+        gpu.temp = metric("Temperature", "GPU Core", -50.0, 200.0)
+            .or_else(|| metric("Temperature", "GPU Temperature", -50.0, 200.0))
+            .map(|value| value as f32);
         gpu.clock_mhz = metric("Clock", "GPU Core", 0.0, u32::MAX as f64).map(|value| value.round() as u32);
         gpu.power_watts = metric("Power", "GPU Package", 0.0, 1000.0).map(|value| value as f32);
     }
@@ -4894,6 +4896,20 @@ mod windows_sensor_tests {
 
         assert_eq!(gpus[0].load_pct, Some(12.5));
         assert_eq!(gpus[0].device_path, "/gpu/0");
+    }
+
+    #[test]
+    fn windows_gpu_temperature_accepts_common_provider_label_with_parent_match() {
+        let mut gpus = vec![GpuSensorInfo { name: "Example GPU".into(), ..Default::default() }];
+        let hardware = serde_json::json!([{"Name":"Example GPU", "Identifier":"/gpu/0", "HardwareType":"GpuIntel"}]);
+        let sensors = serde_json::json!([
+            {"Parent":"/gpu/0", "SensorType":"Temperature", "Name":"GPU Temperature", "Value":57.0},
+            {"Parent":"/gpu/1", "SensorType":"Temperature", "Name":"GPU Temperature", "Value":99.0}
+        ]);
+
+        apply_windows_gpu_sensors(&mut gpus, &hardware, &sensors);
+
+        assert_eq!(gpus[0].temp, Some(57.0));
     }
 
     #[test]

@@ -444,7 +444,7 @@ pub fn set_remote_affinity(host: &SshRemoteHost, pid: u32, cores: &[usize], expe
     run_remote_process_command(host, &command)
 }
 
-// shortcut: PID-based scheduling calls can race after validation; use a kernel handle API if one becomes available.
+// shortcut: renice/taskset setters only take numeric PIDs; keep identity checks until handle-based setters exist.
 #[cfg(target_os = "linux")]
 fn verify_local_process(pid: u32, expected_start: Option<u64>) -> Result<(), String> {
     let expected = expected_start.ok_or("Process identity is unavailable; refresh the list")?;

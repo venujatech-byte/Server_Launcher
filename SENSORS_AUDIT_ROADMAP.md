@@ -90,6 +90,7 @@ Visual review should include 1366×768 (the supplied screenshots), 1920×1080, a
 - Linux power supply documentation: attributes may be missing; charge, energy, status and health have distinct meanings and units: https://docs.kernel.org/power/power_supply_class.html
 - Microsoft Native Wi-Fi API: documented platform functions for wireless interfaces and profiles: https://learn.microsoft.com/en-us/windows/win32/nativewifi/about-the-native-wifi-api
 - Microsoft GPU telemetry explanation: Windows GPU metrics depend on driver support, including WDDM requirements: https://devblogs.microsoft.com/directx/gpus-in-the-task-manager/
+- Linux process scheduling interfaces: `sched_setaffinity()` and `setpriority()` take numeric IDs; pidfds provide stable signal targets, but neither scheduling interface accepts a pidfd: https://man7.org/linux/man-pages/man2/sched_setaffinity.2.html, https://man7.org/linux/man-pages/man2/setpriority.2.html, https://man7.org/linux/man-pages/man2/pidfd_open.2.html
 
 The findings and proposed sequence above describe the original audit; later implementation and verification are recorded below.
 
@@ -162,6 +163,6 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 
 - Complete native Windows build/CI and runtime validation. The full Windows cross-check in this workspace is blocked by the missing `x86_64-w64-mingw32-windres`; a Windows-target Rust check passed using a temporary resource-compiler stub, with existing warnings, but it did not validate Windows resources or packaging. Windows hardware providers and unsupported devices still need real-machine coverage.
 - Validate remote and local readings against real multi-battery PCs, storage stacks, multiple GPUs and wireless adapters.
-- Address the remaining PID race for priority/affinity where a safe platform mechanism is available. Verify permissions, authorization failure and cancellation on real hosts. Process network attribution is partial and depends on access to socket details.
+- Priority and affinity setters still use numeric PID commands (`renice`/`taskset`); Linux exposes pidfd-based signal operations but no corresponding pidfd scheduling setter, so identity checks cannot fully close the exit/reuse window. Verify permissions, authorization failure and cancellation on real hosts. Process network attribution is partial and depends on access to socket details.
 - Perform visual checks at the requested desktop size, narrow sizes and display scaling, including the multi-battery selector. Measure idle and scrolling CPU usage before claiming a performance improvement; scan reductions have been checked but not benchmarked end-to-end.
 - Rust verification follows the workspace rule: `cargo check --locked --offline --tests` only. This compiles tests but does not run them. Python fixtures and the explicitly described read-only/temporary-process VPS checks were run separately.

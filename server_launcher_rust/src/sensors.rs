@@ -624,7 +624,6 @@ impl SystemSensorsCollector {
         let mut cpu_temp = None;
         let mut ram_temp = None;
         let mut storage_temp = None;
-        let mut gpu_temp = None;
 
         for s in &temp_sensors {
             match s.category {
@@ -637,15 +636,12 @@ impl SystemSensorsCollector {
                 SensorCategory::Storage if storage_temp.is_none() || s.name.contains("Composite") => {
                     storage_temp = Some(s.temp);
                 }
-                SensorCategory::Gpu if gpu_temp.is_none() => {
-                    gpu_temp = Some(s.temp);
-                }
                 _ => {}
             }
         }
 
         // 7. GPU & Displays detection (NVIDIA / Intel / AMD / DRM)
-        let gpus = detect_gpus(gpu_temp);
+        let gpus = detect_gpus();
         let displays = self.cached_displays.clone();
 
         // 8. Power Supply & Battery
@@ -1874,7 +1870,7 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
 
 static HAS_NVIDIA_SMI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
-fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
+fn detect_gpus() -> Vec<GpuSensorInfo> {
     let mut gpus = Vec::new();
 
     // 1. Check NVIDIA via nvidia-smi if available
@@ -2091,7 +2087,7 @@ fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
                     gpus.push(GpuSensorInfo { device_path: fs::canonicalize(&dev).unwrap_or_else(|_| dev.clone()).to_string_lossy().into_owned(), engine_loads: Vec::new(),
                         name: vendor_name.to_string(),
                         load_pct,
-                        temp: card_temp.or(known_temp),
+                        temp: card_temp,
                         mem_used_mb,
                         mem_total_mb,
                         clock_mhz: core_clock,
@@ -2134,7 +2130,7 @@ fn detect_gpus(known_temp: Option<f32>) -> Vec<GpuSensorInfo> {
                                 gpus.push(GpuSensorInfo { device_path: String::new(), engine_loads: Vec::new(),
                                     name: vendor_name.to_string(),
                                     load_pct: None,
-                                    temp: known_temp,
+                                    temp: None,
                                     mem_used_mb: None,
                                     mem_total_mb: None,
                                     clock_mhz: None,

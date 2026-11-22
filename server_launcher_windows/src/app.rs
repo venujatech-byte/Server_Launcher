@@ -11293,7 +11293,7 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     // SENSORS PAGE: Overview Dashboard (Matching media_1792121759405_52cfc968.png)
     // ─────────────────────────────────────────────────────────────────────────
-    fn render_sensors_overview_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, _host_id: Option<&str>) {
+    fn render_sensors_overview_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         ScrollArea::vertical()
@@ -11490,7 +11490,8 @@ impl LauncherApp {
                                     ui.vertical(|ui| {
                                         ui.label(RichText::new("OVERALL SPEED").size(11.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                                         ui.add_space(2.0);
-                                        let peak_str = if self.net_tx_history.is_empty() { "All interfaces · collecting".to_string() } else { format!("All interfaces · peak {:.2} MB/s", self.net_peak_mb) };
+                                        let scope = if cfg!(windows) && host_id.is_none() { "Reported interfaces" } else { "All interfaces" };
+                                        let peak_str = if self.net_tx_history.is_empty() { format!("{scope} · collecting") } else { format!("{scope} · peak {:.2} MB/s", self.net_peak_mb) };
                                         ui.label(RichText::new(peak_str).size(9.5).color(p.text_muted));
                                     });
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -15016,7 +15017,7 @@ impl LauncherApp {
                             ui.vertical(|ui| {
                                 ui.label(RichText::new("Network data usage").size(18.0).strong().color(p.text_primary));
                                 ui.label(
-                                    RichText::new(if host_id.is_some() { "Remote counters · all interfaces, including loopback and virtual" } else { "Local counters · all interfaces, including loopback and virtual" })
+                                    RichText::new(if host_id.is_some() { "Remote counters · all interfaces, including loopback and virtual" } else if cfg!(windows) { "Reported interfaces · some disconnected or virtual interfaces may be omitted" } else { "Local counters · all interfaces, including loopback and virtual" })
                                         .size(10.5)
                                         .color(p.text_muted),
                                 );

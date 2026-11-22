@@ -5295,6 +5295,11 @@ mod temperature_category_tests {
         ];
         assert_eq!(super::hottest_temperature_for_category(&sensors, SensorCategory::Memory), Some(51.0));
         assert_eq!(super::hottest_temperature_for_category(&sensors, SensorCategory::Storage), Some(60.0));
+        let cpu_sensors = [
+            TempSensor { name: "CPU Core 0".into(), category: SensorCategory::Cpu, temp: 62.0, ..Default::default() },
+            TempSensor { name: "CPU Package".into(), category: SensorCategory::Cpu, temp: 68.0, ..Default::default() },
+        ];
+        assert_eq!(super::hottest_temperature_for_category(&cpu_sensors, SensorCategory::Cpu), Some(68.0));
     }
 }
 
@@ -16329,7 +16334,7 @@ impl LauncherApp {
         let is_remote = host_id.is_some();
 
         let cpu_temp = snap.cpu_temp
-            .or_else(|| first_temperature_for_category(&snap.temp_sensors, crate::sensors::SensorCategory::Cpu))
+            .or_else(|| hottest_temperature_for_category(&snap.temp_sensors, crate::sensors::SensorCategory::Cpu))
             .unwrap_or(f32::NAN);
 
         let selected_gpu_temp = snap.gpus.get(self.selected_gpu_idx).and_then(|gpu| gpu.temp);

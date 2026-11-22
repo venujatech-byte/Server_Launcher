@@ -671,9 +671,7 @@ impl SystemSensorsCollector {
 
         for s in &temp_sensors {
             match s.category {
-                SensorCategory::Cpu if cpu_temp.is_none() || s.name.contains("Package") || s.name == "CPU" => {
-                    cpu_temp = Some(s.temp);
-                }
+                SensorCategory::Cpu => cpu_temp = hottest_temperature(cpu_temp, s.temp),
                 SensorCategory::Memory => ram_temp = hottest_temperature(ram_temp, s.temp),
                 SensorCategory::Storage => storage_temp = hottest_temperature(storage_temp, s.temp),
                 _ => {}
@@ -3802,9 +3800,7 @@ print(json.dumps(data))
             let cat = categorize_sensor(&label, &chip);
 
             match cat {
-                SensorCategory::Cpu if cpu_temp.is_none() || label.contains("Package") || label == "CPU" => {
-                    cpu_temp = Some(temp);
-                }
+                SensorCategory::Cpu => cpu_temp = hottest_temperature(cpu_temp, temp),
                 SensorCategory::Memory => ram_temp = hottest_temperature(ram_temp, temp),
                 SensorCategory::Storage => storage_temp = hottest_temperature(storage_temp, temp),
                 SensorCategory::Gpu => gpu_temps.push(temp),

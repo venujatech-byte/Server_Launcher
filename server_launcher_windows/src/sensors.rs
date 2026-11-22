@@ -3943,13 +3943,14 @@ impl SystemSensorsCollector {
             Ok(data) => {
                 let live = parse_windows_hardware(data);
                 snap.power = live.power;
-                snap.cpu_temp = live.cpu_temp;
+                snap.cpu_temp = windows_cpu_package_metric(&data["sensor_hardware"], &data["hardware_sensors"], "Temperature", -50.0, 200.0);
+                snap.cpu_power_watts = windows_cpu_package_metric(&data["sensor_hardware"], &data["hardware_sensors"], "Power", 0.0, 1000.0);
                 snap.storage_temp = live.storage_temp;
                 snap.temp_sensors = live.temp_sensors;
                 snap.total_disk_read_rate_bps = live.total_disk_read_rate_bps;
                 snap.total_disk_write_rate_bps = live.total_disk_write_rate_bps;
                 snap.total_disk_rates_available = live.total_disk_rates_available;
-                apply_windows_gpu_sensors(&mut snap.gpus, &data["gpu_hardware"], &data["gpu_sensors"]);
+                apply_windows_gpu_sensors(&mut snap.gpus, &data["sensor_hardware"], &data["hardware_sensors"]);
                 let mut errors: Vec<String> = snap.windows_telemetry_error.take().into_iter().collect();
                 errors.extend(["battery_error", "temp_error"].iter().filter_map(|key| data[*key].as_str()).map(str::to_owned));
                 snap.windows_telemetry_error = (!errors.is_empty()).then(|| errors.join(" • "));
@@ -4060,8 +4061,8 @@ try { $result.battery=@(Get-CimInstance Win32_Battery -ErrorAction Stop | Select
 try {
   $sensors=@(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor -ErrorAction Stop | Select-Object Name,Value,Identifier,Parent,SensorType)
   $result.temp=@($sensors | Where-Object SensorType -eq Temperature)
-  $result.gpu_sensors=$sensors
-  $result.gpu_hardware=@(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Hardware -ErrorAction Stop | Where-Object HardwareType -like 'Gpu*' | Select-Object Name,Identifier,HardwareType)
+  $result.hardware_sensors=$sensors
+  $result.sensor_hardware=@(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Hardware -ErrorAction Stop | Where-Object { $_.HardwareType -like 'Gpu*' -or $_.HardwareType -eq 'Cpu' } | Select-Object Name,Identifier,HardwareType)
 } catch { $result.temp_error='Hardware readings require the LibreHardwareMonitor WMI provider' }
 $result | ConvertTo-Json -Depth 4 -Compress"#;
     let script = script.replace("__INVENTORY__", if inventory { "$true" } else { "$false" });
@@ -4092,6 +4093,24 @@ $result | ConvertTo-Json -Depth 4 -Compress"#;
     }
     let bytes = reader.join().map_err(|_| "Could not read Windows sensor query output".to_string())?;
     serde_json::from_slice(&bytes).map_err(|error| format!("Invalid Windows sensor data: {error}"))
+}
+
+#[cfg(any(windows, test))]
+fn windows_cpu_package_metric(hardware: &serde_json::Value, sensors: &serde_json::Value, kind: &str, min: f64, max: f64) -> Option<f32> {
+    let hardware = hardware.as_array()?;
+    let mut cpus = hardware.iter().filter(|device| device["HardwareType"].as_str() == Some("Cpu"));
+    let cpu = cpus.next()?;
+    if cpus.next().is_some() { return None; }
+    let identifier = cpu["Identifier"].as_str().filter(|id| !id.is_empty())?;
+    if hardware.iter().filter(|device| device["Identifier"].as_str() == Some(identifier)).count() != 1 { return None; }
+    let mut readings = sensors.as_array()?.iter().filter(|sensor| {
+        sensor["Parent"].as_str() == Some(identifier)
+            && sensor["SensorType"].as_str().is_some_and(|value| value.eq_ignore_ascii_case(kind))
+            && sensor["Name"].as_str().is_some_and(|value| value.eq_ignore_ascii_case("CPU Package"))
+    });
+    let value = readings.next()?["Value"].as_f64()?;
+    if readings.next().is_some() || !value.is_finite() || !(min..=max).contains(&value) { return None; }
+    Some(value as f32)
 }
 
 #[cfg(any(windows, test))]
@@ -4197,7 +4216,7 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
                 else if id.contains("hdd") || id.contains("nvme") { SensorCategory::Storage }
                 else { SensorCategory::System };
             match category {
-                SensorCategory::Cpu => snap.cpu_temp = Some(temp as f32),
+                SensorCategory::Cpu => {},
                 SensorCategory::Gpu => {},
                 SensorCategory::Storage => snap.storage_temp = Some(temp as f32),
                 _ => {},
@@ -4240,6 +4259,22 @@ mod windows_sensor_tests {
         assert_eq!(cached.gpus[0].name, "Existing GPU");
         update_windows_inventory(&mut cached, &serde_json::json!({"gpu":[]}));
         assert!(cached.gpus.is_empty());
+    }
+    #[test]
+    fn cpu_package_readings_require_a_unique_cpu_and_matching_sensor() {
+        let hardware = serde_json::json!([{"Identifier":"/cpu/0", "HardwareType":"Cpu"}]);
+        let readings = serde_json::json!([
+            {"Parent":"/cpu/0", "SensorType":"Power", "Name":"CPU Package", "Value":0},
+            {"Parent":"/cpu/0", "SensorType":"Temperature", "Name":"CPU Package", "Value":65.5},
+            {"Parent":"/cpu/1", "SensorType":"Power", "Name":"CPU Package", "Value":90}
+        ]);
+        assert_eq!(windows_cpu_package_metric(&hardware, &readings, "Power", 0.0, 1000.0), Some(0.0));
+        assert_eq!(windows_cpu_package_metric(&hardware, &readings, "Temperature", -50.0, 200.0), Some(65.5));
+        let multi_cpu = serde_json::json!([hardware[0].clone(), {"Identifier":"/cpu/1", "HardwareType":"Cpu"}]);
+        assert_eq!(windows_cpu_package_metric(&multi_cpu, &readings, "Power", 0.0, 1000.0), None);
+        let duplicates = serde_json::json!([readings[0].clone(), readings[0].clone()]);
+        assert_eq!(windows_cpu_package_metric(&hardware, &duplicates, "Power", 0.0, 1000.0), None);
+        assert_eq!(windows_cpu_package_metric(&hardware, &serde_json::Value::Null, "Power", 0.0, 1000.0), None);
     }
     #[test]
     fn gpu_samples_require_unique_device_and_matching_sensor_parent() {
@@ -4317,7 +4352,7 @@ mod windows_sensor_tests {
                      {"Name":"Bad", "Value":999}],
             "battery": [{"Name":"Battery", "EstimatedChargeRemaining":72, "BatteryStatus":1}]
         }));
-        assert_eq!(snap.cpu_temp, Some(65.5));
+        assert_eq!(snap.cpu_temp, None);
         assert_eq!(snap.temp_sensors.len(), 1);
         assert_eq!(snap.power.total_battery_pct, Some(72.0));
         assert_eq!(percentage(1, 0), 0.0);

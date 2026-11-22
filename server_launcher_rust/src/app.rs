@@ -11168,17 +11168,22 @@ impl LauncherApp {
                 push_telemetry(&mut self.storage_history, (used_storage as f64 / total_storage as f64 * 100.0) as f32, 60);
             }
 
-            let cur_write_mb = (snap.total_disk_write_rate_bps / 1_000_000.0) as f32;
-            push_telemetry(&mut self.disk_write_history, cur_write_mb, 60);
+            if snap.total_disk_rates_available {
+                push_telemetry(&mut self.disk_write_history, (snap.total_disk_write_rate_bps / 1_000_000.0) as f32, 60);
+                push_telemetry(&mut self.disk_read_history, (snap.total_disk_read_rate_bps / 1_000_000.0) as f32, 60);
+            } else {
+                self.disk_write_history.clear();
+                self.disk_read_history.clear();
+            }
 
-            let cur_read_mb = (snap.total_disk_read_rate_bps / 1_000_000.0) as f32;
-            push_telemetry(&mut self.disk_read_history, cur_read_mb, 60);
-
-            for p in &snap.physical_disks {
-                let pw = (p.write_rate_bps / 1_000_000.0) as f32;
-                let pr = (p.read_rate_bps / 1_000_000.0) as f32;
-                push_telemetry(self.per_disk_write_history.entry(p.name.clone()).or_default(), pw, 60);
-                push_telemetry(self.per_disk_read_history.entry(p.name.clone()).or_default(), pr, 60);
+            for disk in &snap.physical_disks {
+                if disk.disk_rates_available {
+                    push_telemetry(self.per_disk_write_history.entry(disk.name.clone()).or_default(), (disk.write_rate_bps / 1_000_000.0) as f32, 60);
+                    push_telemetry(self.per_disk_read_history.entry(disk.name.clone()).or_default(), (disk.read_rate_bps / 1_000_000.0) as f32, 60);
+                } else {
+                    self.per_disk_write_history.remove(&disk.name);
+                    self.per_disk_read_history.remove(&disk.name);
+                }
             }
 
             let cur_tx_mb = (snap.total_tx_rate_bps / 1_000_000.0) as f32;
@@ -13193,14 +13198,14 @@ impl LauncherApp {
                         ui,
                         crate::lucide::ARROW_DOWN,
                         "READ THROUGHPUT",
-                        &format!("{:.1}", read_mb),
+                        &snap.total_disk_rates_available.then(|| format!("{:.1}", read_mb)).unwrap_or_else(|| "—".to_string()),
                         "MB/s",
-                        "Measured read rate",
+                        if snap.total_disk_rates_available { "Measured read rate" } else { "Rate unavailable" },
                         "",
                         "",
-                        &rd_history,
+                        if snap.total_disk_rates_available { &rd_history } else { &[] },
                         150.0,
-                        Some((read_mb as f32 / 100.0).clamp(0.05, 1.0)),
+                        snap.total_disk_rates_available.then(|| (read_mb as f32 / 100.0).clamp(0.05, 1.0)),
                         accent,
                         p.bg_card,
                         p.text_muted,
@@ -13213,14 +13218,14 @@ impl LauncherApp {
                         ui,
                         crate::lucide::ARROW_UP,
                         "WRITE THROUGHPUT",
-                        &format!("{:.1}", write_mb),
+                        &snap.total_disk_rates_available.then(|| format!("{:.1}", write_mb)).unwrap_or_else(|| "—".to_string()),
                         "MB/s",
-                        "Measured write rate",
+                        if snap.total_disk_rates_available { "Measured write rate" } else { "Rate unavailable" },
                         "",
                         "",
-                        &wr_history,
+                        if snap.total_disk_rates_available { &wr_history } else { &[] },
                         100.0,
-                        Some((write_mb as f32 / 100.0).clamp(0.05, 1.0)),
+                        snap.total_disk_rates_available.then(|| (write_mb as f32 / 100.0).clamp(0.05, 1.0)),
                         accent,
                         p.bg_card,
                         p.text_muted,
@@ -13232,10 +13237,10 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 3. Drives Grid (Storage 1, Storage 2, Storage 3... in 2-column paired layout)
-                let drives_list: Vec<(String, String, u64, bool, usize, f64, f64)> = if !snap.physical_disks.is_empty() {
+                let drives_list: Vec<(String, String, u64, bool, usize, f64, f64, bool)> = if !snap.physical_disks.is_empty() {
                     snap.physical_disks
                         .iter()
-                        .map(|d| (d.name.clone(), d.model.clone(), d.total_bytes, d.is_ssd, d.partition_count, d.read_rate_bps, d.write_rate_bps))
+                        .map(|d| (d.name.clone(), d.model.clone(), d.total_bytes, d.is_ssd, d.partition_count, d.read_rate_bps, d.write_rate_bps, d.disk_rates_available))
                         .collect()
                 } else if !snap.disks.is_empty() {
                     let mut seen = std::collections::HashSet::new();
@@ -13249,7 +13254,7 @@ impl LauncherApp {
                             } else {
                                 format!("Volume ({})", d.mount_point)
                             };
-                            synthesized.push((clean, model, d.total_bytes, is_ssd, 1, d.read_rate_bps, d.write_rate_bps));
+                            synthesized.push((clean, model, d.total_bytes, is_ssd, 1, d.read_rate_bps, d.write_rate_bps, d.disk_rates_available));
                         }
                     }
                     synthesized
@@ -13266,15 +13271,15 @@ impl LauncherApp {
                 let current_selected_idx = self.selected_disk_idx;
                 let mut clicked_drive_idx: Option<usize> = None;
 
-                let render_drive_card = |ui: &mut Ui, idx: usize, d_name: &str, d_model: &str, d_bytes: u64, d_is_ssd: bool, d_part_count: usize, d_read_bps: f64, d_write_bps: f64, is_selected: bool, clicked_slot: &mut Option<usize>| {
+                let render_drive_card = |ui: &mut Ui, idx: usize, d_name: &str, d_model: &str, d_bytes: u64, d_is_ssd: bool, d_part_count: usize, d_read_bps: f64, d_write_bps: f64, rates_available: bool, is_selected: bool, clicked_slot: &mut Option<usize>| {
                     let d_phys_gb = d_bytes as f64 / 1e9;
                     let physical_disk = snap.physical_disks.iter()
                         .find(|disk| disk.name.trim_start_matches("/dev/") == d_name.trim_start_matches("/dev/"));
                     let partitions = physical_disk.map(|disk| disk.partitions.as_slice()).unwrap_or(&[]);
                     let d_mount = snap.disks.iter().find(|disk| disk_owns_mount(d_name, partitions, &disk.name));
 
-                    let d_read_str = crate::sensors::format_rate(d_read_bps);
-                    let d_write_str = crate::sensors::format_rate(d_write_bps);
+                    let d_read_str = rates_available.then(|| crate::sensors::format_rate(d_read_bps)).unwrap_or_else(|| "—".to_string());
+                    let d_write_str = rates_available.then(|| crate::sensors::format_rate(d_write_bps)).unwrap_or_else(|| "—".to_string());
 
                     let (d_used, d_tot, d_pct, d_fs, is_mounted, mount_pt) = if let Some(m) = d_mount {
                         let u = m.used_bytes as f64 / 1e9;
@@ -13471,11 +13476,11 @@ impl LauncherApp {
                             ui.columns(3, |scols| {
                                 scols[0].vertical(|ui| {
                                     ui.label(RichText::new("READ RATE").size(8.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new("0 B/s").size(12.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new("—").size(12.5).monospace().color(p.text_muted));
                                 });
                                 scols[1].vertical(|ui| {
                                     ui.label(RichText::new("WRITE RATE").size(8.5).monospace().color(p.text_muted));
-                                    ui.label(RichText::new("0 B/s").size(12.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new("—").size(12.5).monospace().color(p.text_muted));
                                 });
                                 scols[2].vertical(|ui| {
                                     ui.label(RichText::new("BUS INTERFACE").size(8.5).monospace().color(p.text_muted));
@@ -13489,12 +13494,12 @@ impl LauncherApp {
                     ui.columns(2, |cols| {
                         let d1 = &chunk[0];
                         let idx1 = chunk_idx * 2;
-                        render_drive_card(&mut cols[0], idx1, &d1.0, &d1.1, d1.2, d1.3, d1.4, d1.5, d1.6, idx1 == current_selected_idx, &mut clicked_drive_idx);
+                        render_drive_card(&mut cols[0], idx1, &d1.0, &d1.1, d1.2, d1.3, d1.4, d1.5, d1.6, d1.7, idx1 == current_selected_idx, &mut clicked_drive_idx);
 
                         if chunk.len() > 1 {
                             let d2 = &chunk[1];
                             let idx2 = chunk_idx * 2 + 1;
-                            render_drive_card(&mut cols[1], idx2, &d2.0, &d2.1, d2.2, d2.3, d2.4, d2.5, d2.6, idx2 == current_selected_idx, &mut clicked_drive_idx);
+                            render_drive_card(&mut cols[1], idx2, &d2.0, &d2.1, d2.2, d2.3, d2.4, d2.5, d2.6, d2.7, idx2 == current_selected_idx, &mut clicked_drive_idx);
                         } else {
                             render_unpopulated_card(&mut cols[1], idx1 + 2);
                         }
@@ -13508,10 +13513,10 @@ impl LauncherApp {
 
                 // 4. Live Throughput Activity (60s Window)
                 let active_disk_idx = if drives_list.is_empty() { 0 } else { self.selected_disk_idx.min(drives_list.len() - 1) };
-                let (active_disk_name, active_read_mb, active_write_mb) = if let Some(d) = drives_list.get(active_disk_idx) {
-                    (d.0.clone(), d.5 / 1_000_000.0, d.6 / 1_000_000.0)
+                let (active_disk_name, active_read_mb, active_write_mb, active_rates_available) = if let Some(d) = drives_list.get(active_disk_idx) {
+                    (d.0.clone(), d.5 / 1_000_000.0, d.6 / 1_000_000.0, d.7)
                 } else {
-                    (primary_drive_name.clone(), read_mb, write_mb)
+                    (primary_drive_name.clone(), read_mb, write_mb, snap.total_disk_rates_available)
                 };
 
                 Frame::none()
@@ -13565,14 +13570,14 @@ impl LauncherApp {
                                         ui.spacing_mut().item_spacing.x = 4.0;
                                         let (sq_r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
                                         ui.painter().rect_filled(sq_r, Rounding::same(1.5), Color32::from_rgb(203, 213, 225));
-                                        ui.label(RichText::new(format!("Read: {:.1} MB/s", active_read_mb)).size(9.5).monospace().color(p.text_secondary));
+                                        ui.label(RichText::new(active_rates_available.then(|| format!("Read: {:.1} MB/s", active_read_mb)).unwrap_or_else(|| "Read: —".to_string())).size(9.5).monospace().color(p.text_secondary));
                                     });
 
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 4.0;
                                         let (sq_r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
                                         ui.painter().rect_filled(sq_r, Rounding::same(1.5), accent);
-                                        ui.label(RichText::new(format!("Write: {:.1} MB/s", active_write_mb)).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                        ui.label(RichText::new(active_rates_available.then(|| format!("Write: {:.1} MB/s", active_write_mb)).unwrap_or_else(|| "Write: —".to_string())).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                                     });
                                 });
                             });
@@ -13595,10 +13600,10 @@ impl LauncherApp {
                             ui.spacing_mut().item_spacing.x = 5.0;
                             let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                             ui.painter().circle_filled(dot_rect.center(), 2.5, accent);
-                            let buf_label = if is_remote {
-                                format!("Direct Kernel Sysfs I/O Pass-through • /dev/{}", active_disk_name)
+                            let buf_label = if active_rates_available {
+                                format!("Disk activity • {}", active_disk_name)
                             } else {
-                                format!("Buffer: /dev/{} (Direct Kernel Block Sysfs Pass-through)", active_disk_name)
+                                "Disk activity unavailable".to_string()
                             };
                             ui.label(RichText::new(buf_label).size(9.0).monospace().color(p.text_muted));
 
@@ -17419,7 +17424,7 @@ impl LauncherApp {
                             (col_name_w, "Name", "name", String::new()),
                             (COL_CPU_W, "CPU", "cpu", snap.cpu_usage_available.then(|| format!("{:.0}%", snap.cpu_global_usage)).unwrap_or_else(|| "—".to_string())),
                             (COL_MEM_W, "Memory", "mem", format!("{:.0}%", mem_total_pct)),
-                            (COL_DISK_W, "Disk", "disk", format_tm_disk(total_disk_mb_s * 1024.0 * 1024.0)),
+                            (COL_DISK_W, "Disk", "disk", snap.total_disk_rates_available.then(|| format_tm_disk(total_disk_mb_s * 1024.0 * 1024.0)).unwrap_or_else(|| "—".to_string())),
                             (COL_NET_W, "Network", "net", crate::sensors::format_rate(snap.total_rx_rate_bps + snap.total_tx_rate_bps)),
                             (COL_GPU_W, "GPU", "gpu", total_gpu_pct.map(|v| format!("{v:.0}%")).unwrap_or_else(|| "—".to_string())),
                             (COL_POWER_W, "Power", "power", "—".to_string()),

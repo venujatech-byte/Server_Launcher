@@ -108,6 +108,7 @@ pub struct DiskInfo {
     pub usage_pct: f32,
     pub read_rate_bps: f64,
     pub write_rate_bps: f64,
+    pub disk_rates_available: bool,
     pub total_read_bytes: u64,
     pub total_write_bytes: u64,
 }
@@ -125,6 +126,7 @@ pub struct PhysicalDiskInfo {
     pub partitions: Vec<DiskPartitionInfo>,
     pub read_rate_bps: f64,
     pub write_rate_bps: f64,
+    pub disk_rates_available: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -267,6 +269,7 @@ pub struct SystemSensorsSnapshot {
     pub storage_temp: Option<f32>,
     pub total_disk_read_rate_bps: f64,
     pub total_disk_write_rate_bps: f64,
+    pub total_disk_rates_available: bool,
 
     // Network
     pub networks: Vec<NetInterfaceInfo>,
@@ -522,6 +525,7 @@ impl SystemSensorsCollector {
                 usage_pct: pct,
                 read_rate_bps: read_rate,
                 write_rate_bps: write_rate,
+                disk_rates_available: disk_rates.contains_key(&clean_dev),
                 total_read_bytes: read_bytes,
                 total_write_bytes: write_bytes,
             });
@@ -531,27 +535,31 @@ impl SystemSensorsCollector {
 
         let mut physical_disks = self.cached_physical_disks.clone();
         // Physical and mounted views share the rates computed above, without consuming baselines.
-        let mut base_matched = false;
-        for p_disk in &mut physical_disks {
-            if let Some(&(read, write)) = disk_rates.get(&p_disk.name) {
-                base_matched = true;
-                p_disk.read_rate_bps = read;
-                p_disk.write_rate_bps = write;
-                total_disk_read_rate_bps += read;
-                total_disk_write_rate_bps += write;
-            }
-        }
-
-        if !base_matched {
-            let mut seen = std::collections::HashSet::new();
-            for d in &disks {
-                let device = fs::canonicalize(&d.name).unwrap_or_else(|_| std::path::PathBuf::from(&d.name));
-                if seen.insert(device) {
-                    total_disk_read_rate_bps += d.read_rate_bps;
-                    total_disk_write_rate_bps += d.write_rate_bps;
+        let total_disk_rates_available = if !physical_disks.is_empty() {
+            for disk in &mut physical_disks {
+                disk.disk_rates_available = false;
+                if let Some(&(read, write)) = disk_rates.get(&disk.name) {
+                    disk.disk_rates_available = true;
+                    disk.read_rate_bps = read;
+                    disk.write_rate_bps = write;
+                    total_disk_read_rate_bps += read;
+                    total_disk_write_rate_bps += write;
                 }
             }
-        }
+            physical_disks.iter().all(|disk| disk.disk_rates_available)
+        } else {
+            let mut seen = std::collections::HashSet::new();
+            let mut available = true;
+            for disk in &disks {
+                let device = fs::canonicalize(&disk.name).unwrap_or_else(|_| std::path::PathBuf::from(&disk.name));
+                if seen.insert(device) {
+                    available &= disk.disk_rates_available;
+                    total_disk_read_rate_bps += disk.read_rate_bps;
+                    total_disk_write_rate_bps += disk.write_rate_bps;
+                }
+            }
+            !seen.is_empty() && available
+        };
         self.prev_disk_time = now;
 
         // 5. Networks
@@ -844,6 +852,7 @@ impl SystemSensorsCollector {
             storage_temp,
             total_disk_read_rate_bps,
             total_disk_write_rate_bps,
+            total_disk_rates_available,
             networks,
             total_rx_rate_bps,
             total_tx_rate_bps,
@@ -870,8 +879,10 @@ impl SystemSensorsCollector {
 }
 
 fn disk_stat_rates(previous: &HashMap<String, (u64, u64)>, current: &HashMap<String, (u64, u64)>, elapsed: f64) -> HashMap<String, (f64, f64)> {
-    current.iter().map(|(device, &totals)| {
-        (device.clone(), counter_rates(previous.get(device).copied(), totals, elapsed))
+    current.iter().filter_map(|(device, &totals)| {
+        let baseline = previous.get(device).copied()?;
+        if !elapsed.is_finite() || elapsed <= 0.0 || totals.0 < baseline.0 || totals.1 < baseline.1 { return None; }
+        Some((device.clone(), counter_rates(Some(baseline), totals, elapsed)))
     }).collect()
 }
 
@@ -887,7 +898,9 @@ mod disk_stat_rate_tests {
         assert_eq!(rates["sda"], (100.0, 100.0));
         assert_eq!(rates["sda1"], (50.0, 50.0));
         assert_eq!(rates["sdaa"], (10.0, 5.0));
-        assert_eq!(rates["sdb"], (0.0, 0.0));
+        assert!(!rates.contains_key("sdb"));
+        assert!(!super::disk_stat_rates(&current, &previous, 2.0).contains_key("sda"));
+        assert_eq!(super::disk_stat_rates(&current, &current, 2.0)["sda"], (0.0, 0.0));
     }
 }
 
@@ -1102,6 +1115,7 @@ pub fn collect_physical_disks() -> Vec<PhysicalDiskInfo> {
                 partitions,
                 read_rate_bps: 0.0,
                 write_rate_bps: 0.0,
+                disk_rates_available: false,
             });
         }
     }
@@ -2968,11 +2982,8 @@ disk_rates = {}
 for dev, (r2, w2) in d2.items():
     if dev in d1:
         r1, w1 = d1[dev]
-        r_rate = max(0.0, (r2 - r1) / t_disk_elapsed)
-        w_rate = max(0.0, (w2 - w1) / t_disk_elapsed)
-        disk_rates[dev] = (r_rate, w_rate, r2, w2)
-    else:
-        disk_rates[dev] = (0.0, 0.0, r2, w2)
+        if r2 >= r1 and w2 >= w1 and t_disk_elapsed > 0:
+            disk_rates[dev] = ((r2 - r1) / t_disk_elapsed, (w2 - w1) / t_disk_elapsed, r2, w2)
 
 def disk_rate_for_source(source, rates):
     if not source.startswith("/dev/"):
@@ -2982,8 +2993,8 @@ def disk_rate_for_source(source, rates):
 
 for d in disks:
     st = disk_rate_for_source(d["name"], disk_rates)
-    d["read_rate"] = st[0] if st else 0.0
-    d["write_rate"] = st[1] if st else 0.0
+    d["read_rate"] = st[0] if st else None
+    d["write_rate"] = st[1] if st else None
     d["total_read"] = st[2] if st else 0
     d["total_write"] = st[3] if st else 0
 
@@ -2998,25 +3009,22 @@ def is_base_block_device(device):
     except OSError:
         return False
 
-tot_disk_read_rate = 0.0
-tot_disk_write_rate = 0.0
-base_found = False
-for dev, (r_rate, w_rate, _, _) in disk_rates.items():
-    if is_base_block_device(dev):
-        base_found = True
-        tot_disk_read_rate += r_rate
-        tot_disk_write_rate += w_rate
-
 def mounted_disk_totals(mounts, rates):
-    devices = set()
-    for mount in mounts:
-        source = mount["name"]
-        if source.startswith("/dev/"):
-            devices.add(os.path.basename(os.path.realpath(source)))
-    return (sum(rates[device][0] for device in devices if device in rates),
-            sum(rates[device][1] for device in devices if device in rates))
+    devices = {os.path.basename(os.path.realpath(mount["name"]))
+               for mount in mounts if mount["name"].startswith("/dev/")}
+    if not devices or not all(device in rates for device in devices):
+        return None, None
+    return (sum(rates[device][0] for device in devices),
+            sum(rates[device][1] for device in devices))
 
-if not base_found:
+base_devices = [dev for dev in d2 if is_base_block_device(dev)]
+if base_devices:
+    if all(dev in disk_rates for dev in base_devices):
+        tot_disk_read_rate = sum(disk_rates[dev][0] for dev in base_devices)
+        tot_disk_write_rate = sum(disk_rates[dev][1] for dev in base_devices)
+    else:
+        tot_disk_read_rate, tot_disk_write_rate = None, None
+else:
     tot_disk_read_rate, tot_disk_write_rate = mounted_disk_totals(disks, disk_rates)
 
 cpu_usage = None
@@ -3242,8 +3250,8 @@ try:
             except:
                 pass
         st = disk_rates.get(dev_name)
-        r_rate = st[0] if st else 0.0
-        w_rate = st[1] if st else 0.0
+        r_rate = st[0] if st else None
+        w_rate = st[1] if st else None
         phys_disks.append({
             "name": dev_name,
             "model": model,
@@ -3276,8 +3284,8 @@ if not phys_disks and disks:
                 "is_ssd": True,
                 "partition_count": 1,
                 "partitions": [{"name": nm, "partition_num": 1, "size_bytes": d.get("total", 0)}],
-                "read_rate": d.get("read_rate", 0.0),
-                "write_rate": d.get("write_rate", 0.0)
+                "read_rate": d.get("read_rate"),
+                "write_rate": d.get("write_rate")
             })
 
 data = {
@@ -3372,6 +3380,7 @@ print(json.dumps(data))
 
     let total_disk_read_rate_bps = parsed["total_disk_read_rate"].as_f64().unwrap_or(0.0);
     let total_disk_write_rate_bps = parsed["total_disk_write_rate"].as_f64().unwrap_or(0.0);
+    let total_disk_rates_available = parsed["total_disk_read_rate"].as_f64().is_some() && parsed["total_disk_write_rate"].as_f64().is_some();
 
     let mut disks = Vec::new();
     if let Some(arr) = parsed["disks"].as_array() {
@@ -3395,6 +3404,7 @@ print(json.dumps(data))
                 usage_pct: pct,
                 read_rate_bps: r_rate,
                 write_rate_bps: w_rate,
+                disk_rates_available: d["read_rate"].as_f64().is_some() && d["write_rate"].as_f64().is_some(),
                 total_read_bytes: r_total,
                 total_write_bytes: w_total,
             });
@@ -3619,6 +3629,7 @@ print(json.dumps(data))
                 partitions,
                 read_rate_bps,
                 write_rate_bps,
+                disk_rates_available: p["read_rate"].as_f64().is_some() && p["write_rate"].as_f64().is_some(),
             });
         }
     }
@@ -3651,6 +3662,7 @@ print(json.dumps(data))
                     }],
                     read_rate_bps: r_rate,
                     write_rate_bps: w_rate,
+                    disk_rates_available: d.disk_rates_available,
                 });
             }
         }
@@ -3690,6 +3702,7 @@ print(json.dumps(data))
         storage_temp,
         total_disk_read_rate_bps,
         total_disk_write_rate_bps,
+        total_disk_rates_available,
         networks,
         total_rx_rate_bps,
         total_tx_rate_bps,

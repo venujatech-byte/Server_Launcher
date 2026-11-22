@@ -353,6 +353,8 @@ pub struct SystemSensorsCollector {
     last_protected_poll: Instant,
     #[cfg(windows)]
     windows_hardware: SystemSensorsSnapshot,
+    #[cfg(windows)]
+    windows_network_adapters: serde_json::Value,
 }
 
 impl Default for SystemSensorsCollector {
@@ -392,6 +394,8 @@ impl SystemSensorsCollector {
             last_protected_poll: now,
             #[cfg(windows)]
             windows_hardware: SystemSensorsSnapshot::default(),
+            #[cfg(windows)]
+            windows_network_adapters: serde_json::Value::Null,
         }
     }
 
@@ -4009,9 +4013,11 @@ impl SystemSensorsCollector {
         if inventory_due {
             if let Ok(data) = &sample {
                 update_windows_inventory(&mut self.windows_hardware, data);
+                self.windows_network_adapters = data["network_adapters"].clone();
                 let errors: Vec<&str> = ["gpu_error", "ram_error"].iter().filter_map(|key| data[*key].as_str()).collect();
                 self.windows_hardware.windows_telemetry_error = (!errors.is_empty()).then(|| errors.join(" • "));
             } else {
+                self.windows_network_adapters = serde_json::Value::Null;
                 self.windows_hardware.windows_telemetry_error = Some("Hardware inventory refresh failed; previous inventory retained".into());
             }
         }
@@ -4078,7 +4084,7 @@ impl SystemSensorsCollector {
             snap.networks.push(NetInterfaceInfo {
                 name: name.clone(), rx_bytes: rx, tx_bytes: tx,
                 rx_rate_bps: rx_rate, tx_rate_bps: tx_rate,
-                is_wireless: name.to_ascii_lowercase().contains("wi-fi"),
+                is_wireless: windows_is_wireless_interface(name, &self.windows_network_adapters),
             });
         }
         (snap.total_rx_bytes, snap.total_tx_bytes, snap.total_rx_rate_bps, snap.total_tx_rate_bps) = network_totals(&snap.networks);
@@ -4131,6 +4137,7 @@ $result=@{gpu=@();ram=@();battery=@();temp=@()};
 if (__INVENTORY__) {
   try { $result.gpu=@(Get-CimInstance Win32_VideoController -ErrorAction Stop | Select-Object Name,DriverVersion) } catch { $result.gpu_error='GPU inventory unavailable' }
   try { $result.ram=@(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop | Select-Object Manufacturer,Capacity,Speed,SMBIOSMemoryType,FormFactor) } catch { $result.ram_error='RAM inventory unavailable' }
+  try { $result.network_adapters=@(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Select-Object Name,ifType) } catch { $result.network_adapters=$null }
 }
 try { $result.disk=Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -Filter "Name='_Total'" -ErrorAction Stop | Select-Object -First 1 DiskReadBytesPerSec,DiskWriteBytesPerSec } catch { $result.disk=$null }
 try { $result.logical_disks=@(Get-CimInstance Win32_PerfFormattedData_PerfDisk_LogicalDisk -ErrorAction Stop | Select-Object Name,DiskReadBytesPerSec,DiskWriteBytesPerSec) } catch { $result.logical_disks=@() }
@@ -4229,6 +4236,16 @@ fn apply_windows_gpu_sensors(gpus: &mut [GpuSensorInfo], hardware: &serde_json::
         gpu.clock_mhz = metric("Clock", "GPU Core", 0.0, u32::MAX as f64).map(|value| value.round() as u32);
         gpu.power_watts = metric("Power", "GPU Package", 0.0, 1000.0).map(|value| value as f32);
     }
+}
+
+#[cfg(any(windows, test))]
+fn windows_is_wireless_interface(name: &str, adapters: &serde_json::Value) -> bool {
+    let mut matching = adapters.as_array().into_iter().flatten().filter(|adapter| {
+        adapter["Name"].as_str().is_some_and(|alias| alias.eq_ignore_ascii_case(name))
+    });
+    let Some(adapter) = matching.next() else { return false; };
+    // IF_TYPE_IEEE80211; an absent or ambiguous type remains Other.
+    matching.next().is_none() && adapter["ifType"].as_u64() == Some(71)
 }
 
 #[cfg(any(windows, test))]
@@ -4401,6 +4418,19 @@ mod windows_sensor_tests {
         for disk in [serde_json::json!(null), serde_json::json!({"DiskReadBytesPerSec": 1}), serde_json::json!({"DiskReadBytesPerSec": -1, "DiskWriteBytesPerSec": 1})] {
             assert!(!parse_windows_hardware(&serde_json::json!({"disk": disk})).total_disk_rates_available);
         }
+    }
+    #[test]
+    fn wireless_classification_uses_the_reported_type_and_unique_alias() {
+        let adapters = serde_json::json!([
+            {"Name":"Renamed adapter", "ifType":71},
+            {"Name":"Wi-Fi cable", "ifType":6},
+            {"Name":"Duplicate", "ifType":71},
+            {"Name":"duplicate", "ifType":6}
+        ]);
+        assert!(windows_is_wireless_interface("renamed adapter", &adapters));
+        assert!(!windows_is_wireless_interface("Wi-Fi cable", &adapters));
+        assert!(!windows_is_wireless_interface("Duplicate", &adapters));
+        assert!(!windows_is_wireless_interface("Wi-Fi", &serde_json::Value::Null));
     }
     #[test]
     fn logical_disk_rates_match_unique_drive_letters_only() {

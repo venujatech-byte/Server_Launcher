@@ -4548,13 +4548,19 @@ for card in sorted(glob.glob('/sys/class/drm/card[0-9]*')):
             result['notes'].append(node + ': ' + output.stderr.strip())
             continue
         samples = json.loads(output.stdout)
-        sample = next((sample for sample in reversed(samples) if sample.get('engines')), None)
-        if sample is not None:
-            engines = {name: values['busy'] for name, values in sample['engines'].items() if isinstance(values.get('busy'), (float, int)) and math.isfinite(values['busy']) and 0 <= values['busy'] <= 100}
-            gpu_power = sample.get('power', {}).get('GPU')
-            if not isinstance(gpu_power, (float, int)) or not math.isfinite(gpu_power) or gpu_power < 0:
-                gpu_power = None
-            result['gpus'].append({'device': device, 'engines': engines, 'watts': gpu_power})
+        if not isinstance(samples, list):
+            raise ValueError('unexpected GPU sample format')
+        sample = next((sample for sample in reversed(samples) if isinstance(sample, dict) and isinstance(sample.get('engines'), dict)), None)
+        if sample is None:
+            raise ValueError('GPU engine readings unavailable')
+        engines = {name: values['busy'] for name, values in sample['engines'].items() if isinstance(values, dict) and isinstance(values.get('busy'), (float, int)) and math.isfinite(values['busy']) and 0 <= values['busy'] <= 100}
+        power = sample.get('power')
+        gpu_power = power.get('GPU') if isinstance(power, dict) else None
+        if not isinstance(gpu_power, (float, int)) or not math.isfinite(gpu_power) or gpu_power < 0:
+            gpu_power = None
+        if not engines and gpu_power is None:
+            raise ValueError('GPU metrics unavailable')
+        result['gpus'].append({'device': device, 'engines': engines, 'watts': gpu_power})
     except (OSError, ValueError, subprocess.TimeoutExpired) as error:
         result['notes'].append(node + ': ' + str(error))
 

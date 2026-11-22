@@ -51,4 +51,16 @@ with patch('builtins.open',missing_package_open),patch('glob.glob',two_package_g
 result=json.loads(output.getvalue())
 assert result['cpu_watts'] is None, result
 assert any('intel-rapl:1' in note for note in result['notes'])
-print('Hardware probe fixture passed: RAPL delta, partial packages, Intel engines, device identity and RAM metadata.')
+# Malformed GPU output must not discard independently valid CPU and memory data.
+energies=iter(['1000000','2000000'])
+def malformed_gpu_run(args,**kwargs):
+    if args[0] == 'intel_gpu_top':
+        return types.SimpleNamespace(returncode=0, stderr='', stdout='{"engines": {}}')
+    return fake_run(args,**kwargs)
+output=io.StringIO()
+with patch('builtins.open',fake_open),patch('glob.glob',fake_glob),patch('os.path.realpath',fake_path),patch('subprocess.run',malformed_gpu_run),patch('sys.argv',['probe','inventory']),patch('time.monotonic',side_effect=[100.0,100.5,100.5]),patch.dict('os.environ',{},clear=False),contextlib.redirect_stdout(output):
+    exec(compile(script,'hardware-probe','exec'),{})
+result=json.loads(output.getvalue())
+assert result['cpu_watts'] == 2.0 and result['memory'] and not result['gpus']
+assert any('unexpected GPU sample format' in note for note in result['notes'])
+print('Hardware probe fixture passed: CPU packages, GPU samples, device identity and RAM metadata.')

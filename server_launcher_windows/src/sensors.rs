@@ -2470,7 +2470,7 @@ mod remote_sensor_command_tests {
 
 pub fn query_remote_sensors(host: &SshRemoteHost, include_processes: bool, include_process_network: bool) -> Result<SystemSensorsSnapshot, String> {
     let script = r#"python3 -c '
-import os, glob, json, time, sys
+import os, glob, json, time, sys, math
 collect_processes = len(sys.argv) > 1 and sys.argv[1] == "1"
 collect_process_network = collect_processes and len(sys.argv) > 2 and sys.argv[2] == "1"
 
@@ -2785,6 +2785,15 @@ def normalize_pci_address(address):
     except (ValueError, AttributeError):
         return None
 
+def nvidia_number(value, minimum=0.0, maximum=1e12, integer=False):
+    try:
+        number = float(value)
+        if not math.isfinite(number) or not minimum <= number <= maximum:
+            return None
+        return int(number) if integer else number
+    except (ValueError, TypeError, OverflowError):
+        return None
+
 gpus = []
 nvidia_devices = set()
 try:
@@ -2798,14 +2807,14 @@ try:
             gpus.append({
                 "device_path": "pci:" + address if address else "",
                 "name": parts[0],
-                "temp": float(parts[1]) if parts[1] != "[N/A]" else None,
-                "load": float(parts[2]) if parts[2] != "[N/A]" else None,
-                "mem_used": int(float(parts[3])) if parts[3] != "[N/A]" else None,
-                "mem_total": int(float(parts[4])) if parts[4] != "[N/A]" else None,
-                "clock_mhz": int(float(parts[5])) if parts[5] != "[N/A]" else None,
-                "mem_clock_mhz": int(float(parts[6])) if parts[6] != "[N/A]" else None,
-                "power_watts": float(parts[7]) if parts[7] != "[N/A]" else None,
-                "power_limit_watts": float(parts[8]) if parts[8] != "[N/A]" else None,
+                "temp": nvidia_number(parts[1], -40.0, 150.0),
+                "load": nvidia_number(parts[2], 0.0, 100.0),
+                "mem_used": nvidia_number(parts[3], integer=True),
+                "mem_total": nvidia_number(parts[4], integer=True),
+                "clock_mhz": nvidia_number(parts[5], maximum=4294967295, integer=True),
+                "mem_clock_mhz": nvidia_number(parts[6], maximum=4294967295, integer=True),
+                "power_watts": nvidia_number(parts[7]),
+                "power_limit_watts": nvidia_number(parts[8]),
                 "driver": "NVIDIA Proprietary"
             })
 except:

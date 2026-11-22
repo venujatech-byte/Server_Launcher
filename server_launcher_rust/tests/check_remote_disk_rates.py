@@ -1,6 +1,7 @@
 # Check the shared SSH collector's counter and mount handling without hardware access.
 import ast
 import io
+import math
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -27,8 +28,8 @@ assert counters['disk_rates']['busy'][:2] == (1.0, 2.0)
 assert 'reset' not in counters['disk_rates'] and 'new' not in counters['disk_rates']
 
 functions = [n for n in node.body if isinstance(n, ast.FunctionDef)
-             and n.name in {'disk_rate_for_source', 'mounted_disk_totals', 'is_base_block_device', 'read_disk_stats', 'disk_discard_supported', 'disk_bus_interface', 'normalize_pci_address'}]
-env = {'os': os}
+             and n.name in {'disk_rate_for_source', 'mounted_disk_totals', 'is_base_block_device', 'read_disk_stats', 'disk_discard_supported', 'disk_bus_interface', 'normalize_pci_address', 'nvidia_number'}]
+env = {'os': os, 'math': math}
 exec(compile(ast.Module(body=functions, type_ignores=[]), '<disk fixture>', 'exec'), env)
 diskstats = '8 0 sda 1 2 bad 4 5 6 7\n8 16 sdb 1 2 3 4 5 6 7\n'
 with patch('builtins.open', return_value=io.StringIO(diskstats)):
@@ -44,6 +45,11 @@ assert env['normalize_pci_address']('00000000:01:00.0') == '0000:01:00.0'
 assert env['normalize_pci_address']('0000:02:00.0') == '0000:02:00.0'
 assert env['normalize_pci_address']('0000:01:20.0') is None
 assert env['normalize_pci_address']('[N/A]') is None
+assert env['nvidia_number']('0') == 0.0
+assert env['nvidia_number']('[N/A]') is None
+assert env['nvidia_number']('nan') is None
+assert env['nvidia_number']('101', 0.0, 100.0) is None
+assert env['nvidia_number']('512.0', integer=True) == 512
 with patch('builtins.open', return_value=io.StringIO('invalid')):
     assert env['disk_discard_supported']('/disk') is None
 with patch('builtins.open', side_effect=PermissionError):

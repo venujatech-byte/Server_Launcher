@@ -278,6 +278,7 @@ pub struct SystemSensorsSnapshot {
 
     // Network
     pub networks: Vec<NetInterfaceInfo>,
+    pub network_stats_available: bool,
     pub total_rx_rate_bps: f64,
     pub total_tx_rate_bps: f64,
     pub total_rx_bytes: u64,
@@ -640,6 +641,7 @@ impl SystemSensorsCollector {
         self.prev_net_tx.retain(|name, _| self.networks.iter().any(|(current, _)| current == name));
         networks.sort_by(|a, b| a.name.cmp(&b.name));
         let (total_rx_bytes, total_tx_bytes, total_rx_rate_bps, total_tx_rate_bps) = network_totals(&networks);
+        let network_stats_available = !networks.is_empty();
         self.prev_net_time = now;
 
         // 6. Temperature Sensors (sysinfo + hwmon / thermal fallback)
@@ -877,6 +879,7 @@ impl SystemSensorsCollector {
             total_disk_write_rate_bps,
             total_disk_rates_available,
             networks,
+            network_stats_available,
             total_rx_rate_bps,
             total_tx_rate_bps,
             total_rx_bytes,
@@ -2574,7 +2577,7 @@ def read_net_dev():
         with open("/proc/net/dev") as f:
             for line in f:
                 if ":" in line:
-                    p = line.split(":")
+                    p = line.split(":", 1)
                     ifname = p[0].strip()
                     fields = p[1].split()
                     if len(fields) >= 9:
@@ -2583,7 +2586,7 @@ def read_net_dev():
                         nets[ifname] = (rx, tx)
     except:
         pass
-    return nets
+    return nets, bool(nets)
 
 def read_proc_start_marker(pid):
     try:
@@ -2675,7 +2678,7 @@ t_start = time.time()
 c1 = read_cpu_stats()
 d1 = read_disk_stats()
 d1_at = time.monotonic()
-n1 = read_net_dev()
+n1, n1_available = read_net_dev()
 n1_at = time.monotonic()
 init_pids = []
 if collect_processes:
@@ -3111,7 +3114,8 @@ if t_elapsed < 0.12:
 c2 = read_cpu_stats()
 d2 = read_disk_stats()
 d2_at = time.monotonic()
-n2 = read_net_dev()
+n2, n2_available = read_net_dev()
+n_stats_available = n1_available and n2_available
 n2_at = time.monotonic()
 t_disk_elapsed = max(d2_at - d1_at, 0.001)
 t_net_elapsed = max(n2_at - n1_at, 0.001)
@@ -3534,6 +3538,7 @@ data = {
     "temps": temps,
     "gpus": gpus,
     "networks": networks,
+    "network_stats_available": n_stats_available,
     "total_rx_rate": total_rx_rate,
     "total_tx_rate": total_tx_rate,
     "active_sockets": active_sockets,
@@ -3787,6 +3792,8 @@ print(json.dumps(data))
             ipv6: parse_network_address(&n["ipv6"], false),
         });
     }
+    let network_stats_available = parsed["network_stats_available"].as_bool() == Some(true)
+        && (interfaces.is_empty() || networks.len() == interfaces.len());
 
     let (total_rx_bytes, total_tx_bytes, total_rx_rate_bps, total_tx_rate_bps) = network_totals(&networks);
 
@@ -3951,6 +3958,7 @@ print(json.dumps(data))
         total_disk_write_rate_bps,
         total_disk_rates_available,
         networks,
+        network_stats_available,
         total_rx_rate_bps,
         total_tx_rate_bps,
         total_rx_bytes,

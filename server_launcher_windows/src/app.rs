@@ -4681,6 +4681,14 @@ fn format_uptime_hms(secs: u64) -> String {
     format!("{}:{:02}:{:02}", hours, mins, s)
 }
 
+fn sensor_network_rate(snap: &crate::sensors::SystemSensorsSnapshot, value: f64) -> String {
+    if snap.network_stats_available { crate::sensors::format_rate(value) } else { "—".to_string() }
+}
+
+fn sensor_network_bytes(snap: &crate::sensors::SystemSensorsSnapshot, value: u64) -> String {
+    if snap.network_stats_available { crate::sensors::format_bytes(value) } else { "—".to_string() }
+}
+
 #[inline]
 fn accent_with_alpha(color: Color32, alpha: u8) -> Color32 {
     Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
@@ -11108,11 +11116,13 @@ impl LauncherApp {
                 }
             }
 
-            let cur_tx_mb = (snap.total_tx_rate_bps / 1_000_000.0) as f32;
-            push_telemetry(&mut self.net_tx_history, cur_tx_mb, history_capacity);
-
-            let cur_rx_mb = (snap.total_rx_rate_bps / 1_000_000.0) as f32;
-            push_telemetry(&mut self.net_rx_history, cur_rx_mb, history_capacity);
+            if snap.network_stats_available {
+                push_telemetry(&mut self.net_tx_history, (snap.total_tx_rate_bps / 1_000_000.0) as f32, history_capacity);
+                push_telemetry(&mut self.net_rx_history, (snap.total_rx_rate_bps / 1_000_000.0) as f32, history_capacity);
+            } else {
+                self.net_tx_history.clear();
+                self.net_rx_history.clear();
+            }
 
             self.net_peak_mb = self.net_tx_history.iter().chain(&self.net_rx_history)
                 .copied().fold(0.0_f32, f32::max);
@@ -11402,14 +11412,14 @@ impl LauncherApp {
                                         ui.label(RichText::new("OVERALL SPEED").size(11.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                                         ui.add_space(2.0);
                                         let scope = if cfg!(windows) && host_id.is_none() { "Reported interfaces" } else { "All interfaces" };
-                                        let peak_str = if self.net_tx_history.is_empty() { format!("{scope} · collecting") } else { format!("{scope} · peak {:.2} MB/s", self.net_peak_mb) };
+                                        let peak_str = if !snap.network_stats_available { "Network counters unavailable".to_string() } else if self.net_tx_history.is_empty() { format!("{scope} · collecting") } else { format!("{scope} · peak {:.2} MB/s", self.net_peak_mb) };
                                         ui.label(RichText::new(peak_str).size(9.5).color(p.text_muted));
                                     });
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 12.0;
-                                            let rx_str = crate::sensors::format_rate(snap.total_rx_rate_bps);
-                                            let tx_str = crate::sensors::format_rate(snap.total_tx_rate_bps);
+                                            let rx_str = sensor_network_rate(&snap, snap.total_rx_rate_bps);
+                                            let tx_str = sensor_network_rate(&snap, snap.total_tx_rate_bps);
                                             ui.horizontal(|ui| {
                                                 ui.label(RichText::new(crate::lucide::ARROW_DOWN).size(11.0).color(Color32::from_rgb(148, 163, 184)));
                                                 ui.label(RichText::new("Down").size(10.0).color(Color32::from_rgb(148, 163, 184)));
@@ -11425,6 +11435,9 @@ impl LauncherApp {
                                 });
 
                                 ui.add_space(10.0);
+                                if !snap.network_stats_available {
+                                    ui.label(RichText::new("Network counters unavailable").size(9.5).color(p.text_muted));
+                                }
                                 draw_dual_network_chart(ui, 130.0, &self.net_tx_history, &self.net_rx_history, self.net_peak_mb, accent);
 
                                 ui.add_space(10.0);
@@ -11436,13 +11449,13 @@ impl LauncherApp {
                                     fcols[0].vertical(|ui| {
                                         ui.label(RichText::new("SENT").size(8.5).monospace().color(p.text_muted));
                                         ui.add_space(2.0);
-                                        let sent_str = crate::sensors::format_bytes(snap.total_tx_bytes);
+                                        let sent_str = sensor_network_bytes(&snap, snap.total_tx_bytes);
                                         ui.label(RichText::new(sent_str).size(15.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                     });
                                     fcols[1].vertical(|ui| {
                                         ui.label(RichText::new("RECEIVED").size(8.5).monospace().color(p.text_muted));
                                         ui.add_space(2.0);
-                                        let recv_str = crate::sensors::format_bytes(snap.total_rx_bytes);
+                                        let recv_str = sensor_network_bytes(&snap, snap.total_rx_bytes);
                                         ui.label(RichText::new(recv_str).size(15.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                     });
                                     fcols[2].vertical(|ui| {
@@ -14124,7 +14137,7 @@ impl LauncherApp {
                             // Row 4: Device and hardware metadata spanning the full card width underneath (wrapped, never overlaps)
                             ui.horizontal_wrapped(|ui| {
                                 if is_remote {
-                                    ui.label(RichText::new(format!("All interfaces: {:.2} GB In • {:.2} GB Out", snap.total_rx_bytes as f64 / 1e9, snap.total_tx_bytes as f64 / 1e9)).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                    ui.label(RichText::new(if snap.network_stats_available { format!("All interfaces: {:.2} GB In • {:.2} GB Out", snap.total_rx_bytes as f64 / 1e9, snap.total_tx_bytes as f64 / 1e9) } else { "Network counters unavailable".to_string() }).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                                 } else {
                                     ui.label(RichText::new(format!("{} • MAC: {}", wifi_snap.product, wifi_snap.mac_address)).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                                 }
@@ -14188,7 +14201,7 @@ impl LauncherApp {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                                 ui.painter().circle_filled(d_rect.center(), 2.8, Color32::from_rgb(148, 163, 184));
-                                                ui.label(RichText::new(format!("TX: {}", crate::sensors::format_rate(disp_tx_bps))).size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                                ui.label(RichText::new(format!("TX: {}", sensor_network_rate(snap, disp_tx_bps))).size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
                                             });
 
                                             // RX indicator
@@ -14196,7 +14209,7 @@ impl LauncherApp {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                                 ui.painter().circle_filled(d_rect.center(), 2.8, accent);
-                                                ui.label(RichText::new(format!("RX: {}", crate::sensors::format_rate(disp_rx_bps))).size(9.5).monospace().color(Color32::from_rgb(226, 232, 240)));
+                                                ui.label(RichText::new(format!("RX: {}", sensor_network_rate(snap, disp_rx_bps))).size(9.5).monospace().color(Color32::from_rgb(226, 232, 240)));
                                             });
                                         });
                                     });
@@ -14208,12 +14221,12 @@ impl LauncherApp {
                                 ui.add_space(8.0);
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
-                                    let rx_rate = crate::sensors::format_rate(disp_rx_bps);
-                                    let tx_rate = crate::sensors::format_rate(disp_tx_bps);
+                                    let rx_rate = sensor_network_rate(snap, disp_rx_bps);
+                                    let tx_rate = sensor_network_rate(snap, disp_tx_bps);
                                     let badges = [
                                         (format!("RX: {}", rx_rate), Color32::from_rgb(226, 232, 240)),
                                         (format!("TX: {}", tx_rate), Color32::from_rgb(203, 213, 225)),
-                                        (format!("Peak: {:.2} MB/s", self.net_peak_mb.max((disp_rx_bps / 1_000_000.0) as f32)), Color32::from_rgb(203, 213, 225)),
+                                        (if snap.network_stats_available { format!("Peak: {:.2} MB/s", self.net_peak_mb.max((disp_rx_bps / 1_000_000.0) as f32)) } else { "Network counters unavailable".to_string() }, Color32::from_rgb(203, 213, 225)),
                                     ];
                                     for (txt, col) in badges {
                                         Frame::none()
@@ -14362,13 +14375,13 @@ impl LauncherApp {
                 sensor_card_columns(ui, 4, |ui, column| match column {
                     0 => {
                     // Card 1: BYTES SENT
-                    let egress_sub = "All interfaces • since boot";
+                    let egress_sub = if snap.network_stats_available { "All interfaces • since boot" } else { "Network counters unavailable" };
                     render_big_stat_card(
                         ui,
                         crate::lucide::UPLOAD,
                         "BYTES SENT",
-                        &format!("{:.2}", tx_gb),
-                        "GB",
+                        &if snap.network_stats_available { format!("{:.2}", tx_gb) } else { "—".to_string() },
+                        if snap.network_stats_available { "GB" } else { "" },
                         &egress_sub,
                         "",
                         "",
@@ -14383,13 +14396,13 @@ impl LauncherApp {
                     },
                     1 => {
                     // Card 2: BYTES RECV
-                    let ingress_sub = "All interfaces • since boot";
+                    let ingress_sub = if snap.network_stats_available { "All interfaces • since boot" } else { "Network counters unavailable" };
                     render_big_stat_card(
                         ui,
                         crate::lucide::DOWNLOAD,
                         "BYTES RECV",
-                        &format!("{:.2}", rx_gb),
-                        "GB",
+                        &if snap.network_stats_available { format!("{:.2}", rx_gb) } else { "—".to_string() },
+                        if snap.network_stats_available { "GB" } else { "" },
                         &ingress_sub,
                         "",
                         "",
@@ -14943,7 +14956,7 @@ impl LauncherApp {
                                 );
                             });
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new(format!("{} interfaces", interfaces.len())).size(10.5).color(p.text_secondary));
+                                ui.label(RichText::new(if snap.network_stats_available { format!("{} interfaces", interfaces.len()) } else { "Interface counters unavailable".to_string() }).size(10.5).color(p.text_secondary));
                             });
                         });
                     });
@@ -14959,10 +14972,10 @@ impl LauncherApp {
                     .show(ui, |ui| {
                         ui.columns(4, |cols| {
                             for (column, label, value, detail) in [
-                                (0, "Received", crate::sensors::format_bytes(snap.total_rx_bytes), crate::sensors::format_rate(snap.total_rx_rate_bps)),
-                                (1, "Sent", crate::sensors::format_bytes(snap.total_tx_bytes), crate::sensors::format_rate(snap.total_tx_rate_bps)),
-                                (2, "Live rate", crate::sensors::format_rate(snap.total_rx_rate_bps + snap.total_tx_rate_bps), "RX + TX".to_string()),
-                                (3, "Active", interfaces.iter().filter(|net| net.rx_rate_bps > 0.0 || net.tx_rate_bps > 0.0).count().to_string(), "interfaces with traffic".to_string()),
+                                (0, "Received", sensor_network_bytes(snap, snap.total_rx_bytes), sensor_network_rate(snap, snap.total_rx_rate_bps)),
+                                (1, "Sent", sensor_network_bytes(snap, snap.total_tx_bytes), sensor_network_rate(snap, snap.total_tx_rate_bps)),
+                                (2, "Live rate", sensor_network_rate(snap, snap.total_rx_rate_bps + snap.total_tx_rate_bps), if snap.network_stats_available { "RX + TX".to_string() } else { "Unavailable".to_string() }),
+                                (3, "Active", if snap.network_stats_available { interfaces.iter().filter(|net| net.rx_rate_bps > 0.0 || net.tx_rate_bps > 0.0).count().to_string() } else { "—".to_string() }, if snap.network_stats_available { "interfaces with traffic".to_string() } else { "Unavailable".to_string() }),
                             ] {
                                 cols[column].vertical(|ui| {
                                     ui.label(RichText::new(label).size(10.5).color(p.text_muted));
@@ -14984,6 +14997,10 @@ impl LauncherApp {
                         ui.label(RichText::new("Interfaces").size(14.0).strong().color(p.text_primary));
                         ui.add_space(8.0);
 
+                        if !snap.network_stats_available {
+                            ui.label(RichText::new("Interface counters unavailable from this host.").size(11.0).color(p.text_muted));
+                            return;
+                        }
                         if interfaces.is_empty() {
                             ui.label(RichText::new("No network interface counters were reported.").size(11.0).color(p.text_muted));
                             return;
@@ -17185,7 +17202,7 @@ impl LauncherApp {
                             (COL_CPU_W, "CPU", "cpu", snap.cpu_usage_available.then(|| format!("{:.0}%", snap.cpu_global_usage)).unwrap_or_else(|| "—".to_string())),
                             (COL_MEM_W, "Memory", "mem", format!("{:.0}%", mem_total_pct)),
                             (COL_DISK_W, "Disk", "disk", snap.total_disk_rates_available.then(|| format_tm_disk(total_disk_mb_s * 1024.0 * 1024.0)).unwrap_or_else(|| "—".to_string())),
-                            (COL_NET_W, "Network", "net", crate::sensors::format_rate(snap.total_rx_rate_bps + snap.total_tx_rate_bps)),
+                            (COL_NET_W, "Network", "net", sensor_network_rate(snap, snap.total_rx_rate_bps + snap.total_tx_rate_bps)),
                             (COL_GPU_W, "GPU", "gpu", total_gpu_pct.map(|v| format!("{v:.0}%")).unwrap_or_else(|| "—".to_string())),
                             (COL_POWER_W, "Power", "power", "—".to_string()),
                         ] {

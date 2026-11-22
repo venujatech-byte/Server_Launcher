@@ -4394,6 +4394,20 @@ fn update_windows_inventory(cached: &mut SystemSensorsSnapshot, data: &serde_jso
 }
 
 #[cfg(any(windows, test))]
+fn windows_battery_status(value: Option<u64>) -> &'static str {
+    match value {
+        Some(1) => "Discharging",
+        Some(2) => "AC connected",
+        Some(3) => "Fully charged",
+        Some(4) => "Low",
+        Some(5) => "Critical",
+        Some(6..=9) => "Charging",
+        Some(11) => "Partially charged",
+        _ => "Unknown",
+    }
+}
+
+#[cfg(any(windows, test))]
 fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
     let mut snap = SystemSensorsSnapshot::default();
     if let (Some(read), Some(write)) = (
@@ -4436,7 +4450,7 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
             snap.power.batteries.push(BatteryInfo {
                 name: b["Name"].as_str().unwrap_or("Battery").into(), present: true,
                 capacity_pct: percent.map(|value| value as f32),
-                status: match b["BatteryStatus"].as_u64() { Some(1) => "Discharging", Some(2) => "AC connected", Some(3) => "Fully charged", _ => "Unknown" }.into(),
+                status: windows_battery_status(b["BatteryStatus"].as_u64()).into(),
                 ..Default::default()
             });
         }
@@ -4477,6 +4491,17 @@ mod windows_sensor_tests {
         update_windows_inventory(&mut cached, &serde_json::json!({"gpu":[]}));
         assert!(cached.gpus.is_empty());
     }
+    #[test]
+    fn windows_battery_status_preserves_ac_and_charge_states() {
+        for code in 6..=9 { assert_eq!(windows_battery_status(Some(code)), "Charging"); }
+        assert_eq!(windows_battery_status(Some(2)), "AC connected");
+        assert_eq!(windows_battery_status(Some(4)), "Low");
+        assert_eq!(windows_battery_status(Some(5)), "Critical");
+        assert_eq!(windows_battery_status(Some(11)), "Partially charged");
+        assert_eq!(windows_battery_status(Some(10)), "Unknown");
+        assert_eq!(windows_battery_status(None), "Unknown");
+    }
+
     #[test]
     fn cpu_package_readings_require_a_unique_cpu_and_matching_sensor() {
         let hardware = serde_json::json!([{"Identifier":"/cpu/0", "HardwareType":"Cpu"}]);

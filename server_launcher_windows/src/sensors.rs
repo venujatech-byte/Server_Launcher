@@ -4151,6 +4151,7 @@ impl SystemSensorsCollector {
                 snap.windows_telemetry_error = Some(error.clone());
             }
         }
+        snap.power.ac_online = windows_ac_online();
         snap.cpu_brand = self.sys.cpus().first().map(|c| c.brand().to_owned()).unwrap_or_default();
         snap.cpu_cores_physical = self.sys.physical_core_count().unwrap_or(0);
         snap.cpu_cores_logical = self.sys.cpus().len();
@@ -4425,6 +4426,44 @@ fn clear_windows_live_hardware_readings(snapshot: &mut SystemSensorsSnapshot) {
     }
 }
 
+#[cfg(windows)]
+#[repr(C)]
+struct WindowsPowerStatus {
+    ac_line_status: u8,
+    battery_flag: u8,
+    battery_life_percent: u8,
+    reserved: u8,
+    battery_life_time: u32,
+    battery_full_life_time: u32,
+}
+
+#[cfg(windows)]
+fn windows_ac_online() -> Option<bool> {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetSystemPowerStatus(status: *mut WindowsPowerStatus) -> i32;
+    }
+    let mut status = WindowsPowerStatus {
+        ac_line_status: 255,
+        battery_flag: 255,
+        battery_life_percent: 255,
+        reserved: 0,
+        battery_life_time: u32::MAX,
+        battery_full_life_time: u32::MAX,
+    };
+    if unsafe { GetSystemPowerStatus(&mut status) } == 0 { return None; }
+    windows_ac_line_status(status.ac_line_status)
+}
+
+#[cfg(any(windows, test))]
+fn windows_ac_line_status(value: u8) -> Option<bool> {
+    match value {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+    }
+}
+
 #[cfg(any(windows, test))]
 fn windows_battery_status(value: Option<u64>) -> &'static str {
     match value {
@@ -4546,6 +4585,13 @@ mod windows_sensor_tests {
         assert!(!snapshot.physical_disks[0].disk_rates_available);
         assert!(snapshot.temp_sensors.is_empty());
         assert!(!snapshot.total_disk_rates_available);
+    }
+    #[test]
+    fn windows_ac_line_status_keeps_unknown_distinct_from_offline() {
+        assert_eq!(windows_ac_line_status(0), Some(false));
+        assert_eq!(windows_ac_line_status(1), Some(true));
+        assert_eq!(windows_ac_line_status(255), None);
+        assert_eq!(windows_ac_line_status(2), None);
     }
     #[test]
     fn windows_battery_status_preserves_ac_and_charge_states() {

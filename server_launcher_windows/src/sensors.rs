@@ -4500,18 +4500,23 @@ fn apply_windows_gpu_engine_counters(gpus: &mut [GpuSensorInfo], counters: &serd
     // GPU Engine instance names contain adapter LUIDs, but Win32_VideoController does not expose a safe matching key.
     let [gpu] = gpus else { return; };
     let Some(counters) = counters.as_array() else { return; };
-    let mut loads = std::collections::BTreeMap::<String, f32>::new();
+    let mut engines = std::collections::BTreeMap::<(String, String), f32>::new();
     for counter in counters {
         let Some(name) = counter["Name"].as_str() else { continue; };
-        let Some((_, kind)) = name.rsplit_once("_engtype_") else { continue; };
+        let Some((prefix, kind)) = name.rsplit_once("_engtype_") else { continue; };
         let Some(kind) = kind.split('_').next().filter(|kind| !kind.is_empty()) else { continue; };
+        let Some((_, adapter_engine)) = prefix.split_once("_luid_") else { continue; };
+        let Some((adapter, engine)) = adapter_engine.rsplit_once("_eng_") else { continue; };
         let Some(value) = counter["UtilizationPercentage"].as_f64()
             .filter(|value| value.is_finite() && (0.0..=100.0).contains(value)) else { continue; };
-        let label = format!("{kind} peak instance");
-        let load = loads.entry(label).or_default();
-        *load = load.max(value as f32);
+        let load = engines.entry((format!("{adapter}_eng_{engine}"), kind.to_owned())).or_default();
+        *load = (*load + value as f32).min(100.0);
     }
-    gpu.engine_loads = loads.into_iter().collect();
+    let mut peaks = std::collections::BTreeMap::<String, f32>::new();
+    for ((_, kind), load) in engines {
+        peaks.entry(kind).and_modify(|peak| *peak = peak.max(load)).or_insert(load);
+    }
+    gpu.engine_loads = peaks.into_iter().map(|(kind, load)| (format!("{kind} busiest engine"), load)).collect();
 }
 
 #[cfg(any(windows, test))]
@@ -4863,12 +4868,15 @@ mod windows_sensor_tests {
         let counters = serde_json::json!([
             {"Name":"pid_1_luid_0x1_phys_0_eng_0_engtype_3D", "UtilizationPercentage":12.5},
             {"Name":"pid_2_luid_0x1_phys_0_eng_0_engtype_3D", "UtilizationPercentage":18.0},
+            {"Name":"pid_3_luid_0x1_phys_0_eng_1_engtype_3D", "UtilizationPercentage":25.0},
+            {"Name":"pid_4_luid_0x1_phys_0_eng_2_engtype_Copy", "UtilizationPercentage":80.0},
+            {"Name":"pid_5_luid_0x1_phys_0_eng_2_engtype_Copy", "UtilizationPercentage":55.0},
             {"Name":"pid_1_luid_0x1_phys_0_eng_1_engtype_Copy", "UtilizationPercentage":101.0},
             {"Name":"bad-instance", "UtilizationPercentage":80.0}
         ]);
         let mut gpus = vec![GpuSensorInfo { name: "GPU".into(), load_pct: Some(90.0), engine_loads: vec![("stale".into(), 1.0)], ..Default::default() }];
         apply_windows_gpu_engine_counters(&mut gpus, &counters);
-        assert_eq!(gpus[0].engine_loads, vec![("3D peak instance".into(), 18.0)]);
+        assert_eq!(gpus[0].engine_loads, vec![("3D busiest engine".into(), 30.5), ("Copy busiest engine".into(), 100.0)]);
         assert_eq!(gpus[0].load_pct, Some(90.0));
 
         gpus.push(GpuSensorInfo { name: "Other GPU".into(), ..Default::default() });

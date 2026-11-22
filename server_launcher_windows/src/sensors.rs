@@ -4146,7 +4146,10 @@ impl SystemSensorsCollector {
                 errors.extend(["battery_error", "temp_error"].iter().filter_map(|key| data[*key].as_str()).map(str::to_owned));
                 snap.windows_telemetry_error = (!errors.is_empty()).then(|| errors.join(" • "));
             }
-            Err(error) => { snap.windows_telemetry_error = Some(error.clone()); }
+            Err(error) => {
+                clear_windows_live_hardware_readings(&mut snap);
+                snap.windows_telemetry_error = Some(error.clone());
+            }
         }
         snap.cpu_brand = self.sys.cpus().first().map(|c| c.brand().to_owned()).unwrap_or_default();
         snap.cpu_cores_physical = self.sys.physical_core_count().unwrap_or(0);
@@ -4394,6 +4397,35 @@ fn update_windows_inventory(cached: &mut SystemSensorsSnapshot, data: &serde_jso
 }
 
 #[cfg(any(windows, test))]
+fn clear_windows_live_hardware_readings(snapshot: &mut SystemSensorsSnapshot) {
+    snapshot.cpu_power_watts = None;
+    snapshot.cpu_temp = None;
+    snapshot.ram_temp = None;
+    snapshot.storage_temp = None;
+    snapshot.temp_sensors.clear();
+    snapshot.power = PowerSupplyInfo::default();
+    snapshot.total_disk_read_rate_bps = 0.0;
+    snapshot.total_disk_write_rate_bps = 0.0;
+    snapshot.total_disk_rates_available = false;
+    for gpu in &mut snapshot.gpus {
+        gpu.load_pct = None;
+        gpu.temp = None;
+        gpu.mem_used_mb = None;
+        gpu.mem_total_mb = None;
+        gpu.clock_mhz = None;
+        gpu.mem_clock_mhz = None;
+        gpu.power_watts = None;
+        gpu.power_limit_watts = None;
+        gpu.engine_loads.clear();
+    }
+    for disk in &mut snapshot.physical_disks {
+        disk.read_rate_bps = 0.0;
+        disk.write_rate_bps = 0.0;
+        disk.disk_rates_available = false;
+    }
+}
+
+#[cfg(any(windows, test))]
 fn windows_battery_status(value: Option<u64>) -> &'static str {
     match value {
         Some(1) => "Discharging",
@@ -4490,6 +4522,30 @@ mod windows_sensor_tests {
         assert_eq!(cached.gpus[0].name, "Existing GPU");
         update_windows_inventory(&mut cached, &serde_json::json!({"gpu":[]}));
         assert!(cached.gpus.is_empty());
+    }
+    #[test]
+    fn failed_live_query_clears_measurements_but_keeps_device_inventory() {
+        let mut snapshot = SystemSensorsSnapshot {
+            cpu_temp: Some(65.0),
+            cpu_power_watts: Some(12.0),
+            power: PowerSupplyInfo { ac_online: Some(true), ..Default::default() },
+            total_disk_rates_available: true,
+            ..Default::default()
+        };
+        snapshot.gpus.push(GpuSensorInfo { name: "GPU".into(), load_pct: Some(40.0), temp: Some(70.0), ..Default::default() });
+        snapshot.physical_disks.push(PhysicalDiskInfo { name: "Disk 0".into(), read_rate_bps: 10.0, disk_rates_available: true, ..Default::default() });
+        snapshot.temp_sensors.push(TempSensor { name: "CPU Package".into(), temp: 65.0, ..Default::default() });
+
+        clear_windows_live_hardware_readings(&mut snapshot);
+
+        assert_eq!(snapshot.gpus[0].name, "GPU");
+        assert_eq!(snapshot.physical_disks[0].name, "Disk 0");
+        assert!(snapshot.cpu_temp.is_none() && snapshot.cpu_power_watts.is_none());
+        assert!(snapshot.power.ac_online.is_none());
+        assert!(snapshot.gpus[0].load_pct.is_none() && snapshot.gpus[0].temp.is_none());
+        assert!(!snapshot.physical_disks[0].disk_rates_available);
+        assert!(snapshot.temp_sensors.is_empty());
+        assert!(!snapshot.total_disk_rates_available);
     }
     #[test]
     fn windows_battery_status_preserves_ac_and_charge_states() {

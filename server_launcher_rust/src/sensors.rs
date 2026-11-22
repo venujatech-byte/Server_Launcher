@@ -1872,7 +1872,11 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
     }
 }
 
-static HAS_NVIDIA_SMI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static NVIDIA_SMI_LAST_FAILURE: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+
+fn nvidia_probe_due(last_failure: Option<Instant>, now: Instant) -> bool {
+    last_failure.is_none_or(|last| now.saturating_duration_since(last) >= Duration::from_secs(30))
+}
 
 fn normalize_pci_address(address: &str) -> Option<String> {
     let (domain, rest) = address.trim().split_once(':')?;
@@ -1885,6 +1889,13 @@ fn normalize_pci_address(address: &str) -> Option<String> {
 
 #[cfg(test)]
 mod gpu_pci_address_tests {
+    #[test]
+    fn nvidia_probe_retries_after_a_cooldown() {
+        let now = std::time::Instant::now();
+        assert!(super::nvidia_probe_due(None, now));
+        assert!(!super::nvidia_probe_due(Some(now), now + std::time::Duration::from_secs(29)));
+        assert!(super::nvidia_probe_due(Some(now), now + std::time::Duration::from_secs(30)));
+    }
     #[test]
     fn normalizes_nvidia_and_linux_addresses_without_conflating_devices() {
         assert_eq!(super::normalize_pci_address("00000000:01:00.0"), Some("0000:01:00.0".into()));
@@ -1899,7 +1910,7 @@ fn detect_gpus() -> Vec<GpuSensorInfo> {
     let mut nvidia_devices = std::collections::HashSet::new();
 
     // 1. Check NVIDIA via nvidia-smi if available
-    if HAS_NVIDIA_SMI.load(std::sync::atomic::Ordering::Relaxed) {
+    if NVIDIA_SMI_LAST_FAILURE.lock().map(|last| nvidia_probe_due(*last, Instant::now())).unwrap_or(true) {
         let nvidia_out = Command::new("nvidia-smi")
             .args([
                 "--query-gpu=name,temperature.gpu,utilization.gpu,utilization.memory,memory.used,memory.total,clocks.current.graphics,clocks.current.memory,power.draw,power.limit,pci.bus_id",
@@ -1909,6 +1920,7 @@ fn detect_gpus() -> Vec<GpuSensorInfo> {
 
         match nvidia_out {
             Ok(out) if out.status.success() => {
+                if let Ok(mut last) = NVIDIA_SMI_LAST_FAILURE.lock() { *last = None; }
                 let stdout = String::from_utf8_lossy(&out.stdout);
                 for line in stdout.lines() {
                     let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
@@ -1941,7 +1953,7 @@ fn detect_gpus() -> Vec<GpuSensorInfo> {
                 }
             }
             _ => {
-                HAS_NVIDIA_SMI.store(false, std::sync::atomic::Ordering::Relaxed);
+                if let Ok(mut last) = NVIDIA_SMI_LAST_FAILURE.lock() { *last = Some(Instant::now()); }
             }
         }
     }

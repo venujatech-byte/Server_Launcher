@@ -2999,7 +2999,7 @@ for d in disks:
     d["total_write"] = st[3] if st else 0
 
 def is_base_block_device(device):
-    if device.startswith(("loop", "ram", "zram", "dm-")):
+    if device.startswith(("loop", "ram", "zram", "dm-", "nbd", "sr")) or (device.startswith("mmcblk") and "boot" in device):
         return False
     path = "/sys/class/block/" + device
     if not os.path.isdir(path) or os.path.exists(path + "/partition"):
@@ -3208,14 +3208,8 @@ phys_disks = []
 try:
     for dev in sorted(glob.glob("/sys/block/*")):
         dev_name = os.path.basename(dev)
-        if dev_name.startswith(("loop", "ram", "zram", "dm-")):
+        if not is_base_block_device(dev_name):
             continue
-        if any(dev_name.startswith(pfx) for pfx in ["sd", "vd", "hd", "xvd"]):
-            if dev_name[-1].isdigit():
-                continue
-        elif dev_name.startswith(("nvme", "mmcblk")):
-            if "p" in dev_name:
-                continue
         sz = 0
         try:
             sz = int(open(dev + "/size").read().strip()) * 512

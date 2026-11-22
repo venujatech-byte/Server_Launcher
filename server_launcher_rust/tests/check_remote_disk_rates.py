@@ -2,6 +2,7 @@
 import ast
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 workspace = Path(__file__).resolve().parents[2]
 
@@ -25,7 +26,7 @@ assert counters['disk_rates']['busy'][:2] == (1.0, 2.0)
 assert 'reset' not in counters['disk_rates'] and 'new' not in counters['disk_rates']
 
 functions = [n for n in node.body if isinstance(n, ast.FunctionDef)
-             and n.name in {'disk_rate_for_source', 'mounted_disk_totals'}]
+             and n.name in {'disk_rate_for_source', 'mounted_disk_totals', 'is_base_block_device'}]
 env = {'os': os}
 exec(compile(ast.Module(body=functions, type_ignores=[]), '<disk fixture>', 'exec'), env)
 rates = {'sda1': (0.0, 0.0, 1, 2), 'sdb1': (3.0, 4.0, 1, 2)}
@@ -35,6 +36,12 @@ assert env['mounted_disk_totals'](mounts, {'sda1': rates['sda1']}) == (None, Non
 assert env['mounted_disk_totals']([], rates) == (None, None)
 assert env['disk_rate_for_source']('/dev/sda1', rates) == rates['sda1']
 assert env['disk_rate_for_source']('tmpfs', rates) is None
+with patch('os.path.isdir', return_value=True), patch('os.path.exists', return_value=False), \
+     patch('os.listdir', side_effect=lambda path: ['sda', 'sdb'] if '/md0/' in path else []):
+    assert env['is_base_block_device']('sda')
+    assert not env['is_base_block_device']('md0')
+    assert not env['is_base_block_device']('nbd0')
+    assert not env['is_base_block_device']('mmcblk0boot0')
 # A mounted volume alone must never be invented as a physical SSD or partition.
 inventory_start = script.index('phys_disks = []\ntry:')
 inventory_end = script.index('\ndata = {', inventory_start)

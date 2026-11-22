@@ -4242,7 +4242,19 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
     if let Some(ram) = data["ram"].as_array().filter(|r| !r.is_empty()) {
         snap.memory_hw = Some(MemoryHardwareInfo {
             slot_summary: format!("{} populated modules", ram.len()),
-            module_spec: ram.iter().map(|r| format!("{} · {} MHz · {}", r["Manufacturer"].as_str().unwrap_or("Unknown"), r["Speed"], format_bytes(r["Capacity"].as_u64().unwrap_or(0)))).collect::<Vec<_>>().join("; "),
+            module_spec: ram.iter().map(|module| {
+                let mut details = Vec::new();
+                if let Some(manufacturer) = module["Manufacturer"].as_str().map(str::trim).filter(|value| !value.is_empty()) {
+                    details.push(manufacturer.to_string());
+                }
+                if let Some(speed) = module["Speed"].as_u64().filter(|value| *value > 0) {
+                    details.push(format!("{speed} MHz"));
+                }
+                if let Some(capacity) = module["Capacity"].as_u64().filter(|value| *value > 0) {
+                    details.push(format_bytes(capacity));
+                }
+                if details.is_empty() { "Module details unavailable".to_string() } else { details.join(" · ") }
+            }).collect::<Vec<_>>().join("; "),
             ..Default::default()
         });
     }
@@ -4332,6 +4344,18 @@ mod windows_sensor_tests {
         assert!(!disks[1].disk_rates_available && !disks[2].disk_rates_available);
         apply_windows_volume_rates(&mut disks, &serde_json::Value::Null);
         assert!(!disks[0].disk_rates_available);
+    }
+    #[test]
+    fn memory_inventory_omits_missing_module_fields() {
+        let snap = parse_windows_hardware(&serde_json::json!({"ram": [
+            {"Manufacturer": "Example", "Speed": 3200, "Capacity": 8589934592_u64},
+            {"Manufacturer": "", "Speed": null, "Capacity": 0}
+        ]}));
+        let memory = snap.memory_hw.unwrap();
+        assert_eq!(memory.slot_summary, "2 populated modules");
+        assert!(memory.module_spec.contains("Example · 3200 MHz"));
+        assert!(memory.module_spec.contains("Module details unavailable"));
+        assert!(!memory.module_spec.contains("null MHz") && !memory.module_spec.contains("0 B"));
     }
     #[test]
     fn live_battery_samples_are_independent_of_inventory() {

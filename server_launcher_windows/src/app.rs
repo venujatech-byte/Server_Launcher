@@ -13735,14 +13735,12 @@ impl LauncherApp {
                             });
                             ui.add_space(4.0);
                             let t = snap.storage_temp.unwrap_or(f32::NAN);
-                            let (st_label, st_col) = if !t.is_finite() {
-                                ("Unavailable", p.text_muted)
-                            } else if t < 55.0 {
-                                ("Optimal State", accent)
-                            } else if t < 70.0 {
-                                ("Normal State", Color32::from_rgb(234, 179, 8))
-                            } else {
-                                ("Thermal Warning", Color32::from_rgb(239, 68, 68))
+                            let limit = matching_temperature_limit(&snap.temp_sensors, crate::sensors::SensorCategory::Storage, t);
+                            let (st_label, st_col) = match (t.is_finite(), limit) {
+                                (false, _) => ("Unavailable", p.text_muted),
+                                (true, Some(limit)) if t >= limit => ("At reported limit", Color32::from_rgb(239, 68, 68)),
+                                (true, Some(_)) => ("Below reported limit", accent),
+                                (true, None) => ("No limit reported", p.text_muted),
                             };
 
                             ui.horizontal(|ui| {

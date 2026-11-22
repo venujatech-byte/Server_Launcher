@@ -3832,24 +3832,48 @@ print(json.dumps(data))
     let mut physical_disks = Vec::new();
     if let Some(arr) = parsed["physical_disks"].as_array() {
         for p in arr {
-            let name = p["name"].as_str().unwrap_or("").to_string();
-            let model = p["model"].as_str().unwrap_or("Disk Drive").to_string();
+            let Some(name) = p["name"].as_str().filter(|name| !name.trim().is_empty()) else {
+                continue;
+            };
+            let Some(total_bytes) = p["total_bytes"].as_u64().filter(|size| *size > 0) else {
+                continue;
+            };
+            let Some(is_ssd) = p["is_ssd"].as_bool() else {
+                continue;
+            };
+            let name = name.to_string();
+            let model = p["model"]
+                .as_str()
+                .filter(|model| !model.trim().is_empty())
+                .unwrap_or("Unknown disk")
+                .to_string();
             let bus_interface = p["bus_interface"].as_str().unwrap_or("").to_string();
             let smart_status = p["smart_status"].as_str().unwrap_or("").to_string();
             let discard_supported = p["discard_supported"].as_bool();
-            let total_bytes = p["total_bytes"].as_u64().unwrap_or(0);
-            let is_ssd = p["is_ssd"].as_bool().unwrap_or(false);
-            let partition_count = p["partition_count"].as_u64().unwrap_or(0) as usize;
             let mut partitions = Vec::new();
             if let Some(parts) = p["partitions"].as_array() {
                 for part in parts {
+                    let Some(part_name) = part["name"].as_str().filter(|name| !name.trim().is_empty()) else {
+                        continue;
+                    };
+                    let Some(size_bytes) = part["size_bytes"].as_u64().filter(|size| *size > 0) else {
+                        continue;
+                    };
+                    let Some(partition_num) = part["partition_num"]
+                        .as_u64()
+                        .and_then(|number| u32::try_from(number).ok())
+                        .filter(|number| *number > 0)
+                    else {
+                        continue;
+                    };
                     partitions.push(DiskPartitionInfo {
-                        name: part["name"].as_str().unwrap_or("").to_string(),
-                        size_bytes: part["size_bytes"].as_u64().unwrap_or(0),
-                        partition_num: part["partition_num"].as_u64().unwrap_or(0) as u32,
+                        name: part_name.to_string(),
+                        size_bytes,
+                        partition_num,
                     });
                 }
             }
+            let partition_count = partitions.len();
             let read_rate = p["read_rate"].as_f64().filter(|rate| rate.is_finite() && *rate >= 0.0);
             let write_rate = p["write_rate"].as_f64().filter(|rate| rate.is_finite() && *rate >= 0.0);
             physical_disks.push(PhysicalDiskInfo {

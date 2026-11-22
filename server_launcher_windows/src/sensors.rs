@@ -3649,16 +3649,22 @@ print(json.dumps(data))
     let mut gpus = Vec::new();
     if let Some(arr) = parsed["gpus"].as_array() {
         for g in arr {
+            let mem_used_mb = g["mem_used"].as_u64();
+            let mem_total_mb = g["mem_total"].as_u64();
+            let memory = match (mem_used_mb, mem_total_mb) {
+                (Some(used), Some(total)) if used > total => (None, None),
+                values => values,
+            };
             gpus.push(GpuSensorInfo { device_path: g["device_path"].as_str().unwrap_or("").to_string(), engine_loads: Vec::new(),
-                name: g["name"].as_str().unwrap_or("Remote GPU").to_string(),
-                load_pct: g["load"].as_f64().map(|v| v as f32),
-                temp: g["temp"].as_f64().map(|v| v as f32),
-                mem_used_mb: g["mem_used"].as_u64(),
-                mem_total_mb: g["mem_total"].as_u64(),
-                clock_mhz: g["clock_mhz"].as_u64().map(|v| v as u32),
-                mem_clock_mhz: g["mem_clock_mhz"].as_u64().map(|v| v as u32),
-                power_watts: g["power_watts"].as_f64().map(|v| v as f32),
-                power_limit_watts: g["power_limit_watts"].as_f64().map(|v| v as f32),
+                name: g["name"].as_str().filter(|name| !name.trim().is_empty()).unwrap_or("Unknown GPU").to_string(),
+                load_pct: g["load"].as_f64().filter(|v| v.is_finite() && (0.0..=100.0).contains(v)).map(|v| v as f32),
+                temp: parse_reported_temperature(&g["temp"]),
+                mem_used_mb: memory.0,
+                mem_total_mb: memory.1,
+                clock_mhz: g["clock_mhz"].as_u64().and_then(|v| u32::try_from(v).ok()),
+                mem_clock_mhz: g["mem_clock_mhz"].as_u64().and_then(|v| u32::try_from(v).ok()),
+                power_watts: g["power_watts"].as_f64().filter(|v| v.is_finite() && (0.0..1000.0).contains(v)).map(|v| v as f32),
+                power_limit_watts: g["power_limit_watts"].as_f64().filter(|v| v.is_finite() && (0.0..1000.0).contains(v)).map(|v| v as f32),
                 driver: g["driver"].as_str().unwrap_or("").to_string(),
             });
         }

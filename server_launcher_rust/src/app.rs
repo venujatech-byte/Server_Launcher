@@ -5309,6 +5309,29 @@ mod mounted_storage_tests {
     }
 }
 
+fn select_remote_interface<'a>(interfaces: &'a [crate::sensors::NetInterfaceInfo], selected: Option<&str>) -> Option<&'a crate::sensors::NetInterfaceInfo> {
+    selected.and_then(|name| interfaces.iter().find(|interface| interface.name != "lo" && interface.name == name))
+        .or_else(|| interfaces.iter().find(|interface| interface.name != "lo" && interface.is_wireless))
+        .or_else(|| interfaces.iter().find(|interface| interface.name != "lo"))
+}
+
+#[cfg(test)]
+mod remote_interface_selection_tests {
+    use crate::sensors::NetInterfaceInfo;
+    #[test]
+    fn prefers_selected_then_wifi_and_handles_removed_adapters() {
+        let networks = vec![
+            NetInterfaceInfo { name: "lo".into(), ..Default::default() },
+            NetInterfaceInfo { name: "eth0".into(), ..Default::default() },
+            NetInterfaceInfo { name: "wlan0".into(), is_wireless: true, ..Default::default() },
+        ];
+        assert_eq!(super::select_remote_interface(&networks, None).unwrap().name, "wlan0");
+        assert_eq!(super::select_remote_interface(&networks, Some("eth0")).unwrap().name, "eth0");
+        assert_eq!(super::select_remote_interface(&networks, Some("removed")).unwrap().name, "wlan0");
+        assert!(super::select_remote_interface(&networks[..1], None).is_none());
+    }
+}
+
 fn push_telemetry<T>(history: &mut VecDeque<T>, value: T, capacity: usize) {
     if history.len() == capacity { history.pop_front(); }
     history.push_back(value);
@@ -13906,9 +13929,10 @@ impl LauncherApp {
             crate::wifi::WifiSnapshot::default()
         };
 
+        let remote_interface_id = egui::Id::new(("remote_wifi_interface", host_id));
+        let saved_interface = ui.ctx().data(|data| data.get_temp::<String>(remote_interface_id));
         let primary_net = if is_remote {
-            snap.networks.iter().find(|n| n.is_wireless)
-                .or_else(|| snap.networks.iter().find(|n| n.name != "lo"))
+            select_remote_interface(&snap.networks, saved_interface.as_deref())
         } else {
             snap.networks.iter().find(|n| n.name == wifi_snap.interface)
         };
@@ -14124,6 +14148,22 @@ impl LauncherApp {
                                 }
                             });
 
+                            if is_remote && snap.networks.iter().filter(|interface| interface.name != "lo").count() > 1 {
+                                let current = iface_name.to_string();
+                                let mut selected = current.clone();
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("Interface").size(10.0).color(p.text_muted));
+                                    egui::ComboBox::from_id_salt(remote_interface_id)
+                                        .selected_text(&selected).show_ui(ui, |ui| {
+                                            for interface in snap.networks.iter().filter(|interface| interface.name != "lo") {
+                                                ui.selectable_value(&mut selected, interface.name.clone(), &interface.name);
+                                            }
+                                        });
+                                });
+                                if selected != current {
+                                    ui.ctx().data_mut(|data| data.insert_temp(remote_interface_id, selected));
+                                }
+                            }
                             if !is_remote && wifi_snap.interfaces.len() > 1 {
                                 let current = self.wifi_selected_interface.as_ref().filter(|name| wifi_snap.interfaces.contains(name)).cloned().unwrap_or_else(|| wifi_snap.interface.clone());
                                 let mut selected = current.clone();
@@ -14142,7 +14182,7 @@ impl LauncherApp {
                             // Row 4: Device and hardware metadata spanning the full card width underneath (wrapped, never overlaps)
                             ui.horizontal_wrapped(|ui| {
                                 if is_remote {
-                                    ui.label(RichText::new(format!("Total: {:.2} GB In • {:.2} GB Out", snap.total_rx_bytes as f64 / 1e9, snap.total_tx_bytes as f64 / 1e9)).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
+                                    ui.label(RichText::new(format!("All interfaces: {:.2} GB In • {:.2} GB Out", snap.total_rx_bytes as f64 / 1e9, snap.total_tx_bytes as f64 / 1e9)).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                                 } else {
                                     ui.label(RichText::new(format!("{} • MAC: {}", wifi_snap.product, wifi_snap.mac_address)).size(8.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                                 }

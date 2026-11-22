@@ -3290,26 +3290,6 @@ try:
 except:
     pass
 
-if not phys_disks and disks:
-    seen = set()
-    for d in disks:
-        nm = os.path.basename(d["name"])
-        if nm not in seen:
-            seen.add(nm)
-            phys_disks.append({
-                "name": nm,
-                "model": "Storage Volume (" + d.get("mount", "/") + ")",
-                "bus_interface": "",
-                "discard_supported": None,
-                "smart_status": "",
-                "total_bytes": d.get("total", 0),
-                "is_ssd": True,
-                "partition_count": 1,
-                "partitions": [{"name": nm, "partition_num": 1, "size_bytes": d.get("total", 0)}],
-                "read_rate": d.get("read_rate"),
-                "write_rate": d.get("write_rate")
-            })
-
 data = {
     "cpu_model": cpu_model,
     "cores": max(cores, 1),
@@ -3653,40 +3633,6 @@ print(json.dumps(data))
                 write_rate_bps,
                 disk_rates_available: p["read_rate"].as_f64().is_some() && p["write_rate"].as_f64().is_some(),
             });
-        }
-    }
-
-    if physical_disks.is_empty() && !disks.is_empty() {
-        let mut seen = std::collections::HashSet::new();
-        for d in &disks {
-            let nm = d.name.trim_start_matches("/dev/").to_string();
-            if seen.insert(nm.clone()) {
-                let model = if !d.mount_point.is_empty() {
-                    format!("Storage Volume ({})", d.mount_point)
-                } else {
-                    "Block Storage".to_string()
-                };
-                let r_rate = d.read_rate_bps;
-                let w_rate = d.write_rate_bps;
-                physical_disks.push(PhysicalDiskInfo {
-                    name: nm.clone(),
-                    model,
-                    bus_interface: String::new(),
-                    smart_status: String::new(),
-                    discard_supported: None,
-                    total_bytes: d.total_bytes,
-                    is_ssd: true,
-                    partition_count: 1,
-                    partitions: vec![DiskPartitionInfo {
-                        name: nm,
-                        size_bytes: d.total_bytes,
-                        partition_num: 1,
-                    }],
-                    read_rate_bps: r_rate,
-                    write_rate_bps: w_rate,
-                    disk_rates_available: d.disk_rates_available,
-                });
-            }
         }
     }
 

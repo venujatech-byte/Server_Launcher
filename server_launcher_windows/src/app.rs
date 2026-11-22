@@ -11188,6 +11188,19 @@ impl LauncherApp {
                 }
             }
 
+            if snap.physical_disks.is_empty() {
+                for disk in &snap.disks {
+                    let name = disk.name.trim_start_matches("/dev/").to_string();
+                    if disk.disk_rates_available {
+                        push_telemetry(self.per_disk_write_history.entry(name.clone()).or_default(), (disk.write_rate_bps / 1_000_000.0) as f32, 60);
+                        push_telemetry(self.per_disk_read_history.entry(name).or_default(), (disk.read_rate_bps / 1_000_000.0) as f32, 60);
+                    } else {
+                        self.per_disk_write_history.remove(&name);
+                        self.per_disk_read_history.remove(&name);
+                    }
+                }
+            }
+
             let cur_tx_mb = (snap.total_tx_rate_bps / 1_000_000.0) as f32;
             push_telemetry(&mut self.net_tx_history, cur_tx_mb, 60);
 
@@ -13154,7 +13167,7 @@ impl LauncherApp {
                                                 ui.spacing_mut().item_spacing.x = 5.0;
                                                 let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                                 ui.painter().circle_filled(dot_rect.center(), 2.8, accent);
-                                                ui.label(RichText::new(format!("{} Disks Detected", drive_count)).size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                                ui.label(RichText::new(if drive_count > 0 { format!("{} Disks Detected", drive_count) } else { "Drive inventory unavailable".to_string() }).size(9.5).monospace().color(Color32::from_rgb(203, 213, 225)));
                                             });
                                         });
                                 });
@@ -13190,10 +13203,8 @@ impl LauncherApp {
                     } else {
                         format!("{}x Block Storage Disks", drive_count)
                     }
-                } else if is_remote {
-                    format!("{}x Mounted Storage Disks", drive_count)
                 } else {
-                    "No physical drive data".to_string()
+                    "Physical drive data unavailable".to_string()
                 };
 
                 sensor_card_columns(ui, 4, |ui, column| match column {
@@ -13223,14 +13234,14 @@ impl LauncherApp {
                         ui,
                         crate::lucide::HARD_DRIVE,
                         "PHYSICAL DRIVES",
-                        &format!("{}", drive_count),
+                        &if drive_count > 0 { drive_count.to_string() } else { "—".to_string() },
                         "DISKS",
                         &drives_sub,
                         "ONLINE",
                         "Not queried",
-                        &dr_history,
-                        drive_count as f32 * 1.5,
-                        Some(1.0),
+                        if drive_count > 0 { &dr_history } else { &[] },
+                        (drive_count as f32 * 1.5).max(1.0),
+                        (drive_count > 0).then_some(1.0),
                         accent,
                         p.bg_card,
                         p.text_muted,
@@ -13299,7 +13310,7 @@ impl LauncherApp {
                             } else {
                                 format!("Volume ({})", d.mount_point)
                             };
-                            synthesized.push((clean, model, d.total_bytes, is_ssd, 1, d.read_rate_bps, d.write_rate_bps, d.disk_rates_available));
+                            synthesized.push((clean, model, d.total_bytes, is_ssd, 0, d.read_rate_bps, d.write_rate_bps, d.disk_rates_available));
                         }
                     }
                     synthesized
@@ -13361,12 +13372,12 @@ impl LauncherApp {
                                 ui.vertical(|ui| {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 5.0;
-                                        ui.label(RichText::new(format!("Storage {} (/dev/{})", idx + 1, d_name)).size(13.0).strong().color(p.text_primary));
+                                        ui.label(RichText::new(if physical_disk.is_some() { format!("Storage {} (/dev/{})", idx + 1, d_name) } else { format!("Volume {} ({})", idx + 1, d_name) }).size(13.0).strong().color(p.text_primary));
                                         let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                         let dot_col = if is_selected { accent } else { Color32::from_rgb(100, 116, 139) };
                                         ui.painter().circle_filled(dot_rect.center(), 2.8, dot_col);
                                     });
-                                    ui.add(egui::Label::new(RichText::new(format!("{} • {} {:.1} GB", if d_is_ssd { "SSD" } else { "Block Device" }, d_model, d_phys_gb)).size(9.5).monospace().color(p.text_muted)).truncate());
+                                    ui.add(egui::Label::new(RichText::new(format!("{} • {} {:.1} GB", if physical_disk.is_none() { "Volume" } else if d_is_ssd { "SSD" } else { "Block Device" }, d_model, d_phys_gb)).size(9.5).monospace().color(p.text_muted)).truncate());
                                 });
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -13386,7 +13397,7 @@ impl LauncherApp {
                                                 });
                                         });
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new(format!("{} PARTITION{}", d_part_count, if d_part_count == 1 { "" } else { "S" })).size(9.0).monospace().color(p.text_muted));
+                                            ui.label(RichText::new(if physical_disk.is_some() { format!("{} PARTITION{}", d_part_count, if d_part_count == 1 { "" } else { "S" }) } else { "VOLUME".to_string() }).size(9.0).monospace().color(p.text_muted));
                                         });
                                     });
                                 });
@@ -13882,7 +13893,11 @@ impl LauncherApp {
 
                         ui.columns(4, |cols| {
                             let mut mounts = snap.disks.iter().filter(|mount| {
-                                d1_phys.map_or(false, |disk| disk_owns_mount(&disk.name, &disk.partitions, &mount.name))
+                                if let Some(disk) = d1_phys {
+                                    disk_owns_mount(&disk.name, &disk.partitions, &mount.name)
+                                } else {
+                                    drives_list.get(self.selected_disk_idx).is_some_and(|disk| disk_owns_mount(&disk.0, &[], &mount.name))
+                                }
                             });
                             for col in cols.iter_mut() {
                                 if let Some(mount) = mounts.next() {

@@ -35,4 +35,14 @@ assert env['mounted_disk_totals'](mounts, {'sda1': rates['sda1']}) == (None, Non
 assert env['mounted_disk_totals']([], rates) == (None, None)
 assert env['disk_rate_for_source']('/dev/sda1', rates) == rates['sda1']
 assert env['disk_rate_for_source']('tmpfs', rates) is None
-print('Remote disk-rate fixtures passed: zero, reset, new devices and incomplete totals.')
+# A mounted volume alone must never be invented as a physical SSD or partition.
+inventory_start = script.index('phys_disks = []\ntry:')
+inventory_end = script.index('\ndata = {', inventory_start)
+class NoInventory:
+    @staticmethod
+    def glob(_pattern):
+        return []
+inventory = {'glob': NoInventory(), 'disks': [{'name': '/dev/sda1', 'mount': '/'}]}
+exec(script[inventory_start:inventory_end], inventory)
+assert inventory['phys_disks'] == []
+print('Remote disk fixtures passed: zero, reset, incomplete totals and missing inventory.')

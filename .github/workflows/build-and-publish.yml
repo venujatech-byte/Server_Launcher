@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - design
+      - fix/ui-alignment
     tags:
       - "v*"
   workflow_dispatch:
@@ -154,6 +155,7 @@ jobs:
 
   publish:
     name: Publish Release
+    if: github.ref_type == 'tag' || github.ref_name == 'main' || github.ref_name == 'design'
     needs: [build, build-windows]
     runs-on: ubuntu-latest
     permissions:

@@ -1,5 +1,6 @@
 # Check the shared SSH collector's counter and mount handling without hardware access.
 import ast
+import io
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -26,9 +27,12 @@ assert counters['disk_rates']['busy'][:2] == (1.0, 2.0)
 assert 'reset' not in counters['disk_rates'] and 'new' not in counters['disk_rates']
 
 functions = [n for n in node.body if isinstance(n, ast.FunctionDef)
-             and n.name in {'disk_rate_for_source', 'mounted_disk_totals', 'is_base_block_device'}]
+             and n.name in {'disk_rate_for_source', 'mounted_disk_totals', 'is_base_block_device', 'read_disk_stats'}]
 env = {'os': os}
 exec(compile(ast.Module(body=functions, type_ignores=[]), '<disk fixture>', 'exec'), env)
+diskstats = '8 0 sda 1 2 bad 4 5 6 7\n8 16 sdb 1 2 3 4 5 6 7\n'
+with patch('builtins.open', return_value=io.StringIO(diskstats)):
+    assert env['read_disk_stats']() == {'sdb': (3 * 512, 7 * 512)}
 rates = {'sda1': (0.0, 0.0, 1, 2), 'sdb1': (3.0, 4.0, 1, 2)}
 mounts = [{'name': '/dev/sda1'}, {'name': '/dev/sda1'}, {'name': '/dev/sdb1'}]
 assert env['mounted_disk_totals'](mounts, rates) == (3.0, 4.0)

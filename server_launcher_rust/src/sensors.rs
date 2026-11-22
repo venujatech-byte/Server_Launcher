@@ -891,6 +891,13 @@ mod disk_stat_rate_tests {
     use std::collections::HashMap;
 
     #[test]
+    fn diskstats_ignore_malformed_counters_without_losing_following_devices() {
+        let parsed = super::parse_proc_diskstats("8 0 sda 1 2 bad 4 5 6 7\n8 16 sdb 1 2 3 4 5 6 7\n");
+        assert!(!parsed.contains_key("sda"));
+        assert_eq!(parsed["sdb"], (3 * 512, 7 * 512));
+    }
+
+    #[test]
     fn rates_keep_distinct_device_baselines_and_handle_new_devices() {
         let previous = HashMap::from([("sda".into(), (100, 200)), ("sda1".into(), (50, 80)), ("sdaa".into(), (1, 1))]);
         let current = HashMap::from([("sda".into(), (300, 400)), ("sda1".into(), (150, 180)), ("sdaa".into(), (21, 11)), ("sdb".into(), (900, 900))]);
@@ -966,19 +973,19 @@ fn collect_proc_diskstats() -> HashMap<String, (u64, u64)> {
     let mut stats = HashMap::new();
     #[cfg(target_os = "linux")]
     if let Ok(content) = fs::read_to_string("/proc/diskstats") {
-        for line in content.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 10 {
-                let dev = parts[2].to_string();
-                let sectors_read = parts[5].parse::<u64>().unwrap_or(0);
-                let sectors_written = parts[9].parse::<u64>().unwrap_or(0);
-                let read_bytes = sectors_read.saturating_mul(512);
-                let write_bytes = sectors_written.saturating_mul(512);
-                stats.insert(dev, (read_bytes, write_bytes));
-            }
-        }
+        stats = parse_proc_diskstats(&content);
     }
     stats
+}
+
+fn parse_proc_diskstats(content: &str) -> HashMap<String, (u64, u64)> {
+    content.lines().filter_map(|line| {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        let name = *parts.get(2)?;
+        let read = parts.get(5)?.parse::<u64>().ok()?.saturating_mul(512);
+        let written = parts.get(9)?.parse::<u64>().ok()?.saturating_mul(512);
+        Some((name.to_string(), (read, written)))
+    }).collect()
 }
 
 fn is_base_physical_disk(dev: &str) -> bool {
@@ -2397,11 +2404,14 @@ def read_disk_stats():
             for line in f:
                 p = line.split()
                 if len(p) >= 10:
-                    dev = p[2]
-                    r_b = int(p[5]) * 512
-                    w_b = int(p[9]) * 512
-                    d[dev] = (r_b, w_b)
-    except:
+                    try:
+                        r_b = int(p[5]) * 512
+                        w_b = int(p[9]) * 512
+                        if r_b >= 0 and w_b >= 0:
+                            d[p[2]] = (r_b, w_b)
+                    except ValueError:
+                        continue
+    except OSError:
         pass
     return d
 

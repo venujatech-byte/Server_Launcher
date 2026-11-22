@@ -1,34 +1,21 @@
 //! Power telemetry and battery charging controls across PC vendors.
 
 use std::fs;
-use std::path::Path;
 
 /// Power profile inputs for the illustrative system power estimate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CpuTdpProfile {
     /// Reported package power cap or estimated nominal CPU power (Watts).
     pub nominal_watts: f32,
-    /// Estimated quiet-mode CPU power (Watts).
-    pub quiet_pl1_watts: f32,
-    /// Estimated nominal CPU power (Watts).
-    pub balanced_pl1_watts: f32,
     /// Estimated peak CPU power (Watts).
     pub turbo_pl2_watts: f32,
-    /// Whether Intel/AMD RAPL sysfs power capping interface was detected.
-    pub has_rapl: bool,
-    /// Whether Linux standard ACPI EC platform_profile was detected.
-    pub has_platform_profile: bool,
 }
 
 impl Default for CpuTdpProfile {
     fn default() -> Self {
         Self {
             nominal_watts: 15.0,
-            quiet_pl1_watts: 10.0,
-            balanced_pl1_watts: 15.0,
             turbo_pl2_watts: 25.0,
-            has_rapl: false,
-            has_platform_profile: false,
         }
     }
 }
@@ -144,28 +131,11 @@ pub fn tdp_profile_from_nominal_or_cpu(nominal_opt: Option<f32>, model_name: &st
         classify_nominal_tdp_from_model_and_cores(model_name, core_count)
     };
 
-    let quiet_pl1_watts = if nominal_watts <= 8.0 {
-        ((nominal_watts * 0.75) * 2.0).round() / 2.0
-    } else if nominal_watts <= 20.0 {
-        (nominal_watts * 0.67).round().max(7.0)
-    } else if nominal_watts <= 35.0 {
-        (nominal_watts * 0.70).round()
-    } else if nominal_watts <= 65.0 {
-        (nominal_watts * 0.65).round()
-    } else {
-        (nominal_watts * 0.70).round()
-    };
-
-    let balanced_pl1_watts = nominal_watts;
     let turbo_pl2_watts = calculate_turbo_tdp(nominal_watts);
 
     CpuTdpProfile {
         nominal_watts,
-        quiet_pl1_watts,
-        balanced_pl1_watts,
         turbo_pl2_watts,
-        has_rapl: nominal_opt.is_some(),
-        has_platform_profile: false,
     }
 }
 
@@ -173,7 +143,6 @@ pub fn tdp_profile_from_nominal_or_cpu(nominal_opt: Option<f32>, model_name: &st
 pub fn detect_cpu_tdp_capability() -> CpuTdpProfile {
     let mut detected_pl1: Option<f32> = None;
     let mut detected_pl2: Option<f32> = None;
-    let mut has_rapl = false;
 
     // 1. Scan Intel & AMD RAPL via powercap sysfs (/sys/class/powercap/intel-rapl)
     if let Ok(entries) = fs::read_dir("/sys/class/powercap") {
@@ -182,7 +151,6 @@ pub fn detect_cpu_tdp_capability() -> CpuTdpProfile {
             let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if fname.starts_with("intel-rapl:") && !fname[11..].contains(':') {
                 // This is a package root domain (package-0, package-1)
-                has_rapl = true;
                 // Constraint 0: PL1 (Long term)
                 let c0_file = path.join("constraint_0_power_limit_uw");
                 let c0_max_file = path.join("constraint_0_max_power_uw");
@@ -246,36 +214,16 @@ pub fn detect_cpu_tdp_capability() -> CpuTdpProfile {
     };
 
     // The preset values feed the estimate only; this app does not apply power limits.
-    let quiet_pl1_watts = if nominal_watts <= 8.0 {
-        ((nominal_watts * 0.75) * 2.0).round() / 2.0 // e.g. 6W -> 4.5W
-    } else if nominal_watts <= 20.0 {
-        (nominal_watts * 0.67).round().max(7.0) // e.g. 15W -> 10W
-    } else if nominal_watts <= 35.0 {
-        (nominal_watts * 0.70).round() // e.g. 28W -> 20W
-    } else if nominal_watts <= 65.0 {
-        (nominal_watts * 0.65).round() // e.g. 45W -> 30W, 65W -> 45W
-    } else {
-        (nominal_watts * 0.70).round() // e.g. 125W -> 85W
-    };
-
-    let balanced_pl1_watts = nominal_watts;
-
     let turbo_pl2_watts = if let Some(pl2) = detected_pl2 {
         let rounded = (pl2 * 2.0).round() / 2.0;
-        if rounded > balanced_pl1_watts { rounded } else { calculate_turbo_tdp(nominal_watts) }
+        if rounded > nominal_watts { rounded } else { calculate_turbo_tdp(nominal_watts) }
     } else {
         calculate_turbo_tdp(nominal_watts)
     };
 
-    let has_platform_profile = Path::new("/sys/firmware/acpi/platform_profile").exists();
-
     CpuTdpProfile {
         nominal_watts,
-        quiet_pl1_watts,
-        balanced_pl1_watts,
         turbo_pl2_watts,
-        has_rapl,
-        has_platform_profile,
     }
 }
 

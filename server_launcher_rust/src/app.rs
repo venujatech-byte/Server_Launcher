@@ -5256,8 +5256,8 @@ fn matching_temperature_limit(sensors: &[crate::sensors::TempSensor], category: 
     let mut matches = sensors.iter().filter(|sensor| sensor.category == category && sensor.temp == value);
     let sensor = matches.next()?;
     if matches.next().is_some() { return None; }
-    sensor.crit.filter(|limit| limit.is_finite() && *limit > 0.0)
-        .or_else(|| sensor.max.filter(|limit| limit.is_finite() && *limit > 0.0))
+    sensor.crit.filter(|limit| limit.is_finite() && (0.0..=150.0).contains(limit))
+        .or_else(|| sensor.max.filter(|limit| limit.is_finite() && (0.0..=150.0).contains(limit)))
 }
 
 fn hottest_temperature_for_category(sensors: &[crate::sensors::TempSensor], category: crate::sensors::SensorCategory) -> Option<f32> {
@@ -5273,6 +5273,8 @@ mod temperature_limit_tests {
         assert_eq!(super::matching_temperature_limit(&[sensor.clone()], SensorCategory::Storage, 40.0), Some(90.0));
         assert_eq!(super::matching_temperature_limit(&[sensor.clone()], SensorCategory::Cpu, 40.0), None);
         assert_eq!(super::matching_temperature_limit(&[sensor.clone(), sensor], SensorCategory::Storage, 40.0), None);
+        let invalid_limit = TempSensor { category: SensorCategory::Storage, temp: 40.0, crit: Some(999.0), max: Some(200.0), ..Default::default() };
+        assert_eq!(super::matching_temperature_limit(&[invalid_limit], SensorCategory::Storage, 40.0), None);
     }
 }
 

@@ -65,7 +65,8 @@ ip_payload = __import__('json').dumps([
         {'family':'inet6', 'local':'fe80::1', 'prefixlen':64, 'scope':'link'},
         {'family':'inet6', 'local':'2001:db8::1', 'prefixlen':64, 'scope':'global'},
         {'family':'inet', 'local':'192.0.2.1', 'prefixlen':24, 'scope':'global'},
-        {'family':'inet', 'local':'invalid', 'prefixlen':24}]},
+        {'family':'inet', 'local':'invalid', 'prefixlen':24},
+        {'family':['inet'], 'local':'192.0.2.2', 'prefixlen':24}]},
     {'ifname': 'eth0', 'addr_info': None},
 ])
 with patch('subprocess.run', return_value=types.SimpleNamespace(stdout=ip_payload)) as run:

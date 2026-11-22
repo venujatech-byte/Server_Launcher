@@ -3141,7 +3141,7 @@ def read_network_addresses():
         if not isinstance(items, list):
             continue
         for item in items:
-            if not isinstance(item, dict) or item.get("family") not in found:
+            if not isinstance(item, dict) or item.get("family") not in ("inet", "inet6"):
                 continue
             try:
                 interface = ipaddress.ip_interface(str(item["local"]) + "/" + str(item["prefixlen"]))

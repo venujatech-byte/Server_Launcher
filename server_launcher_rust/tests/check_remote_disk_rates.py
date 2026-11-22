@@ -2,6 +2,9 @@
 import ast
 import io
 import math
+import ipaddress
+import subprocess
+import types
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -28,8 +31,8 @@ assert counters['disk_rates']['busy'][:2] == (1.0, 2.0)
 assert 'reset' not in counters['disk_rates'] and 'new' not in counters['disk_rates']
 
 functions = [n for n in node.body if isinstance(n, ast.FunctionDef)
-             and n.name in {'disk_rate_for_source', 'mounted_disk_totals', 'is_base_block_device', 'read_disk_stats', 'disk_discard_supported', 'disk_bus_interface', 'normalize_pci_address', 'nvidia_number', 'millidegrees_to_celsius', 'read_optional_text'}]
-env = {'os': os, 'math': math}
+             and n.name in {'disk_rate_for_source', 'mounted_disk_totals', 'is_base_block_device', 'read_disk_stats', 'disk_discard_supported', 'disk_bus_interface', 'normalize_pci_address', 'nvidia_number', 'millidegrees_to_celsius', 'read_optional_text', 'read_network_addresses'}]
+env = {'os': os, 'math': math, 'subprocess': subprocess, 'ipaddress': ipaddress, 'json': __import__('json')}
 exec(compile(ast.Module(body=functions, type_ignores=[]), '<disk fixture>', 'exec'), env)
 diskstats = '8 0 sda 1 2 bad 4 5 6 7\n8 16 sdb 1 2 3 4 5 6 7\n'
 with patch('builtins.open', return_value=io.StringIO(diskstats)):
@@ -57,6 +60,24 @@ assert env['nvidia_number']('[N/A]') is None
 assert env['nvidia_number']('nan') is None
 assert env['nvidia_number']('101', 0.0, 100.0) is None
 assert env['nvidia_number']('512.0', integer=True) == 512
+ip_payload = __import__('json').dumps([
+    {'ifname': 'wlan0', 'addr_info': [
+        {'family':'inet6', 'local':'fe80::1', 'prefixlen':64, 'scope':'link'},
+        {'family':'inet6', 'local':'2001:db8::1', 'prefixlen':64, 'scope':'global'},
+        {'family':'inet', 'local':'192.0.2.1', 'prefixlen':24, 'scope':'global'},
+        {'family':'inet', 'local':'invalid', 'prefixlen':24}]},
+    {'ifname': 'eth0', 'addr_info': None},
+])
+with patch('subprocess.run', return_value=types.SimpleNamespace(stdout=ip_payload)) as run:
+    addresses = env['read_network_addresses']()
+    assert addresses['wlan0'] == {'inet':'192.0.2.1/24', 'inet6':'2001:db8::1/64'}
+    assert 'eth0' not in addresses
+    assert run.call_args.args[0] == ['ip', '-j', 'address', 'show']
+    assert run.call_args.kwargs['timeout'] == 2
+with patch('subprocess.run', side_effect=FileNotFoundError):
+    assert env['read_network_addresses']() == {}
+with patch('subprocess.run', side_effect=subprocess.TimeoutExpired('ip', 2)):
+    assert env['read_network_addresses']() == {}
 with patch('builtins.open', return_value=io.StringIO('invalid')):
     assert env['disk_discard_supported']('/disk') is None
 with patch('builtins.open', side_effect=PermissionError):
@@ -92,11 +113,12 @@ metadata = {
 }
 network_env = {'os': os, 'n1': {'wlan0': (100, 200)},
                'n2': {'wlan0': (200, 400), 'eth0': (2, 3)},
-               't_net_elapsed': 2.0, 'read_optional_text': metadata.get}
+               't_net_elapsed': 2.0, 'read_optional_text': metadata.get, 'network_addresses': addresses}
 with patch('os.path.exists', side_effect=lambda path: path == '/sys/class/net/wlan0/wireless'):
     exec(script[network_start:network_end], network_env)
 wifi, ethernet = network_env['networks']
 assert wifi['is_wireless'] and wifi['mtu'] == 1500 and wifi['link_state'] == 'up'
 assert wifi['mac_address'] == '00:11:22:aa:bb:cc' and wifi['tx_rate'] == 100.0
+assert wifi['ipv4'] == '192.0.2.1/24' and wifi['ipv6'] == '2001:db8::1/64'
 assert not ethernet['is_wireless'] and ethernet['mtu'] is None and ethernet['link_state'] is None
 print('Remote sensor fixtures passed: disk rates, GPU identity, and interface metadata.')

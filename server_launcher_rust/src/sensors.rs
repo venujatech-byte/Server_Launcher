@@ -147,6 +147,8 @@ pub struct NetInterfaceInfo {
     pub link_state: Option<String>,
     pub mac_address: Option<String>,
     pub mtu: Option<u32>,
+    pub ipv4: Option<String>,
+    pub ipv6: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -289,6 +291,7 @@ pub struct SystemSensorsSnapshot {
     pub process_count: Option<usize>,
     pub processes_collected: bool,
     pub process_network_collected: bool,
+    pub network_details_collected: bool,
 
     // OS info
     pub os_name: String,
@@ -863,6 +866,7 @@ impl SystemSensorsCollector {
             top_apps,
             processes_collected: include_top_apps,
             process_network_collected: include_top_apps && include_process_network,
+            network_details_collected: false,
             os_name: System::name().unwrap_or_default(),
             os_version: System::os_version().unwrap_or_default(),
             cpu_governor,
@@ -960,6 +964,20 @@ mod cpu_core_reading_tests {
     }
 }
 
+fn parse_network_address(value: &serde_json::Value, ipv4: bool) -> Option<String> {
+    let text = value.as_str()?;
+    let (address, prefix) = text.split_once('/')?;
+    let prefix: u8 = prefix.parse().ok()?;
+    if ipv4 {
+        address.parse::<std::net::Ipv4Addr>().ok()?;
+        if prefix > 32 { return None; }
+    } else {
+        address.parse::<std::net::Ipv6Addr>().ok()?;
+        if prefix > 128 { return None; }
+    }
+    Some(text.to_owned())
+}
+
 fn parse_network_link_state(value: &serde_json::Value) -> Option<String> {
     match value.as_str()? {
         "up" => Some("Up".into()),
@@ -992,6 +1010,10 @@ mod network_total_tests {
     use super::NetInterfaceInfo;
     #[test]
     fn remote_interface_metadata_rejects_missing_or_invalid_values() {
+        assert_eq!(super::parse_network_address(&serde_json::json!("192.0.2.1/24"), true).as_deref(), Some("192.0.2.1/24"));
+        assert_eq!(super::parse_network_address(&serde_json::json!("2001:db8::1/64"), false).as_deref(), Some("2001:db8::1/64"));
+        assert_eq!(super::parse_network_address(&serde_json::json!("192.0.2.1/33"), true), None);
+        assert_eq!(super::parse_network_address(&serde_json::json!("not an address"), false), None);
         assert_eq!(super::parse_network_link_state(&serde_json::json!("up")).as_deref(), Some("Up"));
         assert_eq!(super::parse_network_link_state(&serde_json::json!("unknown")).as_deref(), Some("Unknown"));
         assert_eq!(super::parse_network_link_state(&serde_json::Value::Null), None);
@@ -2470,24 +2492,25 @@ pub fn temp_color(temp: f32) -> Color32 {
     }
 }
 
-fn remote_sensor_command(script: &str, include_processes: bool, include_process_network: bool) -> String {
-    format!("{} {} {}", script.trim_end(), if include_processes { "1" } else { "0" }, if include_processes && include_process_network { "1" } else { "0" })
+fn remote_sensor_command(script: &str, include_processes: bool, include_process_network: bool, include_network_details: bool) -> String {
+    format!("{} {} {} {}", script.trim_end(), if include_processes { "1" } else { "0" }, if include_processes && include_process_network { "1" } else { "0" }, if include_network_details { "1" } else { "0" })
 }
 
 #[cfg(test)]
 mod remote_sensor_command_tests {
     #[test]
     fn scan_flag_is_an_argument_to_the_python_command() {
-        assert_eq!(super::remote_sensor_command("python3 -c 'pass'\n", true, true), "python3 -c 'pass' 1 1");
-        assert_eq!(super::remote_sensor_command("python3 -c 'pass'\n", false, true), "python3 -c 'pass' 0 0");
+        assert_eq!(super::remote_sensor_command("python3 -c 'pass'\n", true, true, false), "python3 -c 'pass' 1 1 0");
+        assert_eq!(super::remote_sensor_command("python3 -c 'pass'\n", false, true, true), "python3 -c 'pass' 0 0 1");
     }
 }
 
-pub fn query_remote_sensors(host: &SshRemoteHost, include_processes: bool, include_process_network: bool) -> Result<SystemSensorsSnapshot, String> {
+pub fn query_remote_sensors(host: &SshRemoteHost, include_processes: bool, include_process_network: bool, include_network_details: bool) -> Result<SystemSensorsSnapshot, String> {
     let script = r#"python3 -c '
-import os, glob, json, time, sys, math
+import os, glob, json, time, sys, math, subprocess, ipaddress
 collect_processes = len(sys.argv) > 1 and sys.argv[1] == "1"
 collect_process_network = collect_processes and len(sys.argv) > 2 and sys.argv[2] == "1"
+collect_network_details = len(sys.argv) > 3 and sys.argv[3] == "1"
 
 def read_cpu_stats():
     cpus = {}
@@ -3074,6 +3097,36 @@ p2_net = read_proc_net_map() if collect_process_network else {}
 p2_net_at = time.monotonic()
 proc_net_elapsed = max(p2_net_at - p1_net_at, 0.001)
 
+def read_network_addresses():
+    try:
+        output = subprocess.run(["ip", "-j", "address", "show"], capture_output=True, text=True, timeout=2, check=True)
+        entries = json.loads(output.stdout)
+        if not isinstance(entries, list):
+            return {}
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {}
+    addresses = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("ifname"), str):
+            continue
+        found = {"inet": [], "inet6": []}
+        items = entry.get("addr_info")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict) or item.get("family") not in found:
+                continue
+            try:
+                interface = ipaddress.ip_interface(str(item["local"]) + "/" + str(item["prefixlen"]))
+                if (item["family"] == "inet") != (interface.version == 4):
+                    continue
+                found[item["family"]].append((item.get("scope") != "global", str(interface)))
+            except (KeyError, TypeError, ValueError):
+                continue
+        addresses[entry["ifname"]] = {family: min(values)[1] if values else None for family, values in found.items()}
+    return addresses
+
+network_addresses = read_network_addresses() if collect_network_details else {}
 networks = []
 total_rx_rate = 0.0
 total_tx_rate = 0.0
@@ -3101,7 +3154,9 @@ for ifname, (rx2, tx2) in n2.items():
         "is_wireless": is_wl,
         "link_state": read_optional_text(interface_path + "/operstate"),
         "mac_address": read_optional_text(interface_path + "/address"),
-        "mtu": mtu
+        "mtu": mtu,
+        "ipv4": network_addresses.get(ifname, {}).get("inet"),
+        "ipv6": network_addresses.get(ifname, {}).get("inet6")
     })
 
 if rapl_sources and len(rapl_e1) == len(rapl_sources):
@@ -3475,7 +3530,7 @@ print(json.dumps(data))
 '
 "#;
 
-    let script = remote_sensor_command(script, include_processes, include_process_network);
+    let script = remote_sensor_command(script, include_processes, include_process_network, include_network_details);
     let mut cmd = build_ssh_command(host, &script);
     let out = cmd.output().map_err(|e| format!("SSH command execution error: {}", e))?;
     if !out.status.success() {
@@ -3683,6 +3738,8 @@ print(json.dumps(data))
                 link_state: parse_network_link_state(&n["link_state"]),
                 mac_address: parse_network_mac(&n["mac_address"]),
                 mtu: n["mtu"].as_u64().and_then(|value| u32::try_from(value).ok()).filter(|value| *value > 0),
+                ipv4: parse_network_address(&n["ipv4"], true),
+                ipv6: parse_network_address(&n["ipv6"], false),
             });
         }
     }
@@ -3829,6 +3886,7 @@ print(json.dumps(data))
         top_apps,
         processes_collected: include_processes,
         process_network_collected: include_processes && include_process_network,
+        network_details_collected: include_network_details,
         os_name: parsed["os_name"].as_str().unwrap_or("").to_string(),
         os_version: parsed["os_version"].as_str().unwrap_or("").to_string(),
         cpu_governor,

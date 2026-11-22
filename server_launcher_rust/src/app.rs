@@ -1149,12 +1149,13 @@ impl LauncherApp {
         let snapshots_arc = self.remote_sensors_snapshots.clone();
         let include_processes = matches!(self.sensors_subtab, SensorsSubTab::TopApps | SensorsSubTab::Ram);
         let include_process_network = self.sensors_subtab == SensorsSubTab::TopApps;
+        let include_network_details = self.sensors_subtab == SensorsSubTab::Wifi;
         let in_flight_arc = self.remote_sensors_in_flight.clone();
         let last_fetch_arc = self.remote_sensors_last_fetch.clone();
         let errors_arc = self.remote_sensors_errors.clone();
 
         std::thread::spawn(move || {
-            match crate::sensors::query_remote_sensors(&host, include_processes, include_process_network) {
+            match crate::sensors::query_remote_sensors(&host, include_processes, include_process_network, include_network_details) {
                 Ok(snap) => {
                     snapshots_arc.lock().unwrap().insert(hid.clone(), Arc::new(snap));
                     last_fetch_arc.lock().unwrap().insert(hid.clone(), Instant::now());
@@ -11091,8 +11092,10 @@ impl LauncherApp {
                                 } else if tab == SensorsSubTab::DataUsage && host_id.is_none() && self.sensors_snapshot.networks.is_empty() {
                                     self.trigger_local_sensors_query(false, Some(ui.ctx().clone()));
                                     self.last_sensors_refresh = Instant::now();
-                                } else if tab == SensorsSubTab::Wifi {
-                                    // Wi-Fi hardware interface view
+                                } else if tab == SensorsSubTab::Wifi && host_id.is_some() {
+                                    if let Some(host) = self.ssh_hosts.iter().find(|host| Some(host.id.as_str()) == host_id).cloned() {
+                                        self.trigger_remote_sensors_query(host);
+                                    }
                                 }
                             }
                             ui.add_space(2.0);
@@ -11139,8 +11142,9 @@ impl LauncherApp {
         if let Some(hid) = host_id {
             let needs_processes = matches!(self.sensors_subtab, SensorsSubTab::TopApps | SensorsSubTab::Ram);
             let needs_network = self.sensors_subtab == SensorsSubTab::TopApps;
+            let needs_network_details = self.sensors_subtab == SensorsSubTab::Wifi;
             if snap.timestamp.is_some() && !is_fetching
-                && ((needs_processes && !snap.processes_collected) || (needs_network && !snap.process_network_collected))
+                && ((needs_processes && !snap.processes_collected) || (needs_network && !snap.process_network_collected) || (needs_network_details && !snap.network_details_collected))
                 && !self.remote_sensors_errors.lock().unwrap().contains_key(hid)
             {
                 if let Some(host) = self.ssh_hosts.iter().find(|host| host.id == hid).cloned() {
@@ -14570,12 +14574,12 @@ impl LauncherApp {
                 let half_w = (total_w - gap) * 0.50;
 
                 // Prepare Data for Left & Right Cards
-                let raw_ip = if is_remote { "Unavailable".to_string() } else { wifi_snap.ip_v4.clone() };
+                let raw_ip = if is_remote { primary_net.and_then(|interface| interface.ipv4.clone()).unwrap_or_else(|| "Unavailable".to_string()) } else { wifi_snap.ip_v4.clone() };
                 let (ip_without_cidr, cidr_str) = raw_ip.split_once('/').map(|(ip, _)| (ip, &raw_ip[ip.len()..])).unwrap_or((raw_ip.as_str(), ""));
                 let subnet_mask_str = if is_remote { "Unavailable" } else { wifi_snap.subnet_mask.as_str() };
                 let gateway_str = if is_remote { "Unavailable" } else { wifi_snap.gateway.as_str() };
                 let dns_resolvers_str = if is_remote { "Unavailable" } else { wifi_snap.dns_resolvers.as_str() };
-                let ip_v6_str = if is_remote { "Unavailable" } else { wifi_snap.ip_v6.as_str() };
+                let ip_v6_str = if is_remote { primary_net.and_then(|interface| interface.ipv6.as_deref()).unwrap_or("Unavailable") } else { wifi_snap.ip_v6.as_str() };
                 let mac_str = if is_remote { primary_net.and_then(|interface| interface.mac_address.as_deref()).unwrap_or("Unavailable") } else { wifi_snap.mac_address.as_str() };
                 let driver_str = if is_remote { "Unavailable" } else { wifi_snap.driver.as_str() };
                 let pci_str = if is_remote { "—" } else { wifi_snap.pci_slot.as_str() };
@@ -16978,7 +16982,7 @@ impl LauncherApp {
                     results.lock().unwrap().push_back(message);
                     ctx.request_repaint();
                     std::thread::sleep(std::time::Duration::from_millis(400));
-                    if let Ok(snap) = crate::sensors::query_remote_sensors(&host, true, true) {
+                    if let Ok(snap) = crate::sensors::query_remote_sensors(&host, true, true, false) {
                         snapshots_arc.lock().unwrap().insert(hid_clone.clone(), Arc::new(snap));
                         last_fetch_arc.lock().unwrap().insert(hid_clone.clone(), Instant::now());
                         errors_arc.lock().unwrap().remove(&hid_clone);

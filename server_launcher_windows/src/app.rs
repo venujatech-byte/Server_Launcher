@@ -5172,6 +5172,11 @@ mod temperature_category_tests {
             TempSensor { name: "CPU Package".into(), category: SensorCategory::Cpu, temp: 68.0, ..Default::default() },
         ];
         assert_eq!(super::hottest_temperature_for_category(&cpu_sensors, SensorCategory::Cpu), Some(68.0));
+        let cpu_sensors = [
+            TempSensor { name: "CPU Core 0".into(), category: SensorCategory::Cpu, temp: 62.0, ..Default::default() },
+            TempSensor { name: "CPU Package".into(), category: SensorCategory::Cpu, temp: 68.0, ..Default::default() },
+        ];
+        assert_eq!(super::hottest_temperature_for_category(&cpu_sensors, SensorCategory::Cpu), Some(68.0));
     }
 }
 

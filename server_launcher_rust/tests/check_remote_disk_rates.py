@@ -28,7 +28,7 @@ assert counters['disk_rates']['busy'][:2] == (1.0, 2.0)
 assert 'reset' not in counters['disk_rates'] and 'new' not in counters['disk_rates']
 
 functions = [n for n in node.body if isinstance(n, ast.FunctionDef)
-             and n.name in {'disk_rate_for_source', 'mounted_disk_totals', 'is_base_block_device', 'read_disk_stats', 'disk_discard_supported', 'disk_bus_interface', 'normalize_pci_address', 'nvidia_number'}]
+             and n.name in {'disk_rate_for_source', 'mounted_disk_totals', 'is_base_block_device', 'read_disk_stats', 'disk_discard_supported', 'disk_bus_interface', 'normalize_pci_address', 'nvidia_number', 'millidegrees_to_celsius'}]
 env = {'os': os, 'math': math}
 exec(compile(ast.Module(body=functions, type_ignores=[]), '<disk fixture>', 'exec'), env)
 diskstats = '8 0 sda 1 2 bad 4 5 6 7\n8 16 sdb 1 2 3 4 5 6 7\n'
@@ -45,6 +45,9 @@ assert env['normalize_pci_address']('00000000:01:00.0') == '0000:01:00.0'
 assert env['normalize_pci_address']('0000:02:00.0') == '0000:02:00.0'
 assert env['normalize_pci_address']('0000:01:20.0') is None
 assert env['normalize_pci_address']('[N/A]') is None
+assert env['millidegrees_to_celsius'](100.0) == 0.1
+assert env['millidegrees_to_celsius'](-100.0) == -0.1
+assert env['millidegrees_to_celsius'](61000.0) == 61.0
 assert env['nvidia_number']('0') == 0.0
 assert env['nvidia_number']('[N/A]') is None
 assert env['nvidia_number']('nan') is None

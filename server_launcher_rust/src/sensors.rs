@@ -1141,6 +1141,8 @@ pub fn collect_physical_disks() -> Vec<PhysicalDiskInfo> {
     physical_disks
 }
 
+fn millidegrees_to_celsius(value: f32) -> f32 { value / 1000.0 }
+
 fn parse_reported_temperature(value: &serde_json::Value) -> Option<f32> {
     value.as_f64().filter(|value| value.is_finite() && (-40.0..=150.0).contains(value)).map(|value| value as f32)
 }
@@ -1231,7 +1233,7 @@ pub fn collect_hwmon_sensors() -> Vec<TempSensor> {
 
                                 if let Ok(val_str) = fs::read_to_string(&tf) {
                                     if let Ok(raw_val) = val_str.trim().parse::<f32>() {
-                                        let temp = if raw_val.abs() > 200.0 { raw_val / 1000.0 } else { raw_val };
+                                        let temp = millidegrees_to_celsius(raw_val);
                                         // Ignore absurd disconnected sensor readings like -273 or 65261
                                         if temp >= -40.0 && temp <= 150.0 {
                                             let cat = categorize_sensor(&label, &chip);
@@ -1267,7 +1269,7 @@ pub fn collect_hwmon_sensors() -> Vec<TempSensor> {
                                 .unwrap_or_else(|_| name.to_string());
                             if let Ok(temp_str) = fs::read_to_string(path.join("temp")) {
                                 if let Ok(raw) = temp_str.trim().parse::<f32>() {
-                                    let temp = if raw.abs() > 200.0 { raw / 1000.0 } else { raw };
+                                    let temp = millidegrees_to_celsius(raw);
                                     if temp >= -40.0 && temp <= 150.0 {
                                         let cat = categorize_sensor(&type_str, "thermal_zone");
                                         result.push(TempSensor {
@@ -1364,7 +1366,7 @@ pub fn detect_hardware_cpu_tjunction_max(temp_sensors: &[TempSensor]) -> Option<
                             for cf in crit_files {
                                 if let Ok(content) = fs::read_to_string(cf) {
                                     if let Ok(raw) = content.trim().parse::<f32>() {
-                                        let val = if raw.abs() > 200.0 { raw / 1000.0 } else { raw };
+                                        let val = millidegrees_to_celsius(raw);
                                         if val >= 60.0 && val <= 125.0 {
                                             return Some(val);
                                         }
@@ -1394,7 +1396,7 @@ pub fn detect_hardware_cpu_tjunction_max(temp_sensors: &[TempSensor]) -> Option<
                                     if ttype.trim().eq_ignore_ascii_case("critical") {
                                         if let Ok(tstr) = fs::read_to_string(trip_temp_path) {
                                             if let Ok(raw) = tstr.trim().parse::<f32>() {
-                                                let val = if raw.abs() > 200.0 { raw / 1000.0 } else { raw };
+                                                let val = millidegrees_to_celsius(raw);
                                                 if val >= 60.0 && val <= 125.0 {
                                                     return Some(val);
                                                 }
@@ -2063,7 +2065,7 @@ fn detect_gpus() -> Vec<GpuSensorInfo> {
                                 if card_temp.is_none() {
                                     if let Ok(s) = fs::read_to_string(hp.join("temp1_input")).or_else(|_| fs::read_to_string(hp.join("temp2_input"))) {
                                         if let Ok(raw) = s.trim().parse::<f32>() {
-                                            let t = if raw.abs() > 200.0 { raw / 1000.0 } else { raw };
+                                            let t = millidegrees_to_celsius(raw);
                                             if t >= -40.0 && t <= 150.0 {
                                                 card_temp = Some(t);
                                             }
@@ -2714,6 +2716,9 @@ try:
 except:
     pass
 
+def millidegrees_to_celsius(value):
+    return value / 1000.0
+
 temps = []
 for hw in glob.glob("/sys/class/hwmon/hwmon*"):
     name = open(hw + "/name").read().strip() if os.path.exists(hw + "/name") else os.path.basename(hw)
@@ -2725,7 +2730,7 @@ for hw in glob.glob("/sys/class/hwmon/hwmon*"):
         if os.path.exists(crit_p):
             try:
                 rc = float(open(crit_p).read().strip())
-                crit = rc / 1000.0 if abs(rc) > 200.0 else rc
+                crit = millidegrees_to_celsius(rc)
             except:
                 pass
         max_p = inp.replace("_input", "_max")
@@ -2733,12 +2738,12 @@ for hw in glob.glob("/sys/class/hwmon/hwmon*"):
         if os.path.exists(max_p):
             try:
                 rm = float(open(max_p).read().strip())
-                tmax = rm / 1000.0 if abs(rm) > 200.0 else rm
+                tmax = millidegrees_to_celsius(rm)
             except:
                 pass
         try:
             raw_t = float(open(inp).read().strip())
-            t = raw_t / 1000.0 if abs(raw_t) > 200.0 else raw_t
+            t = millidegrees_to_celsius(raw_t)
             if -40 <= t <= 150:
                 temps.append({"chip": name, "label": lbl, "temp": round(t, 1), "crit": crit, "max": tmax})
         except:
@@ -2748,7 +2753,7 @@ if len(temps) < 3:
         try:
             type_lbl = open(tz + "/type").read().strip() if os.path.exists(tz + "/type") else os.path.basename(tz)
             raw_t = float(open(tz + "/temp").read().strip())
-            t = raw_t / 1000.0 if abs(raw_t) > 200.0 else raw_t
+            t = millidegrees_to_celsius(raw_t)
             if -40 <= t <= 150:
                 temps.append({"chip": "thermal_zone", "label": type_lbl, "temp": round(t, 1)})
         except:
@@ -2838,7 +2843,7 @@ for card in sorted(glob.glob("/sys/class/drm/card[0-9]*")):
             for tin in glob.glob(hw + "/temp1_input") + glob.glob(hw + "/temp2_input"):
                 try:
                     raw_t = float(open(tin).read().strip())
-                    c_temp = round(raw_t / 1000.0 if abs(raw_t) > 200.0 else raw_t, 1)
+                    c_temp = round(millidegrees_to_celsius(raw_t), 1)
                     break
                 except: pass
             for pin in glob.glob(hw + "/power1_average") + glob.glob(hw + "/power1_input"):
@@ -3874,6 +3879,9 @@ mod tests {
         assert_eq!(categorize_sensor("GPU Core", "sysinfo"), SensorCategory::Gpu);
         assert_eq!(categorize_sensor("Core", "amdgpu"), SensorCategory::Gpu);
         assert_eq!(categorize_sensor("Core 0", "coretemp"), SensorCategory::Cpu);
+        assert_eq!(millidegrees_to_celsius(100.0), 0.1);
+        assert_eq!(millidegrees_to_celsius(-100.0), -0.1);
+        assert_eq!(millidegrees_to_celsius(61000.0), 61.0);
         assert_eq!(parse_reported_temperature(&serde_json::json!(0)), Some(0.0));
         assert_eq!(parse_reported_temperature(&serde_json::Value::Null), None);
         assert_eq!(parse_reported_temperature(&serde_json::json!(999)), None);

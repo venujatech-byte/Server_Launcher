@@ -1893,14 +1893,35 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
 
 static HAS_NVIDIA_SMI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
+fn normalize_pci_address(address: &str) -> Option<String> {
+    let (domain, rest) = address.trim().split_once(':')?;
+    let (bus, slot) = rest.split_once(':')?;
+    let (device, function) = slot.split_once('.')?;
+    let (domain, bus, device, function) = (u16::from_str_radix(domain, 16).ok()?, u8::from_str_radix(bus, 16).ok()?, u8::from_str_radix(device, 16).ok()?, u8::from_str_radix(function, 16).ok()?);
+    if device > 0x1f || function > 7 { return None; }
+    Some(format!("{domain:04x}:{bus:02x}:{device:02x}.{function:x}"))
+}
+
+#[cfg(test)]
+mod gpu_pci_address_tests {
+    #[test]
+    fn normalizes_nvidia_and_linux_addresses_without_conflating_devices() {
+        assert_eq!(super::normalize_pci_address("00000000:01:00.0"), Some("0000:01:00.0".into()));
+        assert_eq!(super::normalize_pci_address("0000:02:00.0"), Some("0000:02:00.0".into()));
+        assert_eq!(super::normalize_pci_address("0000:01:20.0"), None);
+        assert_eq!(super::normalize_pci_address("[N/A]"), None);
+    }
+}
+
 fn detect_gpus() -> Vec<GpuSensorInfo> {
     let mut gpus = Vec::new();
+    let mut nvidia_devices = std::collections::HashSet::new();
 
     // 1. Check NVIDIA via nvidia-smi if available
     if HAS_NVIDIA_SMI.load(std::sync::atomic::Ordering::Relaxed) {
         let nvidia_out = Command::new("nvidia-smi")
             .args([
-                "--query-gpu=name,temperature.gpu,utilization.gpu,utilization.memory,memory.used,memory.total,clocks.current.graphics,clocks.current.memory,power.draw,power.limit",
+                "--query-gpu=name,temperature.gpu,utilization.gpu,utilization.memory,memory.used,memory.total,clocks.current.graphics,clocks.current.memory,power.draw,power.limit,pci.bus_id",
                 "--format=csv,noheader,nounits"
             ])
             .output();
@@ -1921,7 +1942,9 @@ fn detect_gpus() -> Vec<GpuSensorInfo> {
                         let power_watts = parts.get(8).and_then(|s| s.parse::<f32>().ok());
                         let power_limit_watts = parts.get(9).and_then(|s| s.parse::<f32>().ok());
 
-                        gpus.push(GpuSensorInfo { device_path: String::new(), engine_loads: Vec::new(),
+                        let pci = parts.get(10).and_then(|value| normalize_pci_address(value));
+                        if let Some(address) = &pci { nvidia_devices.insert(address.clone()); }
+                        gpus.push(GpuSensorInfo { device_path: pci.map(|address| format!("pci:{address}")).unwrap_or_default(), engine_loads: Vec::new(),
                             name,
                             load_pct,
                             temp,
@@ -1961,8 +1984,8 @@ fn detect_gpus() -> Vec<GpuSensorInfo> {
                     let dev = e.path().join("device");
                     let vendor = fs::read_to_string(dev.join("vendor")).unwrap_or_default().trim().to_lowercase();
                     
-                    // If nvidia-smi already populated NVIDIA cards, avoid duplicating an NVIDIA card from DRM
-                    if vendor == "0x10de" && !gpus.is_empty() && gpus.iter().any(|g| g.driver.contains("NVIDIA")) {
+                    let pci_address = fs::canonicalize(&dev).ok().and_then(|path| path.file_name().and_then(|name| name.to_str()).and_then(normalize_pci_address));
+                    if vendor == "0x10de" && pci_address.as_ref().is_some_and(|address| nvidia_devices.contains(address)) {
                         continue;
                     }
 
@@ -2739,13 +2762,29 @@ if len(temps) < 3:
         except:
             pass
 
+def normalize_pci_address(address):
+    try:
+        domain, bus, slot = address.strip().split(":")
+        device, function = slot.split(".")
+        domain, bus, device, function = (int(value, 16) for value in (domain, bus, device, function))
+        if not (0 <= domain <= 0xffff and 0 <= bus <= 0xff and 0 <= device <= 0x1f and 0 <= function <= 7):
+            return None
+        return f"{domain:04x}:{bus:02x}:{device:02x}.{function:x}"
+    except (ValueError, AttributeError):
+        return None
+
 gpus = []
+nvidia_devices = set()
 try:
-    cmd = "nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total,clocks.current.graphics,clocks.current.memory,power.draw,power.limit --format=csv,noheader,nounits 2>/dev/null"
+    cmd = "nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total,clocks.current.graphics,clocks.current.memory,power.draw,power.limit,pci.bus_id --format=csv,noheader,nounits 2>/dev/null"
     for line in os.popen(cmd).read().strip().split("\n"):
-        parts = [x.strip() for x in line.split(",") if x.strip()]
-        if len(parts) >= 9:
+        parts = [x.strip() for x in line.split(",")]
+        if len(parts) >= 10:
+            address = normalize_pci_address(parts[9])
+            if address:
+                nvidia_devices.add(address)
             gpus.append({
+                "device_path": "pci:" + address if address else "",
                 "name": parts[0],
                 "temp": float(parts[1]) if parts[1] != "[N/A]" else None,
                 "load": float(parts[2]) if parts[2] != "[N/A]" else None,
@@ -2764,7 +2803,8 @@ for card in sorted(glob.glob("/sys/class/drm/card[0-9]*")):
     if "-" not in os.path.basename(card):
         vendor_p = card + "/device/vendor"
         v = open(vendor_p).read().strip().lower() if os.path.exists(vendor_p) else ""
-        if v == "0x10de" and any("NVIDIA" in g.get("driver", "") for g in gpus):
+        address = normalize_pci_address(os.path.basename(os.path.realpath(card + "/device")))
+        if v == "0x10de" and address in nvidia_devices:
             continue
         drv_p = card + "/device/driver"
         drv_name = os.path.basename(os.readlink(drv_p)) if os.path.islink(drv_p) else ""
@@ -2813,6 +2853,7 @@ for card in sorted(glob.glob("/sys/class/drm/card[0-9]*")):
                 except: pass
 
         gpus.append({
+            "device_path": os.path.realpath(card + "/device"),
             "name": v_name,
             "temp": c_temp,
             "load": load,
@@ -3467,7 +3508,7 @@ print(json.dumps(data))
     let mut gpus = Vec::new();
     if let Some(arr) = parsed["gpus"].as_array() {
         for g in arr {
-            gpus.push(GpuSensorInfo { device_path: String::new(), engine_loads: Vec::new(),
+            gpus.push(GpuSensorInfo { device_path: g["device_path"].as_str().unwrap_or("").to_string(), engine_loads: Vec::new(),
                 name: g["name"].as_str().unwrap_or("Remote GPU").to_string(),
                 load_pct: g["load"].as_f64().map(|v| v as f32),
                 temp: g["temp"].as_f64().map(|v| v as f32),

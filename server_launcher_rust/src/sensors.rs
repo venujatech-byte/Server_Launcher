@@ -675,9 +675,7 @@ impl SystemSensorsCollector {
                     cpu_temp = Some(s.temp);
                 }
                 SensorCategory::Memory => ram_temp = hottest_temperature(ram_temp, s.temp),
-                SensorCategory::Storage if storage_temp.is_none() || s.name.contains("Composite") => {
-                    storage_temp = Some(s.temp);
-                }
+                SensorCategory::Storage => storage_temp = hottest_temperature(storage_temp, s.temp),
                 _ => {}
             }
         }
@@ -3808,9 +3806,7 @@ print(json.dumps(data))
                     cpu_temp = Some(temp);
                 }
                 SensorCategory::Memory => ram_temp = hottest_temperature(ram_temp, temp),
-                SensorCategory::Storage if storage_temp.is_none() || label.contains("Composite") => {
-                    storage_temp = Some(temp);
-                }
+                SensorCategory::Storage => storage_temp = hottest_temperature(storage_temp, temp),
                 SensorCategory::Gpu => gpu_temps.push(temp),
                 _ => {}
             }

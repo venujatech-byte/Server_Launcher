@@ -168,7 +168,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Windows GPU engine fallback:** Samples the optional OS GPU Engine counters, sums valid process readings per engine (capped at 100%), then reports the busiest engine per type only when exactly one adapter is present. It does not fabricate overall GPU load; unsupported counters or multi-GPU hosts remain unavailable. Hardware/driver runtime validation is still needed.
 - **Remote GPU temperature association:** The remote collector now carries a generic GPU temperature into the adapter record only when there is exactly one detected GPU and one GPU temperature sensor, preserving device-reported values and leaving ambiguous multi-GPU or multi-sensor cases unmatched.
 - **Temperature page fallback:** RAM and storage fallback readings now follow the collector's sensor category instead of searching label substrings, preventing a label such as `GPU Memory` from appearing as a RAM temperature in either app.
-- **RAM temperature summary:** When a host reports multiple memory temperature sensors, both local collectors, remote Linux parsing, and Windows hardware parsing now summarize the hottest categorized memory reading instead of depending on sensor enumeration order. Per-sensor readings remain available in the detailed list.
+- **Memory and storage temperature summaries:** Local collectors, remote Linux parsing, Windows hardware parsing, and both UI fallback paths now summarize the hottest categorized memory/storage sensor instead of depending on enumeration order. CPU/GPU fallback selection remains unchanged, and per-sensor readings remain available in the detailed list.
 
 ### Remaining work and validation
 

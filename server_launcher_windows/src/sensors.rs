@@ -688,9 +688,7 @@ impl SystemSensorsCollector {
                     cpu_temp = Some(s.temp);
                 }
                 SensorCategory::Memory => ram_temp = hottest_temperature(ram_temp, s.temp),
-                SensorCategory::Storage if storage_temp.is_none() || s.name.contains("Composite") => {
-                    storage_temp = Some(s.temp);
-                }
+                SensorCategory::Storage => storage_temp = hottest_temperature(storage_temp, s.temp),
                 _ => {}
             }
         }
@@ -3836,9 +3834,7 @@ print(json.dumps(data))
                     cpu_temp = Some(temp);
                 }
                 SensorCategory::Memory => ram_temp = hottest_temperature(ram_temp, temp),
-                SensorCategory::Storage if storage_temp.is_none() || label.contains("Composite") => {
-                    storage_temp = Some(temp);
-                }
+                SensorCategory::Storage => storage_temp = hottest_temperature(storage_temp, temp),
                 SensorCategory::Gpu => gpu_temps.push(temp),
                 _ => {}
             }
@@ -4736,7 +4732,7 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
                 SensorCategory::Cpu => {},
                 SensorCategory::Gpu => {},
                 SensorCategory::Memory => snap.ram_temp = hottest_temperature(snap.ram_temp, temp as f32),
-                SensorCategory::Storage => snap.storage_temp = Some(temp as f32),
+                SensorCategory::Storage => snap.storage_temp = hottest_temperature(snap.storage_temp, temp as f32),
                 _ => {},
             }
             snap.temp_sensors.push(TempSensor { name: name.into(), chip: "LibreHardwareMonitor".into(),

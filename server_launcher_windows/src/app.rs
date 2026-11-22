@@ -5136,6 +5136,10 @@ fn first_temperature_for_category(sensors: &[crate::sensors::TempSensor], catego
     sensors.iter().find(|sensor| sensor.category == category).map(|sensor| sensor.temp)
 }
 
+fn hottest_temperature_for_category(sensors: &[crate::sensors::TempSensor], category: crate::sensors::SensorCategory) -> Option<f32> {
+    sensors.iter().filter(|sensor| sensor.category == category).map(|sensor| sensor.temp).filter(|temp| temp.is_finite()).reduce(f32::max)
+}
+
 #[cfg(test)]
 mod temperature_limit_tests {
     use crate::sensors::{SensorCategory, TempSensor};
@@ -5156,10 +5160,13 @@ mod temperature_category_tests {
     fn uses_sensor_category_instead_of_incidental_label_words() {
         let sensors = [
             TempSensor { name: "GPU Memory".into(), category: SensorCategory::Gpu, temp: 70.0, ..Default::default() },
-            TempSensor { name: "DIMM".into(), category: SensorCategory::Memory, temp: 43.0, ..Default::default() },
+            TempSensor { name: "DIMM 0".into(), category: SensorCategory::Memory, temp: 43.0, ..Default::default() },
+            TempSensor { name: "DIMM 1".into(), category: SensorCategory::Memory, temp: 51.0, ..Default::default() },
+            TempSensor { name: "NVMe Composite".into(), category: SensorCategory::Storage, temp: 52.0, ..Default::default() },
+            TempSensor { name: "Drive 2".into(), category: SensorCategory::Storage, temp: 60.0, ..Default::default() },
         ];
-        assert_eq!(super::first_temperature_for_category(&sensors, SensorCategory::Memory), Some(43.0));
-        assert_eq!(super::first_temperature_for_category(&sensors, SensorCategory::Storage), None);
+        assert_eq!(super::hottest_temperature_for_category(&sensors, SensorCategory::Memory), Some(51.0));
+        assert_eq!(super::hottest_temperature_for_category(&sensors, SensorCategory::Storage), Some(60.0));
     }
 }
 
@@ -16222,11 +16229,11 @@ impl LauncherApp {
         }).unwrap_or(f32::NAN);
 
         let ram_temp = snap.ram_temp
-            .or_else(|| first_temperature_for_category(&snap.temp_sensors, crate::sensors::SensorCategory::Memory))
+            .or_else(|| hottest_temperature_for_category(&snap.temp_sensors, crate::sensors::SensorCategory::Memory))
             .unwrap_or(f32::NAN);
 
         let nvme_temp = snap.storage_temp
-            .or_else(|| first_temperature_for_category(&snap.temp_sensors, crate::sensors::SensorCategory::Storage))
+            .or_else(|| hottest_temperature_for_category(&snap.temp_sensors, crate::sensors::SensorCategory::Storage))
             .unwrap_or(f32::NAN);
 
         let vrm_temp = snap.temp_sensors.iter()

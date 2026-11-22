@@ -305,6 +305,7 @@ pub struct SystemSensorsSnapshot {
     pub socket_total: usize,
     pub socket_tcp: usize,
     pub socket_udp: usize,
+    pub socket_stats_available: bool,
     pub active_sockets: Vec<crate::wifi::WifiActiveSocket>,
 
     pub hardware_access_unlocked: bool,
@@ -321,6 +322,19 @@ fn counter_rates(previous: Option<(u64, u64)>, current: (u64, u64), elapsed: f64
         ),
         None => (0.0, 0.0),
     }
+}
+
+fn parse_socket_stats(content: &str) -> Option<(usize, usize, usize)> {
+    let value = |prefix: &str, key: &str| content.lines().find_map(|line| {
+        if !line.starts_with(prefix) { return None; }
+        let mut fields = line.split_whitespace().skip(1);
+        while let (Some(field), Some(value)) = (fields.next(), fields.next()) {
+            if field == key { return value.parse::<usize>().ok(); }
+        }
+        None
+    });
+    let (total, tcp, udp) = (value("sockets:", "used")?, value("TCP:", "inuse")?, value("UDP:", "inuse")?);
+    Some((total.max(tcp.saturating_add(udp)), tcp, udp))
 }
 
 #[cfg(test)]
@@ -772,29 +786,15 @@ impl SystemSensorsCollector {
             #[cfg(not(target_os = "linux"))]
             0
         };
-        let (socket_total, socket_tcp, socket_udp) = {
-            let mut total = 0;
-            let mut tcp = 0;
-            let mut udp = 0;
+        let (socket_total, socket_tcp, socket_udp, socket_stats_available) = {
             #[cfg(target_os = "linux")]
-            if let Ok(content) = fs::read_to_string("/proc/net/sockstat") {
-                for line in content.lines() {
-                    if line.starts_with("sockets: used") {
-                        if let Some(val) = line.split_whitespace().nth(2) {
-                            total = val.parse::<usize>().unwrap_or(0);
-                        }
-                    } else if line.starts_with("TCP: inuse") {
-                        if let Some(val) = line.split_whitespace().nth(2) {
-                            tcp = val.parse::<usize>().unwrap_or(0);
-                        }
-                    } else if line.starts_with("UDP: inuse") {
-                        if let Some(val) = line.split_whitespace().nth(2) {
-                            udp = val.parse::<usize>().unwrap_or(0);
-                        }
-                    }
-                }
+            let stats = fs::read_to_string("/proc/net/sockstat").ok().and_then(|content| parse_socket_stats(&content));
+            #[cfg(not(target_os = "linux"))]
+            let stats: Option<(usize, usize, usize)> = None;
+            match stats {
+                Some((total, tcp, udp)) => (total.max(tcp.saturating_add(udp)), tcp, udp, true),
+                None => (0, 0, 0, false),
             }
-            (total.max(tcp + udp), tcp, udp)
         };
 
         let cpu_tjunction_max = detect_hardware_cpu_tjunction_max(&temp_sensors);
@@ -877,6 +877,7 @@ impl SystemSensorsCollector {
             socket_total,
             socket_tcp,
             socket_udp,
+            socket_stats_available,
             active_sockets: Vec::new(),
             hardware_access_unlocked: false,
             hardware_access_error: None,
@@ -3399,20 +3400,20 @@ try:
 except:
     pass
 
-socket_stats = [0, 0, 0]
+socket_stats = None
 try:
     with open("/proc/net/sockstat") as f:
-        tot = 0
-        tcp = 0
-        udp = 0
+        values = {}
         for line in f:
+            fields = line.split()
             if line.startswith("sockets: used"):
-                tot = int(line.split()[2])
+                values["total"] = int(fields[2])
             elif line.startswith("TCP: inuse"):
-                tcp = int(line.split()[2])
+                values["tcp"] = int(fields[2])
             elif line.startswith("UDP: inuse"):
-                udp = int(line.split()[2])
-        socket_stats = [max(tot, tcp + udp), tcp, udp]
+                values["udp"] = int(fields[2])
+        if all(key in values for key in ("total", "tcp", "udp")):
+            socket_stats = [max(values["total"], values["tcp"] + values["udp"]), values["tcp"], values["udp"]]
 except:
     pass
 
@@ -3824,9 +3825,17 @@ print(json.dumps(data))
     }
 
     let uptime_secs = parsed["uptime"].as_u64().unwrap_or(0);
-    let socket_total = parsed["socket_stats"].get(0).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let socket_tcp = parsed["socket_stats"].get(1).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-    let socket_udp = parsed["socket_stats"].get(2).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    let socket_counts = parsed["socket_stats"].as_array().filter(|values| values.len() == 3).and_then(|values| {
+        Some((
+            usize::try_from(values[0].as_u64()?).ok()?,
+            usize::try_from(values[1].as_u64()?).ok()?,
+            usize::try_from(values[2].as_u64()?).ok()?,
+        ))
+    });
+    let (socket_total, socket_tcp, socket_udp, socket_stats_available) = match socket_counts {
+        Some((total, tcp, udp)) => (total.max(tcp.saturating_add(udp)), tcp, udp, true),
+        None => (0, 0, 0, false),
+    };
     let cpu_governor = parsed["cpu_governor"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string());
 
     let mut physical_disks = Vec::new();
@@ -3946,6 +3955,7 @@ print(json.dumps(data))
         socket_total,
         socket_tcp,
         socket_udp,
+        socket_stats_available,
         active_sockets,
         hardware_access_unlocked: false,
             hardware_access_error: None,
@@ -3955,6 +3965,12 @@ print(json.dumps(data))
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn socket_stats_require_all_reported_counters() {
+        assert_eq!(parse_socket_stats("sockets: used 20\nTCP: inuse 7 orphan 1\nUDP: inuse 2\n"), Some((20, 7, 2)));
+        assert_eq!(parse_socket_stats("sockets: used 20\nTCP: inuse invalid\n"), None);
+    }
+
     use super::*;
     #[test]
     fn unlock_reports_actual_metrics_instead_of_unconditional_success() {

@@ -11115,9 +11115,13 @@ impl LauncherApp {
             self.net_peak_mb = self.net_tx_history.iter().chain(&self.net_rx_history)
                 .copied().fold(0.0_f32, f32::max);
 
-            let (cur_tcp, cur_udp) = (snap.socket_tcp as f32, snap.socket_udp as f32);
-            push_telemetry(&mut self.socket_tcp_history, cur_tcp, history_capacity);
-            push_telemetry(&mut self.socket_udp_history, cur_udp, history_capacity);
+            if snap.socket_stats_available {
+                push_telemetry(&mut self.socket_tcp_history, snap.socket_tcp as f32, history_capacity);
+                push_telemetry(&mut self.socket_udp_history, snap.socket_udp as f32, history_capacity);
+            } else {
+                self.socket_tcp_history.clear();
+                self.socket_udp_history.clear();
+            }
 
             if let Some(load) = snap.gpus.get(self.selected_gpu_idx).and_then(|g| g.load_pct) {
                 push_telemetry(&mut self.gpu_load_history, load, history_capacity);
@@ -11455,9 +11459,13 @@ impl LauncherApp {
                                 ui.label(RichText::new("CONNECTION STATS").size(11.0).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                                 ui.add_space(4.0);
 
-                                let (tot_sock, tcp_c, udp_c) = (snap.socket_total, snap.socket_tcp, snap.socket_udp);
+                                let (tot_sock, tcp_c, udp_c) = if snap.socket_stats_available {
+                                    (snap.socket_total.to_string(), snap.socket_tcp.to_string(), snap.socket_udp.to_string())
+                                } else {
+                                    ("—".to_string(), "—".to_string(), "—".to_string())
+                                };
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new(format!("{}", tot_sock)).size(22.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                    ui.label(RichText::new(tot_sock).size(22.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                     ui.label(RichText::new("open sockets").size(10.5).color(p.text_muted));
                                 });
 
@@ -11467,17 +11475,21 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         ui.label(RichText::new("—").size(11.0).color(accent));
                                         ui.label(RichText::new("TCP").size(10.0).monospace().color(p.text_muted));
-                                        ui.label(RichText::new(format!("{}", tcp_c)).size(10.5).strong().color(Color32::from_rgb(241, 245, 249)));
+                                        ui.label(RichText::new(tcp_c).size(10.5).strong().color(Color32::from_rgb(241, 245, 249)));
                                     });
                                     ui.horizontal(|ui| {
                                         ui.label(RichText::new("—").size(11.0).color(Color32::from_rgb(148, 163, 184)));
                                         ui.label(RichText::new("UDP").size(10.0).monospace().color(p.text_muted));
-                                        ui.label(RichText::new(format!("{}", udp_c)).size(10.5).strong().color(Color32::from_rgb(241, 245, 249)));
+                                        ui.label(RichText::new(udp_c).size(10.5).strong().color(Color32::from_rgb(241, 245, 249)));
                                     });
                                 });
 
                                 ui.add_space(10.0);
-                                draw_sockets_chart(ui, 130.0, &self.socket_tcp_history, &self.socket_udp_history, accent);
+                                if snap.socket_stats_available {
+                                    draw_sockets_chart(ui, 130.0, &self.socket_tcp_history, &self.socket_udp_history, accent);
+                                } else {
+                                    ui.label(RichText::new("Socket history unavailable").size(10.0).color(p.text_muted));
+                                }
                             });
                     });
                 });
@@ -13937,7 +13949,7 @@ impl LauncherApp {
                                             .rounding(Rounding::same(4.0))
                                             .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                             .show(ui, |ui| {
-                                                ui.label(RichText::new(format!("Sockets: {}", snap.socket_total)).size(9.0).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                                ui.label(RichText::new(if snap.socket_stats_available { format!("Sockets: {}", snap.socket_total) } else { "Sockets: —".to_string() }).size(9.0).monospace().color(Color32::from_rgb(203, 213, 225)));
                                             });
                                     }
                                 });
@@ -14004,7 +14016,7 @@ impl LauncherApp {
                                                 .rounding(Rounding::same(4.0))
                                                 .inner_margin(egui::Margin::symmetric(8.0, 4.0))
                                                 .show(ui, |ui| {
-                                                    ui.label(RichText::new(format!("Sockets: {}", snap.socket_total)).size(9.0).monospace().color(Color32::from_rgb(203, 213, 225)));
+                                                    ui.label(RichText::new(if snap.socket_stats_available { format!("Sockets: {}", snap.socket_total) } else { "Sockets: —".to_string() }).size(9.0).monospace().color(Color32::from_rgb(203, 213, 225)));
                                                 });
                                         }
                                     });
@@ -14341,13 +14353,13 @@ impl LauncherApp {
                             ui,
                             crate::lucide::ACTIVITY,
                             "SOCKETS",
-                            &format!("{}", snap.socket_total),
+                            &if snap.socket_stats_available { snap.socket_total.to_string() } else { "—".to_string() },
                             "TOTAL",
-                            &format!("{} TCP • {} UDP", snap.socket_tcp, snap.socket_udp),
+                            &if snap.socket_stats_available { format!("{} TCP • {} UDP", snap.socket_tcp, snap.socket_udp) } else { "Socket counts unavailable".to_string() },
                             "",
                             "",
                             &sock_slice,
-                            (snap.socket_total as f32 * 1.5).max(20.0),
+                            if snap.socket_stats_available { (snap.socket_total as f32 * 1.5).max(20.0) } else { 20.0 },
                             None,
                             Color32::from_rgb(96, 165, 250),
                             p.bg_card,

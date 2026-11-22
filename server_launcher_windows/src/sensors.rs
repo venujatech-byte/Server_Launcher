@@ -4509,7 +4509,7 @@ for path in glob.glob('/sys/class/powercap/intel-rapl:*'):
     energy = read_number(path + '/energy_uj')
     maximum = read_number(path + '/max_energy_range_uj')
     if energy is not None:
-        zones.append((path, energy, maximum))
+        zones.append((path, energy, maximum, time.monotonic()))
     else:
         unreadable_zones.append(path)
 started = time.monotonic()
@@ -4567,15 +4567,16 @@ for card in sorted(glob.glob('/sys/class/drm/card[0-9]*')):
 if time.monotonic() - started < 0.15:
     time.sleep(0.15)
 watts = []
-for path, previous, maximum in zones:
+for path, previous, maximum, sampled_at in zones:
     current = read_number(path + '/energy_uj')
-    if current is None:
+    elapsed = time.monotonic() - sampled_at
+    if current is None or previous < 0 or current < 0 or elapsed <= 0:
         continue
     delta = current - previous
-    if delta < 0 and maximum is not None:
+    if delta < 0 and maximum is not None and maximum > 0 and previous <= maximum and current <= maximum:
         delta += maximum
     if delta >= 0:
-        watts.append(delta / 1e6 / (time.monotonic() - started))
+        watts.append(delta / 1e6 / elapsed)
 if zones and not unreadable_zones and len(watts) == len(zones):
     result['cpu_watts'] = sum(watts)
 print(json.dumps(result, allow_nan=False))

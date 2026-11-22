@@ -1516,6 +1516,14 @@ mod cpu_frequency_tests {
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn parse_package_power(label: &str, microwatts: &str) -> Option<f32> {
+    let label = label.trim().to_ascii_lowercase();
+    if !label.starts_with("package") && !label.starts_with("cpu package") { return None; }
+    let watts = microwatts.trim().parse::<f32>().ok()? / 1_000_000.0;
+    (watts.is_finite() && (0.0..1000.0).contains(&watts)).then_some(watts)
+}
+
 pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32>) {
     let mut freqs = Vec::new();
     let mut cpu_power_watts = None;
@@ -1592,13 +1600,14 @@ pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32
                             for f in files.flatten() {
                                 let fname = f.file_name().to_string_lossy().to_string();
                                 if fname.starts_with("power") && (fname.ends_with("_input") || fname.ends_with("_average")) {
-                                    if let Ok(s) = fs::read_to_string(f.path()) {
-                                        if let Ok(uw) = s.trim().parse::<f32>() {
-                                            let w = uw / 1_000_000.0;
-                                            if w > 0.0 && w < 1000.0 {
-                                                cpu_power_watts = Some(w);
-                                                break;
-                                            }
+                                    let Some(prefix) = fname.strip_suffix("_input").or_else(|| fname.strip_suffix("_average")) else { continue; };
+                                    if let (Ok(label), Ok(value)) = (
+                                        fs::read_to_string(p.join(format!("{prefix}_label"))),
+                                        fs::read_to_string(f.path()),
+                                    ) {
+                                        if let Some(watts) = parse_package_power(&label, &value) {
+                                            cpu_power_watts = Some(watts);
+                                            break;
                                         }
                                     }
                                 }
@@ -1614,6 +1623,19 @@ pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32
     }
 
     (freqs, cpu_power_watts, cpu_tdp_watts)
+}
+
+#[cfg(test)]
+mod package_power_tests {
+    #[test]
+    fn accepts_only_labeled_valid_package_power() {
+        assert_eq!(super::parse_package_power("CPU Package", "3250000"), Some(3.25));
+        assert_eq!(super::parse_package_power("package-0", "0"), Some(0.0));
+        assert_eq!(super::parse_package_power("Core", "3250000"), None);
+        assert_eq!(super::parse_package_power("", "3250000"), None);
+        assert_eq!(super::parse_package_power("Package", "NaN"), None);
+        assert_eq!(super::parse_package_power("Package", "-1"), None);
+    }
 }
 
 #[cfg(any(target_os = "linux", test))]

@@ -116,7 +116,6 @@ pub enum SensorsSubTab {
 #[derive(Clone, Debug)]
 pub enum PendingSudoAction {
     UnlockSensorAccess,
-    DropLinuxCaches,
     SetChargeLimit { battery: String, limit: u32 },
     ServiceAction { unit: String, action: &'static str, user_mode: bool },
     CreateService { def: crate::systemd::NewServiceDefinition },
@@ -149,7 +148,6 @@ impl PendingSudoAction {
     fn key(&self, host_id: Option<&str>) -> String {
         let (kind, target, user_mode) = match self {
             Self::UnlockSensorAccess => ("hardware", "local", false),
-            Self::DropLinuxCaches => ("drop-caches", "system", false),
             Self::SetChargeLimit { battery, .. } => ("charge-limit", battery.as_str(), false),
             Self::ServiceAction { unit, user_mode, .. } => ("control", unit.as_str(), *user_mode),
             Self::CreateService { def } => ("create", def.name.as_str(), def.is_user),
@@ -536,7 +534,6 @@ pub struct LauncherApp {
     pub sensors_top_apps_normalize_cpu: bool,
     pub sensors_top_apps_status_msg: Option<(String, bool, Instant)>,
     pub remote_process_results: Arc<Mutex<VecDeque<(String, bool)>>>,
-    pub ram_status_msg: Option<(String, bool, Instant)>,
     pub sensors_subtab: SensorsSubTab,
     pub sensors_top_apps_visited: bool,
     pub sensors_top_apps_section_apps_expanded: bool,
@@ -873,7 +870,6 @@ impl LauncherApp {
             sensors_top_apps_normalize_cpu: true,
             sensors_top_apps_status_msg: None,
             remote_process_results: Arc::new(Mutex::new(VecDeque::new())),
-            ram_status_msg: None,
             sensors_subtab: SensorsSubTab::Overview,
             sensors_top_apps_visited: false,
             sensors_top_apps_section_apps_expanded: true,
@@ -8918,7 +8914,6 @@ impl LauncherApp {
                     if host.is_some() { Err("Protected sensor access applies to the local host only.".into()) }
                     else { sensor_collector.lock().unwrap().unlock_hardware_access(pass).map(SystemdActionValue::Message) }
                 },
-                PendingSudoAction::DropLinuxCaches => crate::sensors::drop_linux_caches(host.as_ref(), pass).map(SystemdActionValue::Message),
                 PendingSudoAction::SetChargeLimit { battery, limit } => crate::power::set_charge_limit(battery, *limit, host.as_ref(), pass).map(SystemdActionValue::Message),
                 PendingSudoAction::ServiceAction { unit, action, user_mode } => {
                     if let Some(host) = &host { control_remote_service(host, unit, action, *user_mode, pass) }
@@ -8979,7 +8974,7 @@ impl LauncherApp {
                 continue;
             };
             let action_scope = match &action {
-                PendingSudoAction::UnlockSensorAccess | PendingSudoAction::DropLinuxCaches | PendingSudoAction::SetChargeLimit { .. } => false,
+                PendingSudoAction::UnlockSensorAccess | PendingSudoAction::SetChargeLimit { .. } => false,
                 PendingSudoAction::CreateService { def } => def.is_user,
                 PendingSudoAction::ServiceAction { user_mode, .. } | PendingSudoAction::SaveUnitFile { user_mode, .. }
                 | PendingSudoAction::CreateDropIn { user_mode, .. } | PendingSudoAction::DeleteDropIn { user_mode, .. }
@@ -8998,7 +8993,6 @@ impl LauncherApp {
                         if result.host_id.is_some() { self.remote_journal_logs.lock().unwrap().insert(format!("{}:{}:{}", host_key, unit, scope), format!("Error: {}", error)); }
                         else { self.local_journal_logs.lock().unwrap().insert(format!("{}:{}", unit, scope), format!("Error: {}", error)); }
                     }
-                    if current_host && matches!(action, PendingSudoAction::DropLinuxCaches) { self.ram_status_msg = Some((error.clone(), true, Instant::now())); }
                     if current_host && matches!(action, PendingSudoAction::SetChargeLimit { .. }) { self.power_status_msg = Some((error.clone(), true, Instant::now())); }
                     if current_host { self.systemd_file_status_msg = Some((error.clone(), true)); }
                     if result.host_id.is_some() { *self.remote_service_action_msg.lock().unwrap() = Some(format!("Error: {}", error)); }
@@ -9058,7 +9052,6 @@ impl LauncherApp {
                             let mut refresh = None;
                             match &action {
                                 PendingSudoAction::UnlockSensorAccess => self.trigger_local_sensors_query(false, None),
-                                PendingSudoAction::DropLinuxCaches => { if current_host { self.ram_status_msg = Some((message.clone(), false, Instant::now())); if let Some(host) = host.clone() { self.trigger_remote_sensors_query(host); } else { self.trigger_local_sensors_query(false, None); } } },
                                 PendingSudoAction::SetChargeLimit { .. } => { if current_host { self.power_status_msg = Some((message.clone(), false, Instant::now())); if let Some(host) = host.clone() { self.trigger_remote_sensors_query(host); } else { self.trigger_local_sensors_query(false, None); } } },
                                 PendingSudoAction::ServiceAction { unit, user_mode, .. } => { refresh = Some((unit.clone(), *user_mode)); }
                                 PendingSudoAction::CreateService { def } => {
@@ -9158,7 +9151,6 @@ impl LauncherApp {
                 if let Some(pending) = &self.sudo_popup.pending {
                     match pending {
                         PendingSudoAction::UnlockSensorAccess => { ui.label("Read-only access to CPU energy, Intel GPU counters and RAM inventory on this computer."); }
-                        PendingSudoAction::DropLinuxCaches => { ui.label("Drop clean Linux caches on the selected host after syncing dirty data."); }
                         PendingSudoAction::SetChargeLimit { battery, limit } => { ui.label(format!("Set battery {} charge limit to {}% on the selected host.", battery, limit)); }
                         PendingSudoAction::ServiceAction { unit, action, .. } => {
                             let act_color = match *action {
@@ -11778,50 +11770,6 @@ impl LauncherApp {
                             });
                         });
                     });
-
-                ui.add_space(6.0);
-                egui::CollapsingHeader::new("Advanced memory maintenance")
-                    .id_salt("ram_advanced_maintenance")
-                    .show(ui, |ui| {
-                        ui.label(RichText::new("Drop clean Linux page cache, dentries and inodes after syncing dirty data.").size(11.0).color(p.text_muted));
-                        let available = host_id.is_some() || cfg!(target_os = "linux");
-                        let key = PendingSudoAction::DropLinuxCaches.key(host_id);
-                        let busy = self.systemd_actions_in_flight.lock().unwrap().contains(&key);
-                        if ui.add_enabled(available && !busy, egui::Button::new(if busy { "Dropping caches…" } else { "Drop Linux caches" })).clicked() {
-                            let host = host_id.and_then(|id| self.ssh_hosts.iter().find(|h| h.id == id)).cloned();
-                            if host_id.is_none() || host.is_some() {
-                                self.ram_status_msg = Some(("Dropping caches…".into(), false, Instant::now()));
-                                self.queue_systemd_action(PendingSudoAction::DropLinuxCaches, host.as_ref(), None);
-                            } else {
-                                self.ram_status_msg = Some(("Selected host is unavailable".into(), true, Instant::now()));
-                            }
-                        }
-                        if !available { ui.label(RichText::new("Unavailable on this operating system.").size(10.0).color(p.text_muted)); }
-                    });
-
-                // Status message toast banner
-                if let Some((ref msg, is_err, time)) = self.ram_status_msg {
-                    if time.elapsed().as_secs() < 6 {
-                        ui.add_space(6.0);
-                        let (bg, border, text_color) = if is_err {
-                            (Color32::from_rgb(45, 20, 20), Color32::from_rgb(239, 68, 68), Color32::from_rgb(252, 165, 165))
-                        } else {
-                            (Color32::from_rgb(15, 35, 25), Color32::from_rgb(34, 197, 94), Color32::from_rgb(134, 239, 172))
-                        };
-                        Frame::none()
-                            .fill(bg)
-                            .stroke(egui::Stroke::new(1.0_f32, border))
-                            .rounding(Rounding::same(6.0))
-                            .inner_margin(egui::Margin::symmetric(12.0, 6.0))
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    let icon = if is_err { crate::lucide::ALERT_TRIANGLE } else { crate::lucide::CHECK };
-                                    ui.label(RichText::new(icon).size(12.0).color(text_color));
-                                    ui.label(RichText::new(msg).size(11.0).color(text_color));
-                                });
-                            });
-                    }
-                }
 
                 ui.add_space(8.0);
 

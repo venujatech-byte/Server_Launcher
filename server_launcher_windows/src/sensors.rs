@@ -1552,31 +1552,6 @@ pub fn detect_hardware_cpu_tjunction_max(temp_sensors: &[TempSensor]) -> Option<
     None
 }
 
-const DROP_CACHES_COMMAND: &str = "sync && printf 3 > /proc/sys/vm/drop_caches";
-
-/// Drop clean Linux page cache, dentries, and inodes after syncing dirty data.
-pub fn drop_linux_caches(host: Option<&crate::config::SshRemoteHost>, password: Option<&str>) -> Result<String, String> {
-    if let Some(host) = host {
-        crate::systemd::remote_script(host, DROP_CACHES_COMMAND, false, true, password)?;
-    } else {
-        #[cfg(not(target_os = "linux"))]
-        return Err("Cache dropping is only available on Linux hosts.".into());
-        #[cfg(target_os = "linux")]
-        crate::systemd::run_local("sh", &["-c", DROP_CACHES_COMMAND], true, password)?;
-    }
-    Ok("Clean page cache, dentries and inodes dropped.".into())
-}
-
-#[cfg(all(test, target_os = "linux"))]
-mod drop_cache_tests {
-    #[test]
-    fn failed_write_is_reported() {
-        let script = super::DROP_CACHES_COMMAND.replace("/proc/sys/vm/drop_caches", "/dev/null/nonexistent");
-        let result = std::process::Command::new("sh").args(["-c", &script]).status().unwrap();
-        assert!(!result.success());
-    }
-}
-
 /// Detects if the current system has any active physical fan controllers in hwmon.
 pub fn detect_active_fans() -> bool {
     #[cfg(target_os = "linux")]

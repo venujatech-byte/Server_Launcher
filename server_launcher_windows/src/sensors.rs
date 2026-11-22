@@ -3949,6 +3949,7 @@ impl SystemSensorsCollector {
                 snap.total_disk_read_rate_bps = live.total_disk_read_rate_bps;
                 snap.total_disk_write_rate_bps = live.total_disk_write_rate_bps;
                 snap.total_disk_rates_available = live.total_disk_rates_available;
+                apply_windows_gpu_sensors(&mut snap.gpus, &data["gpu_hardware"], &data["gpu_sensors"]);
                 let mut errors: Vec<String> = snap.windows_telemetry_error.take().into_iter().collect();
                 errors.extend(["battery_error", "temp_error"].iter().filter_map(|key| data[*key].as_str()).map(str::to_owned));
                 snap.windows_telemetry_error = (!errors.is_empty()).then(|| errors.join(" • "));
@@ -4056,7 +4057,12 @@ if (__INVENTORY__) {
 try { $result.disk=Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -Filter "Name='_Total'" -ErrorAction Stop | Select-Object -First 1 DiskReadBytesPerSec,DiskWriteBytesPerSec } catch { $result.disk=$null }
 try { $result.logical_disks=@(Get-CimInstance Win32_PerfFormattedData_PerfDisk_LogicalDisk -ErrorAction Stop | Select-Object Name,DiskReadBytesPerSec,DiskWriteBytesPerSec) } catch { $result.logical_disks=@() }
 try { $result.battery=@(Get-CimInstance Win32_Battery -ErrorAction Stop | Select-Object Name,EstimatedChargeRemaining,BatteryStatus) } catch { $result.battery_error='Battery telemetry unavailable' }
-try { $result.temp=@(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor -ErrorAction Stop | Where-Object SensorType -eq Temperature | Select-Object Name,Value,Identifier) } catch { $result.temp_error='Temperature readings require the LibreHardwareMonitor WMI provider' }
+try {
+  $sensors=@(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor -ErrorAction Stop | Select-Object Name,Value,Identifier,Parent,SensorType)
+  $result.temp=@($sensors | Where-Object SensorType -eq Temperature)
+  $result.gpu_sensors=$sensors
+  $result.gpu_hardware=@(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Hardware -ErrorAction Stop | Where-Object HardwareType -like 'Gpu*' | Select-Object Name,Identifier,HardwareType)
+} catch { $result.temp_error='Hardware readings require the LibreHardwareMonitor WMI provider' }
 $result | ConvertTo-Json -Depth 4 -Compress"#;
     let script = script.replace("__INVENTORY__", if inventory { "$true" } else { "$false" });
     let mut child = Command::new("powershell.exe")
@@ -4086,6 +4092,47 @@ $result | ConvertTo-Json -Depth 4 -Compress"#;
     }
     let bytes = reader.join().map_err(|_| "Could not read Windows sensor query output".to_string())?;
     serde_json::from_slice(&bytes).map_err(|error| format!("Invalid Windows sensor data: {error}"))
+}
+
+#[cfg(any(windows, test))]
+fn apply_windows_gpu_sensors(gpus: &mut [GpuSensorInfo], hardware: &serde_json::Value, sensors: &serde_json::Value) {
+    for gpu in gpus.iter_mut() {
+        gpu.device_path.clear();
+        gpu.load_pct = None;
+        gpu.temp = None;
+        gpu.clock_mhz = None;
+        gpu.power_watts = None;
+    }
+    let Some(hardware) = hardware.as_array() else { return; };
+    let Some(sensors) = sensors.as_array() else { return; };
+    let names: Vec<_> = gpus.iter().map(|gpu| gpu.name.to_ascii_lowercase()).collect();
+    for gpu in gpus {
+        let name = gpu.name.trim();
+        if name.is_empty() || names.iter().filter(|candidate| candidate.trim().eq_ignore_ascii_case(name)).count() != 1 { continue; }
+        let mut devices = hardware.iter().filter(|device| {
+            device["Name"].as_str().is_some_and(|candidate| candidate.trim().eq_ignore_ascii_case(name))
+                && device["HardwareType"].as_str().is_some_and(|kind| kind.starts_with("Gpu"))
+        });
+        let Some(device) = devices.next() else { continue; };
+        if devices.next().is_some() { continue; }
+        let Some(identifier) = device["Identifier"].as_str().filter(|id| !id.is_empty()) else { continue; };
+        if hardware.iter().filter(|device| device["Identifier"].as_str() == Some(identifier)).count() != 1 { continue; }
+        let metric = |kind: &str, label: &str, min: f64, max: f64| {
+            let mut matching = sensors.iter().filter(|sensor| {
+                sensor["Parent"].as_str() == Some(identifier)
+                    && sensor["SensorType"].as_str().is_some_and(|value| value.eq_ignore_ascii_case(kind))
+                    && sensor["Name"].as_str().is_some_and(|value| value.eq_ignore_ascii_case(label))
+            });
+            let value = matching.next()?["Value"].as_f64()?;
+            if matching.next().is_some() || !value.is_finite() || !(min..=max).contains(&value) { return None; }
+            Some(value)
+        };
+        gpu.device_path = identifier.to_owned();
+        gpu.load_pct = metric("Load", "GPU Core", 0.0, 100.0).map(|value| value as f32);
+        gpu.temp = metric("Temperature", "GPU Core", -50.0, 200.0).map(|value| value as f32);
+        gpu.clock_mhz = metric("Clock", "GPU Core", 0.0, u32::MAX as f64).map(|value| value.round() as u32);
+        gpu.power_watts = metric("Power", "GPU Package", 0.0, 1000.0).map(|value| value as f32);
+    }
 }
 
 #[cfg(any(windows, test))]
@@ -4193,6 +4240,31 @@ mod windows_sensor_tests {
         assert_eq!(cached.gpus[0].name, "Existing GPU");
         update_windows_inventory(&mut cached, &serde_json::json!({"gpu":[]}));
         assert!(cached.gpus.is_empty());
+    }
+    #[test]
+    fn gpu_samples_require_unique_device_and_matching_sensor_parent() {
+        let mut gpus = vec![GpuSensorInfo { name: "Example GPU".into(), ..Default::default() }];
+        let hardware = serde_json::json!([{ "Name":"Example GPU", "Identifier":"/gpu/0", "HardwareType":"GpuIntel" }]);
+        let sensors = serde_json::json!([
+            {"Parent":"/gpu/0", "SensorType":"Load", "Name":"GPU Core", "Value":0.0},
+            {"Parent":"/gpu/0", "SensorType":"Temperature", "Name":"GPU Core", "Value":60.5},
+            {"Parent":"/gpu/0", "SensorType":"Clock", "Name":"GPU Core", "Value":500},
+            {"Parent":"/gpu/1", "SensorType":"Power", "Name":"GPU Package", "Value":4.0}
+        ]);
+        apply_windows_gpu_sensors(&mut gpus, &hardware, &sensors);
+        assert_eq!(gpus[0].load_pct, Some(0.0));
+        assert_eq!(gpus[0].temp, Some(60.5));
+        assert_eq!(gpus[0].clock_mhz, Some(500));
+        assert_eq!(gpus[0].power_watts, None);
+        apply_windows_gpu_sensors(&mut gpus, &serde_json::Value::Null, &sensors);
+        assert!(gpus[0].load_pct.is_none() && gpus[0].temp.is_none() && gpus[0].clock_mhz.is_none());
+        let mut duplicates = vec![GpuSensorInfo { name: "Example GPU".into(), ..Default::default() }; 2];
+        apply_windows_gpu_sensors(&mut duplicates, &hardware, &sensors);
+        assert!(duplicates.iter().all(|gpu| gpu.load_pct.is_none()));
+        let mut gpu = vec![GpuSensorInfo { name: "Example GPU".into(), ..Default::default() }];
+        let duplicate_hardware = serde_json::json!([hardware[0].clone(), hardware[0].clone()]);
+        apply_windows_gpu_sensors(&mut gpu, &duplicate_hardware, &sensors);
+        assert!(gpu[0].load_pct.is_none());
     }
     #[test]
     fn disk_rates_distinguish_idle_from_missing_or_invalid_data() {

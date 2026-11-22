@@ -687,9 +687,7 @@ impl SystemSensorsCollector {
                 SensorCategory::Cpu if cpu_temp.is_none() || s.name.contains("Package") || s.name == "CPU" => {
                     cpu_temp = Some(s.temp);
                 }
-                SensorCategory::Memory if ram_temp.is_none() || s.name.contains("SODIMM") => {
-                    ram_temp = Some(s.temp);
-                }
+                SensorCategory::Memory => ram_temp = hottest_temperature(ram_temp, s.temp),
                 SensorCategory::Storage if storage_temp.is_none() || s.name.contains("Composite") => {
                     storage_temp = Some(s.temp);
                 }
@@ -1243,6 +1241,10 @@ fn millidegrees_to_celsius(value: f32) -> f32 { value / 1000.0 }
 
 fn parse_reported_temperature(value: &serde_json::Value) -> Option<f32> {
     value.as_f64().filter(|value| value.is_finite() && (-40.0..=150.0).contains(value)).map(|value| value as f32)
+}
+
+fn hottest_temperature(current: Option<f32>, candidate: f32) -> Option<f32> {
+    Some(current.map_or(candidate, |value| value.max(candidate)))
 }
 
 fn apply_unambiguous_gpu_temperature(gpus: &mut [GpuSensorInfo], temperatures: &[f32]) {
@@ -3833,9 +3835,7 @@ print(json.dumps(data))
                 SensorCategory::Cpu if cpu_temp.is_none() || label.contains("Package") || label == "CPU" => {
                     cpu_temp = Some(temp);
                 }
-                SensorCategory::Memory if ram_temp.is_none() || label.contains("SODIMM") => {
-                    ram_temp = Some(temp);
-                }
+                SensorCategory::Memory => ram_temp = hottest_temperature(ram_temp, temp),
                 SensorCategory::Storage if storage_temp.is_none() || label.contains("Composite") => {
                     storage_temp = Some(temp);
                 }
@@ -4076,6 +4076,13 @@ print(json.dumps(data))
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn memory_summary_uses_hottest_sensor_independent_of_order() {
+        assert_eq!(super::hottest_temperature(Some(43.0), 51.0), Some(51.0));
+        assert_eq!(super::hottest_temperature(Some(51.0), 43.0), Some(51.0));
+        assert_eq!(super::hottest_temperature(None, 43.0), Some(43.0));
+    }
+
     #[test]
     fn socket_stats_require_all_reported_counters() {
         assert_eq!(parse_socket_stats("sockets: used 20\nTCP: inuse 7 orphan 1\nUDP: inuse 2\n"), Some((20, 7, 2)));
@@ -4728,7 +4735,7 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
             match category {
                 SensorCategory::Cpu => {},
                 SensorCategory::Gpu => {},
-                SensorCategory::Memory if snap.ram_temp.is_none() => snap.ram_temp = Some(temp as f32),
+                SensorCategory::Memory => snap.ram_temp = hottest_temperature(snap.ram_temp, temp as f32),
                 SensorCategory::Storage => snap.storage_temp = Some(temp as f32),
                 _ => {},
             }

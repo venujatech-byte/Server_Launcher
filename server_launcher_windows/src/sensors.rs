@@ -1041,7 +1041,7 @@ fn is_base_physical_disk(dev: &str) -> bool {
 
 #[cfg_attr(windows, allow(unused_mut))]
 fn disk_has_no_slaves(path: &std::path::Path) -> bool {
-    fs::read_dir(path.join("slaves")).map(|mut entries| entries.next().is_none()).unwrap_or(false)
+    std::fs::read_dir(path.join("slaves")).map(|mut entries| entries.next().is_none()).unwrap_or(false)
 }
 
 pub fn collect_physical_disks() -> Vec<PhysicalDiskInfo> {

@@ -296,8 +296,14 @@ f="$p/charge_control_end_threshold"
 [ -f "$f" ] || {{ echo 'Charge limit is unsupported by this battery' >&2; exit 1; }}
 printf '%s' '{limit}' > "$f"
 [ "$(cat "$f")" = '{limit}' ] || {{ echo 'Charge limit read-back did not match' >&2; exit 1; }}"#);
-    if let Some(host) = host { crate::systemd::remote_script(host, &script, false, true, password)?; }
-    else { crate::systemd::run_local("sh", &["-c", &script], true, password)?; }
+    if let Some(host) = host {
+        crate::systemd::remote_script(host, &script, false, true, password)?;
+    } else {
+        #[cfg(not(windows))]
+        crate::systemd::run_local("sh", &["-c", &script], true, password)?;
+        #[cfg(windows)]
+        return Err("Local charge-limit control is available only on Linux".into());
+    }
     Ok(format!("{} charge limit set to {}%", battery, limit))
 }
 

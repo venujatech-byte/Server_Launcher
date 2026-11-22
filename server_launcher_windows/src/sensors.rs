@@ -4234,7 +4234,7 @@ impl SystemSensorsCollector {
             if let Ok(data) = &sample {
                 update_windows_inventory(&mut self.windows_hardware, data);
                 self.windows_network_adapters = data["network_adapters"].clone();
-                let errors: Vec<&str> = ["gpu_error", "ram_error"].iter().filter_map(|key| data[*key].as_str()).collect();
+                let errors: Vec<&str> = ["gpu_error", "ram_error", "disk_inventory_error"].iter().filter_map(|key| data[*key].as_str()).collect();
                 self.windows_hardware.windows_telemetry_error = (!errors.is_empty()).then(|| errors.join(" • "));
             } else {
                 self.windows_network_adapters = serde_json::Value::Null;
@@ -4365,6 +4365,7 @@ $result=@{gpu=@();ram=@();battery=@();temp=@()};
 if (__INVENTORY__) {
   try { $result.gpu=@(Get-CimInstance Win32_VideoController -ErrorAction Stop | Select-Object Name,DriverVersion) } catch { $result.gpu_error='GPU inventory unavailable' }
   try { $result.ram=@(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop | Select-Object Manufacturer,Capacity,Speed,SMBIOSMemoryType,FormFactor) } catch { $result.ram_error='RAM inventory unavailable' }
+  try { $result.physical_disks=@(Get-CimInstance Win32_DiskDrive -ErrorAction Stop | Select-Object DeviceID,Model,InterfaceType,Size,Partitions) } catch { $result.disk_inventory_error='Physical disk inventory unavailable' }
   try { $result.network_adapters=@(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Select-Object Name,ifType) } catch { $result.network_adapters=$null }
 }
 try { $result.disk=Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -Filter "Name='_Total'" -ErrorAction Stop | Select-Object -First 1 DiskReadBytesPerSec,DiskWriteBytesPerSec } catch { $result.disk=$null }
@@ -4508,6 +4509,7 @@ fn update_windows_inventory(cached: &mut SystemSensorsSnapshot, data: &serde_jso
     let inventory = parse_windows_hardware(data);
     if data["gpu_error"].is_null() { cached.gpus = inventory.gpus; }
     if data["ram_error"].is_null() { cached.memory_hw = inventory.memory_hw; }
+    if data["disk_inventory_error"].is_null() { cached.physical_disks = inventory.physical_disks; }
 }
 
 #[cfg(any(windows, test))]
@@ -4594,6 +4596,23 @@ fn windows_battery_status(value: Option<u64>) -> &'static str {
 #[cfg(any(windows, test))]
 fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
     let mut snap = SystemSensorsSnapshot::default();
+    if let Some(disks) = data["physical_disks"].as_array() {
+        snap.physical_disks = disks.iter().filter_map(|disk| {
+            let name = disk["DeviceID"].as_str().map(str::trim).filter(|name| !name.is_empty())?;
+            let total_bytes = disk["Size"].as_str().and_then(|size| size.parse::<u64>().ok())
+                .or_else(|| disk["Size"].as_u64()).filter(|size| *size > 0)?;
+            Some(PhysicalDiskInfo {
+                name: name.rsplit('\\').next().unwrap_or(name).to_owned(),
+                model: disk["Model"].as_str().map(str::trim).filter(|model| !model.is_empty()).unwrap_or("Unknown disk").to_owned(),
+                bus_interface: disk["InterfaceType"].as_str().unwrap_or_default().to_owned(),
+                total_bytes,
+                partition_count: disk["Partitions"].as_u64().unwrap_or(0) as usize,
+                // Win32_DiskDrive does not reliably distinguish SSDs from rotational media.
+                is_ssd: false,
+                ..Default::default()
+            })
+        }).collect();
+    }
     if let (Some(read), Some(write)) = (
         data["disk"]["DiskReadBytesPerSec"].as_f64().filter(|value| value.is_finite() && *value >= 0.0),
         data["disk"]["DiskWriteBytesPerSec"].as_f64().filter(|value| value.is_finite() && *value >= 0.0),
@@ -4684,6 +4703,21 @@ mod windows_sensor_tests {
         assert_eq!(cached.gpus[0].name, "Existing GPU");
         update_windows_inventory(&mut cached, &serde_json::json!({"gpu":[]}));
         assert!(cached.gpus.is_empty());
+    }
+    #[test]
+    fn windows_disk_inventory_requires_identity_and_capacity() {
+        let snapshot = parse_windows_hardware(&serde_json::json!({"physical_disks": [
+            {"DeviceID":"\\\\.\\PHYSICALDRIVE0", "Model":"NVMe Drive", "InterfaceType":"SCSI", "Size":"1000", "Partitions":2},
+            {"DeviceID":"", "Model":"No identity", "Size":"2000"},
+            {"DeviceID":"\\\\.\\PHYSICALDRIVE2", "Size":"0"}
+        ]}));
+        assert_eq!(snapshot.physical_disks.len(), 1);
+        assert_eq!(snapshot.physical_disks[0].name, "PHYSICALDRIVE0");
+        assert_eq!(snapshot.physical_disks[0].total_bytes, 1000);
+        assert_eq!(snapshot.physical_disks[0].partition_count, 2);
+        let mut cached = snapshot.clone();
+        update_windows_inventory(&mut cached, &serde_json::json!({"disk_inventory_error":"unavailable"}));
+        assert_eq!(cached.physical_disks.len(), 1);
     }
     #[test]
     fn failed_live_query_clears_measurements_but_keeps_device_inventory() {

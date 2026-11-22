@@ -15478,7 +15478,6 @@ impl LauncherApp {
                                                 ui.set_width(ui.available_width());
                                                 let content_start_y = ui.cursor().min.y;
 
-                                                let cycles_val = bat.and_then(|b| b.cycle_count).unwrap_or(0);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 5.0;
                                                     ui.label(RichText::new(crate::lucide::REFRESH_CW).size(11.0).color(accent));
@@ -15487,8 +15486,8 @@ impl LauncherApp {
                                                 ui.add_space(4.0);
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 2.0;
-                                                    if bat.and_then(|battery| battery.cycle_count).is_some() {
-                                                        ui.label(RichText::new(format!("{}", cycles_val)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                                    if let Some(cycles) = bat.and_then(|battery| battery.cycle_count) {
+                                                        ui.label(RichText::new(format!("{}", cycles)).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
                                                         ui.label(RichText::new("cycles").size(11.0).color(Color32::from_rgb(148, 163, 184)));
                                                     } else {
                                                         ui.label(RichText::new("—").size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));

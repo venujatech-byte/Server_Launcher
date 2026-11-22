@@ -5256,8 +5256,12 @@ fn matching_temperature_limit(sensors: &[crate::sensors::TempSensor], category: 
     let mut matches = sensors.iter().filter(|sensor| sensor.category == category && sensor.temp == value);
     let sensor = matches.next()?;
     if matches.next().is_some() { return None; }
-    sensor.crit.filter(|limit| limit.is_finite() && (0.0..=150.0).contains(limit))
-        .or_else(|| sensor.max.filter(|limit| limit.is_finite() && (0.0..=150.0).contains(limit)))
+    reported_temperature_limit(sensor.crit, sensor.max)
+}
+
+fn reported_temperature_limit(crit: Option<f32>, max: Option<f32>) -> Option<f32> {
+    crit.filter(|limit| limit.is_finite() && (0.0..=150.0).contains(limit))
+        .or_else(|| max.filter(|limit| limit.is_finite() && (0.0..=150.0).contains(limit)))
 }
 
 fn hottest_temperature_for_category(sensors: &[crate::sensors::TempSensor], category: crate::sensors::SensorCategory) -> Option<f32> {
@@ -5275,6 +5279,7 @@ mod temperature_limit_tests {
         assert_eq!(super::matching_temperature_limit(&[sensor.clone(), sensor], SensorCategory::Storage, 40.0), None);
         let invalid_limit = TempSensor { category: SensorCategory::Storage, temp: 40.0, crit: Some(999.0), max: Some(200.0), ..Default::default() };
         assert_eq!(super::matching_temperature_limit(&[invalid_limit], SensorCategory::Storage, 40.0), None);
+        assert_eq!(super::reported_temperature_limit(Some(999.0), Some(100.0)), Some(100.0));
     }
 }
 
@@ -16589,7 +16594,7 @@ impl LauncherApp {
                         ui.add_space(10.0);
 
                         let thermistors: Vec<(String, f32, f32, String, &'static str, Color32)> = snap.temp_sensors.iter().filter(|sensor| sensor.temp.is_finite()).map(|sensor| {
-                            let limit = sensor.crit.or(sensor.max).filter(|value| value.is_finite() && *value > 0.0);
+                            let limit = reported_temperature_limit(sensor.crit, sensor.max);
                             let status = if limit.is_some_and(|limit| sensor.temp >= limit) { "LIMIT" } else { "READING" };
                             let note = limit.map(|limit| format!("Limit {limit:.0}°C")).unwrap_or_else(|| "Limit unavailable".to_string());
                             (sensor.name.clone(), sensor.temp, limit.unwrap_or(f32::NAN), note, status, accent)

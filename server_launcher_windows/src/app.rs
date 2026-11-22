@@ -5163,7 +5163,7 @@ fn render_animated_power_estimate(ui: &mut Ui, snapshot: &crate::sensors::System
         limit * (0.08 + 0.92 * (gpu.load_pct.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0))
     })).sum();
     let disk_mb = (snapshot.total_disk_read_rate_bps + snapshot.total_disk_write_rate_bps) as f32 / 1_000_000.0;
-    let storage = snapshot.physical_disks.iter().map(|disk| if disk.is_ssd { 0.5 } else { 2.2 }).sum::<f32>() + (disk_mb * 0.04).clamp(0.0, 4.0);
+    let storage = snapshot.physical_disks.iter().filter_map(|disk| match disk.is_ssd { Some(true) => Some(0.5), Some(false) => Some(2.2), None => None }).sum::<f32>() + (disk_mb * 0.04).clamp(0.0, 4.0);
     let memory_gb = snapshot.mem_total_bytes as f32 / (1024.0 * 1024.0 * 1024.0);
     let motherboard = 1.0 + memory_gb / 8.0 * (0.35 + snapshot.mem_usage_pct / 100.0 * 0.55);
     let display = if snapshot.power.batteries.is_empty() { 0.0 } else { 1.0 + snapshot.power.backlight_ratio.unwrap_or(0.4) * 2.8 };
@@ -13115,13 +13115,18 @@ impl LauncherApp {
                 let wr_history = [write_mb as f32; 5];
                 let dr_history = [drive_count as f32; 5];
 
-                let ssd_count = snap.physical_disks.iter().filter(|d| d.is_ssd).count();
-                let hdd_count = snap.physical_disks.len().saturating_sub(ssd_count);
+                let ssd_count = snap.physical_disks.iter().filter(|d| d.is_ssd == Some(true)).count();
+                let hdd_count = snap.physical_disks.iter().filter(|d| d.is_ssd == Some(false)).count();
+                let unknown_count = snap.physical_disks.len().saturating_sub(ssd_count + hdd_count);
                 let drives_sub = if !snap.physical_disks.is_empty() {
-                    if ssd_count > 0 && hdd_count > 0 {
+                    if unknown_count > 0 {
+                        format!("{} SSD • {} HDD • {} unknown", ssd_count, hdd_count, unknown_count)
+                    } else if ssd_count > 0 && hdd_count > 0 {
                         format!("{}x SSD • {}x HDD", ssd_count, hdd_count)
                     } else if ssd_count > 0 {
                         format!("{}x SSD Storage", ssd_count)
+                    } else if hdd_count > 0 {
+                        format!("{}x HDD Storage", hdd_count)
                     } else {
                         format!("{}x Block Storage Disks", drive_count)
                     }
@@ -13215,7 +13220,7 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 3. Drives Grid (Storage 1, Storage 2, Storage 3... in 2-column paired layout)
-                let drives_list: Vec<(String, String, u64, bool, usize, f64, f64, bool)> = if !snap.physical_disks.is_empty() {
+                let drives_list: Vec<(String, String, u64, Option<bool>, usize, f64, f64, bool)> = if !snap.physical_disks.is_empty() {
                     snap.physical_disks
                         .iter()
                         .map(|d| (d.name.clone(), d.model.clone(), d.total_bytes, d.is_ssd, d.partition_count, d.read_rate_bps, d.write_rate_bps, d.disk_rates_available))
@@ -13226,7 +13231,7 @@ impl LauncherApp {
                     for d in &snap.disks {
                         let clean = d.name.trim_start_matches("/dev/").to_string();
                         if seen.insert(clean.clone()) {
-                            let is_ssd = false;
+                            let is_ssd = None;
                             let model = if !d.fs_type.is_empty() {
                                 format!("{} Storage ({})", d.fs_type.to_uppercase(), d.mount_point)
                             } else {
@@ -13249,7 +13254,7 @@ impl LauncherApp {
                 let current_selected_idx = self.selected_disk_idx;
                 let mut clicked_drive_idx: Option<usize> = None;
 
-                let render_drive_card = |ui: &mut Ui, idx: usize, d_name: &str, d_model: &str, d_bytes: u64, d_is_ssd: bool, d_part_count: usize, d_read_bps: f64, d_write_bps: f64, rates_available: bool, is_selected: bool, clicked_slot: &mut Option<usize>| {
+                let render_drive_card = |ui: &mut Ui, idx: usize, d_name: &str, d_model: &str, d_bytes: u64, d_is_ssd: Option<bool>, d_part_count: usize, d_read_bps: f64, d_write_bps: f64, rates_available: bool, is_selected: bool, clicked_slot: &mut Option<usize>| {
                     let d_phys_gb = d_bytes as f64 / 1e9;
                     let physical_disk = snap.physical_disks.iter()
                         .find(|disk| disk.name.trim_start_matches("/dev/") == d_name.trim_start_matches("/dev/"));
@@ -13289,7 +13294,7 @@ impl LauncherApp {
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(if d_is_ssd { crate::lucide::STORAGE } else { crate::lucide::HARD_DRIVE }).size(15.0).color(accent));
+                                ui.label(RichText::new(if d_is_ssd == Some(true) { crate::lucide::STORAGE } else { crate::lucide::HARD_DRIVE }).size(15.0).color(accent));
                                 ui.add_space(4.0);
 
                                 ui.vertical(|ui| {
@@ -13300,7 +13305,8 @@ impl LauncherApp {
                                         let dot_col = if is_selected { accent } else { Color32::from_rgb(100, 116, 139) };
                                         ui.painter().circle_filled(dot_rect.center(), 2.8, dot_col);
                                     });
-                                    ui.add(egui::Label::new(RichText::new(format!("{} • {} {:.1} GB", if physical_disk.is_none() { "Volume" } else if d_is_ssd { "SSD" } else { "Block Device" }, d_model, d_phys_gb)).size(9.5).monospace().color(p.text_muted)).truncate());
+                                    let media_label = if physical_disk.is_none() { "Volume" } else { match d_is_ssd { Some(true) => "SSD", Some(false) => "HDD", None => "Disk" } };
+                                    ui.add(egui::Label::new(RichText::new(format!("{} • {} {:.1} GB", media_label, d_model, d_phys_gb)).size(9.5).monospace().color(p.text_muted)).truncate());
                                 });
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -15576,18 +15582,12 @@ impl LauncherApp {
                                     let mut rot = 0;
                                     let mut ssd = 0;
                                     for d in &snap.physical_disks {
-                                        if d.is_ssd { ssd += 1; } else { rot += 1; }
+                                        match d.is_ssd { Some(true) => ssd += 1, Some(false) => rot += 1, None => {} }
                                     }
-                                    if rot == 0 && ssd == 0 {
-                                        if snap.disks.is_empty() { (0, 1) } else { (0, snap.disks.len()) }
-                                    } else {
-                                        (rot, ssd)
-                                    }
+                                    (rot, ssd)
                                 };
-                                let hdd_draw = (num_rotational as f32 * 2.2) + (disk_mb_s * 0.10).clamp(0.0, 8.0);
-                                let ssd_draw = (num_ssd.max(1) as f32 * 0.5) + (disk_mb_s * 0.04).clamp(0.0, 4.0);
-                                let raw_storage = (hdd_draw + ssd_draw).clamp(0.5, 50.0);
-                                let storage_cap = (num_rotational as f32 * 7.0 + num_ssd as f32 * 3.5).clamp(5.0, 60.0);
+                                let raw_storage = (num_rotational as f32 * 2.2 + num_ssd as f32 * 0.5 + (disk_mb_s * 0.04).clamp(0.0, 4.0)).clamp(0.0, 50.0);
+                                let storage_cap = (num_rotational as f32 * 7.0 + num_ssd as f32 * 3.5).max(raw_storage).clamp(0.1, 60.0);
 
                                 // Motherboard chipset & memory
                                 let mem_gb = (snap.mem_total_bytes as f32 / (1024.0 * 1024.0 * 1024.0)).max(4.0);

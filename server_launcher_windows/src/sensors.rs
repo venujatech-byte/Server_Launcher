@@ -123,7 +123,7 @@ pub struct PhysicalDiskInfo {
     pub smart_status: String,
     pub discard_supported: Option<bool>,
     pub total_bytes: u64,
-    pub is_ssd: bool,
+    pub is_ssd: Option<bool>,
     pub partition_count: usize,
     pub partitions: Vec<DiskPartitionInfo>,
     pub read_rate_bps: f64,
@@ -1160,8 +1160,8 @@ pub fn collect_physical_disks() -> Vec<PhysicalDiskInfo> {
 
             let is_ssd = fs::read_to_string(format!("{}/queue/rotational", p))
                 .ok()
-                .map(|s| s.trim() == "0")
-                .unwrap_or_else(|| dev.starts_with("nvme"));
+                .and_then(|s| match s.trim() { "0" => Some(true), "1" => Some(false), _ => None })
+                .or_else(|| dev.starts_with("nvme").then_some(true));
 
             let mut partitions = Vec::new();
             if let Ok(sub_entries) = fs::read_dir(&p) {
@@ -3518,12 +3518,12 @@ try:
                         break
                 except:
                     pass
-        rot = "1"
+        rot = None
         try:
             rot = open(dev + "/queue/rotational").read().strip()
         except:
             pass
-        is_ssd = (rot == "0") or dev_name.startswith("nvme")
+        is_ssd = False if rot == "1" else (True if rot == "0" or dev_name.startswith("nvme") else None)
         parts = []
         for part in sorted(glob.glob(dev + "/*/partition")):
             p_dir = os.path.dirname(part)
@@ -3904,9 +3904,7 @@ print(json.dumps(data))
             let Some(total_bytes) = p["total_bytes"].as_u64().filter(|size| *size > 0) else {
                 continue;
             };
-            let Some(is_ssd) = p["is_ssd"].as_bool() else {
-                continue;
-            };
+            let is_ssd = p["is_ssd"].as_bool();
             let name = name.to_string();
             let model = p["model"]
                 .as_str()
@@ -4608,7 +4606,7 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
                 total_bytes,
                 partition_count: disk["Partitions"].as_u64().unwrap_or(0) as usize,
                 // Win32_DiskDrive does not reliably distinguish SSDs from rotational media.
-                is_ssd: false,
+                is_ssd: None,
                 ..Default::default()
             })
         }).collect();
@@ -4715,6 +4713,7 @@ mod windows_sensor_tests {
         assert_eq!(snapshot.physical_disks[0].name, "PHYSICALDRIVE0");
         assert_eq!(snapshot.physical_disks[0].total_bytes, 1000);
         assert_eq!(snapshot.physical_disks[0].partition_count, 2);
+        assert_eq!(snapshot.physical_disks[0].is_ssd, None);
         let mut cached = snapshot.clone();
         update_windows_inventory(&mut cached, &serde_json::json!({"disk_inventory_error":"unavailable"}));
         assert_eq!(cached.physical_disks.len(), 1);

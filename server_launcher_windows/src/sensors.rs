@@ -3589,8 +3589,10 @@ print(json.dumps(data))
     let cpu_power_watts = parsed["cpu_power"].as_f64().map(|v| v as f32)
         .filter(|value| value.is_finite() && *value >= 0.0);
 
-    let mem_total_bytes = parsed["mem_total"].as_u64().unwrap_or(0);
-    let mem_avail = parsed["mem_avail"].as_u64().unwrap_or(0);
+    let mem_total_bytes = parsed["mem_total"].as_u64().filter(|total| *total > 0)
+        .ok_or_else(|| "Remote sensor data has no valid total memory reading".to_string())?;
+    let mem_avail = parsed["mem_avail"].as_u64().filter(|available| *available <= mem_total_bytes)
+        .ok_or_else(|| "Remote sensor data has no valid available memory reading".to_string())?;
     let mem_used_bytes = mem_total_bytes.saturating_sub(mem_avail);
     let mem_usage_pct = if mem_total_bytes > 0 {
         (mem_used_bytes as f32 / mem_total_bytes as f32) * 100.0
@@ -3598,8 +3600,10 @@ print(json.dumps(data))
         0.0
     };
 
-    let swap_total_bytes = parsed["swap_total"].as_u64().unwrap_or(0);
-    let swap_free = parsed["swap_free"].as_u64().unwrap_or(0);
+    let swap_total_bytes = parsed["swap_total"].as_u64()
+        .ok_or_else(|| "Remote sensor data has no valid total swap reading".to_string())?;
+    let swap_free = parsed["swap_free"].as_u64().filter(|free| *free <= swap_total_bytes)
+        .ok_or_else(|| "Remote sensor data has no valid available swap reading".to_string())?;
     let swap_used_bytes = swap_total_bytes.saturating_sub(swap_free);
     let swap_usage_pct = if swap_total_bytes > 0 {
         (swap_used_bytes as f32 / swap_total_bytes as f32) * 100.0

@@ -5313,7 +5313,7 @@ mod mounted_storage_tests {
 
 fn select_remote_interface<'a>(interfaces: &'a [crate::sensors::NetInterfaceInfo], selected: Option<&str>) -> Option<&'a crate::sensors::NetInterfaceInfo> {
     selected.and_then(|name| interfaces.iter().find(|interface| interface.name != "lo" && interface.name == name))
-        .or_else(|| interfaces.iter().find(|interface| interface.name != "lo" && interface.is_wireless))
+        .or_else(|| interfaces.iter().find(|interface| interface.name != "lo" && interface.is_wireless == Some(true)))
         .or_else(|| interfaces.iter().find(|interface| interface.name != "lo"))
 }
 
@@ -5325,13 +5325,14 @@ mod remote_interface_selection_tests {
         let networks = vec![
             NetInterfaceInfo { name: "lo".into(), ..Default::default() },
             NetInterfaceInfo { name: "eth0".into(), ..Default::default() },
-            NetInterfaceInfo { name: "wlan0".into(), is_wireless: true, ..Default::default() },
+            NetInterfaceInfo { name: "wlan0".into(), is_wireless: Some(true), ..Default::default() },
         ];
         assert_eq!(super::select_remote_interface(&networks, None).unwrap().name, "wlan0");
         assert_eq!(super::select_remote_interface(&networks, Some("eth0")).unwrap().name, "eth0");
         assert_eq!(super::select_remote_interface(&networks, Some("removed")).unwrap().name, "wlan0");
         assert!(super::select_remote_interface(&networks[..1], None).is_none());
     }
+
 }
 
 fn telemetry_capacity(interval_secs: u32) -> usize {
@@ -13848,7 +13849,7 @@ impl LauncherApp {
             snap.networks.iter().find(|n| n.name == wifi_snap.interface)
         };
         let iface_name = primary_net.map(|n| n.name.as_str()).unwrap_or("Unavailable");
-        let is_wireless = if is_remote { primary_net.is_some_and(|n| n.is_wireless) } else { !wifi_snap.interface.is_empty() };
+        let is_wireless = if is_remote { primary_net.and_then(|n| n.is_wireless) } else { (!wifi_snap.interface.is_empty()).then_some(true) };
         let is_connected = !is_remote && wifi_snap.is_connected;
         let remote_state = primary_net.and_then(|interface| interface.link_state.as_deref()).unwrap_or("Unavailable");
 
@@ -13885,7 +13886,11 @@ impl LauncherApp {
                             let avail_w = ui.available_width();
                             let is_narrow = avail_w < 700.0;
 
-                            let title = if is_remote && !is_wireless { "Network Subsystem & Host Interface" } else { "Wireless Network & Wi-Fi" };
+                            let title = match is_wireless {
+                                Some(false) if is_remote => "Network Subsystem & Host Interface",
+                                None if is_remote => "Network Interface",
+                                _ => "Wireless Network & Wi-Fi",
+                            };
                             let (status_text, dot_col) = if is_remote {
                                 if primary_net.is_some() { ("INTERFACE FOUND", accent) } else { ("UNAVAILABLE", p.text_muted) }
                             } else if wifi_snap.interface.is_empty() {
@@ -14242,7 +14247,7 @@ impl LauncherApp {
                                     .show(ui, |ui| {
                                         ui.set_width(ui.available_width());
                                         ui.horizontal(|ui| {
-                                            let icon = if is_remote && !is_wireless { crate::lucide::SERVER } else { crate::lucide::WIFI };
+                                            let icon = if is_remote && is_wireless != Some(true) { crate::lucide::SERVER } else { crate::lucide::WIFI };
                                             ui.label(RichText::new(icon).size(20.0).color(accent));
                                             ui.add_space(6.0);
                                             ui.vertical(|ui| {
@@ -14289,7 +14294,7 @@ impl LauncherApp {
                                 ui.columns(3, |cols| {
                                     let ap_chips: [(&str, &str); 3] = if is_remote {
                                         [
-                                            ("TYPE", if is_wireless { "Wi-Fi" } else { "Network" }),
+                                            ("TYPE", match is_wireless { Some(true) => "Wi-Fi", Some(false) => "Network", None => "Unknown" }),
                                             ("STATE", remote_state),
                                             ("SOCKETS", "Host-wide"),
                                         ]
@@ -14517,7 +14522,7 @@ impl LauncherApp {
                                     ui.allocate_ui_with_layout(egui::vec2(ip_left_w, 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                         let (icon_rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
                                         ui.painter().rect_filled(icon_rect, Rounding::same(6.0), Color32::from_rgb(20, 28, 44));
-                                        let icon_char = if is_remote && !is_wireless { crate::lucide::SERVER } else { crate::lucide::LAYERS };
+                                        let icon_char = if is_remote && is_wireless != Some(true) { crate::lucide::SERVER } else { crate::lucide::LAYERS };
                                         ui.painter().text(icon_rect.center(), egui::Align2::CENTER_CENTER, icon_char, egui::FontId::proportional(14.0), accent);
 
                                         ui.vertical(|ui| {
@@ -15001,7 +15006,7 @@ impl LauncherApp {
                                             ui.painter().text(name_rect.left_center(), egui::Align2::LEFT_CENTER, &net.name, egui::FontId::proportional(11.5), p.text_primary);
 
                                             let (type_rect, _) = ui.allocate_exact_size(egui::vec2(TYPE_W, 28.0), egui::Sense::hover());
-                                            let kind = if net.name == "lo" { "Loopback" } else if net.is_wireless { "Wi-Fi" } else { "Other" };
+                                            let kind = if net.name == "lo" { "Loopback" } else { match net.is_wireless { Some(true) => "Wi-Fi", Some(false) => "Other", None => "Unknown" } };
                                             ui.painter().text(type_rect.right_center(), egui::Align2::RIGHT_CENTER, kind, egui::FontId::proportional(10.5), p.text_secondary);
 
                                             for (width, value) in [

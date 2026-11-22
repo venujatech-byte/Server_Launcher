@@ -143,7 +143,7 @@ pub struct NetInterfaceInfo {
     pub tx_bytes: u64,
     pub rx_rate_bps: f64,
     pub tx_rate_bps: f64,
-    pub is_wireless: bool,
+    pub is_wireless: Option<bool>,
     pub link_state: Option<String>,
     pub mac_address: Option<String>,
     pub mtu: Option<u32>,
@@ -620,11 +620,12 @@ impl SystemSensorsCollector {
             let is_wireless = {
                 #[cfg(target_os = "linux")]
                 {
-                    Path::new(&format!("/sys/class/net/{}/wireless", name)).exists()
+                    Some(Path::new(&format!("/sys/class/net/{}/wireless", name)).exists()
                         || Path::new(&format!("/sys/class/net/{}/phy80211", name)).exists()
+                    )
                 }
                 #[cfg(not(target_os = "linux"))]
-                false
+                None
             };
 
             networks.push(NetInterfaceInfo {
@@ -3800,9 +3801,9 @@ print(json.dumps(data))
     let interfaces = parsed["networks"].as_array()
         .ok_or_else(|| "Remote sensor data has no network interface list".to_string())?;
     for n in interfaces {
-        let (Some(name), Some(rx), Some(tx), Some(rx_rate), Some(tx_rate), Some(is_wireless)) = (
+        let (Some(name), Some(rx), Some(tx), Some(rx_rate), Some(tx_rate)) = (
             n["name"].as_str(), n["rx_bytes"].as_u64(), n["tx_bytes"].as_u64(),
-            n["rx_rate"].as_f64(), n["tx_rate"].as_f64(), n["is_wireless"].as_bool(),
+            n["rx_rate"].as_f64(), n["tx_rate"].as_f64(),
         ) else { continue; };
         if name.is_empty() || !rx_rate.is_finite() || rx_rate < 0.0 || !tx_rate.is_finite() || tx_rate < 0.0 { continue; }
         networks.push(NetInterfaceInfo {
@@ -3811,7 +3812,7 @@ print(json.dumps(data))
             tx_bytes: tx,
             rx_rate_bps: rx_rate,
             tx_rate_bps: tx_rate,
-            is_wireless,
+            is_wireless: n["is_wireless"].as_bool(),
             link_state: parse_network_link_state(&n["link_state"]),
             mac_address: parse_network_mac(&n["mac_address"]),
             mtu: n["mtu"].as_u64().and_then(|value| u32::try_from(value).ok()).filter(|value| *value > 0),

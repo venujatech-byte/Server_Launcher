@@ -4774,15 +4774,15 @@ fn draw_core_waveform(ui: &mut Ui, width: f32, height: f32, values: &[f32], stro
     let n = values.len();
     let step_x = rect.width() / (n - 1) as f32;
 
-    let points: Vec<egui::Pos2> = values
+    let points: Vec<Option<egui::Pos2>> = values
         .iter()
         .enumerate()
-        .map(|(i, &v)| {
+        .map(|(i, &v)| v.is_finite().then(|| {
             let x = rect.left() + i as f32 * step_x;
             let norm = (v / 100.0).clamp(0.03, 0.97);
             let y = rect.bottom() - 2.0 - norm * (rect.height() - 4.0);
             egui::pos2(x, y)
-        })
+        }))
         .collect();
 
     let top_fill = Color32::from_rgba_unmultiplied(stroke_color.r(), stroke_color.g(), stroke_color.b(), 35);
@@ -4790,8 +4790,7 @@ fn draw_core_waveform(ui: &mut Ui, width: f32, height: f32, values: &[f32], stro
 
     let mut mesh = egui::Mesh::default();
     for i in 0..(points.len() - 1) {
-        let p1 = points[i];
-        let p2 = points[i + 1];
+        let (Some(p1), Some(p2)) = (points[i], points[i + 1]) else { continue; };
         let b1 = egui::pos2(p1.x, rect.bottom());
         let b2 = egui::pos2(p2.x, rect.bottom());
 
@@ -4806,10 +4805,12 @@ fn draw_core_waveform(ui: &mut Ui, width: f32, height: f32, values: &[f32], stro
     painter.add(egui::Shape::mesh(mesh));
 
     for i in 0..(points.len() - 1) {
-        painter.line_segment([points[i], points[i + 1]], Stroke::new(1.6_f32, stroke_color));
+        if let (Some(p1), Some(p2)) = (points[i], points[i + 1]) {
+            painter.line_segment([p1, p2], Stroke::new(1.6_f32, stroke_color));
+        }
     }
 
-    if let Some(&last_pt) = points.last() {
+    if let Some(last_pt) = points.iter().rev().find_map(|point| *point) {
         painter.circle_filled(last_pt, 3.5, stroke_color.gamma_multiply(0.4));
         painter.circle_filled(last_pt, 2.0, stroke_color);
     }
@@ -11272,7 +11273,7 @@ impl LauncherApp {
                     .collect();
             }
             for (history, value) in self.cpu_core_histories.iter_mut().zip(&snap.cpu_core_usages) {
-                if let Some(value) = value { push_telemetry(history, *value, history_capacity); }
+                push_telemetry(history, value.filter(|value| value.is_finite()).unwrap_or(f32::NAN), history_capacity);
             }
 
 

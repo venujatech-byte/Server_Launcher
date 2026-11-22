@@ -2768,6 +2768,8 @@ try:
                 cores += 1
 except:
     pass
+if cores <= 0:
+    cores = os.cpu_count() or 0
 
 def read_cpu_frequencies():
     by_cpu = {}
@@ -3605,7 +3607,10 @@ print(json.dumps(data))
         .map_err(|e| format!("Failed to parse remote sensor json: {}", e))?;
 
     let cpu_brand = parsed["cpu_model"].as_str().unwrap_or("Remote CPU").to_string();
-    let cpu_cores = parsed["cores"].as_u64().unwrap_or(1) as usize;
+    let cpu_cores = parsed["cores"].as_u64()
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| "Remote sensor data has no valid logical CPU count".to_string())?;
     let cpu_usage = parse_cpu_usage(&parsed["cpu_usage"]);
     let cpu_global_usage = cpu_usage.unwrap_or(0.0);
     let cpu_core_usages = parse_cpu_core_usages(&parsed["cpu_core_usages"]);

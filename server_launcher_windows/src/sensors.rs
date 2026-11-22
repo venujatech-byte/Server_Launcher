@@ -3676,19 +3676,22 @@ print(json.dumps(data))
         ac_online = p_obj["ac_online"].as_bool();
         if let Some(b_arr) = p_obj["batteries"].as_array() {
             for b in b_arr {
+                let value = |key: &str| b[key].as_f64()
+                    .filter(|value| value.is_finite() && *value >= 0.0 && *value <= f32::MAX as f64)
+                    .map(|value| value as f32);
                 batteries.push(BatteryInfo {
-                    name: b["name"].as_str().unwrap_or("BAT").to_string(),
+                    name: b["name"].as_str().filter(|name| !name.trim().is_empty()).unwrap_or("Unknown battery").to_string(),
                     present: true,
                     status: b["status"].as_str().unwrap_or("Unknown").to_string(),
-                    capacity_pct: b["capacity_pct"].as_f64().map(|value| value as f32).filter(|value| value.is_finite() && (0.0..=100.0).contains(value)),
-                    power_watts: b["power_watts"].as_f64().map(|v| v as f32),
-                    voltage_volts: b["voltage_volts"].as_f64().map(|v| v as f32),
-                    energy_wh: b["energy_wh"].as_f64().map(|v| v as f32),
-                    energy_full_wh: b["energy_full_wh"].as_f64().map(|v| v as f32),
-                    energy_design_wh: b["energy_design_wh"].as_f64().map(|v| v as f32),
+                    capacity_pct: value("capacity_pct").filter(|value| *value <= 100.0),
+                    power_watts: value("power_watts"),
+                    voltage_volts: value("voltage_volts"),
+                    energy_wh: value("energy_wh"),
+                    energy_full_wh: value("energy_full_wh"),
+                    energy_design_wh: value("energy_design_wh"),
                     energy_estimated: b["energy_estimated"].as_bool().unwrap_or(false),
-                    health_pct: b["health_pct"].as_f64().map(|v| v as f32),
-                    cycle_count: b["cycle_count"].as_u64().map(|v| v as u32),
+                    health_pct: value("health_pct").filter(|value| *value <= 100.0),
+                    cycle_count: b["cycle_count"].as_u64().and_then(|value| u32::try_from(value).ok()),
                     technology: b["technology"].as_str().unwrap_or("").to_string(),
                     model_name: b["model_name"].as_str().unwrap_or("").to_string(),
                     manufacturer: b["manufacturer"].as_str().unwrap_or("").to_string(),

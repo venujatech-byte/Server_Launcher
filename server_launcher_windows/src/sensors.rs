@@ -4555,10 +4555,13 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
         snap.total_disk_rates_available = true;
     }
     if let Some(gpus) = data["gpu"].as_array() {
-        snap.gpus = gpus.iter().map(|g| GpuSensorInfo { device_path: String::new(), engine_loads: Vec::new(),
-            name: g["Name"].as_str().unwrap_or_default().into(),
-            driver: g["DriverVersion"].as_str().unwrap_or_default().into(),
-            ..Default::default()
+        snap.gpus = gpus.iter().filter_map(|g| {
+            let name = g["Name"].as_str().map(str::trim).filter(|name| !name.is_empty())?;
+            Some(GpuSensorInfo { device_path: String::new(), engine_loads: Vec::new(),
+                name: name.into(),
+                driver: g["DriverVersion"].as_str().unwrap_or_default().into(),
+                ..Default::default()
+            })
         }).collect();
     }
     if let Some(temps) = data["temp"].as_array() {
@@ -4619,6 +4622,13 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
 #[cfg(test)]
 mod windows_sensor_tests {
     use super::*;
+    #[test]
+    fn windows_gpu_inventory_omits_unnamed_adapters() {
+        let snapshot = parse_windows_hardware(&serde_json::json!({"gpu": [{"Name":"  "}, {"Name":"Intel Graphics"}]}));
+        assert_eq!(snapshot.gpus.len(), 1);
+        assert_eq!(snapshot.gpus[0].name, "Intel Graphics");
+    }
+
     #[test]
     fn failed_inventory_does_not_erase_previous_devices() {
         let mut cached = parse_windows_hardware(&serde_json::json!({"gpu": [{"Name":"Existing GPU"}]}));

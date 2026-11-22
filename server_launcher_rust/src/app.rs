@@ -16264,9 +16264,12 @@ impl LauncherApp {
             .or_else(|| snap.temp_sensors.iter().find(|s| s.category == crate::sensors::SensorCategory::Cpu).map(|s| s.temp))
             .unwrap_or(f32::NAN);
 
-        let gpu_temp = snap.gpus.get(self.selected_gpu_idx).and_then(|g| g.temp)
-            .or_else(|| snap.temp_sensors.iter().find(|s| s.category == crate::sensors::SensorCategory::Gpu).map(|s| s.temp))
-            .unwrap_or(f32::NAN);
+        let selected_gpu_temp = snap.gpus.get(self.selected_gpu_idx).and_then(|gpu| gpu.temp);
+        let gpu_temp = selected_gpu_temp.or_else(|| {
+            (snap.gpus.len() == 1).then(|| snap.temp_sensors.iter()
+                .find(|sensor| sensor.category == crate::sensors::SensorCategory::Gpu)
+                .map(|sensor| sensor.temp)).flatten()
+        }).unwrap_or(f32::NAN);
 
         let ram_temp = snap.ram_temp
             .or_else(|| snap.temp_sensors.iter().find(|s| s.name.to_lowercase().contains("ram") || s.name.to_lowercase().contains("sodimm") || s.name.to_lowercase().contains("memory")).map(|s| s.temp))

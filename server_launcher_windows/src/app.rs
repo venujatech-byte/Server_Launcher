@@ -11743,7 +11743,7 @@ impl LauncherApp {
                     snap.cpu_power_watts,
                     snap.cpu_temp,
                 ];
-                let labels = ["CPU LOAD", "CLOCK FREQUENCY", "PACKAGE POWER", "CORE TEMPERATURE"];
+                let labels = ["CPU LOAD", "CLOCK FREQUENCY", "PACKAGE POWER", "CPU TEMPERATURE"];
                 let units = ["%", "GHz", "W", "°C"];
                 let icons = [crate::lucide::ACTIVITY, crate::lucide::GAUGE, crate::lucide::ZAP, crate::lucide::THERMOMETER];
                 let histories: Vec<_> = labels.iter().enumerate().map(|(index, label)|
@@ -16452,11 +16452,11 @@ impl LauncherApp {
         }
 
         let cpu_temp = snap.cpu_temp
-            .or_else(|| snap.temp_sensors.iter().find(|s| s.name.to_lowercase().contains("cpu") || s.name.to_lowercase().contains("package") || s.name.to_lowercase().contains("core")).map(|s| s.temp))
+            .or_else(|| snap.temp_sensors.iter().find(|s| s.category == crate::sensors::SensorCategory::Cpu).map(|s| s.temp))
             .unwrap_or(f32::NAN);
 
         let gpu_temp = snap.gpus.first().and_then(|g| g.temp)
-            .or_else(|| snap.temp_sensors.iter().find(|s| s.name.to_lowercase().contains("gpu")).map(|s| s.temp))
+            .or_else(|| snap.temp_sensors.iter().find(|s| s.category == crate::sensors::SensorCategory::Gpu).map(|s| s.temp))
             .unwrap_or(f32::NAN);
 
         let ram_temp = snap.ram_temp

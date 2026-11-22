@@ -5403,6 +5403,13 @@ fn draw_card_sparkline(
 
     let n = history.len();
     if n < 2 {
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            if n == 0 { "No history" } else { "Collecting history…" },
+            egui::FontId::monospace(8.5),
+            Color32::from_rgb(100, 116, 139),
+        );
         return;
     }
 

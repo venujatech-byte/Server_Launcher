@@ -3230,6 +3230,17 @@ for p in ["/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"]:
         except:
             pass
 
+def disk_discard_supported(path):
+    try:
+        with open(path + "/queue/discard_max_bytes") as value:
+            return int(value.read().strip()) > 0
+    except (OSError, ValueError):
+        return None
+
+def disk_bus_interface(path):
+    subsystem = path + "/device/subsystem"
+    return os.path.basename(os.path.realpath(subsystem)).upper() if os.path.exists(subsystem) else ""
+
 phys_disks = []
 try:
     for dev in sorted(glob.glob("/sys/block/*")):
@@ -3275,8 +3286,8 @@ try:
         phys_disks.append({
             "name": dev_name,
             "model": model,
-            "bus_interface": os.path.basename(os.path.realpath(dev + "/device/subsystem")).upper(),
-            "discard_supported": (int(open(dev + "/queue/discard_max_bytes").read().strip()) > 0) if os.path.exists(dev + "/queue/discard_max_bytes") else None,
+            "bus_interface": disk_bus_interface(dev),
+            "discard_supported": disk_discard_supported(dev),
             "smart_status": "",
             "total_bytes": sz,
             "is_ssd": is_ssd,

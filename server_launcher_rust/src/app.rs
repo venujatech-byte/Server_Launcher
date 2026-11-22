@@ -5412,12 +5412,19 @@ fn workspace_sidebar_body(ui: &mut Ui) -> Ui {
     body
 }
 
-// Keep metric cards readable instead of squeezing four or five into a narrow pane.
+fn sensor_grid_columns(available: f32, gap: f32, count: usize) -> usize {
+    if count == 0 { return 0; }
+    let max_columns = (((available + gap) / (180.0 + gap)).floor() as usize).clamp(1, count);
+    let rows = count.div_ceil(max_columns);
+    count.div_ceil(rows)
+}
+
+// Keep cards readable and distribute a final short row instead of leaving a single card alone.
 fn sensor_card_columns(ui: &mut Ui, count: usize, mut render: impl FnMut(&mut Ui, usize)) {
     let gap = ui.spacing().item_spacing.x;
     let available = ui.available_width();
-    let mut columns = (((available + gap) / (180.0 + gap)).floor() as usize).clamp(1, count);
-    if count == 4 && columns == 3 { columns = 2; }
+    let columns = sensor_grid_columns(available, gap, count);
+    if columns == 0 { return; }
     let width = ((available - gap * (columns - 1) as f32) / columns as f32).max(0.0);
     ui.allocate_ui_with_layout(egui::vec2(available, 0.0), egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true), |ui| {
         for index in 0..count {
@@ -5433,6 +5440,14 @@ fn sensor_card_columns(ui: &mut Ui, count: usize, mut render: impl FnMut(&mut Ui
 #[cfg(test)]
 mod layout_tests {
     use super::*;
+    #[test]
+    fn sensor_cards_balance_rows_at_breakpoints() {
+        assert_eq!(sensor_grid_columns(800.0, 8.0, 5), 3);
+        assert_eq!(sensor_grid_columns(800.0, 8.0, 6), 3);
+        assert_eq!(sensor_grid_columns(1_400.0, 8.0, 5), 5);
+        assert_eq!(sensor_grid_columns(800.0, 8.0, 0), 0);
+    }
+
     #[test]
     fn battery_flow_requires_a_uniform_reported_status() {
         let charging = crate::sensors::BatteryInfo { status: "Charging".into(), ..Default::default() };

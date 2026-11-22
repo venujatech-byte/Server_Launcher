@@ -4272,6 +4272,7 @@ impl SystemSensorsCollector {
                 snap.total_disk_write_rate_bps = live.total_disk_write_rate_bps;
                 snap.total_disk_rates_available = live.total_disk_rates_available;
                 apply_windows_gpu_sensors(&mut snap.gpus, &data["sensor_hardware"], &data["hardware_sensors"]);
+                apply_windows_gpu_engine_counters(&mut snap.gpus, &data["gpu_engines"]);
                 let mut errors: Vec<String> = snap.windows_telemetry_error.take().into_iter().collect();
                 errors.extend(["battery_error", "temp_error"].iter().filter_map(|key| data[*key].as_str()).map(str::to_owned));
                 snap.windows_telemetry_error = (!errors.is_empty()).then(|| errors.join(" • "));
@@ -4379,7 +4380,7 @@ fn collect_windows_hardware(inventory: bool) -> Result<serde_json::Value, String
     use std::io::Read;
     // shortcut: temperature telemetry needs LibreHardwareMonitor's WMI provider; add a native driver only if required.
     let script = r#"$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new();
-$result=@{gpu=@();ram=@();battery=@();temp=@()};
+$result=@{gpu=@();ram=@();battery=@();temp=@();gpu_engines=@()};
 if (__INVENTORY__) {
   try { $result.gpu=@(Get-CimInstance Win32_VideoController -ErrorAction Stop | Select-Object Name,DriverVersion) } catch { $result.gpu_error='GPU inventory unavailable' }
   try { $result.ram=@(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop | Select-Object Manufacturer,Capacity,Speed,SMBIOSMemoryType,FormFactor) } catch { $result.ram_error='RAM inventory unavailable' }
@@ -4387,6 +4388,7 @@ if (__INVENTORY__) {
   try { $result.network_adapters=@(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Select-Object Name,ifType) } catch { $result.network_adapters=$null }
 }
 try { $result.disk=Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -Filter "Name='_Total'" -ErrorAction Stop | Select-Object -First 1 DiskReadBytesPerSec,DiskWriteBytesPerSec } catch { $result.disk=$null }
+try { $result.gpu_engines=@(Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction Stop | Select-Object Name,UtilizationPercentage) } catch { $result.gpu_engines=@() }
 try { $result.logical_disks=@(Get-CimInstance Win32_PerfFormattedData_PerfDisk_LogicalDisk -ErrorAction Stop | Select-Object Name,DiskReadBytesPerSec,DiskWriteBytesPerSec) } catch { $result.logical_disks=@() }
 try { $result.battery=@(Get-CimInstance Win32_Battery -ErrorAction Stop | Select-Object Name,EstimatedChargeRemaining,BatteryStatus,DesignCapacity,FullChargeCapacity) } catch { $result.battery_error='Battery telemetry unavailable' }
 try {
@@ -4490,6 +4492,26 @@ fn apply_windows_gpu_sensors(gpus: &mut [GpuSensorInfo], hardware: &serde_json::
         gpu.clock_mhz = metric("Clock", "GPU Core", 0.0, u32::MAX as f64).map(|value| value.round() as u32);
         gpu.power_watts = metric("Power", "GPU Package", 0.0, 1000.0).map(|value| value as f32);
     }
+}
+
+#[cfg(any(windows, test))]
+fn apply_windows_gpu_engine_counters(gpus: &mut [GpuSensorInfo], counters: &serde_json::Value) {
+    for gpu in gpus.iter_mut() { gpu.engine_loads.clear(); }
+    // GPU Engine instance names contain adapter LUIDs, but Win32_VideoController does not expose a safe matching key.
+    let [gpu] = gpus else { return; };
+    let Some(counters) = counters.as_array() else { return; };
+    let mut loads = std::collections::BTreeMap::<String, f32>::new();
+    for counter in counters {
+        let Some(name) = counter["Name"].as_str() else { continue; };
+        let Some((_, kind)) = name.rsplit_once("_engtype_") else { continue; };
+        let Some(kind) = kind.split('_').next().filter(|kind| !kind.is_empty()) else { continue; };
+        let Some(value) = counter["UtilizationPercentage"].as_f64()
+            .filter(|value| value.is_finite() && (0.0..=100.0).contains(value)) else { continue; };
+        let label = format!("{kind} peak instance");
+        let load = loads.entry(label).or_default();
+        *load = load.max(value as f32);
+    }
+    gpu.engine_loads = loads.into_iter().collect();
 }
 
 #[cfg(any(windows, test))]
@@ -4834,6 +4856,24 @@ mod windows_sensor_tests {
         let duplicate_hardware = serde_json::json!([hardware[0].clone(), hardware[0].clone()]);
         apply_windows_gpu_sensors(&mut gpu, &duplicate_hardware, &sensors);
         assert!(gpu[0].load_pct.is_none());
+    }
+
+    #[test]
+    fn windows_gpu_engine_counters_require_one_adapter_and_valid_readings() {
+        let counters = serde_json::json!([
+            {"Name":"pid_1_luid_0x1_phys_0_eng_0_engtype_3D", "UtilizationPercentage":12.5},
+            {"Name":"pid_2_luid_0x1_phys_0_eng_0_engtype_3D", "UtilizationPercentage":18.0},
+            {"Name":"pid_1_luid_0x1_phys_0_eng_1_engtype_Copy", "UtilizationPercentage":101.0},
+            {"Name":"bad-instance", "UtilizationPercentage":80.0}
+        ]);
+        let mut gpus = vec![GpuSensorInfo { name: "GPU".into(), load_pct: Some(90.0), engine_loads: vec![("stale".into(), 1.0)], ..Default::default() }];
+        apply_windows_gpu_engine_counters(&mut gpus, &counters);
+        assert_eq!(gpus[0].engine_loads, vec![("3D peak instance".into(), 18.0)]);
+        assert_eq!(gpus[0].load_pct, Some(90.0));
+
+        gpus.push(GpuSensorInfo { name: "Other GPU".into(), ..Default::default() });
+        apply_windows_gpu_engine_counters(&mut gpus, &counters);
+        assert!(gpus.iter().all(|gpu| gpu.engine_loads.is_empty()));
     }
 
     #[test]

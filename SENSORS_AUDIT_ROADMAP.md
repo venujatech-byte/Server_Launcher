@@ -165,6 +165,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Windows battery capacity:** The native `Win32_Battery` query now includes reported design and full-charge capacities. These values populate the battery layout in Wh, and charge-derived remaining energy stays explicitly marked estimated; zero/unsupported capacity values remain unavailable.
 - **Windows CPU package metrics:** CPU power/temperature matching accepts provider labels that include the package metric suffix, while still requiring a unique CPU, sensor parent, and reading.
 - **Windows CPU page layout:** Removed its text-only local fallback; Windows now uses the shared sensor cards, metric history and per-logical-processor layout, with unsupported hardware readings still shown as unavailable.
+- **Windows GPU engine fallback:** Samples the optional OS GPU Engine counters, exposing only validated per-engine readings when exactly one adapter is present. These counters do not become a fabricated overall GPU percentage; unsupported counters or multi-GPU hosts remain unavailable. Hardware/driver runtime validation is still needed.
 
 ### Remaining work and validation
 

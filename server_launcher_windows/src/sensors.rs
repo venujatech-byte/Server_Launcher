@@ -3924,6 +3924,9 @@ impl SystemSensorsCollector {
                 snap.cpu_temp = live.cpu_temp;
                 snap.storage_temp = live.storage_temp;
                 snap.temp_sensors = live.temp_sensors;
+                snap.total_disk_read_rate_bps = live.total_disk_read_rate_bps;
+                snap.total_disk_write_rate_bps = live.total_disk_write_rate_bps;
+                snap.total_disk_rates_available = live.total_disk_rates_available;
                 let mut errors: Vec<String> = snap.windows_telemetry_error.take().into_iter().collect();
                 errors.extend(["battery_error", "temp_error"].iter().filter_map(|key| data[*key].as_str()).map(str::to_owned));
                 snap.windows_telemetry_error = (!errors.is_empty()).then(|| errors.join(" • "));
@@ -4024,6 +4027,7 @@ if (__INVENTORY__) {
   try { $result.gpu=@(Get-CimInstance Win32_VideoController -ErrorAction Stop | Select-Object Name,DriverVersion) } catch { $result.gpu_error='GPU inventory unavailable' }
   try { $result.ram=@(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop | Select-Object Manufacturer,Capacity,Speed,SMBIOSMemoryType,FormFactor) } catch { $result.ram_error='RAM inventory unavailable' }
 }
+try { $result.disk=Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -Filter "Name='_Total'" -ErrorAction Stop | Select-Object -First 1 DiskReadBytesPerSec,DiskWriteBytesPerSec } catch { $result.disk=$null }
 try { $result.battery=@(Get-CimInstance Win32_Battery -ErrorAction Stop | Select-Object Name,EstimatedChargeRemaining,BatteryStatus) } catch { $result.battery_error='Battery telemetry unavailable' }
 try { $result.temp=@(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor -ErrorAction Stop | Where-Object SensorType -eq Temperature | Select-Object Name,Value,Identifier) } catch { $result.temp_error='Temperature readings require the LibreHardwareMonitor WMI provider' }
 $result | ConvertTo-Json -Depth 4 -Compress"#;
@@ -4067,6 +4071,14 @@ fn update_windows_inventory(cached: &mut SystemSensorsSnapshot, data: &serde_jso
 #[cfg(any(windows, test))]
 fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
     let mut snap = SystemSensorsSnapshot::default();
+    if let (Some(read), Some(write)) = (
+        data["disk"]["DiskReadBytesPerSec"].as_f64().filter(|value| value.is_finite() && *value >= 0.0),
+        data["disk"]["DiskWriteBytesPerSec"].as_f64().filter(|value| value.is_finite() && *value >= 0.0),
+    ) {
+        snap.total_disk_read_rate_bps = read;
+        snap.total_disk_write_rate_bps = write;
+        snap.total_disk_rates_available = true;
+    }
     if let Some(gpus) = data["gpu"].as_array() {
         snap.gpus = gpus.iter().map(|g| GpuSensorInfo { device_path: String::new(), engine_loads: Vec::new(),
             name: g["Name"].as_str().unwrap_or_default().into(),
@@ -4127,6 +4139,18 @@ mod windows_sensor_tests {
         assert_eq!(cached.gpus[0].name, "Existing GPU");
         update_windows_inventory(&mut cached, &serde_json::json!({"gpu":[]}));
         assert!(cached.gpus.is_empty());
+    }
+    #[test]
+    fn disk_rates_distinguish_idle_from_missing_or_invalid_data() {
+        let idle = parse_windows_hardware(&serde_json::json!({"disk": {"DiskReadBytesPerSec": 0, "DiskWriteBytesPerSec": 0}}));
+        assert!(idle.total_disk_rates_available);
+        assert_eq!(idle.total_disk_read_rate_bps, 0.0);
+        let busy = parse_windows_hardware(&serde_json::json!({"disk": {"DiskReadBytesPerSec": 512, "DiskWriteBytesPerSec": 1024}}));
+        assert!(busy.total_disk_rates_available);
+        assert_eq!(busy.total_disk_write_rate_bps, 1024.0);
+        for disk in [serde_json::json!(null), serde_json::json!({"DiskReadBytesPerSec": 1}), serde_json::json!({"DiskReadBytesPerSec": -1, "DiskWriteBytesPerSec": 1})] {
+            assert!(!parse_windows_hardware(&serde_json::json!({"disk": disk})).total_disk_rates_available);
+        }
     }
     #[test]
     fn live_battery_samples_are_independent_of_inventory() {

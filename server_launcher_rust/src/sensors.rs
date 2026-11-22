@@ -307,6 +307,7 @@ pub struct SystemSensorsSnapshot {
     pub socket_udp: usize,
     pub socket_stats_available: bool,
     pub active_sockets: Vec<crate::wifi::WifiActiveSocket>,
+    pub active_sockets_available: bool,
 
     pub hardware_access_unlocked: bool,
     pub hardware_access_error: Option<String>,
@@ -335,6 +336,22 @@ fn parse_socket_stats(content: &str) -> Option<(usize, usize, usize)> {
     });
     let (total, tcp, udp) = (value("sockets:", "used")?, value("TCP:", "inuse")?, value("UDP:", "inuse")?);
     Some((total.max(tcp.saturating_add(udp)), tcp, udp))
+}
+
+fn parse_active_sockets(value: &serde_json::Value) -> Option<Vec<crate::wifi::WifiActiveSocket>> {
+    let rows = value.as_array()?;
+    let parsed: Vec<_> = rows.iter().filter_map(|row| {
+        let (Some(process), Some(proto), Some(port), Some(status)) = (
+            row["process"].as_str().filter(|value| !value.trim().is_empty()),
+            row["proto"].as_str().filter(|value| !value.trim().is_empty()),
+            row["port"].as_str().filter(|value| !value.trim().is_empty()),
+            row["status"].as_str().filter(|value| !value.trim().is_empty()),
+        ) else { return None; };
+        Some(crate::wifi::WifiActiveSocket {
+            process: process.to_string(), proto: proto.to_string(), port: port.to_string(), status: status.to_string(),
+        })
+    }).collect();
+    if !rows.is_empty() && parsed.is_empty() { None } else { Some(parsed) }
 }
 
 #[cfg(test)]
@@ -879,6 +896,7 @@ impl SystemSensorsCollector {
             socket_udp,
             socket_stats_available,
             active_sockets: Vec::new(),
+            active_sockets_available: false,
             hardware_access_unlocked: false,
             hardware_access_error: None,
             timestamp: Some(now),
@@ -3269,10 +3287,13 @@ for idx in range(max(core_indices, default=-1) + 1):
     else:
         cpu_core_usages.append(None)
 
-active_sockets = []
+active_sockets = None
 proc_ports = {}
 try:
-    for line in os.popen("ss -tulpn 2>/dev/null || ss -tunaep 2>/dev/null").read().strip().split("\n")[1:40]:
+    socket_output = os.popen("ss -tulpn 2>/dev/null || ss -tunaep 2>/dev/null").read().strip()
+    if socket_output:
+        active_sockets = []
+    for line in socket_output.split("\n")[1:40]:
         parts = line.split()
         if len(parts) >= 5:
             proto = parts[0].upper()
@@ -3812,17 +3833,9 @@ print(json.dumps(data))
         });
     }
 
-    let mut active_sockets = Vec::new();
-    if let Some(arr) = parsed.get("active_sockets").and_then(|v| v.as_array()) {
-        for s in arr {
-            active_sockets.push(crate::wifi::WifiActiveSocket {
-                process: s["process"].as_str().unwrap_or("").to_string(),
-                proto: s["proto"].as_str().unwrap_or("").to_string(),
-                port: s["port"].as_str().unwrap_or("").to_string(),
-                status: s["status"].as_str().unwrap_or("").to_string(),
-            });
-        }
-    }
+    let active_socket_rows = parse_active_sockets(&parsed["active_sockets"]);
+    let active_sockets_available = active_socket_rows.is_some();
+    let active_sockets = active_socket_rows.unwrap_or_default();
 
     let uptime_secs = parsed["uptime"].as_u64().unwrap_or(0);
     let socket_counts = parsed["socket_stats"].as_array().filter(|values| values.len() == 3).and_then(|values| {
@@ -3957,6 +3970,7 @@ print(json.dumps(data))
         socket_udp,
         socket_stats_available,
         active_sockets,
+        active_sockets_available,
         hardware_access_unlocked: false,
             hardware_access_error: None,
             timestamp: Some(Instant::now()),
@@ -3969,6 +3983,18 @@ mod tests {
     fn socket_stats_require_all_reported_counters() {
         assert_eq!(parse_socket_stats("sockets: used 20\nTCP: inuse 7 orphan 1\nUDP: inuse 2\n"), Some((20, 7, 2)));
         assert_eq!(parse_socket_stats("sockets: used 20\nTCP: inuse invalid\n"), None);
+    }
+
+    #[test]
+    fn active_socket_rows_preserve_empty_success_and_drop_malformed_rows() {
+        assert!(parse_active_sockets(&serde_json::json!([])).is_some_and(|rows| rows.is_empty()));
+        let rows = parse_active_sockets(&serde_json::json!([
+            {"process":"sshd", "proto":"TCP", "port":":22", "status":"LISTEN"},
+            {"process":"", "proto":"TCP", "port":":22", "status":"LISTEN"}
+        ])).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(parse_active_sockets(&serde_json::json!([{"process":""}])).is_none());
+        assert!(parse_active_sockets(&serde_json::Value::Null).is_none());
     }
 
     use super::*;

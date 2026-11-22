@@ -14678,18 +14678,16 @@ impl LauncherApp {
                                 ui.set_width(ui.available_width());
 
                                 // Sockets to display
-                                let default_remote_socks: [(&str, &str, &str, &str); 0] = [];
-
                                 let endpoint_count = if is_remote {
-                                    if !snap.active_sockets.is_empty() {
-                                        snap.active_sockets.len()
-                                    } else {
-                                        default_remote_socks.len()
-                                    }
+                                    snap.active_sockets.len()
                                 } else {
                                     wifi_snap.active_sockets.len()
                                 };
-                                let ep_badge_str = format!("{} Endpoints", endpoint_count);
+                                let ep_badge_str = if is_remote && !snap.active_sockets_available {
+                                    "Unavailable".to_string()
+                                } else {
+                                    format!("{} Endpoints", endpoint_count)
+                                };
 
                                 // Card Header
                                 let right_btn_w = 72.0;
@@ -14756,12 +14754,12 @@ impl LauncherApp {
                                         ui.end_row();
 
                                         if is_remote {
-                                            let remote_socks: Vec<(&str, &str, &str, &str)> = if !snap.active_sockets.is_empty() {
-                                                snap.active_sockets.iter().map(|s| (s.process.as_str(), s.proto.as_str(), s.port.as_str(), s.status.as_str())).collect()
-                                            } else {
-                                                default_remote_socks.to_vec()
-                                            };
-                                            for (proc_name, proto, port, status) in remote_socks {
+                                            if !snap.active_sockets_available {
+                                                ui.label(RichText::new("Remote socket details unavailable (ss is missing or inaccessible)").size(9.0).color(p.text_muted));
+                                                ui.label(""); ui.label(""); ui.label(""); ui.end_row();
+                                            }
+                                            for sock in &snap.active_sockets {
+                                                let (proc_name, proto, port, status) = (sock.process.as_str(), sock.proto.as_str(), sock.port.as_str(), sock.status.as_str());
                                                 // Col 1: Cyan dot + Process name + muted (parenthesis)
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 4.0;

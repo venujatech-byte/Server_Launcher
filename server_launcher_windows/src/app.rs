@@ -13258,6 +13258,7 @@ impl LauncherApp {
 
                     let d_read_str = rates_available.then(|| crate::sensors::format_rate(d_read_bps)).unwrap_or_else(|| "—".to_string());
                     let d_write_str = rates_available.then(|| crate::sensors::format_rate(d_write_bps)).unwrap_or_else(|| "—".to_string());
+                    let disk_identity = if cfg!(windows) { d_name.to_owned() } else { format!("/dev/{d_name}") };
 
                     let (d_used, d_tot, d_pct, d_fs, is_mounted, mount_pt) = if let Some(m) = d_mount {
                         let u = m.used_bytes as f64 / 1e9;
@@ -13294,7 +13295,7 @@ impl LauncherApp {
                                 ui.vertical(|ui| {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 5.0;
-                                        ui.label(RichText::new(if physical_disk.is_some() { format!("Storage {} (/dev/{})", idx + 1, d_name) } else { format!("Volume {} ({})", idx + 1, d_name) }).size(13.0).strong().color(p.text_primary));
+                                        ui.label(RichText::new(if physical_disk.is_some() { format!("Storage {} ({})", idx + 1, disk_identity) } else { format!("Volume {} ({})", idx + 1, d_name) }).size(13.0).strong().color(p.text_primary));
                                         let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                         let dot_col = if is_selected { accent } else { Color32::from_rgb(100, 116, 139) };
                                         ui.painter().circle_filled(dot_rect.center(), 2.8, dot_col);

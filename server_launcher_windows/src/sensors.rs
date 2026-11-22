@@ -3917,9 +3917,9 @@ impl SystemSensorsCollector {
             }
         }
         let mut snap = self.windows_hardware.clone();
-        match sample {
+        match &sample {
             Ok(data) => {
-                let live = parse_windows_hardware(&data);
+                let live = parse_windows_hardware(data);
                 snap.power = live.power;
                 snap.cpu_temp = live.cpu_temp;
                 snap.storage_temp = live.storage_temp;
@@ -3931,7 +3931,7 @@ impl SystemSensorsCollector {
                 errors.extend(["battery_error", "temp_error"].iter().filter_map(|key| data[*key].as_str()).map(str::to_owned));
                 snap.windows_telemetry_error = (!errors.is_empty()).then(|| errors.join(" • "));
             }
-            Err(error) => { snap.windows_telemetry_error = Some(error); }
+            Err(error) => { snap.windows_telemetry_error = Some(error.clone()); }
         }
         snap.cpu_brand = self.sys.cpus().first().map(|c| c.brand().to_owned()).unwrap_or_default();
         snap.cpu_cores_physical = self.sys.physical_core_count().unwrap_or(0);
@@ -3953,7 +3953,8 @@ impl SystemSensorsCollector {
             let total = d.total_space();
             let available = d.available_space();
             DiskInfo {
-                name: d.name().to_string_lossy().into_owned(),
+                // Windows volume labels can be empty or duplicated; mount paths identify the displayed volume.
+                name: d.mount_point().display().to_string(),
                 mount_point: d.mount_point().display().to_string(),
                 fs_type: d.file_system().to_string_lossy().into_owned(),
                 total_bytes: total, available_bytes: available,
@@ -3962,6 +3963,9 @@ impl SystemSensorsCollector {
                 ..Default::default()
             }
         }).collect();
+        if let Ok(data) = &sample {
+            apply_windows_volume_rates(&mut snap.disks, &data["logical_disks"]);
+        }
         let elapsed = now.duration_since(self.prev_net_time).as_secs_f64().max(0.001);
         for (name, data) in &self.networks {
             let rx = data.total_received();
@@ -4028,6 +4032,7 @@ if (__INVENTORY__) {
   try { $result.ram=@(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop | Select-Object Manufacturer,Capacity,Speed,SMBIOSMemoryType,FormFactor) } catch { $result.ram_error='RAM inventory unavailable' }
 }
 try { $result.disk=Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -Filter "Name='_Total'" -ErrorAction Stop | Select-Object -First 1 DiskReadBytesPerSec,DiskWriteBytesPerSec } catch { $result.disk=$null }
+try { $result.logical_disks=@(Get-CimInstance Win32_PerfFormattedData_PerfDisk_LogicalDisk -ErrorAction Stop | Select-Object Name,DiskReadBytesPerSec,DiskWriteBytesPerSec) } catch { $result.logical_disks=@() }
 try { $result.battery=@(Get-CimInstance Win32_Battery -ErrorAction Stop | Select-Object Name,EstimatedChargeRemaining,BatteryStatus) } catch { $result.battery_error='Battery telemetry unavailable' }
 try { $result.temp=@(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor -ErrorAction Stop | Where-Object SensorType -eq Temperature | Select-Object Name,Value,Identifier) } catch { $result.temp_error='Temperature readings require the LibreHardwareMonitor WMI provider' }
 $result | ConvertTo-Json -Depth 4 -Compress"#;
@@ -4059,6 +4064,33 @@ $result | ConvertTo-Json -Depth 4 -Compress"#;
     }
     let bytes = reader.join().map_err(|_| "Could not read Windows sensor query output".to_string())?;
     serde_json::from_slice(&bytes).map_err(|error| format!("Invalid Windows sensor data: {error}"))
+}
+
+#[cfg(any(windows, test))]
+fn windows_drive_letter(path: &str) -> Option<&str> {
+    let drive = path.trim_end_matches(['\\', '/']);
+    let bytes = drive.as_bytes();
+    (bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':').then_some(drive)
+}
+
+#[cfg(any(windows, test))]
+fn apply_windows_volume_rates(disks: &mut [DiskInfo], samples: &serde_json::Value) {
+    for disk in disks {
+        disk.disk_rates_available = false;
+        let Some(drive) = windows_drive_letter(&disk.mount_point) else { continue; };
+        let mut matches = samples.as_array().into_iter().flatten().filter(|sample| {
+            sample["Name"].as_str().is_some_and(|name| name.eq_ignore_ascii_case(drive))
+        });
+        let Some(sample) = matches.next() else { continue; };
+        if matches.next().is_some() { continue; }
+        let read = sample["DiskReadBytesPerSec"].as_f64().filter(|value| value.is_finite() && *value >= 0.0);
+        let write = sample["DiskWriteBytesPerSec"].as_f64().filter(|value| value.is_finite() && *value >= 0.0);
+        if let (Some(read), Some(write)) = (read, write) {
+            disk.read_rate_bps = read;
+            disk.write_rate_bps = write;
+            disk.disk_rates_available = true;
+        }
+    }
 }
 
 #[cfg(any(windows, test))]
@@ -4151,6 +4183,26 @@ mod windows_sensor_tests {
         for disk in [serde_json::json!(null), serde_json::json!({"DiskReadBytesPerSec": 1}), serde_json::json!({"DiskReadBytesPerSec": -1, "DiskWriteBytesPerSec": 1})] {
             assert!(!parse_windows_hardware(&serde_json::json!({"disk": disk})).total_disk_rates_available);
         }
+    }
+    #[test]
+    fn logical_disk_rates_match_unique_drive_letters_only() {
+        let mut disks = vec![
+            DiskInfo { mount_point: "C:\\".into(), ..Default::default() },
+            DiskInfo { mount_point: "d:/".into(), ..Default::default() },
+            DiskInfo { mount_point: "C:\\data".into(), ..Default::default() },
+        ];
+        let samples = serde_json::json!([
+            {"Name":"c:", "DiskReadBytesPerSec":0, "DiskWriteBytesPerSec":9},
+            {"Name":"D:", "DiskReadBytesPerSec":5, "DiskWriteBytesPerSec":6},
+            {"Name":"d:", "DiskReadBytesPerSec":5, "DiskWriteBytesPerSec":6},
+            {"Name":"_Total", "DiskReadBytesPerSec":99, "DiskWriteBytesPerSec":99}
+        ]);
+        apply_windows_volume_rates(&mut disks, &samples);
+        assert!(disks[0].disk_rates_available);
+        assert_eq!((disks[0].read_rate_bps, disks[0].write_rate_bps), (0.0, 9.0));
+        assert!(!disks[1].disk_rates_available && !disks[2].disk_rates_available);
+        apply_windows_volume_rates(&mut disks, &serde_json::Value::Null);
+        assert!(!disks[0].disk_rates_available);
     }
     #[test]
     fn live_battery_samples_are_independent_of_inventory() {

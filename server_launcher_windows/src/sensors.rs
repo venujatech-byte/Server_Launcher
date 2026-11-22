@@ -903,6 +903,18 @@ mod disk_stat_rate_tests {
     use std::collections::HashMap;
 
     #[test]
+    fn stacked_disks_are_not_physical_devices() {
+        let root = std::env::temp_dir().join(format!("server-launcher-block-{}", std::process::id()));
+        let slaves = root.join("slaves");
+        std::fs::create_dir_all(&slaves).unwrap();
+        assert!(super::disk_has_no_slaves(&root));
+        std::fs::write(slaves.join("sda"), "").unwrap();
+        assert!(!super::disk_has_no_slaves(&root));
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(!super::disk_has_no_slaves(&root));
+    }
+
+    #[test]
     fn diskstats_ignore_malformed_counters_without_losing_following_devices() {
         let parsed = super::parse_proc_diskstats("8 0 sda 1 2 bad 4 5 6 7\n8 16 sdb 1 2 3 4 5 6 7\n");
         assert!(!parsed.contains_key("sda"));
@@ -1028,6 +1040,10 @@ fn is_base_physical_disk(dev: &str) -> bool {
 }
 
 #[cfg_attr(windows, allow(unused_mut))]
+fn disk_has_no_slaves(path: &std::path::Path) -> bool {
+    fs::read_dir(path.join("slaves")).map(|mut entries| entries.next().is_none()).unwrap_or(false)
+}
+
 pub fn collect_physical_disks() -> Vec<PhysicalDiskInfo> {
     let mut physical_disks = Vec::new();
     #[cfg(target_os = "linux")]
@@ -1035,7 +1051,7 @@ pub fn collect_physical_disks() -> Vec<PhysicalDiskInfo> {
         let mut dev_names: Vec<String> = entries
             .filter_map(|e| e.ok())
             .filter_map(|e| e.file_name().into_string().ok())
-            .filter(|name| is_base_physical_disk(name))
+            .filter(|name| is_base_physical_disk(name) && disk_has_no_slaves(&std::path::Path::new("/sys/block").join(name)))
             .collect();
         dev_names.sort();
 

@@ -134,6 +134,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **CPU power telemetry:** The CPU page calls kernel-reported package caps power caps rather than PL1 limits. The estimated power profile no longer carries unused governor/preset capability fields.
 - **Remote memory telemetry:** Remote memory totals and available values must be present and consistent; malformed memory or swap fields fail the sensor query instead of rendering false zero usage.
 - **Remote GPU telemetry:** Utilization, temperature, clock widths, memory totals and power are range-checked before display; invalid readings remain unavailable and unnamed adapters are not given a fabricated model name.
+- **Local NVIDIA telemetry:** `nvidia-smi` temperature, utilization and power values now reject non-finite/out-of-range results; VRAM is kept only when used and total counters form a valid pair. Empty adapter rows are skipped.
 - **Remote battery telemetry:** Battery numeric values are finite/range checked, cycle counts are not truncated, and unnamed batteries use an explicit unknown label.
 - **Remote network telemetry:** The interface list must be present, malformed rows are omitted, and missing rates/counters or wireless classification can no longer be reported as zero or wired.
 - **Remote temperature and charge-limit fields:** Sensor limits use the same finite range checks as temperatures, and charge thresholds are accepted only from 1–100 without integer truncation.

@@ -1992,6 +1992,10 @@ fn normalize_pci_address(address: &str) -> Option<String> {
     Some(format!("{domain:04x}:{bus:02x}:{device:02x}.{function:x}"))
 }
 
+fn parse_nvidia_metric(value: &str, min: f32, max: f32) -> Option<f32> {
+    value.parse::<f32>().ok().filter(|value| value.is_finite() && (min..=max).contains(value))
+}
+
 #[cfg(test)]
 mod gpu_pci_address_tests {
     #[test]
@@ -2007,6 +2011,13 @@ mod gpu_pci_address_tests {
         assert_eq!(super::normalize_pci_address("0000:02:00.0"), Some("0000:02:00.0".into()));
         assert_eq!(super::normalize_pci_address("0000:01:20.0"), None);
         assert_eq!(super::normalize_pci_address("[N/A]"), None);
+    }
+    #[test]
+    fn rejects_invalid_nvidia_values() {
+        assert_eq!(super::parse_nvidia_metric("N/A", 0.0, 100.0), None);
+        assert_eq!(super::parse_nvidia_metric("NaN", 0.0, 100.0), None);
+        assert_eq!(super::parse_nvidia_metric("101", 0.0, 100.0), None);
+        assert_eq!(super::parse_nvidia_metric("42.5", 0.0, 100.0), Some(42.5));
     }
 }
 
@@ -2030,24 +2041,27 @@ fn detect_gpus() -> Vec<GpuSensorInfo> {
                 for line in stdout.lines() {
                     let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
                     if parts.len() >= 6 {
-                        let name = parts[0].to_string();
-                        let temp = parts[1].parse::<f32>().ok();
-                        let load_pct = parts[2].parse::<f32>().ok();
-                        let mem_used = parts[4].parse::<u64>().ok();
-                        let mem_total = parts[5].parse::<u64>().ok();
-                        let clock_mhz = parts.get(6).and_then(|s| s.parse::<u32>().ok());
-                        let mem_clock_mhz = parts.get(7).and_then(|s| s.parse::<u32>().ok());
-                        let power_watts = parts.get(8).and_then(|s| s.parse::<f32>().ok());
-                        let power_limit_watts = parts.get(9).and_then(|s| s.parse::<f32>().ok());
+                        let name = parts[0];
+                        if name.is_empty() { continue; }
+                        let temp = parse_nvidia_metric(parts[1], -40.0, 150.0);
+                        let load_pct = parse_nvidia_metric(parts[2], 0.0, 100.0);
+                        let memory = match (parts[4].parse::<u64>().ok(), parts[5].parse::<u64>().ok()) {
+                            (Some(used), Some(total)) if total > 0 && used <= total => (Some(used), Some(total)),
+                            _ => (None, None),
+                        };
+                        let clock_mhz = parts.get(6).and_then(|s| s.parse::<u32>().ok()).filter(|value| *value > 0);
+                        let mem_clock_mhz = parts.get(7).and_then(|s| s.parse::<u32>().ok()).filter(|value| *value > 0);
+                        let power_watts = parts.get(8).and_then(|s| parse_nvidia_metric(s, 0.0, 10000.0));
+                        let power_limit_watts = parts.get(9).and_then(|s| parse_nvidia_metric(s, 0.0, 10000.0));
 
                         let pci = parts.get(10).and_then(|value| normalize_pci_address(value));
                         if let Some(address) = &pci { nvidia_devices.insert(address.clone()); }
                         gpus.push(GpuSensorInfo { device_path: pci.map(|address| format!("pci:{address}")).unwrap_or_default(), engine_loads: Vec::new(),
-                            name,
+                            name: name.to_owned(),
                             load_pct,
                             temp,
-                            mem_used_mb: mem_used,
-                            mem_total_mb: mem_total,
+                            mem_used_mb: memory.0,
+                            mem_total_mb: memory.1,
                             clock_mhz,
                             mem_clock_mhz,
                             power_watts,

@@ -1245,6 +1245,40 @@ fn parse_reported_temperature(value: &serde_json::Value) -> Option<f32> {
     value.as_f64().filter(|value| value.is_finite() && (-40.0..=150.0).contains(value)).map(|value| value as f32)
 }
 
+fn apply_unambiguous_gpu_temperature(gpus: &mut [GpuSensorInfo], temperatures: &[f32]) {
+    if let ([gpu], [temperature]) = (gpus, temperatures) {
+        if gpu.temp.is_none() { gpu.temp = Some(*temperature); }
+    }
+}
+
+#[cfg(test)]
+mod gpu_temperature_matching_tests {
+    use super::{apply_unambiguous_gpu_temperature, GpuSensorInfo};
+
+    #[test]
+    fn only_attaches_one_temperature_to_one_unreported_gpu() {
+        let mut gpus = vec![GpuSensorInfo::default()];
+        apply_unambiguous_gpu_temperature(&mut gpus, &[56.0]);
+        assert_eq!(gpus[0].temp, Some(56.0));
+    }
+
+    #[test]
+    fn leaves_multiple_gpus_or_temperatures_unmatched() {
+        let mut gpus = vec![GpuSensorInfo::default(), GpuSensorInfo::default()];
+        apply_unambiguous_gpu_temperature(&mut gpus, &[56.0]);
+        assert!(gpus.iter().all(|gpu| gpu.temp.is_none()));
+        apply_unambiguous_gpu_temperature(&mut gpus[..1], &[56.0, 60.0]);
+        assert!(gpus[0].temp.is_none());
+    }
+
+    #[test]
+    fn preserves_gpu_specific_temperature() {
+        let mut gpus = vec![GpuSensorInfo { temp: Some(50.0), ..Default::default() }];
+        apply_unambiguous_gpu_temperature(&mut gpus, &[56.0]);
+        assert_eq!(gpus[0].temp, Some(50.0));
+    }
+}
+
 fn categorize_sensor(label: &str, chip: &str) -> SensorCategory {
     let lower_label = label.to_lowercase();
     let lower_chip = chip.to_lowercase();
@@ -3786,7 +3820,7 @@ print(json.dumps(data))
     let mut cpu_temp = None;
     let mut ram_temp = None;
     let mut storage_temp = None;
-    let mut gpu_temp = None;
+    let mut gpu_temps = Vec::new();
 
     if let Some(arr) = parsed["temps"].as_array() {
         for t in arr {
@@ -3805,9 +3839,7 @@ print(json.dumps(data))
                 SensorCategory::Storage if storage_temp.is_none() || label.contains("Composite") => {
                     storage_temp = Some(temp);
                 }
-                SensorCategory::Gpu if gpu_temp.is_none() => {
-                    gpu_temp = Some(temp);
-                }
+                SensorCategory::Gpu => gpu_temps.push(temp),
                 _ => {}
             }
 
@@ -3824,6 +3856,7 @@ print(json.dumps(data))
             });
         }
     }
+    apply_unambiguous_gpu_temperature(&mut gpus, &gpu_temps);
 
     let mut networks = Vec::new();
     let interfaces = parsed["networks"].as_array()

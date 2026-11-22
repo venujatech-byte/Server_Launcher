@@ -16297,7 +16297,10 @@ impl LauncherApp {
             .unwrap_or(f32::NAN);
 
         let temperature_text = |value: f32| if value.is_finite() { format!("{value:.1}") } else { "—".to_string() };
-        let history_id = egui::Id::new(("thermal_measured_history", host_id));
+        let selected_gpu_identity = snap.gpus.get(self.selected_gpu_idx).map(|gpu| {
+            if gpu.device_path.is_empty() { gpu.name.as_str() } else { gpu.device_path.as_str() }
+        }).unwrap_or("unavailable");
+        let history_id = egui::Id::new(("thermal_measured_history", host_id, self.selected_gpu_idx, selected_gpu_identity));
         let history = ui.ctx().data_mut(|data| {
             let history = data.get_temp_mut_or_default::<VecDeque<(Instant, f32, f32)>>(history_id);
             if let Some(timestamp) = snap.timestamp {

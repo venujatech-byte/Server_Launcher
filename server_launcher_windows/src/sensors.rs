@@ -1154,11 +1154,22 @@ pub fn collect_physical_disks() -> Vec<PhysicalDiskInfo> {
     physical_disks
 }
 
+fn parse_reported_temperature(value: &serde_json::Value) -> Option<f32> {
+    value.as_f64().filter(|value| value.is_finite() && (-40.0..=150.0).contains(value)).map(|value| value as f32)
+}
+
 fn categorize_sensor(label: &str, chip: &str) -> SensorCategory {
     let lower_label = label.to_lowercase();
     let lower_chip = chip.to_lowercase();
 
-    if lower_label.contains("cpu")
+    if lower_label.contains("gpu")
+        || lower_chip.contains("amdgpu")
+        || lower_chip.contains("nouveau")
+        || lower_chip.contains("nvidia")
+        || lower_chip.contains("radeon")
+    {
+        SensorCategory::Gpu
+    } else if lower_label.contains("cpu")
         || lower_label.contains("core")
         || lower_label.contains("package")
         || lower_label.contains("tcpu")
@@ -1175,13 +1186,6 @@ fn categorize_sensor(label: &str, chip: &str) -> SensorCategory {
         || lower_label.contains("ram")
     {
         SensorCategory::Memory
-    } else if lower_label.contains("gpu")
-        || lower_chip.contains("amdgpu")
-        || lower_chip.contains("nouveau")
-        || lower_chip.contains("nvidia")
-        || lower_chip.contains("radeon")
-    {
-        SensorCategory::Gpu
     } else if lower_label.contains("nvme")
         || lower_label.contains("composite")
         || lower_label.contains("drive")
@@ -3533,7 +3537,7 @@ print(json.dumps(data))
         for t in arr {
             let chip = t["chip"].as_str().unwrap_or("").to_string();
             let label = t["label"].as_str().unwrap_or("").to_string();
-            let temp = t["temp"].as_f64().unwrap_or(0.0) as f32;
+            let Some(temp) = parse_reported_temperature(&t["temp"]) else { continue; };
             let cat = categorize_sensor(&label, &chip);
 
             match cat {
@@ -3827,6 +3831,12 @@ mod tests {
     #[test]
     fn test_sensor_categorization() {
         assert_eq!(categorize_sensor("Package id 0", "coretemp"), SensorCategory::Cpu);
+        assert_eq!(categorize_sensor("GPU Core", "sysinfo"), SensorCategory::Gpu);
+        assert_eq!(categorize_sensor("Core", "amdgpu"), SensorCategory::Gpu);
+        assert_eq!(categorize_sensor("Core 0", "coretemp"), SensorCategory::Cpu);
+        assert_eq!(parse_reported_temperature(&serde_json::json!(0)), Some(0.0));
+        assert_eq!(parse_reported_temperature(&serde_json::Value::Null), None);
+        assert_eq!(parse_reported_temperature(&serde_json::json!(999)), None);
         assert_eq!(categorize_sensor("SODIMM", "dell_smm"), SensorCategory::Memory);
         assert_eq!(categorize_sensor("Composite", "nvme"), SensorCategory::Storage);
         assert_eq!(categorize_sensor("amdgpu edge", "amdgpu"), SensorCategory::Gpu);

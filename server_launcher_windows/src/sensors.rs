@@ -3762,28 +3762,27 @@ print(json.dumps(data))
     }
 
     let mut networks = Vec::new();
-    if let Some(arr) = parsed["networks"].as_array() {
-        for n in arr {
-            let name = n["name"].as_str().unwrap_or("").to_string();
-            let rx = n["rx_bytes"].as_u64().unwrap_or(0);
-            let tx = n["tx_bytes"].as_u64().unwrap_or(0);
-            let rx_rate = n["rx_rate"].as_f64().unwrap_or(0.0);
-            let tx_rate = n["tx_rate"].as_f64().unwrap_or(0.0);
-            let is_wireless = n["is_wireless"].as_bool().unwrap_or(false);
-            networks.push(NetInterfaceInfo {
-                name,
-                rx_bytes: rx,
-                tx_bytes: tx,
-                rx_rate_bps: rx_rate,
-                tx_rate_bps: tx_rate,
-                is_wireless,
-                link_state: parse_network_link_state(&n["link_state"]),
-                mac_address: parse_network_mac(&n["mac_address"]),
-                mtu: n["mtu"].as_u64().and_then(|value| u32::try_from(value).ok()).filter(|value| *value > 0),
-                ipv4: parse_network_address(&n["ipv4"], true),
-                ipv6: parse_network_address(&n["ipv6"], false),
-            });
-        }
+    let interfaces = parsed["networks"].as_array()
+        .ok_or_else(|| "Remote sensor data has no network interface list".to_string())?;
+    for n in interfaces {
+        let (Some(name), Some(rx), Some(tx), Some(rx_rate), Some(tx_rate), Some(is_wireless)) = (
+            n["name"].as_str(), n["rx_bytes"].as_u64(), n["tx_bytes"].as_u64(),
+            n["rx_rate"].as_f64(), n["tx_rate"].as_f64(), n["is_wireless"].as_bool(),
+        ) else { continue; };
+        if name.is_empty() || !rx_rate.is_finite() || rx_rate < 0.0 || !tx_rate.is_finite() || tx_rate < 0.0 { continue; }
+        networks.push(NetInterfaceInfo {
+            name: name.to_string(),
+            rx_bytes: rx,
+            tx_bytes: tx,
+            rx_rate_bps: rx_rate,
+            tx_rate_bps: tx_rate,
+            is_wireless,
+            link_state: parse_network_link_state(&n["link_state"]),
+            mac_address: parse_network_mac(&n["mac_address"]),
+            mtu: n["mtu"].as_u64().and_then(|value| u32::try_from(value).ok()).filter(|value| *value > 0),
+            ipv4: parse_network_address(&n["ipv4"], true),
+            ipv6: parse_network_address(&n["ipv6"], false),
+        });
     }
 
     let (total_rx_bytes, total_tx_bytes, total_rx_rate_bps, total_tx_rate_bps) = network_totals(&networks);

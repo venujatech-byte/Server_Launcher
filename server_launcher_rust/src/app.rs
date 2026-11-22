@@ -5333,8 +5333,12 @@ mod remote_interface_selection_tests {
     }
 }
 
+fn telemetry_capacity(interval_secs: u32) -> usize {
+    if interval_secs == 0 { 60 } else { (60 / interval_secs as usize).max(1) }
+}
+
 fn push_telemetry<T>(history: &mut VecDeque<T>, value: T, capacity: usize) {
-    if history.len() == capacity { history.pop_front(); }
+    while history.len() >= capacity { history.pop_front(); }
     history.push_back(value);
 }
 
@@ -11196,22 +11200,23 @@ impl LauncherApp {
                 .map(|_| VecDeque::with_capacity(30)).collect();
         }
 
-        // Each collected snapshot contributes at most one history sample.
+        // Keep overview histories near a 60-second window at the selected poll interval.
+        let history_capacity = telemetry_capacity(self.sensors_refresh_interval);
         if snap.timestamp.is_some_and(|timestamp| self.last_telemetry_sample.is_none_or(|last| timestamp > last)) {
             self.last_telemetry_sample = snap.timestamp;
             if snap.cpu_usage_available {
-                push_telemetry(&mut self.cpu_history, snap.cpu_global_usage, 60);
+                push_telemetry(&mut self.cpu_history, snap.cpu_global_usage, history_capacity);
                 self.cpu_peak_usage = self.cpu_history.iter().copied().fold(0.0_f32, f32::max);
             }
-            push_telemetry(&mut self.ram_history, (snap.mem_usage_pct, snap.swap_usage_pct), 60);
+            push_telemetry(&mut self.ram_history, (snap.mem_usage_pct, snap.swap_usage_pct), history_capacity);
             let (total_storage, used_storage, _) = mounted_storage_totals(&snap.disks);
             if total_storage > 0 {
-                push_telemetry(&mut self.storage_history, (used_storage as f64 / total_storage as f64 * 100.0) as f32, 60);
+                push_telemetry(&mut self.storage_history, (used_storage as f64 / total_storage as f64 * 100.0) as f32, history_capacity);
             }
 
             if snap.total_disk_rates_available {
-                push_telemetry(&mut self.disk_write_history, (snap.total_disk_write_rate_bps / 1_000_000.0) as f32, 60);
-                push_telemetry(&mut self.disk_read_history, (snap.total_disk_read_rate_bps / 1_000_000.0) as f32, 60);
+                push_telemetry(&mut self.disk_write_history, (snap.total_disk_write_rate_bps / 1_000_000.0) as f32, history_capacity);
+                push_telemetry(&mut self.disk_read_history, (snap.total_disk_read_rate_bps / 1_000_000.0) as f32, history_capacity);
             } else {
                 self.disk_write_history.clear();
                 self.disk_read_history.clear();
@@ -11219,8 +11224,8 @@ impl LauncherApp {
 
             for disk in &snap.physical_disks {
                 if disk.disk_rates_available {
-                    push_telemetry(self.per_disk_write_history.entry(disk.name.clone()).or_default(), (disk.write_rate_bps / 1_000_000.0) as f32, 60);
-                    push_telemetry(self.per_disk_read_history.entry(disk.name.clone()).or_default(), (disk.read_rate_bps / 1_000_000.0) as f32, 60);
+                    push_telemetry(self.per_disk_write_history.entry(disk.name.clone()).or_default(), (disk.write_rate_bps / 1_000_000.0) as f32, history_capacity);
+                    push_telemetry(self.per_disk_read_history.entry(disk.name.clone()).or_default(), (disk.read_rate_bps / 1_000_000.0) as f32, history_capacity);
                 } else {
                     self.per_disk_write_history.remove(&disk.name);
                     self.per_disk_read_history.remove(&disk.name);
@@ -11231,8 +11236,8 @@ impl LauncherApp {
                 for disk in &snap.disks {
                     let name = disk.name.trim_start_matches("/dev/").to_string();
                     if disk.disk_rates_available {
-                        push_telemetry(self.per_disk_write_history.entry(name.clone()).or_default(), (disk.write_rate_bps / 1_000_000.0) as f32, 60);
-                        push_telemetry(self.per_disk_read_history.entry(name).or_default(), (disk.read_rate_bps / 1_000_000.0) as f32, 60);
+                        push_telemetry(self.per_disk_write_history.entry(name.clone()).or_default(), (disk.write_rate_bps / 1_000_000.0) as f32, history_capacity);
+                        push_telemetry(self.per_disk_read_history.entry(name).or_default(), (disk.read_rate_bps / 1_000_000.0) as f32, history_capacity);
                     } else {
                         self.per_disk_write_history.remove(&name);
                         self.per_disk_read_history.remove(&name);
@@ -11241,20 +11246,20 @@ impl LauncherApp {
             }
 
             let cur_tx_mb = (snap.total_tx_rate_bps / 1_000_000.0) as f32;
-            push_telemetry(&mut self.net_tx_history, cur_tx_mb, 60);
+            push_telemetry(&mut self.net_tx_history, cur_tx_mb, history_capacity);
 
             let cur_rx_mb = (snap.total_rx_rate_bps / 1_000_000.0) as f32;
-            push_telemetry(&mut self.net_rx_history, cur_rx_mb, 60);
+            push_telemetry(&mut self.net_rx_history, cur_rx_mb, history_capacity);
 
             self.net_peak_mb = self.net_tx_history.iter().chain(&self.net_rx_history)
                 .copied().fold(0.0_f32, f32::max);
 
             let (cur_tcp, cur_udp) = (snap.socket_tcp as f32, snap.socket_udp as f32);
-            push_telemetry(&mut self.socket_tcp_history, cur_tcp, 60);
-            push_telemetry(&mut self.socket_udp_history, cur_udp, 60);
+            push_telemetry(&mut self.socket_tcp_history, cur_tcp, history_capacity);
+            push_telemetry(&mut self.socket_udp_history, cur_udp, history_capacity);
 
             if let Some(load) = snap.gpus.get(self.selected_gpu_idx).and_then(|g| g.load_pct) {
-                push_telemetry(&mut self.gpu_load_history, load, 60);
+                push_telemetry(&mut self.gpu_load_history, load, history_capacity);
             }
             // Per-engine counters cannot be inferred from total GPU utilization.
             self.gpu_3d_history.clear();
@@ -11267,7 +11272,7 @@ impl LauncherApp {
                     .collect();
             }
             for (history, value) in self.cpu_core_histories.iter_mut().zip(&snap.cpu_core_usages) {
-                if let Some(value) = value { push_telemetry(history, *value, 30); }
+                if let Some(value) = value { push_telemetry(history, *value, history_capacity); }
             }
 
 

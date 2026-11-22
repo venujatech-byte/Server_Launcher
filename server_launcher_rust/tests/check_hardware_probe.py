@@ -35,4 +35,20 @@ assert result['gpus'][0]['device']=='/pci/intel'
 assert result['memory'][0]['kind']=='DDR4'
 assert result['memory'][0]['speed']=='2400 MT/s'
 assert result['notes']==[]
-print('Hardware probe fixture passed: RAPL delta, Intel engines, device identity and RAM metadata.')
+# A partial package measurement must not be reported as total CPU power.
+energies=iter(['1000000','2000000'])
+def missing_package_open(path,*args,**kwargs):
+    if 'intel-rapl:1/energy_uj' in path:
+        raise PermissionError(path)
+    return fake_open(path,*args,**kwargs)
+def two_package_glob(pattern):
+    if 'powercap' in pattern:
+        return ['/sys/class/powercap/intel-rapl:0', '/sys/class/powercap/intel-rapl:1']
+    return fake_glob(pattern)
+output=io.StringIO()
+with patch('builtins.open',missing_package_open),patch('glob.glob',two_package_glob),patch('os.path.realpath',fake_path),patch('subprocess.run',fake_run),patch('sys.argv',['probe','inventory']),patch('time.monotonic',side_effect=[100.0,100.5,100.5]),patch.dict('os.environ',{},clear=False),contextlib.redirect_stdout(output):
+    exec(compile(script,'hardware-probe','exec'),{})
+result=json.loads(output.getvalue())
+assert result['cpu_watts'] is None, result
+assert any('intel-rapl:1' in note for note in result['notes'])
+print('Hardware probe fixture passed: RAPL delta, partial packages, Intel engines, device identity and RAM metadata.')

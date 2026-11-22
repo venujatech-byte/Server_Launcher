@@ -4570,7 +4570,7 @@ for path, previous, maximum in zones:
         delta += maximum
     if delta >= 0:
         watts.append(delta / 1e6 / (time.monotonic() - started))
-if zones and len(watts) == len(zones):
+if zones and not unreadable_zones and len(watts) == len(zones):
     result['cpu_watts'] = sum(watts)
 print(json.dumps(result, allow_nan=False))
 "##;

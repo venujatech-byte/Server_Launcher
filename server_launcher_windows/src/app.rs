@@ -13995,6 +13995,7 @@ impl LauncherApp {
         let iface_name = primary_net.map(|n| n.name.as_str()).unwrap_or("Unavailable");
         let is_wireless = if is_remote { primary_net.is_some_and(|n| n.is_wireless) } else { !wifi_snap.interface.is_empty() };
         let is_connected = !is_remote && wifi_snap.is_connected;
+        let remote_state = primary_net.and_then(|interface| interface.link_state.as_deref()).unwrap_or("Unavailable");
 
         ScrollArea::vertical()
             .id_salt("sensors_wifi_scroll_v2")
@@ -14393,7 +14394,7 @@ impl LauncherApp {
                                                 let main_lbl = if is_remote { format!("Interface {}", iface_name) } else if wifi_snap.ssid.is_empty() { "Access point unavailable".to_string() } else { wifi_snap.ssid.clone() };
                                                 ui.label(RichText::new(main_lbl).size(13.0).strong().color(p.text_primary));
                                                 let band_str = if is_remote {
-                                                    "Connection state unavailable".to_string()
+                                                    format!("Interface state: {}", remote_state)
                                                 } else {
                                                     let frequency = if wifi_snap.frequency_mhz > 0 { format!("{:.1} GHz", wifi_snap.frequency_mhz as f32 / 1000.0) } else { "Frequency unavailable".into() };
                                                     format!("{} • {} ({})", frequency, if wifi_snap.security.is_empty() { "Security unavailable" } else { &wifi_snap.security }, if wifi_snap.driver.is_empty() { "Driver unavailable" } else { &wifi_snap.driver })
@@ -14434,7 +14435,7 @@ impl LauncherApp {
                                     let ap_chips: [(&str, &str); 3] = if is_remote {
                                         [
                                             ("TYPE", if is_wireless { "Wi-Fi" } else { "Network" }),
-                                            ("CARRIER", "Unavailable"),
+                                            ("STATE", remote_state),
                                             ("SOCKETS", "Host-wide"),
                                         ]
                                     } else {
@@ -14589,7 +14590,8 @@ impl LauncherApp {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                     ui.painter().circle_filled(d_rect.center(), 2.8, accent);
-                    ui.label(RichText::new(if is_remote { "LINK: UNKNOWN" } else if is_connected { "LINK: UP" } else if wifi_snap.state == "DISCONNECTED" { "LINK: DOWN" } else { "LINK: UNKNOWN" }).size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
+                    let link_status = if is_remote { format!("STATE: {}", remote_state.to_uppercase()) } else if is_connected { "LINK: UP".to_string() } else if wifi_snap.state == "DISCONNECTED" { "LINK: DOWN".to_string() } else { "LINK: UNKNOWN".to_string() };
+                    ui.label(RichText::new(link_status).size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                     ui.label(RichText::new("/").size(9.5).monospace().color(Color32::from_rgb(100, 116, 139)));
                     ui.label(RichText::new(iface_display).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
 
@@ -14630,10 +14632,10 @@ impl LauncherApp {
                 let gateway_str = if is_remote { "Unavailable" } else { wifi_snap.gateway.as_str() };
                 let dns_resolvers_str = if is_remote { "Unavailable" } else { wifi_snap.dns_resolvers.as_str() };
                 let ip_v6_str = if is_remote { "Unavailable" } else { wifi_snap.ip_v6.as_str() };
-                let mac_str = if is_remote { "Unavailable" } else { wifi_snap.mac_address.as_str() };
+                let mac_str = if is_remote { primary_net.and_then(|interface| interface.mac_address.as_deref()).unwrap_or("Unavailable") } else { wifi_snap.mac_address.as_str() };
                 let driver_str = if is_remote { "Unavailable" } else { wifi_snap.driver.as_str() };
                 let pci_str = if is_remote { "—" } else { wifi_snap.pci_slot.as_str() };
-                let mtu_val = if is_remote || wifi_snap.mtu == 0 { "—".to_string() } else { wifi_snap.mtu.to_string() };
+                let mtu_val = if is_remote { primary_net.and_then(|interface| interface.mtu).map(|mtu| mtu.to_string()).unwrap_or_else(|| "—".to_string()) } else if wifi_snap.mtu == 0 { "—".to_string() } else { wifi_snap.mtu.to_string() };
                 let tx_bytes_val = if is_remote { primary_net.map(|interface| interface.tx_bytes) } else { Some(wifi_snap.tx_bytes) };
                 let lease_time_str = if is_remote { "Unavailable" } else { wifi_snap.lease_time_remaining.as_str() };
                 let _kernel_str = if is_remote { snap.os_version.as_str() } else { wifi_snap.kernel_version.as_str() };

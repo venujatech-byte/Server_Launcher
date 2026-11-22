@@ -144,6 +144,9 @@ pub struct NetInterfaceInfo {
     pub rx_rate_bps: f64,
     pub tx_rate_bps: f64,
     pub is_wireless: bool,
+    pub link_state: Option<String>,
+    pub mac_address: Option<String>,
+    pub mtu: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -595,6 +598,7 @@ impl SystemSensorsCollector {
                 rx_rate_bps: rx_rate,
                 tx_rate_bps: tx_rate,
                 is_wireless,
+                ..Default::default()
             });
         }
         networks.sort_by(|a, b| a.name.cmp(&b.name));
@@ -956,6 +960,26 @@ mod cpu_core_reading_tests {
     }
 }
 
+fn parse_network_link_state(value: &serde_json::Value) -> Option<String> {
+    match value.as_str()? {
+        "up" => Some("Up".into()),
+        "down" => Some("Down".into()),
+        "dormant" => Some("Dormant".into()),
+        "lowerlayerdown" => Some("Lower layer down".into()),
+        "testing" => Some("Testing".into()),
+        "unknown" => Some("Unknown".into()),
+        "notpresent" => Some("Not present".into()),
+        _ => None,
+    }
+}
+
+fn parse_network_mac(value: &serde_json::Value) -> Option<String> {
+    let address = value.as_str()?;
+    let parts: Vec<_> = address.split(':').collect();
+    (parts.len() == 6 && parts.iter().all(|part| part.len() == 2 && part.bytes().all(|byte| byte.is_ascii_hexdigit())))
+        .then(|| address.to_owned())
+}
+
 fn network_totals(networks: &[NetInterfaceInfo]) -> (u64, u64, f64, f64) {
     networks.iter().fold((0_u64, 0_u64, 0.0, 0.0), |(rx, tx, rx_rate, tx_rate), net| (
         rx.saturating_add(net.rx_bytes), tx.saturating_add(net.tx_bytes),
@@ -966,6 +990,15 @@ fn network_totals(networks: &[NetInterfaceInfo]) -> (u64, u64, f64, f64) {
 #[cfg(test)]
 mod network_total_tests {
     use super::NetInterfaceInfo;
+    #[test]
+    fn remote_interface_metadata_rejects_missing_or_invalid_values() {
+        assert_eq!(super::parse_network_link_state(&serde_json::json!("up")).as_deref(), Some("Up"));
+        assert_eq!(super::parse_network_link_state(&serde_json::json!("unknown")).as_deref(), Some("Unknown"));
+        assert_eq!(super::parse_network_link_state(&serde_json::Value::Null), None);
+        assert_eq!(super::parse_network_mac(&serde_json::json!("00:11:22:aa:bb:cc")).as_deref(), Some("00:11:22:aa:bb:cc"));
+        assert_eq!(super::parse_network_mac(&serde_json::json!("bad address")), None);
+        assert_eq!(super::parse_network_mac(&serde_json::Value::Null), None);
+    }
     #[test]
     fn counters_and_rates_include_the_same_interfaces() {
         let networks = vec![
@@ -3050,14 +3083,25 @@ for ifname, (rx2, tx2) in n2.items():
     tx_rate = max(0.0, (tx2 - tx1) / t_net_elapsed)
     total_rx_rate += rx_rate
     total_tx_rate += tx_rate
-    is_wl = os.path.exists("/sys/class/net/" + ifname + "/wireless") or os.path.exists("/sys/class/net/" + ifname + "/phy80211")
+    interface_path = "/sys/class/net/" + ifname
+    is_wl = os.path.exists(interface_path + "/wireless") or os.path.exists(interface_path + "/phy80211")
+    mtu_text = read_optional_text(interface_path + "/mtu")
+    try:
+        mtu = int(mtu_text) if mtu_text is not None else None
+        if mtu is not None and not 0 < mtu <= 4294967295:
+            mtu = None
+    except (TypeError, ValueError):
+        mtu = None
     networks.append({
         "name": ifname,
         "rx_bytes": rx2,
         "tx_bytes": tx2,
         "rx_rate": rx_rate,
         "tx_rate": tx_rate,
-        "is_wireless": is_wl
+        "is_wireless": is_wl,
+        "link_state": read_optional_text(interface_path + "/operstate"),
+        "mac_address": read_optional_text(interface_path + "/address"),
+        "mtu": mtu
     })
 
 if rapl_sources and len(rapl_e1) == len(rapl_sources):
@@ -3636,6 +3680,9 @@ print(json.dumps(data))
                 rx_rate_bps: rx_rate,
                 tx_rate_bps: tx_rate,
                 is_wireless,
+                link_state: parse_network_link_state(&n["link_state"]),
+                mac_address: parse_network_mac(&n["mac_address"]),
+                mtu: n["mtu"].as_u64().and_then(|value| u32::try_from(value).ok()).filter(|value| *value > 0),
             });
         }
     }

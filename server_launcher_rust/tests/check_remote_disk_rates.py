@@ -81,4 +81,22 @@ class NoInventory:
 inventory = {'glob': NoInventory(), 'disks': [{'name': '/dev/sda1', 'mount': '/'}]}
 exec(script[inventory_start:inventory_end], inventory)
 assert inventory['phys_disks'] == []
-print('Remote disk fixtures passed: zero, reset, incomplete totals and missing inventory.')
+# Optional interface data comes from the matching interface and tolerates missing files.
+network_start = script.index('networks = []\ntotal_rx_rate = 0.0')
+network_end = script.index('\nif rapl_sources', network_start)
+metadata = {
+    '/sys/class/net/wlan0/mtu': '1500',
+    '/sys/class/net/wlan0/operstate': 'up',
+    '/sys/class/net/wlan0/address': '00:11:22:aa:bb:cc',
+    '/sys/class/net/eth0/mtu': 'invalid',
+}
+network_env = {'os': os, 'n1': {'wlan0': (100, 200)},
+               'n2': {'wlan0': (200, 400), 'eth0': (2, 3)},
+               't_net_elapsed': 2.0, 'read_optional_text': metadata.get}
+with patch('os.path.exists', side_effect=lambda path: path == '/sys/class/net/wlan0/wireless'):
+    exec(script[network_start:network_end], network_env)
+wifi, ethernet = network_env['networks']
+assert wifi['is_wireless'] and wifi['mtu'] == 1500 and wifi['link_state'] == 'up'
+assert wifi['mac_address'] == '00:11:22:aa:bb:cc' and wifi['tx_rate'] == 100.0
+assert not ethernet['is_wireless'] and ethernet['mtu'] is None and ethernet['link_state'] is None
+print('Remote sensor fixtures passed: disk rates, GPU identity, and interface metadata.')

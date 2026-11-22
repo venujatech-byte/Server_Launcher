@@ -1271,6 +1271,10 @@ fn categorize_sensor(label: &str, chip: &str) -> SensorCategory {
         || lower_label.contains("dram")
         || lower_label.contains("memory")
         || lower_label.contains("ram")
+        || lower_chip.contains("dimm")
+        || lower_chip.contains("dram")
+        || lower_chip.contains("memory")
+        || lower_chip.contains("ram")
     {
         SensorCategory::Memory
     } else if lower_label.contains("nvme")
@@ -4261,6 +4265,7 @@ impl SystemSensorsCollector {
                 snap.power = live.power;
                 snap.cpu_temp = windows_cpu_package_metric(&data["sensor_hardware"], &data["hardware_sensors"], "Temperature", -50.0, 200.0);
                 snap.cpu_power_watts = windows_cpu_package_metric(&data["sensor_hardware"], &data["hardware_sensors"], "Power", 0.0, 1000.0);
+                snap.ram_temp = live.ram_temp;
                 snap.storage_temp = live.storage_temp;
                 snap.temp_sensors = live.temp_sensors;
                 snap.total_disk_read_rate_bps = live.total_disk_read_rate_bps;
@@ -4657,13 +4662,11 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
             let Some(temp) = t["Value"].as_f64().filter(|v| v.is_finite() && *v > -50.0 && *v < 200.0) else { continue; };
             let name = t["Name"].as_str().unwrap_or("Temperature");
             let id = t["Identifier"].as_str().unwrap_or_default();
-            let category = if id.contains("cpu") { SensorCategory::Cpu }
-                else if id.contains("gpu") { SensorCategory::Gpu }
-                else if id.contains("hdd") || id.contains("nvme") { SensorCategory::Storage }
-                else { SensorCategory::System };
+            let category = categorize_sensor(name, id);
             match category {
                 SensorCategory::Cpu => {},
                 SensorCategory::Gpu => {},
+                SensorCategory::Memory if snap.ram_temp.is_none() => snap.ram_temp = Some(temp as f32),
                 SensorCategory::Storage => snap.storage_temp = Some(temp as f32),
                 _ => {},
             }
@@ -4835,6 +4838,16 @@ mod windows_sensor_tests {
 
         assert_eq!(gpus[0].load_pct, Some(12.5));
         assert_eq!(gpus[0].device_path, "/gpu/0");
+    }
+
+    #[test]
+    fn windows_ram_temperature_uses_sensor_identity() {
+        let snapshot = parse_windows_hardware(&serde_json::json!({"temp": [
+            {"Name":"Temperature", "Identifier":"/ram/dimm/0", "Value":43.0}
+        ]}));
+
+        assert_eq!(snapshot.ram_temp, Some(43.0));
+        assert_eq!(snapshot.temp_sensors[0].category, SensorCategory::Memory);
     }
 
     #[test]

@@ -420,6 +420,7 @@ impl SystemSensorsCollector {
 
         let now = Instant::now();
         if self.last_hardware_scan.elapsed() >= Duration::from_secs(30) {
+            self.networks.refresh_list();
             self.cached_physical_disks = collect_physical_disks();
             self.cached_displays = detect_displays();
             self.last_hardware_scan = now;
@@ -617,6 +618,8 @@ impl SystemSensorsCollector {
                 ..Default::default()
             });
         }
+        self.prev_net_rx.retain(|name, _| self.networks.iter().any(|(current, _)| current == name));
+        self.prev_net_tx.retain(|name, _| self.networks.iter().any(|(current, _)| current == name));
         networks.sort_by(|a, b| a.name.cmp(&b.name));
         let (total_rx_bytes, total_tx_bytes, total_rx_rate_bps, total_tx_rate_bps) = network_totals(&networks);
         self.prev_net_time = now;
@@ -4193,6 +4196,8 @@ impl SystemSensorsCollector {
                 ..Default::default()
             });
         }
+        self.prev_net_rx.retain(|name, _| self.networks.iter().any(|(current, _)| current == name));
+        self.prev_net_tx.retain(|name, _| self.networks.iter().any(|(current, _)| current == name));
         (snap.total_rx_bytes, snap.total_tx_bytes, snap.total_rx_rate_bps, snap.total_tx_rate_bps) = network_totals(&snap.networks);
         self.prev_net_time = now;
         if include_top_apps {

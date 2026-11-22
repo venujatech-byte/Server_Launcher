@@ -17014,7 +17014,8 @@ impl LauncherApp {
                     let mut groups_map: std::collections::BTreeMap<String, (String, bool, Vec<crate::sensors::ProcessSensorInfo>)> = std::collections::BTreeMap::new();
                     for app in filtered_apps {
                         let key = app.name.trim().to_lowercase();
-                        let is_app = is_foreground(&key);
+                        // The collector has no reliable Windows foreground-app classification.
+                        let is_app = !cfg!(windows) && is_foreground(&key);
                         let entry = groups_map.entry(key).or_insert_with(|| (app.name.clone(), is_app, Vec::new()));
                         entry.2.push(app.clone());
                     }
@@ -17730,7 +17731,7 @@ impl LauncherApp {
                                             ui.allocate_ui_with_layout(egui::vec2(col_name_w, 28.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                                 let chev = if self.sensors_top_apps_section_bg_expanded { crate::lucide::CHEVRON_DOWN } else { crate::lucide::CHEVRON_RIGHT };
                                                 let btn = egui::Button::new(
-                                                    RichText::new(format!("{} Background processes ({})", chev, bg_groups.len()))
+                                                    RichText::new(format!("{} {} ({})", chev, if cfg!(windows) { "Processes" } else { "Background processes" }, bg_groups.len()))
                                                         .size(12.5)
                                                         .strong()
                                                         .color(p.text_secondary),

@@ -3561,9 +3561,10 @@ print(json.dumps(data))
     }
     let cpu_frequency_mhz = average_cpu_frequency(&cpu_frequencies_mhz);
 
-    let cpu_tdp_watts = parsed["cpu_tdp"].as_f64().map(|v| v as f32);
+    let cpu_tdp_watts = parsed["cpu_tdp"].as_f64()
+        .filter(|value| value.is_finite() && (0.0..1000.0).contains(value)).map(|value| value as f32);
     let cpu_power_watts = parsed["cpu_power"].as_f64().map(|v| v as f32)
-        .filter(|value| value.is_finite() && *value >= 0.0);
+        .filter(|value| value.is_finite() && (0.0..1000.0).contains(value));
 
     let mem_total_bytes = parsed["mem_total"].as_u64().filter(|total| *total > 0)
         .ok_or_else(|| "Remote sensor data has no valid total memory reading".to_string())?;
@@ -3587,9 +3588,11 @@ print(json.dumps(data))
         0.0
     };
 
-    let total_disk_read_rate_bps = parsed["total_disk_read_rate"].as_f64().unwrap_or(0.0);
-    let total_disk_write_rate_bps = parsed["total_disk_write_rate"].as_f64().unwrap_or(0.0);
-    let total_disk_rates_available = parsed["total_disk_read_rate"].as_f64().is_some() && parsed["total_disk_write_rate"].as_f64().is_some();
+    let total_disk_read = parsed["total_disk_read_rate"].as_f64().filter(|rate| rate.is_finite() && *rate >= 0.0);
+    let total_disk_write = parsed["total_disk_write_rate"].as_f64().filter(|rate| rate.is_finite() && *rate >= 0.0);
+    let total_disk_rates_available = total_disk_read.is_some() && total_disk_write.is_some();
+    let total_disk_read_rate_bps = total_disk_read.unwrap_or(0.0);
+    let total_disk_write_rate_bps = total_disk_write.unwrap_or(0.0);
 
     let mut disks = Vec::new();
     if let Some(arr) = parsed["disks"].as_array() {
@@ -3600,8 +3603,9 @@ print(json.dumps(data))
             ) else { continue; };
             if name.is_empty() || mount_point.is_empty() || total == 0 || used > total || avail > total { continue; }
             let pct = (used as f32 / total as f32) * 100.0;
-            let r_rate = d["read_rate"].as_f64().unwrap_or(0.0);
-            let w_rate = d["write_rate"].as_f64().unwrap_or(0.0);
+            let r_rate = d["read_rate"].as_f64().filter(|rate| rate.is_finite() && *rate >= 0.0);
+            let w_rate = d["write_rate"].as_f64().filter(|rate| rate.is_finite() && *rate >= 0.0);
+            let disk_rates_available = r_rate.is_some() && w_rate.is_some();
             let r_total = d["total_read"].as_u64().unwrap_or(0);
             let w_total = d["total_write"].as_u64().unwrap_or(0);
 
@@ -3613,9 +3617,9 @@ print(json.dumps(data))
                 available_bytes: avail,
                 used_bytes: used,
                 usage_pct: pct,
-                read_rate_bps: r_rate,
-                write_rate_bps: w_rate,
-                disk_rates_available: d["read_rate"].as_f64().is_some() && d["write_rate"].as_f64().is_some(),
+                read_rate_bps: r_rate.unwrap_or(0.0),
+                write_rate_bps: w_rate.unwrap_or(0.0),
+                disk_rates_available,
                 total_read_bytes: r_total,
                 total_write_bytes: w_total,
             });
@@ -3846,8 +3850,8 @@ print(json.dumps(data))
                     });
                 }
             }
-            let read_rate_bps = p["read_rate"].as_f64().unwrap_or(0.0);
-            let write_rate_bps = p["write_rate"].as_f64().unwrap_or(0.0);
+            let read_rate = p["read_rate"].as_f64().filter(|rate| rate.is_finite() && *rate >= 0.0);
+            let write_rate = p["write_rate"].as_f64().filter(|rate| rate.is_finite() && *rate >= 0.0);
             physical_disks.push(PhysicalDiskInfo {
                 name,
                 model,
@@ -3858,9 +3862,9 @@ print(json.dumps(data))
                 is_ssd,
                 partition_count,
                 partitions,
-                read_rate_bps,
-                write_rate_bps,
-                disk_rates_available: p["read_rate"].as_f64().is_some() && p["write_rate"].as_f64().is_some(),
+                read_rate_bps: read_rate.unwrap_or(0.0),
+                write_rate_bps: write_rate.unwrap_or(0.0),
+                disk_rates_available: read_rate.is_some() && write_rate.is_some(),
             });
         }
     }

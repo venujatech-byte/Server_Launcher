@@ -3765,40 +3765,46 @@ print(json.dumps(data))
     let (total_rx_bytes, total_tx_bytes, total_rx_rate_bps, total_tx_rate_bps) = network_totals(&networks);
 
     let mut top_apps = Vec::new();
-    if let Some(arr) = parsed.get("top_apps").and_then(|v| v.as_array()) {
-        for a in arr {
-            let pid = a["pid"].as_u64().unwrap_or(0) as u32;
-            let name = a["name"].as_str().unwrap_or("").to_string();
-            let cpu_reading = parse_process_cpu_usage(&a["cpu"]);
-            let cpu_usage = cpu_reading.unwrap_or(0.0);
-            let memory_bytes = a["mem_bytes"].as_u64().unwrap_or(0);
-            let status = a["status"].as_str().unwrap_or("Unknown").to_string();
-            let net_rx_bytes = a["net_rx_bytes"].as_u64().unwrap_or(0);
-            let net_tx_bytes = a["net_tx_bytes"].as_u64().unwrap_or(0);
-            let net_rate_bps = a["net_rate"].as_f64().unwrap_or(0.0);
-            let disk_read_bytes = a["disk_read_bytes"].as_u64().unwrap_or(0);
-            let disk_written_bytes = a["disk_write_bytes"].as_u64().unwrap_or(0);
-            let disk_read_rate_bps = a["disk_read_rate"].as_f64().unwrap_or(0.0);
-            let disk_write_rate_bps = a["disk_write_rate"].as_f64().unwrap_or(0.0);
-            let disk_rate_bps = a["disk_rate"].as_f64().unwrap_or(0.0);
-            top_apps.push(ProcessSensorInfo {
-                pid,
-                start_marker: a["start_marker"].as_u64(),
-                name,
-                cpu_usage,
-                cpu_usage_available: cpu_reading.is_some(),
-                memory_bytes,
-                disk_read_bytes,
-                disk_written_bytes,
-                disk_read_rate_bps,
-                disk_write_rate_bps,
-                disk_rate_bps,
-                net_rx_bytes,
-                net_tx_bytes,
-                net_rate_bps,
-                status,
-            });
+    let process_rows: &[serde_json::Value] = if include_processes {
+        parsed["top_apps"].as_array().map(Vec::as_slice).ok_or_else(|| "Remote sensor data has no process list".to_string())?
+    } else {
+        &[]
+    };
+    for a in process_rows {
+        let (Some(pid), Some(name), Some(memory_bytes), Some(net_rx_bytes), Some(net_tx_bytes),
+            Some(net_rate_bps), Some(disk_read_bytes), Some(disk_written_bytes),
+            Some(disk_read_rate_bps), Some(disk_write_rate_bps), Some(disk_rate_bps)) = (
+            a["pid"].as_u64(), a["name"].as_str(), a["mem_bytes"].as_u64(),
+            a["net_rx_bytes"].as_u64(), a["net_tx_bytes"].as_u64(), a["net_rate"].as_f64(),
+            a["disk_read_bytes"].as_u64(), a["disk_write_bytes"].as_u64(),
+            a["disk_read_rate"].as_f64(), a["disk_write_rate"].as_f64(), a["disk_rate"].as_f64(),
+        ) else { continue; };
+        let Ok(pid) = u32::try_from(pid) else { continue; };
+        if pid == 0 || name.trim().is_empty()
+            || [net_rate_bps, disk_read_rate_bps, disk_write_rate_bps, disk_rate_bps].iter().any(|rate| !rate.is_finite() || *rate < 0.0) {
+            continue;
         }
+        let name = name.to_string();
+        let cpu_reading = parse_process_cpu_usage(&a["cpu"]);
+        let cpu_usage = cpu_reading.unwrap_or(0.0);
+        let status = a["status"].as_str().unwrap_or("Unknown").to_string();
+        top_apps.push(ProcessSensorInfo {
+            pid,
+            start_marker: a["start_marker"].as_u64(),
+            name,
+            cpu_usage,
+            cpu_usage_available: cpu_reading.is_some(),
+            memory_bytes,
+            disk_read_bytes,
+            disk_written_bytes,
+            disk_read_rate_bps,
+            disk_write_rate_bps,
+            disk_rate_bps,
+            net_rx_bytes,
+            net_tx_bytes,
+            net_rate_bps,
+            status,
+        });
     }
 
     let mut active_sockets = Vec::new();

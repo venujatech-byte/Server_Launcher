@@ -685,8 +685,8 @@ impl SystemSensorsCollector {
 
                 let pid_u32 = pid.as_u32();
                 let mut name = proc.name().to_string_lossy().to_string();
-                if (name == "exe" || name.is_empty()) && proc.exe().is_some() {
-                    if let Some(exe_file) = proc.exe().unwrap().file_name() {
+                if name == "exe" || name.is_empty() {
+                    if let Some(exe_file) = proc.exe().and_then(|exe| exe.file_name()) {
                         name = exe_file.to_string_lossy().to_string();
                     }
                 }

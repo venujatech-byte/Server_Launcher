@@ -170,6 +170,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Temperature page fallback:** RAM and storage fallback readings now follow the collector's sensor category instead of searching label substrings, preventing a label such as `GPU Memory` from appearing as a RAM temperature in either app.
 - **Memory and storage temperature summaries:** Local collectors, remote Linux parsing, Windows hardware parsing, and both UI fallback paths summarize the hottest categorized memory/storage sensor instead of depending on enumeration order. Per-sensor readings remain available in the detailed list.
 - **CPU temperature summary:** Linux local/remote collection and both app fallback paths summarize the hottest categorized CPU sensor, independent of provider order. A uniquely matched native Windows package temperature remains preferred; individual readings stay available.
+- **Generic GPU temperature fallback:** When exactly one adapter is present but its provider-specific temperature is missing, both app pages now use the hottest categorized GPU sensor instead of choosing an arbitrary first sensor. Multiple-adapter hosts still require an adapter-specific reading.
 - **CPU temperature summary:** Linux local/remote collection and both app fallback paths summarize the hottest categorized CPU sensor, independent of provider order. A uniquely matched native Windows package temperature remains preferred; individual readings stay available.
 
 ### Remaining work and validation

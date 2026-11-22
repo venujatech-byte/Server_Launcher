@@ -5260,10 +5260,6 @@ fn matching_temperature_limit(sensors: &[crate::sensors::TempSensor], category: 
         .or_else(|| sensor.max.filter(|limit| limit.is_finite() && *limit > 0.0))
 }
 
-fn first_temperature_for_category(sensors: &[crate::sensors::TempSensor], category: crate::sensors::SensorCategory) -> Option<f32> {
-    sensors.iter().find(|sensor| sensor.category == category).map(|sensor| sensor.temp)
-}
-
 fn hottest_temperature_for_category(sensors: &[crate::sensors::TempSensor], category: crate::sensors::SensorCategory) -> Option<f32> {
     sensors.iter().filter(|sensor| sensor.category == category).map(|sensor| sensor.temp).filter(|temp| temp.is_finite()).reduce(f32::max)
 }
@@ -5288,11 +5284,13 @@ mod temperature_category_tests {
     fn uses_sensor_category_instead_of_incidental_label_words() {
         let sensors = [
             TempSensor { name: "GPU Memory".into(), category: SensorCategory::Gpu, temp: 70.0, ..Default::default() },
+            TempSensor { name: "GPU Hotspot".into(), category: SensorCategory::Gpu, temp: 72.0, ..Default::default() },
             TempSensor { name: "DIMM 0".into(), category: SensorCategory::Memory, temp: 43.0, ..Default::default() },
             TempSensor { name: "DIMM 1".into(), category: SensorCategory::Memory, temp: 51.0, ..Default::default() },
             TempSensor { name: "NVMe Composite".into(), category: SensorCategory::Storage, temp: 52.0, ..Default::default() },
             TempSensor { name: "Drive 2".into(), category: SensorCategory::Storage, temp: 60.0, ..Default::default() },
         ];
+        assert_eq!(super::hottest_temperature_for_category(&sensors, SensorCategory::Gpu), Some(72.0));
         assert_eq!(super::hottest_temperature_for_category(&sensors, SensorCategory::Memory), Some(51.0));
         assert_eq!(super::hottest_temperature_for_category(&sensors, SensorCategory::Storage), Some(60.0));
         let cpu_sensors = [
@@ -16344,7 +16342,7 @@ impl LauncherApp {
 
         let selected_gpu_temp = snap.gpus.get(self.selected_gpu_idx).and_then(|gpu| gpu.temp);
         let gpu_temp = selected_gpu_temp.or_else(|| {
-            (snap.gpus.len() == 1).then(|| first_temperature_for_category(&snap.temp_sensors, crate::sensors::SensorCategory::Gpu)).flatten()
+            (snap.gpus.len() == 1).then(|| hottest_temperature_for_category(&snap.temp_sensors, crate::sensors::SensorCategory::Gpu)).flatten()
         }).unwrap_or(f32::NAN);
 
         let ram_temp = snap.ram_temp

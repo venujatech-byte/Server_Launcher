@@ -5198,23 +5198,21 @@ fn reported_sensor_value(value: Option<f32>, decimals: usize) -> String {
         .unwrap_or_else(|| "—".to_string())
 }
 
-fn record_sensor_sample(history: &mut VecDeque<(Instant, f32)>, timestamp: Instant, value: Option<f32>) {
+fn record_sensor_sample(history: &mut VecDeque<(Instant, Option<f32>)>, timestamp: Instant, value: Option<f32>) {
     while history.front().is_some_and(|sample| timestamp.saturating_duration_since(sample.0) > Duration::from_secs(60)) {
         history.pop_front();
     }
     if history.back().is_some_and(|sample| sample.0 >= timestamp) { return; }
-    if let Some(value) = value.filter(|value| value.is_finite()) {
-        history.push_back((timestamp, value));
-        if history.len() > 120 { history.pop_front(); }
-    }
+    history.push_back((timestamp, value.filter(|value| value.is_finite())));
+    if history.len() > 120 { history.pop_front(); }
 }
 
 fn sensor_metric_history(ui: &Ui, host_id: Option<&str>, metric: &str, timestamp: Option<Instant>, value: Option<f32>) -> Vec<f32> {
     let id = egui::Id::new(("reported_sensor_history", host_id, metric));
     ui.ctx().data_mut(|data| {
-        let history = data.get_temp_mut_or_default::<VecDeque<(Instant, f32)>>(id);
+        let history = data.get_temp_mut_or_default::<VecDeque<(Instant, Option<f32>)>>(id);
         if let Some(timestamp) = timestamp { record_sensor_sample(history, timestamp, value); }
-        if value.is_some_and(f32::is_finite) { history.iter().map(|sample| sample.1).collect() } else { Vec::new() }
+        history.iter().map(|sample| sample.1.unwrap_or(f32::NAN)).collect()
     })
 }
 
@@ -5380,14 +5378,15 @@ fn draw_card_sparkline(
     }
 
     let step_x = rect.width() / (n - 1) as f32;
-    let pts: Vec<egui::Pos2> = history
+    let pts: Vec<Option<egui::Pos2>> = history
         .iter()
         .enumerate()
         .map(|(i, &v)| {
+            if !v.is_finite() { return None; }
             let x = rect.left() + i as f32 * step_x;
             let norm = (v / max_val.max(1.0)).clamp(0.02, 0.98);
             let y = rect.bottom() - norm * (rect.height() - 4.0);
-            egui::pos2(x, y)
+            Some(egui::pos2(x, y))
         })
         .collect();
 
@@ -5395,8 +5394,7 @@ fn draw_card_sparkline(
     let c_top = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 40);
     let c_bot = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 2);
     for i in 0..(pts.len() - 1) {
-        let p1 = pts[i];
-        let p2 = pts[i + 1];
+        let (Some(p1), Some(p2)) = (pts[i], pts[i + 1]) else { continue; };
         let b1 = egui::pos2(p1.x, rect.bottom());
         let b2 = egui::pos2(p2.x, rect.bottom());
         let idx = mesh.vertices.len() as u32;
@@ -5409,7 +5407,9 @@ fn draw_card_sparkline(
     painter.add(egui::Shape::mesh(mesh));
 
     for i in 0..(pts.len() - 1) {
-        painter.line_segment([pts[i], pts[i + 1]], Stroke::new(1.8_f32, color));
+        if let (Some(first), Some(second)) = (pts[i], pts[i + 1]) {
+            painter.line_segment([first, second], Stroke::new(1.8_f32, color));
+        }
     }
 }
 
@@ -5472,18 +5472,16 @@ mod layout_tests {
 
 
     #[test]
-    fn reported_sensor_history_never_invents_samples() {
+    fn reported_sensor_history_preserves_missing_samples_and_real_zeroes() {
         let now = Instant::now();
         let mut history = VecDeque::new();
-        record_sensor_sample(&mut history, now, None);
-        assert!(history.is_empty());
         record_sensor_sample(&mut history, now, Some(0.0));
         record_sensor_sample(&mut history, now, Some(99.0));
-        assert_eq!(history.iter().map(|sample| sample.1).collect::<Vec<_>>(), vec![0.0]);
         record_sensor_sample(&mut history, now + Duration::from_secs(1), Some(f32::NAN));
-        assert_eq!(history.len(), 1);
-        record_sensor_sample(&mut history, now + Duration::from_secs(61), Some(12.0));
-        assert_eq!(history.iter().map(|sample| sample.1).collect::<Vec<_>>(), vec![12.0]);
+        record_sensor_sample(&mut history, now + Duration::from_secs(2), Some(12.0));
+        assert_eq!(history.iter().map(|sample| sample.1).collect::<Vec<_>>(), vec![Some(0.0), None, Some(12.0)]);
+        record_sensor_sample(&mut history, now + Duration::from_secs(63), Some(8.0));
+        assert_eq!(history.iter().map(|sample| sample.1).collect::<Vec<_>>(), vec![Some(8.0)]);
         assert_eq!(reported_sensor_value(None, 1), "—");
         assert_eq!(reported_sensor_value(Some(0.0), 1), "0.0");
     }
@@ -11750,8 +11748,8 @@ impl LauncherApp {
                     sensor_metric_history(ui, host_id, label, snap.timestamp, readings[index])).collect();
                 sensor_card_columns(ui, 4, |ui, column| {
                     let history = &histories[column];
-                    let minimum = history.iter().copied().reduce(f32::min);
-                    let maximum = history.iter().copied().reduce(f32::max);
+                    let minimum = history.iter().copied().filter(|value| value.is_finite()).reduce(f32::min);
+                    let maximum = history.iter().copied().filter(|value| value.is_finite()).reduce(f32::max);
                     let subtitle = match column {
                         0 => format!("{} Cores / {} Threads", phys, log),
                         1 => "Reported clock".to_string(),

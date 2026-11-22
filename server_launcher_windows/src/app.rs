@@ -11398,37 +11398,6 @@ impl LauncherApp {
     }
 
     fn render_sensors_cpu_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
-        #[cfg(windows)]
-        if host_id.is_none() {
-            let p = self.palette();
-            ScrollArea::vertical().id_salt("windows_cpu").show(ui, |ui| {
-                ui.heading("CPU");
-                ui.label(if snap.cpu_brand.is_empty() { "Waiting for processor telemetry" } else { &snap.cpu_brand });
-                let physical = if snap.cpu_cores_physical > 0 { snap.cpu_cores_physical.to_string() } else { "—".into() };
-                let logical = if snap.cpu_cores_logical > 0 { snap.cpu_cores_logical.to_string() } else { "—".into() };
-                ui.label(format!("{} physical cores · {} logical processors", physical, logical));
-                ui.add_space(12.0);
-                ui.label(snap.cpu_usage_available.then(|| format!("Usage: {:.1}%", snap.cpu_global_usage)).unwrap_or_else(|| "Usage unavailable".into()));
-                ui.label(if snap.cpu_frequency_mhz > 0 { format!("Reported frequency: {} MHz", snap.cpu_frequency_mhz) } else { "Frequency unavailable".into() });
-                ui.label(format!("Uptime: {}", format_uptime_hms(snap.uptime_secs)));
-                ui.label(snap.cpu_temp.map(|v| format!("Temperature: {v:.1} °C")).unwrap_or_else(|| "Temperature unavailable; LibreHardwareMonitor WMI provider required".into()));
-                ui.label("CPU package power, TDP limits, and junction limits are unavailable.");
-                draw_card_sparkline(ui, 100.0, &self.cpu_history.iter().copied().collect::<Vec<_>>(), 100.0, None, p.accent);
-                ui.add_space(12.0);
-                for (idx, usage) in snap.cpu_core_usages.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        ui.label(format!("Logical processor {}", idx));
-                        if let Some(usage) = usage {
-                            ui.add(egui::ProgressBar::new(*usage / 100.0).text(format!("{usage:.1}%")));
-                        } else {
-                            ui.label("Unavailable");
-                        }
-                    });
-                }
-            });
-            return;
-        }
-
         let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         ScrollArea::vertical()

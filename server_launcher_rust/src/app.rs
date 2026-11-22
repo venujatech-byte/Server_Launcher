@@ -11731,7 +11731,7 @@ impl LauncherApp {
 
                 ui.add_space(4.0);
 
-                // 5. Low-Level Architecture Registers & OS Context Card
+                // 5. Reported System Context
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(8.0))
@@ -11740,28 +11740,19 @@ impl LauncherApp {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             ui.label(RichText::new(crate::lucide::SYSTEMD).size(11.0).color(accent));
-                            ui.label(RichText::new("ARCHITECTURE & OS CONTEXT").size(10.5).monospace().strong().color(p.text_muted));
-
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 5.0;
-                                    ui.label(RichText::new(crate::lucide::SYSTEMD).size(10.5).color(accent));
-                                    let gov_label = snap.cpu_governor.as_deref().unwrap_or("Governor unavailable");
-                                    ui.label(RichText::new(gov_label).size(10.0).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
-                                });
-                            });
+                            ui.label(RichText::new("SYSTEM CONTEXT").size(10.5).monospace().strong().color(p.text_muted));
                         });
 
                         ui.add_space(8.0);
 
                         let process_count = snap.process_count.map(|count| count.to_string()).unwrap_or_else(|| "—".to_string());
+                        let os_name = if snap.os_name.is_empty() { "—" } else { &snap.os_name };
+                        let os_version = if snap.os_version.is_empty() { "Version unavailable" } else { &snap.os_version };
+                        let uptime = if snap.uptime_secs > 0 { format_uptime(snap.uptime_secs) } else { "—".to_string() };
                         let values = [
-                            ("L1 CACHE", "—", "Not reported"),
-                            ("L2 CACHE", "—", "Not reported"),
-                            ("VIRTUALIZATION", "—", "Not reported"),
                             ("PROCESSES", process_count.as_str(), "Visible processes"),
-                            ("THREADS", "—", "Not reported"),
-                            ("HANDLES", "—", "Not reported"),
+                            ("OPERATING SYSTEM", os_name, os_version),
+                            ("UPTIME", uptime.as_str(), "Since last boot"),
                         ];
                         ui.columns(values.len(), |cols| {
                             for (column, (title, value, detail)) in cols.iter_mut().zip(values) {

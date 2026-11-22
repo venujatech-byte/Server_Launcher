@@ -4437,7 +4437,7 @@ fn windows_cpu_package_metric(hardware: &serde_json::Value, sensors: &serde_json
     let mut readings = sensors.as_array()?.iter().filter(|sensor| {
         sensor["Parent"].as_str() == Some(identifier)
             && sensor["SensorType"].as_str().is_some_and(|value| value.eq_ignore_ascii_case(kind))
-            && sensor["Name"].as_str().is_some_and(|value| value.eq_ignore_ascii_case("CPU Package"))
+            && sensor["Name"].as_str().is_some_and(|value| value.to_ascii_lowercase().contains("package"))
     });
     let value = readings.next()?["Value"].as_f64()?;
     if readings.next().is_some() || !value.is_finite() || !(min..=max).contains(&value) { return None; }
@@ -4802,6 +4802,8 @@ mod windows_sensor_tests {
         ]);
         assert_eq!(windows_cpu_package_metric(&hardware, &readings, "Power", 0.0, 1000.0), Some(0.0));
         assert_eq!(windows_cpu_package_metric(&hardware, &readings, "Temperature", -50.0, 200.0), Some(65.5));
+        let labeled_power = serde_json::json!([{"Parent":"/cpu/0", "SensorType":"Power", "Name":"CPU Package Power", "Value":8.25}]);
+        assert_eq!(windows_cpu_package_metric(&hardware, &labeled_power, "Power", 0.0, 1000.0), Some(8.25));
         let multi_cpu = serde_json::json!([hardware[0].clone(), {"Identifier":"/cpu/1", "HardwareType":"Cpu"}]);
         assert_eq!(windows_cpu_package_metric(&multi_cpu, &readings, "Power", 0.0, 1000.0), None);
         let duplicates = serde_json::json!([readings[0].clone(), readings[0].clone()]);

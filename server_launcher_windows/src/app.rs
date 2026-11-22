@@ -11415,7 +11415,7 @@ impl LauncherApp {
                             ui.label(RichText::new(ram_str).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                             ui.add_space(8.0);
                             let ram_avg = self.ram_history.iter().map(|(r, _)| *r).sum::<f32>() / self.ram_history.len().max(1) as f32;
-                            let ram_peak = self.ram_history.iter().map(|(r, _)| *r).fold(0.0_f32, f32::max);
+                            let ram_peak = self.ram_history.iter().map(|(r, _)| *r).fold(snap.mem_usage_pct, f32::max);
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(if self.ram_history.is_empty() { "AVG —".to_string() } else { format!("AVG {:.0}%", ram_avg) }).size(8.5).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -11452,7 +11452,7 @@ impl LauncherApp {
                             ui.label(RichText::new(swap_str).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                             ui.add_space(8.0);
                             let swap_avg = self.ram_history.iter().map(|(_, s)| *s).sum::<f32>() / self.ram_history.len().max(1) as f32;
-                            let swap_peak = self.ram_history.iter().map(|(_, s)| *s).fold(0.0_f32, f32::max);
+                            let swap_peak = self.ram_history.iter().map(|(_, s)| *s).fold(snap.swap_usage_pct, f32::max);
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(if self.ram_history.is_empty() { "AVG —".to_string() } else { format!("AVG {:.1}%", swap_avg) }).size(8.5).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

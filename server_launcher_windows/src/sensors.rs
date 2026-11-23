@@ -495,6 +495,7 @@ pub struct SystemSensorsCollector {
     prev_proc_disk_time: Option<Instant>,
     prev_proc_net: HashMap<(u32, u64), (u64, u64)>,
     prev_proc_net_time: Instant,
+    prev_cpu_energy: Option<(u64, u64, Instant)>,
     protected_data: Option<serde_json::Value>,
     last_protected_poll: Instant,
     #[cfg(windows)]
@@ -542,6 +543,7 @@ impl SystemSensorsCollector {
             prev_proc_disk_time: None,
             prev_proc_net: HashMap::new(),
             prev_proc_net_time: now,
+            prev_cpu_energy: read_rapl_package_energy().map(|(energy, range)| (energy, range, now)),
             protected_data: None,
             last_protected_poll: now,
             #[cfg(windows)]
@@ -600,7 +602,16 @@ impl SystemSensorsCollector {
         };
         #[cfg(not(target_os = "linux"))]
         let cpu_core_usages: Vec<Option<f32>> = self.sys.cpus().iter().map(|cpu| Some(cpu.cpu_usage())).collect();
-        let (mut cpu_frequencies_mhz, cpu_power_watts, cpu_power_cap_watts) = collect_cpu_frequencies_and_power();
+        let (mut cpu_frequencies_mhz, mut cpu_power_watts, cpu_power_cap_watts) = collect_cpu_frequencies_and_power();
+        if let Some((energy, range)) = read_rapl_package_energy() {
+            if let Some((previous, previous_range, sampled_at)) = self.prev_cpu_energy {
+                let elapsed = sampled_at.elapsed().as_secs_f64();
+                if let Some(watts) = rapl_power_watts(previous, energy, range.min(previous_range), elapsed) {
+                    cpu_power_watts.get_or_insert(watts);
+                }
+            }
+            self.prev_cpu_energy = Some((energy, range, now));
+        }
         if cpu_frequencies_mhz.is_empty() {
             #[cfg(target_os = "linux")]
             for cpu in self.sys.cpus() {
@@ -1779,6 +1790,41 @@ fn parse_package_power(label: &str, microwatts: &str) -> Option<f32> {
     if !label.starts_with("package") && !label.starts_with("cpu package") { return None; }
     let watts = microwatts.trim().parse::<f32>().ok()? / 1_000_000.0;
     (watts.is_finite() && (0.0..1000.0).contains(&watts)).then_some(watts)
+}
+
+#[cfg(target_os = "linux")]
+fn read_rapl_package_energy() -> Option<(u64, u64)> {
+    let entries = fs::read_dir("/sys/class/powercap").ok()?;
+    entries.flatten().find_map(|entry| {
+        let path = entry.path();
+        let name = fs::read_to_string(path.join("name")).ok()?.trim().to_ascii_lowercase();
+        if !name.starts_with("package") && !name.starts_with("cpu package") { return None; }
+        let energy = fs::read_to_string(path.join("energy_uj")).ok()?.trim().parse().ok()?;
+        let range = fs::read_to_string(path.join("max_energy_range_uj")).ok()?.trim().parse().ok()?;
+        (range > 0 && energy <= range).then_some((energy, range))
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_rapl_package_energy() -> Option<(u64, u64)> { None }
+
+fn rapl_power_watts(previous: u64, current: u64, range: u64, elapsed_secs: f64) -> Option<f32> {
+    if range == 0 || previous > range || current > range || !elapsed_secs.is_finite() || elapsed_secs <= 0.0 { return None; }
+    let delta = if current >= previous { current - previous } else { range - previous + current };
+    let watts = delta as f64 / 1_000_000.0 / elapsed_secs;
+    (watts.is_finite() && (0.0..1000.0).contains(&watts)).then_some(watts as f32)
+}
+
+#[cfg(test)]
+mod rapl_power_tests {
+    #[test]
+    fn converts_energy_deltas_and_rejects_invalid_samples() {
+        assert_eq!(super::rapl_power_watts(1_000_000, 3_000_000, 10_000_000, 2.0), Some(1.0));
+        assert_eq!(super::rapl_power_watts(9_000_000, 1_000_000, 10_000_000, 2.0), Some(1.0));
+        assert_eq!(super::rapl_power_watts(1, 1, 0, 1.0), None);
+        assert_eq!(super::rapl_power_watts(1, 1, 10, 0.0), None);
+        assert_eq!(super::rapl_power_watts(1, 9_000_000, 10, 1.0), None);
+    }
 }
 
 pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32>) {

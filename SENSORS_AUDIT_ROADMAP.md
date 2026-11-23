@@ -96,6 +96,8 @@ The findings and proposed sequence above describe the original audit; later impl
 
 ## Implementation progress
 
+- Linux CPU package power now falls back to measured RAPL energy deltas when labeled `hwmon` power is absent. Both collectors validate the package counter range, wrap and sample interval; unreadable counters remain unavailable and the existing privileged unlock path remains required on restricted hosts. Regression fixtures are compiled in both crates.
+
 Initial implementation after approval:
 
 - `6c02d0f`: removed collector power estimates, guessed Linux RAM metadata and clock-derived GPU utilization; preserved actual reported counters.

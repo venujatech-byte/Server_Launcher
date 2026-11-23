@@ -4866,25 +4866,24 @@ fn draw_ram_waveform(
     let graph_w = (rect.width() - 16.0).max(20.0);
     let step_x = graph_w / (n - 1) as f32;
 
-    // 1. Cached Buffer / Standby dashed line (green)
-    let cache_pts: Vec<egui::Pos2> = history
+    // Swap is an independent metric and may be unavailable when no swap is configured.
+    let swap_pts: Vec<Option<egui::Pos2>> = history
         .iter()
         .enumerate()
-        .map(|(i, &(_, cache_pct))| {
+        .map(|(i, &(_, swap_pct))| {
+            if !swap_pct.is_finite() { return None; }
             let x = rect.left() + 8.0 + i as f32 * step_x;
-            let norm = (cache_pct / 100.0).clamp(0.04, 0.96);
+            let norm = (swap_pct / 100.0).clamp(0.04, 0.96);
             let y = rect.bottom() - 18.0 - norm * (rect.height() - 36.0);
-            egui::pos2(x, y)
+            Some(egui::pos2(x, y))
         })
         .collect();
 
-    // Draw dashed line for cached
-    for i in 0..(cache_pts.len() - 1) {
+    for (i, pair) in swap_pts.windows(2).enumerate() {
         if i % 2 == 0 {
-            painter.line_segment(
-                [cache_pts[i], cache_pts[i + 1]],
-                Stroke::new(1.4_f32, Color32::from_rgb(96, 165, 250)),
-            );
+            if let [Some(first), Some(second)] = pair {
+                painter.line_segment([*first, *second], Stroke::new(1.4_f32, Color32::from_rgb(96, 165, 250)));
+            }
         }
     }
 
@@ -5160,6 +5159,10 @@ fn battery_capacity_retention(battery: &crate::sensors::BatteryInfo) -> Option<f
 fn reported_sensor_value(value: Option<f32>, decimals: usize) -> String {
     value.filter(|value| value.is_finite()).map(|value| format!("{value:.decimals$}"))
         .unwrap_or_else(|| "—".to_string())
+}
+
+fn reported_swap_usage(total_bytes: u64, usage_pct: f32) -> Option<f32> {
+    (total_bytes > 0 && usage_pct.is_finite() && (0.0..=100.0).contains(&usage_pct)).then_some(usage_pct)
 }
 
 fn record_sensor_sample(history: &mut VecDeque<(Instant, Option<f32>)>, timestamp: Instant, value: Option<f32>) {
@@ -5545,6 +5548,9 @@ mod layout_tests {
 
     #[test]
     fn reported_sensor_history_preserves_missing_samples_and_real_zeroes() {
+        assert_eq!(reported_swap_usage(0, 0.0), None);
+        assert_eq!(reported_swap_usage(100, 0.0), Some(0.0));
+        assert_eq!(reported_swap_usage(100, 101.0), None);
         let now = Instant::now();
         let mut history = VecDeque::new();
         record_sensor_sample(&mut history, now, Some(0.0));
@@ -11135,7 +11141,7 @@ impl LauncherApp {
                 push_telemetry(&mut self.cpu_history, snap.cpu_global_usage, history_capacity);
                 self.cpu_peak_usage = self.cpu_history.iter().copied().fold(0.0_f32, f32::max);
             }
-            push_telemetry(&mut self.ram_history, (snap.mem_usage_pct, snap.swap_usage_pct), history_capacity);
+            push_telemetry(&mut self.ram_history, (snap.mem_usage_pct, reported_swap_usage(snap.swap_total_bytes, snap.swap_usage_pct).unwrap_or(f32::NAN)), history_capacity);
             let (total_storage, used_storage, _) = mounted_storage_totals(&snap.disks);
             if total_storage > 0 {
                 push_telemetry(&mut self.storage_history, (used_storage as f64 / total_storage as f64 * 100.0) as f32, history_capacity);
@@ -11366,21 +11372,23 @@ impl LauncherApp {
                                 ui.label(RichText::new("SWAP").size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184)));
                             });
                             ui.add_space(6.0);
+                            let swap_usage = reported_swap_usage(snap.swap_total_bytes, snap.swap_usage_pct);
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new(format!("{:.1}", snap.swap_usage_pct)).size(29.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                ui.label(RichText::new("%").size(12.0).color(p.text_muted));
+                                ui.label(RichText::new(reported_sensor_value(swap_usage, 1)).size(29.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                if swap_usage.is_some() { ui.label(RichText::new("%").size(12.0).color(p.text_muted)); }
                             });
                             ui.add_space(2.0);
-                            let swap_str = format!("{} / {}", crate::sensors::format_bytes(snap.swap_used_bytes), crate::sensors::format_bytes(snap.swap_total_bytes));
+                            let swap_str = if swap_usage.is_some() { format!("{} / {}", crate::sensors::format_bytes(snap.swap_used_bytes), crate::sensors::format_bytes(snap.swap_total_bytes)) } else { "No swap configured".to_string() };
                             ui.label(RichText::new(swap_str).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184)));
                             ui.add_space(8.0);
-                            let swap_avg = self.ram_history.iter().map(|(_, s)| *s).sum::<f32>() / self.ram_history.len().max(1) as f32;
-                            let swap_peak = self.ram_history.iter().map(|(_, s)| *s).fold(snap.swap_usage_pct, f32::max);
+                            let swap_values: Vec<f32> = self.ram_history.iter().map(|(_, s)| *s).filter(|value| value.is_finite()).collect();
+                            let swap_avg = (!swap_values.is_empty()).then(|| swap_values.iter().sum::<f32>() / swap_values.len() as f32);
+                            let swap_peak = swap_values.iter().copied().reduce(f32::max);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(if self.ram_history.is_empty() { "AVG —".to_string() } else { format!("AVG {:.1}%", swap_avg) }).size(8.5).monospace().color(p.text_muted));
+                                ui.label(RichText::new(format!("AVG {}{}", reported_sensor_value(swap_avg, 1), if swap_avg.is_some() { "%" } else { "" })).size(8.5).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(if self.ram_history.is_empty() { "PEAK —".to_string() } else { format!("PEAK {:.1}%", swap_peak) }).size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(format!("PEAK {}{}", reported_sensor_value(swap_peak, 1), if swap_peak.is_some() { "%" } else { "" })).size(8.5).monospace().color(p.text_muted));
                                 });
                             });
                             ui.add_space(4.0);
@@ -11941,8 +11949,9 @@ impl LauncherApp {
                 let swap_slice: Vec<f32> = self.ram_history.iter().map(|(_, s)| *s).collect();
                 let ram_avg = if !self.ram_history.is_empty() { self.ram_history.iter().map(|(r, _)| *r).sum::<f32>() / self.ram_history.len() as f32 } else { snap.mem_usage_pct };
                 let ram_peak = self.ram_history.iter().map(|(r, _)| *r).fold(snap.mem_usage_pct, f32::max);
-                let swap_avg = if !self.ram_history.is_empty() { self.ram_history.iter().map(|(_, s)| *s).sum::<f32>() / self.ram_history.len() as f32 } else { snap.swap_usage_pct };
-                let swap_peak = self.ram_history.iter().map(|(_, s)| *s).fold(snap.swap_usage_pct, f32::max);
+                let swap_values: Vec<f32> = self.ram_history.iter().map(|(_, s)| *s).filter(|value| value.is_finite()).collect();
+                let swap_avg = if swap_values.is_empty() { reported_swap_usage(snap.swap_total_bytes, snap.swap_usage_pct) } else { Some(swap_values.iter().sum::<f32>() / swap_values.len() as f32) };
+                let swap_peak = swap_values.iter().copied().reduce(f32::max).or_else(|| reported_swap_usage(snap.swap_total_bytes, snap.swap_usage_pct));
 
                 sensor_card_columns(ui, 4, |ui, column| match column {
                     0 => {
@@ -12009,15 +12018,20 @@ impl LauncherApp {
                     },
                     3 => {
                     // Card 4: SWAP ALLOCATION
+                    let swap_usage = reported_swap_usage(snap.swap_total_bytes, snap.swap_usage_pct);
+                    let swap_value = reported_sensor_value(swap_usage, 1);
+                    let swap_subtitle = if swap_usage.is_some() { format!("{} / {}", crate::sensors::format_bytes(snap.swap_used_bytes), crate::sensors::format_bytes(snap.swap_total_bytes)) } else { "No swap configured".to_string() };
+                    let swap_avg_label = format!("AVG {}{}", reported_sensor_value(swap_avg, 1), if swap_avg.is_some() { "%" } else { "" });
+                    let swap_peak_label = format!("PEAK {}{}", reported_sensor_value(swap_peak, 1), if swap_peak.is_some() { "%" } else { "" });
                     render_big_stat_card(
                         ui,
                         crate::lucide::REFRESH_CW,
                         "SWAP ALLOCATION",
-                        &format!("{:.1}", snap.swap_usage_pct),
-                        "%",
-                        &format!("{} / {}", crate::sensors::format_bytes(snap.swap_used_bytes), crate::sensors::format_bytes(snap.swap_total_bytes)),
-                        &format!("AVG {:.1}%", swap_avg),
-                        &format!("PEAK {:.1}%", swap_peak),
+                        &swap_value,
+                        if swap_usage.is_some() { "%" } else { "" },
+                        &swap_subtitle,
+                        &swap_avg_label,
+                        &swap_peak_label,
                         &swap_slice,
                         100.0,
                         None,
@@ -12042,9 +12056,13 @@ impl LauncherApp {
                             let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                             ui.painter().circle_filled(d_rect.center(), 2.8, accent);
                             ui.label(RichText::new("Memory Usage History").size(12.5).strong().color(p.text_primary));
-
-
-
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(RichText::new("Swap").size(9.0).monospace().color(p.text_muted));
+                                ui.painter().circle_filled(ui.min_rect().center(), 3.0, Color32::from_rgb(96, 165, 250));
+                                ui.add_space(6.0);
+                                ui.label(RichText::new("In use").size(9.0).monospace().color(p.text_muted));
+                                ui.painter().circle_filled(ui.min_rect().center(), 3.0, accent);
+                            });
                         });
 
                         ui.add_space(8.0);

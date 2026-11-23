@@ -184,6 +184,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Top Apps unavailable sort keys:** GPU and per-process power columns remain visible as unavailable, and their headers no longer accept sorting clicks against hard-coded zero values; hover text explains the collector limitation on both platforms.
 - **Multi-GPU process-table summary:** The Top Apps GPU summary now displays a measured percentage only for a single adapter; multi-adapter hosts show unavailable rather than presenting the first adapter as a system-wide total. Values are finite and range checked.
 - **Initial local network rates:** Linux and Windows collectors now seed RX/TX baselines from their initial interface snapshot, so the first refresh measures real counter deltas instead of defaulting every interface to 0 B/s.
+- **RAM history series and no-swap hosts:** The RAM history's second series is now identified as swap allocation (it was mislabeled as cached memory). Swap percentage and history are unavailable when the host reports zero swap capacity, while a real 0% remains valid when swap exists.
 
 ### Remaining work and validation
 

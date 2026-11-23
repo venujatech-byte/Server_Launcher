@@ -2803,6 +2803,8 @@ mod remote_sensor_command_tests {
         assert!(script.contains("$cpuCoreUsages[$row.index] = $row.usage"));
         assert!(script.contains("$rxRate = $null"));
         assert!(script.contains("[int]$adapter.ifType -eq 71"));
+        assert!(script.contains("Get-NetIPInterface -InterfaceIndex $adapter.ifIndex"));
+        assert!(script.contains("mtu = $mtu"));
         assert!(!command.contains("Get-CimInstance"));
     }
 

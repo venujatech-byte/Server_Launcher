@@ -124,7 +124,11 @@ try {
         if ($null -ne $stat -and $null -ne $stat.ReceivedBytes -and $null -ne $stat.SentBytes -and $stat.ReceivedBytes -ge 0 -and $stat.SentBytes -ge 0) {
             $ipv4 = $null
             $ipv6 = $null
+            $mtu = $null
             if ($collectNetworkDetails -and $adapter.ifIndex) {
+                $ipInterface = $null
+                try { $ipInterface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction Stop | Select-Object -First 1 } catch { }
+                if ($null -ne $ipInterface.NlMtu -and $ipInterface.NlMtu -gt 0) { $mtu = [uint32]$ipInterface.NlMtu }
                 $ipv4Address = $null
                 $ipv6Address = $null
                 try { $ipv4Address = Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.IPAddress -notlike '169.254.*' } | Select-Object -First 1 } catch { }
@@ -152,7 +156,7 @@ try {
                 is_wireless = if ($null -ne $adapter.ifType) { [int]$adapter.ifType -eq 71 } else { $null }
                 link_state = $linkState
                 mac_address = if ($mac -match '^([0-9a-f]{2}:){5}[0-9a-f]{2}$') { $mac } else { $null }
-                mtu = $null
+                mtu = $mtu
                 ipv4 = $ipv4
                 ipv6 = $ipv6
             }

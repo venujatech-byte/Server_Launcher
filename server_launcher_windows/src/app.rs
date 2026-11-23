@@ -1139,7 +1139,6 @@ impl LauncherApp {
     }
 
     pub fn trigger_wifi_query(&mut self, ctx: Option<egui::Context>) {
-        if cfg!(windows) { return; }
         if self.wifi_in_flight.swap(true, std::sync::atomic::Ordering::SeqCst) {
             return;
         }
@@ -13743,16 +13742,6 @@ impl LauncherApp {
     // SENSORS PAGE: Wi-Fi & Network Dashboard
     // ─────────────────────────────────────────────────────────────────────────
     fn render_sensors_wifi_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
-        #[cfg(windows)]
-        if host_id.is_none() {
-            if ui.button("Open Windows network settings").clicked() {
-                let _ = std::process::Command::new("cmd.exe").args(["/D", "/C", "start", "", "ms-settings:network-wifi"]).spawn();
-            }
-            ui.label("Windows interface counters are shown below. Signal strength, link details and per-process network traffic are unavailable.");
-            self.render_sensors_data_usage_page(ui, snap, host_id);
-            return;
-        }
-
         let p = self.palette();
         let accent = self.sensors_accent_color(&p);
         let is_remote = host_id.is_some();
@@ -13996,6 +13985,10 @@ impl LauncherApp {
                                     ui.label(RichText::new(format!("SSH link to host '{}'", self.host_display_name(host_id))).size(10.0).color(Color32::from_rgb(148, 163, 184)));
                                 } else {
                                     ui.label(RichText::new("Wireless interface telemetry").size(10.0).color(Color32::from_rgb(148, 163, 184)));
+                                }
+                                #[cfg(windows)]
+                                if !is_remote && ui.small_button("Windows Network Settings").clicked() {
+                                    let _ = std::process::Command::new("cmd.exe").args(["/D", "/C", "start", "", "ms-settings:network-wifi"]).spawn();
                                 }
                             });
 

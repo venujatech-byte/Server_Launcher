@@ -124,7 +124,7 @@ pub struct PhysicalDiskInfo {
     pub discard_supported: Option<bool>,
     pub total_bytes: u64,
     pub is_ssd: Option<bool>,
-    pub partition_count: usize,
+    pub partition_count: Option<usize>,
     pub partitions: Vec<DiskPartitionInfo>,
     pub read_rate_bps: f64,
     pub write_rate_bps: f64,
@@ -1236,7 +1236,7 @@ pub fn collect_physical_disks() -> Vec<PhysicalDiskInfo> {
                 .map(|passed| if passed { "PASSED" } else { "WARNING" }.to_string())
                 .unwrap_or_default();
 
-            let partition_count = partitions.len();
+            let partition_count = Some(partitions.len());
             physical_disks.push(PhysicalDiskInfo {
                 name: dev,
                 model,
@@ -3958,7 +3958,7 @@ print(json.dumps(data))
                     });
                 }
             }
-            let partition_count = partitions.len();
+            let partition_count = Some(partitions.len());
             let read_rate = p["read_rate"].as_f64().filter(|rate| rate.is_finite() && *rate >= 0.0);
             let write_rate = p["write_rate"].as_f64().filter(|rate| rate.is_finite() && *rate >= 0.0);
             physical_disks.push(PhysicalDiskInfo {
@@ -4670,7 +4670,7 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
                 model: disk["Model"].as_str().map(str::trim).filter(|model| !model.is_empty()).unwrap_or("Unknown disk").to_owned(),
                 bus_interface: disk["InterfaceType"].as_str().unwrap_or_default().to_owned(),
                 total_bytes,
-                partition_count: disk["Partitions"].as_u64().unwrap_or(0) as usize,
+                partition_count: disk["Partitions"].as_u64().and_then(|count| usize::try_from(count).ok()),
                 // Win32_DiskDrive does not reliably distinguish SSDs from rotational media.
                 is_ssd: None,
                 ..Default::default()
@@ -4782,11 +4782,20 @@ mod windows_sensor_tests {
         assert_eq!(snapshot.physical_disks.len(), 1);
         assert_eq!(snapshot.physical_disks[0].name, "PHYSICALDRIVE0");
         assert_eq!(snapshot.physical_disks[0].total_bytes, 1000);
-        assert_eq!(snapshot.physical_disks[0].partition_count, 2);
+        assert_eq!(snapshot.physical_disks[0].partition_count, Some(2));
         assert_eq!(snapshot.physical_disks[0].is_ssd, None);
         let mut cached = snapshot.clone();
         update_windows_inventory(&mut cached, &serde_json::json!({"disk_inventory_error":"unavailable"}));
         assert_eq!(cached.physical_disks.len(), 1);
+    }
+    #[test]
+    fn windows_disk_partition_count_preserves_missing_and_reported_zero() {
+        let snapshot = parse_windows_hardware(&serde_json::json!({"physical_disks": [
+            {"DeviceID":"\\\\.\\PHYSICALDRIVE0", "Size":"1000"},
+            {"DeviceID":"\\\\.\\PHYSICALDRIVE1", "Size":"2000", "Partitions":0}
+        ]}));
+        assert_eq!(snapshot.physical_disks[0].partition_count, None);
+        assert_eq!(snapshot.physical_disks[1].partition_count, Some(0));
     }
     #[test]
     fn failed_live_query_clears_measurements_but_keeps_device_inventory() {

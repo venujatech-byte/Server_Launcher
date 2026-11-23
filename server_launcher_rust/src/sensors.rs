@@ -122,7 +122,7 @@ pub struct PhysicalDiskInfo {
     pub discard_supported: Option<bool>,
     pub total_bytes: u64,
     pub is_ssd: Option<bool>,
-    pub partition_count: usize,
+    pub partition_count: Option<usize>,
     pub partitions: Vec<DiskPartitionInfo>,
     pub read_rate_bps: f64,
     pub write_rate_bps: f64,
@@ -1217,7 +1217,7 @@ pub fn collect_physical_disks() -> Vec<PhysicalDiskInfo> {
                 .map(|passed| if passed { "PASSED" } else { "WARNING" }.to_string())
                 .unwrap_or_default();
 
-            let partition_count = partitions.len();
+            let partition_count = Some(partitions.len());
             physical_disks.push(PhysicalDiskInfo {
                 name: dev,
                 model,
@@ -3926,7 +3926,7 @@ print(json.dumps(data))
                     });
                 }
             }
-            let partition_count = partitions.len();
+            let partition_count = Some(partitions.len());
             let read_rate = p["read_rate"].as_f64().filter(|rate| rate.is_finite() && *rate >= 0.0);
             let write_rate = p["write_rate"].as_f64().filter(|rate| rate.is_finite() && *rate >= 0.0);
             physical_disks.push(PhysicalDiskInfo {

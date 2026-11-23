@@ -13037,7 +13037,7 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 3. Drives Grid (Storage 1, Storage 2, Storage 3... in 2-column paired layout)
-                let drives_list: Vec<(String, String, u64, Option<bool>, usize, f64, f64, bool)> = if !snap.physical_disks.is_empty() {
+                let drives_list: Vec<(String, String, u64, Option<bool>, Option<usize>, f64, f64, bool)> = if !snap.physical_disks.is_empty() {
                     snap.physical_disks
                         .iter()
                         .map(|d| (d.name.clone(), d.model.clone(), d.total_bytes, d.is_ssd, d.partition_count, d.read_rate_bps, d.write_rate_bps, d.disk_rates_available))
@@ -13054,7 +13054,7 @@ impl LauncherApp {
                             } else {
                                 format!("Volume ({})", d.mount_point)
                             };
-                            synthesized.push((clean, model, d.total_bytes, is_ssd, 0, d.read_rate_bps, d.write_rate_bps, d.disk_rates_available));
+                            synthesized.push((clean, model, d.total_bytes, is_ssd, None, d.read_rate_bps, d.write_rate_bps, d.disk_rates_available));
                         }
                     }
                     synthesized
@@ -13071,7 +13071,7 @@ impl LauncherApp {
                 let current_selected_idx = self.selected_disk_idx;
                 let mut clicked_drive_idx: Option<usize> = None;
 
-                let render_drive_card = |ui: &mut Ui, idx: usize, d_name: &str, d_model: &str, d_bytes: u64, d_is_ssd: Option<bool>, d_part_count: usize, d_read_bps: f64, d_write_bps: f64, rates_available: bool, is_selected: bool, clicked_slot: &mut Option<usize>| {
+                let render_drive_card = |ui: &mut Ui, idx: usize, d_name: &str, d_model: &str, d_bytes: u64, d_is_ssd: Option<bool>, d_part_count: Option<usize>, d_read_bps: f64, d_write_bps: f64, rates_available: bool, is_selected: bool, clicked_slot: &mut Option<usize>| {
                     let d_phys_gb = d_bytes as f64 / 1e9;
                     let physical_disk = snap.physical_disks.iter()
                         .find(|disk| disk.name.trim_start_matches("/dev/") == d_name.trim_start_matches("/dev/"));
@@ -13143,7 +13143,10 @@ impl LauncherApp {
                                                 });
                                         });
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(RichText::new(if physical_disk.is_some() { format!("{} PARTITION{}", d_part_count, if d_part_count == 1 { "" } else { "S" }) } else { "VOLUME".to_string() }).size(9.0).monospace().color(p.text_muted));
+                                            let partition_label = if physical_disk.is_none() { "VOLUME".to_string() } else {
+                                                d_part_count.map_or_else(|| "PARTITIONS N/A".to_string(), |count| format!("{count} PARTITION{}", if count == 1 { "" } else { "S" }))
+                                            };
+                                            ui.label(RichText::new(partition_label).size(9.0).monospace().color(p.text_muted));
                                         });
                                     });
                                 });

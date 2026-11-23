@@ -15445,7 +15445,7 @@ impl LauncherApp {
                                                 ui.add_space(8.0);
 
                                                 let design_wh = bat.and_then(|b| b.energy_design_wh).unwrap_or(f32::NAN);
-                                                render_card_meta_row(ui, "Health", &format!("{}%", reported_sensor_value(Some(bat_health), 1)), Color32::from_rgb(203, 213, 225));
+                                                render_card_meta_row(ui, "Retention", &format!("{}%", reported_sensor_value(Some(bat_health), 1)), Color32::from_rgb(203, 213, 225));
                                                 ui.add_space(3.0);
                                                 render_card_meta_row(ui, "Design", &format!("{} Wh", reported_sensor_value(Some(design_wh), 1)), Color32::from_rgb(148, 163, 184));
 
@@ -15486,7 +15486,7 @@ impl LauncherApp {
                                                 let cond_label = bat.map(|battery| battery.status.as_str()).unwrap_or("Unavailable");
                                                 render_card_meta_row(ui, "Lifespan", life_label, Color32::from_rgb(203, 213, 225));
                                                 ui.add_space(3.0);
-                                                render_card_meta_row(ui, "Condition", cond_label, Color32::from_rgb(148, 163, 184));
+                                                render_card_meta_row(ui, "State", cond_label, Color32::from_rgb(148, 163, 184));
 
                                                 let inner_h = ui.cursor().min.y - content_start_y;
                                                 observed_max_inner_h = observed_max_inner_h.max(inner_h);

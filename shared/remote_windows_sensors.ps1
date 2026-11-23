@@ -16,6 +16,8 @@ try {
     $cpu = @(Get-CimInstance Win32_Processor -ErrorAction Stop)
     $cores = [int](($cpu | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum)
     if ($cores -lt 1) { throw 'No logical CPU count was reported' }
+    $reportedPhysicalCores = @($cpu | Where-Object { $null -ne $_.NumberOfCores -and $_.NumberOfCores -gt 0 })
+    $physicalCores = if ($reportedPhysicalCores.Count -gt 0) { [int](($reportedPhysicalCores | Measure-Object -Property NumberOfCores -Sum).Sum) } else { $null }
     $cpuLoad = $null
     $reportedCpuLoads = @($cpu | Where-Object { $null -ne $_.LoadPercentage })
     if ($reportedCpuLoads.Count -gt 0) { $cpuLoad = [double](($reportedCpuLoads | Measure-Object -Property LoadPercentage -Average).Average) }
@@ -276,6 +278,7 @@ try {
     $result = [ordered]@{
         cpu_model = (($cpu | ForEach-Object { $_.Name } | Where-Object { $_ } | Select-Object -Unique) -join ' / ')
         cores = $cores
+        physical_cores = $physicalCores
         cpu_usage = $cpuLoad
         cpu_core_usages = $cpuCoreUsages
         cpu_freqs = @($cpu | Where-Object { $_.CurrentClockSpeed -gt 0 } | ForEach-Object { [int64]$_.CurrentClockSpeed })

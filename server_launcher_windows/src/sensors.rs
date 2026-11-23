@@ -2824,6 +2824,8 @@ mod remote_sensor_command_tests {
         assert!(script.contains("Win32_PhysicalMemory"));
         assert!(script.contains("$collectNetworkRates = $true"));
         assert!(script.contains("$collectCpuCores = $true"));
+        assert!(script.contains("NumberOfCores"));
+        assert!(script.contains("physical_cores = $physicalCores"));
         assert!(script.contains("$collectDiskRates = $true"));
         assert!(script.contains("Win32_PerfFormattedData_PerfDisk_PhysicalDisk"));
         assert!(script.contains("DiskReadBytesPersec"));
@@ -4301,7 +4303,7 @@ print(json.dumps(data))
 
     Ok(SystemSensorsSnapshot {
         cpu_brand,
-        cpu_cores_physical: 0,
+        cpu_cores_physical: parsed["physical_cores"].as_u64().and_then(|value| usize::try_from(value).ok()).unwrap_or(0),
         cpu_cores_logical: cpu_cores,
         cpu_global_usage,
         cpu_usage_available: cpu_usage.is_some(),

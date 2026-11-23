@@ -184,6 +184,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Remote Bluetooth status:** Linux SSH hosts now show read-only BlueZ radio and paired-device status in both apps; unsupported remote operating systems and missing BlueZ are reported explicitly. Scanning and device controls remain local.
 - **Responsive Data Usage table:** Narrow sensor panels switch the fixed-width interface table to compact per-interface cards, keeping byte totals and live rates visible without a horizontal scroll area in both apps.
 - **Metric-card readability and themes:** Shared sensor stat cards now use the active theme's foreground/muted colors and raise secondary labels to a readable 9.5–10.5 px scale in both apps.
+- **Metric-card height:** AVG/PEAK labels now render in a fixed-height horizontal row instead of `ui.columns`, which could consume the available scroll height and stretch all four cards vertically in both apps.
 - **Top Apps theme colors:** Process heatmaps and selected rows now use the active accent and theme text colors in both apps.
 - **Unavailable metric plots:** Sensor card sparklines now distinguish no history, one sample, and repeated unavailable samples; an unsupported GPU engine no longer leaves a blank graph that can be mistaken for a zero reading.
 - **Storage histories:** Mounted usage and read/write charts now append the actual snapshot timestamp once per sample. Missing mounted capacity and unsupported rates remain unavailable; physical drive count is no longer repeated as a fake time series.

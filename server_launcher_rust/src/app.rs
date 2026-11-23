@@ -6039,10 +6039,11 @@ fn render_big_stat_card(
             ui.add_space(2.0);
             ui.add(egui::Label::new(RichText::new(subtitle).size(10.0).monospace().color(text_muted)).truncate()).on_hover_text(subtitle);
             ui.add_space(8.0);
-            ui.columns(2, |cols| {
-                cols[0].add(egui::Label::new(RichText::new(left_stat).size(9.5).monospace().color(text_muted)).truncate()).on_hover_text(left_stat);
-                cols[1].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add(egui::Label::new(RichText::new(right_stat).size(9.5).monospace().color(text_muted)).truncate()).on_hover_text(right_stat);
+            ui.horizontal(|ui| {
+                let width = ((ui.available_width() - ui.spacing().item_spacing.x) * 0.5).max(0.0);
+                ui.add_sized(egui::vec2(width, 16.0), egui::Label::new(RichText::new(left_stat).size(9.5).monospace().color(text_muted)).truncate()).on_hover_text(left_stat);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_sized(egui::vec2(width, 16.0), egui::Label::new(RichText::new(right_stat).size(9.5).monospace().color(text_muted)).truncate()).on_hover_text(right_stat);
                 });
             });
             ui.add_space(4.0);

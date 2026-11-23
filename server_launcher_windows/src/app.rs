@@ -15716,7 +15716,12 @@ impl LauncherApp {
                     if snap.os_name.is_empty() {
                         ui.label(RichText::new("Waiting for remote operating system details…").size(11.0).color(p.text_secondary));
                     } else if !linux_host {
-                        ui.label(RichText::new("Remote Bluetooth monitoring requires a Linux host with BlueZ.").size(11.0).color(p.text_secondary));
+                        let message = if snap.os_name.to_ascii_lowercase().contains("windows") {
+                            "Remote Windows Bluetooth telemetry is not available yet."
+                        } else {
+                            "Remote Bluetooth monitoring requires a Linux host with BlueZ."
+                        };
+                        ui.label(RichText::new(message).size(11.0).color(p.text_secondary));
                     } else if let Some(remote) = remote_snapshot {
                         if let Some((error, _, _)) = &remote.status_msg {
                             ui.label(RichText::new(error).size(11.0).color(p.text_secondary));

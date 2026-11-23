@@ -186,6 +186,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Initial local network rates:** Linux and Windows collectors now seed RX/TX baselines from their initial interface snapshot, so the first refresh measures real counter deltas instead of defaulting every interface to 0 B/s.
 - **RAM history series and no-swap hosts:** The RAM history's second series is now identified as swap allocation (it was mislabeled as cached memory). Swap percentage and history are unavailable when the host reports zero swap capacity, while a real 0% remains valid when swap exists.
 - **RAM composition accuracy:** The physical-memory bar now compares reported in-use memory with the remainder of total memory. Dirty, free/available, and reclaimable counters remain separate because collectors can report overlapping values; the UI explains this on both platforms.
+- **Unused GPU history state:** Removed three GPU history queues that had no readers; the rendered GPU histories are already stored by host and adapter identity.
 
 ### Remaining work and validation
 

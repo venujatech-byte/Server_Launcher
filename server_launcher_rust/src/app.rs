@@ -552,9 +552,6 @@ pub struct LauncherApp {
     pub net_peak_mb: f32,
     pub socket_tcp_history: VecDeque<f32>,
     pub socket_udp_history: VecDeque<f32>,
-    pub gpu_load_history: VecDeque<f32>,
-    pub gpu_3d_history: VecDeque<f32>,
-    pub gpu_copy_history: VecDeque<f32>,
     pub gpu_mode: usize,
     pub selected_gpu_idx: usize,
     pub selected_disk_idx: usize,
@@ -986,9 +983,6 @@ impl LauncherApp {
             net_peak_mb: 0.0,
             socket_tcp_history: VecDeque::with_capacity(60),
             socket_udp_history: VecDeque::with_capacity(60),
-            gpu_load_history: VecDeque::with_capacity(60),
-            gpu_3d_history: VecDeque::with_capacity(20),
-            gpu_copy_history: VecDeque::with_capacity(20),
             gpu_mode: 1, // Balanced
             selected_gpu_idx: 0,
             selected_disk_idx: 0,
@@ -11126,9 +11120,6 @@ impl LauncherApp {
             self.net_peak_mb = 0.0;
             self.socket_tcp_history.clear();
             self.socket_udp_history.clear();
-            self.gpu_load_history.clear();
-            self.gpu_3d_history.clear();
-            self.gpu_copy_history.clear();
             self.cpu_core_histories = (0..snap.cpu_core_usages.len())
                 .map(|_| VecDeque::with_capacity(30)).collect();
         }
@@ -11196,13 +11187,6 @@ impl LauncherApp {
                 self.socket_tcp_history.clear();
                 self.socket_udp_history.clear();
             }
-
-            if let Some(load) = snap.gpus.get(self.selected_gpu_idx).and_then(|g| g.load_pct) {
-                push_telemetry(&mut self.gpu_load_history, load, history_capacity);
-            }
-            // Per-engine counters cannot be inferred from total GPU utilization.
-            self.gpu_3d_history.clear();
-            self.gpu_copy_history.clear();
 
             let num_cores = snap.cpu_core_usages.len();
             if self.cpu_core_histories.len() != num_cores {

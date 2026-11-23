@@ -2625,20 +2625,25 @@ impl LauncherApp {
                             }
 
                             host_resp.context_menu(|ui| {
-                                if ui.button(format!("{} Edit Host", crate::lucide::SETTINGS)).clicked() {
+                                ui.set_min_width(160.0);
+                                ui.spacing_mut().interact_size.y = 24.0;
+                                ui.spacing_mut().item_spacing.y = 2.0;
+                                ui.spacing_mut().button_padding = egui::vec2(8.0, 3.0);
+                                let item = |label: String, color| egui::Button::new(RichText::new(label).size(11.5).color(color));
+                                if ui.add(item(format!("{} Edit Host", crate::lucide::SETTINGS), p.text_secondary)).clicked() {
                                     host_to_edit = Some(host.clone());
                                     ui.close_menu();
                                 }
-                                if ui.button(format!("{} Test Connection", crate::lucide::REFRESH_CW)).clicked() {
+                                if ui.add(item(format!("{} Test Connection", crate::lucide::REFRESH_CW), p.text_secondary)).clicked() {
                                     host_to_test = Some(host.clone());
                                     ui.close_menu();
                                 }
-                                if ui.button(format!("{} Launch External Terminal", crate::lucide::EXTERNAL_LINK)).clicked() {
+                                if ui.add(item(format!("{} Launch External Terminal", crate::lucide::EXTERNAL_LINK), p.text_secondary)).clicked() {
                                     host_to_term = Some(host.clone());
                                     ui.close_menu();
                                 }
                                 ui.separator();
-                                if ui.button(RichText::new(format!("{} Delete Host", crate::lucide::TRASH)).color(Color32::from_rgb(239, 68, 68))).clicked() {
+                                if ui.add(item(format!("{} Delete Host", crate::lucide::TRASH), p.danger)).clicked() {
                                     host_to_delete = Some(host.id.clone());
                                     ui.close_menu();
                                 }

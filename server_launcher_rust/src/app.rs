@@ -15771,7 +15771,7 @@ impl LauncherApp {
 
                             if is_narrow {
                                 // Narrow viewport: Title row with badge, then dedicated row for radio card
-                                ui.horizontal(|ui| {
+                                ui.horizontal_wrapped(|ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
                                     ui.label(RichText::new("Bluetooth Radio & Connected Devices").size(16.5).strong().color(p.text_primary));
                                     Frame::none()

@@ -12075,7 +12075,7 @@ impl LauncherApp {
                             ui.label(RichText::new("Physical Memory Overview").size(12.5).strong().color(p.text_primary));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 let pool_mb = snap.mem_total_bytes / (1024 * 1024);
-                                ui.label(RichText::new(format!("{} MB TOTAL RESIDENT POOL", pool_mb)).size(10.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new(format!("{} MB TOTAL PHYSICAL MEMORY", pool_mb)).size(10.0).monospace().color(p.text_muted));
                             });
                         });
 

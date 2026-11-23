@@ -1053,7 +1053,6 @@ impl LauncherApp {
                     errors_arc.lock().unwrap().remove(&hid);
                 }
                 Err(e) => {
-                    snapshots_arc.lock().unwrap().remove(&hid);
                     errors_arc.lock().unwrap().insert(hid.clone(), e);
                     last_fetch_arc.lock().unwrap().insert(hid.clone(), Instant::now());
                 }

@@ -1578,92 +1578,59 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
     let title = if state.is_edit { "Edit SSH Remote PC" } else { "Add SSH Remote PC" };
 
     let screen = ctx.screen_rect();
-    let modal_w = 540.0_f32.min((screen.width() - 68.0).max(0.0));
-    let max_h = (screen.height() - 60.0).max(0.0);
-
+    let modal_w = 560.0_f32.min((screen.width() - 48.0).max(200.0));
+    let max_h = 640.0_f32.min((screen.height() - 60.0).max(200.0));
+    let mut window_open = state.open;
     let mut is_open = state.open;
-    let window_id = egui::Id::new("add_edit_ssh_host_modal_window");
-    let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
-    Window::new(title)
-        .id(window_id)
-        .title_bar(false)
-        .collapsible(false)
-        .resizable(false)
-        .movable(false)
-        .current_pos(screen.center() + drag_offset)
-        .pivot(egui::Align2::CENTER_CENTER)
-        .min_width(modal_w)
-        .max_width(modal_w)
-        .fixed_size(egui::vec2(modal_w, max_h.min(620.0)))
-        .frame(
-            egui::Frame::none()
-                .fill(Color32::from_rgb(17, 19, 27))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
-                .rounding(Rounding::same(16.0))
-                .shadow(egui::epaint::Shadow {
-                    offset: egui::vec2(0.0, 8.0),
-                    blur: 24.0,
-                    spread: 0.0,
-                    color: Color32::from_black_alpha(160),
-                })
-                .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
-        )
+    Window::new(RichText::new(title).size(17.0).strong())
+        .id(egui::Id::new("add_edit_ssh_host_modal_window"))
+        .open(&mut window_open)
+        .collapsible(false).resizable(false).movable(true)
+        .default_pos(screen.center()).pivot(egui::Align2::CENTER_CENTER)
+        .min_width(modal_w).max_width(modal_w)
+        .default_height(max_h).max_height(max_h)
+        .frame(egui::Frame::none().fill(palette.bg_card)
+            .stroke(Stroke::NONE).rounding(Rounding::same(14.0))
+            .shadow(egui::epaint::Shadow { offset: egui::vec2(0.0, 4.0), blur: 16.0, spread: 0.0, color: Color32::from_black_alpha(120) })
+            .inner_margin(egui::Margin::same(18.0)))
         .show(ctx, |ui| {
-            render_modal_titlebar(ui, title, &mut is_open);
-            ui.add_space(8.0);
+            *ui.visuals_mut() = palette.egui_visuals();
+            ui.spacing_mut().interact_size.y = 26.0;
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+            ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
+            ui.style_mut().text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
+            ui.style_mut().text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(11.5));
+            ui.style_mut().text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.5));
+            ui.visuals_mut().widgets.inactive.weak_bg_fill = palette.bg_button;
+            ui.visuals_mut().widgets.inactive.bg_fill = palette.bg_button;
+            ui.visuals_mut().widgets.hovered.weak_bg_fill = palette.bg_card_active;
+            ui.visuals_mut().widgets.active.weak_bg_fill = palette.accent_subtle;
+            ui.add_space(4.0);
             ui.set_max_width(ui.available_width());
 
             egui::ScrollArea::vertical()
                 .id_salt("ssh_host_form")
-                .max_height((ui.available_height() - 100.0).max(0.0))
+                .max_width(ui.available_width())
+                .max_height((max_h - 145.0).max(80.0))
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-        // ── Subtitle row: Saved to remote_hosts.json ──
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            ui.label(RichText::new("Saved to").size(11.0).color(palette.text_muted));
-            egui::Frame::none()
-                .fill(Color32::from_rgb(22, 25, 35))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
-                .rounding(Rounding::same(3.0))
-                .inner_margin(egui::Margin::symmetric(5.0, 1.0))
-                .show(ui, |ui| {
-                    ui.label(RichText::new("remote_hosts.json").size(10.5).monospace().color(Color32::from_rgb(180, 185, 200)));
-                });
-            ui.label(RichText::new("— encrypted vault credentials.").size(11.0).color(palette.text_muted));
-
-            ui.horizontal(|ui| {
-                egui::Frame::none()
-                    .fill(Color32::from_rgb(19, 21, 30))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 52)))
-                    .rounding(Rounding::same(12.0))
-                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
-                            ui.label(RichText::new("●").size(8.0).color(Color32::from_rgb(196, 192, 255)));
-                            ui.label(RichText::new("SSH v2 (OpenSSH)").size(10.5).monospace().color(Color32::from_rgb(180, 185, 200)));
-                        });
-                    });
-            });
-        });
-
-            ui.add_space(12.0);
+            ui.label(RichText::new("Configure an SSH connection. Required fields are marked *.").size(11.5).color(palette.text_muted));
+            ui.add_space(4.0);
 
             // ── Card: Automatic SSH Config Import Banner ──
             egui::Frame::none()
-                .fill(Color32::from_rgb(19, 21, 30))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 52)))
+                .fill(palette.bg_subtle)
+                .stroke(Stroke::NONE)
                 .rounding(Rounding::same(8.0))
                 .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         egui::Frame::none()
-                            .fill(Color32::from_rgb(26, 29, 42))
-                            .rounding(Rounding::same(6.0))
+                            .fill(palette.bg_button)
+                            .rounding(Rounding::same(8.0))
                             .inner_margin(egui::Margin::same(6.0))
                             .show(ui, |ui| {
-                                ui.label(RichText::new(crate::lucide::ZAP).size(13.0).color(Color32::from_rgb(196, 192, 255)));
+                                ui.label(RichText::new(crate::lucide::ZAP).size(13.0).color(palette.accent));
                             });
                         ui.add_space(6.0);
                         ui.vertical(|ui| {
@@ -1673,9 +1640,9 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                         });
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let scan_btn = egui::Button::new(RichText::new("Scan Hosts").size(11.0).color(palette.text_primary))
-                                .fill(Color32::from_rgb(26, 29, 40))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
-                                .rounding(Rounding::same(6.0));
+                                .fill(palette.bg_button)
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(8.0));
                             if ui.add(scan_btn).clicked() {
                                 let imported = crate::remote::import_from_ssh_config();
                                 if let Some(first) = imported.first() {
@@ -1693,7 +1660,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                     });
                 });
 
-            ui.add_space(10.0);
+            ui.add_space(4.0);
 
             // Display Name *
             ui.horizontal(|ui| {
@@ -1703,11 +1670,11 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             });
             ui.add(
                 egui::TextEdit::singleline(&mut state.name)
-                    .hint_text("e.g. Dev Cloud Server, Staging VPS")
-                    .clip_text(true)
+                    .hint_text(RichText::new("e.g. Dev Cloud Server, Staging VPS").color(palette.text_muted))
+                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true)
                     .desired_width(ui.available_width()),
             );
-            ui.add_space(8.0);
+            ui.add_space(4.0);
 
             // Host & Port row
             ui.horizontal(|ui| {
@@ -1721,8 +1688,8 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                     ui.add_sized(
                         [host_w, 20.0],
                         egui::TextEdit::singleline(&mut state.host)
-                            .hint_text("e.g. 192.168.1.100 or vps.example.com")
-                            .clip_text(true),
+                            .hint_text(RichText::new("e.g. 192.168.1.100 or vps.example.com").color(palette.text_muted))
+                            .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true),
                     );
                 });
                 ui.vertical(|ui| {
@@ -1733,13 +1700,13 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                     });
                     ui.add(
                         egui::TextEdit::singleline(&mut state.port_str)
-                            .hint_text("22")
-                            .clip_text(true)
+                            .hint_text(RichText::new("22").color(palette.text_muted))
+                            .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true)
                             .desired_width(75.0),
                     );
                 });
             });
-            ui.add_space(8.0);
+            ui.add_space(4.0);
 
             // SSH Username *
             ui.horizontal(|ui| {
@@ -1749,11 +1716,11 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             });
             ui.add(
                 egui::TextEdit::singleline(&mut state.user)
-                    .hint_text("ubuntu")
-                    .clip_text(true)
+                    .hint_text(RichText::new("ubuntu").color(palette.text_muted))
+                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true)
                     .desired_width(ui.available_width()),
             );
-            ui.add_space(8.0);
+            ui.add_space(4.0);
 
             // SSH Private Key Path (optional)
             ui.label(RichText::new("SSH Private Key Path (optional if using agent/default)").size(12.0).strong().color(palette.text_primary));
@@ -1763,20 +1730,20 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                 ui.add_sized(
                     [input_w, 20.0],
                     egui::TextEdit::singleline(&mut state.key_path)
-                        .hint_text("e.g. ~/.ssh/id_ed25519 or /home/user/.ssh/id_rsa")
-                        .clip_text(true),
+                        .hint_text(RichText::new("e.g. ~/.ssh/id_ed25519 or /home/user/.ssh/id_rsa").color(palette.text_muted))
+                        .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true),
                 );
                 let browse_btn = egui::Button::new(RichText::new(format!("{} Browse...", crate::lucide::FOLDER)).size(11.0).color(palette.text_secondary))
-                    .fill(Color32::from_rgb(26, 29, 40))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
-                    .rounding(Rounding::same(6.0));
+                    .fill(palette.bg_button)
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(8.0));
                 if ui.add(browse_btn).clicked() {
                     if let Some(path) = rfd::FileDialog::new().pick_file() {
                         state.key_path = path.to_string_lossy().to_string();
                     }
                 }
             });
-            ui.add_space(8.0);
+            ui.add_space(4.0);
 
             // SSH Password (optional)
             ui.horizontal(|ui| {
@@ -1795,21 +1762,21 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             ui.add(
                 egui::TextEdit::singleline(&mut state.password)
                     .password(!state.show_password)
-                    .hint_text("Enter SSH password (for password-based authentication)")
-                    .clip_text(true)
+                    .hint_text(RichText::new("Enter SSH password (for password-based authentication)").color(palette.text_muted))
+                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true)
                     .desired_width(ui.available_width()),
             );
-            ui.add_space(8.0);
+            ui.add_space(4.0);
 
             // Default Remote Directory (optional)
             ui.label(RichText::new("Default Remote Directory (optional)").size(12.0).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::singleline(&mut state.remote_cwd)
-                    .hint_text("e.g. /var/www or /home/ubuntu/app")
-                    .clip_text(true)
+                    .hint_text(RichText::new("e.g. /var/www or /home/ubuntu/app").color(palette.text_muted))
+                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0)).clip_text(true)
                     .desired_width(ui.available_width()),
             );
-            ui.add_space(10.0);
+            ui.add_space(4.0);
 
             // Checkboxes: Use local SSH agent authentication & Strict host key check
             ui.horizontal_wrapped(|ui| {
@@ -1818,7 +1785,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                 ui.checkbox(&mut state.strict_host_key, RichText::new("Strict host key check").size(11.5).color(palette.text_secondary));
             });
                 });
-            ui.add_space(8.0);
+            ui.add_space(4.0);
             ui.separator();
             ui.add_space(6.0);
 
@@ -1826,10 +1793,10 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             // Footer
             ui.horizontal(|ui| {
                 // Test Connection button
-                let test_btn = egui::Button::new(RichText::new(format!("{} Test Connection", crate::lucide::ZAP)).size(11.5).color(Color32::from_rgb(196, 192, 255)))
-                    .fill(Color32::from_rgb(26, 29, 42))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(45, 50, 72)))
-                    .rounding(Rounding::same(999.0));
+                let test_btn = egui::Button::new(RichText::new(format!("{} Test Connection", crate::lucide::ZAP)).size(11.5).color(palette.accent))
+                    .fill(palette.bg_button)
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(8.0));
                 if ui.add(test_btn).clicked() {
                     let port = state.port_str.trim().parse::<u16>().unwrap_or(22);
                     let host_obj = crate::config::SshRemoteHost {
@@ -1863,7 +1830,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                 }
 
             });
-            ui.add_space(8.0);
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
                 if state.is_edit {
                     if let Some(id_to_del) = state.editing_id.clone() {
@@ -1877,8 +1844,8 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let save_btn = egui::Button::new(RichText::new("Save Host").size(12.0).strong().color(Color32::from_rgb(24, 25, 34)))
-                        .fill(Color32::from_rgb(196, 192, 255))
+                    let save_btn = egui::Button::new(RichText::new("Save Host").size(12.0).strong().color(palette.accent_text))
+                        .fill(palette.accent)
                         .rounding(Rounding::same(8.0))
                         .min_size(egui::vec2(95.0, 28.0));
 
@@ -1910,9 +1877,9 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                     }
 
                     let cancel_btn = egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
-                        .fill(Color32::from_rgb(26, 29, 40))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
-                        .rounding(Rounding::same(6.0))
+                        .fill(palette.bg_button)
+                        .stroke(Stroke::NONE)
+                        .rounding(Rounding::same(8.0))
                         .min_size(egui::vec2(75.0, 28.0));
                     if ui.add(cancel_btn).clicked() {
                         state.open = false;
@@ -1922,7 +1889,7 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
             });
         });
 
-    if !is_open {
+    if !is_open || !window_open {
         state.open = false;
     }
     action

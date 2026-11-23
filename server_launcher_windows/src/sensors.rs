@@ -4787,7 +4787,7 @@ impl SystemSensorsCollector {
         self.disks.refresh();
         self.networks.refresh();
         let now = Instant::now();
-        let inventory_due = self.last_hardware_scan.elapsed() >= Duration::from_secs(30);
+        let inventory_due = windows_inventory_scan_due(self.last_hardware_scan, now);
         if inventory_due {
             self.disks.refresh_list();
             self.networks.refresh_list();
@@ -4803,6 +4803,8 @@ impl SystemSensorsCollector {
                 self.windows_hardware.windows_hardware_sampled_at = Some(sampled_at);
             }
             if inventory_due {
+                // Retry failed inventory only after the normal interval; its success age is tracked separately.
+                self.last_hardware_scan = sampled_at;
                 match &sample {
                     Ok(data) => {
                         update_windows_inventory(&mut self.windows_hardware, data);
@@ -4812,7 +4814,6 @@ impl SystemSensorsCollector {
                         if errors.is_empty() {
                             self.windows_hardware.windows_inventory_sampled_at = Some(sampled_at);
                         }
-                        self.last_hardware_scan = sampled_at;
                     }
                     Err(_) => {
                         self.windows_network_adapters = serde_json::Value::Null;
@@ -4949,6 +4950,11 @@ fn windows_hardware_query_due(last: Instant, now: Instant) -> bool {
     now.saturating_duration_since(last) >= Duration::from_secs(3)
 }
 
+#[cfg(any(windows, test))]
+fn windows_inventory_scan_due(last: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(last) >= Duration::from_secs(30)
+}
+
 #[cfg(windows)]
 fn windows_volume_id(mount_point: &str) -> Option<String> {
     let mount_path = windows_volume_mount_path(mount_point)?;
@@ -4983,6 +4989,13 @@ mod windows_hardware_query_schedule_tests {
         let last = Instant::now();
         assert!(!super::windows_hardware_query_due(last, last + Duration::from_secs(2)));
         assert!(super::windows_hardware_query_due(last, last + Duration::from_secs(3)));
+    }
+
+    #[test]
+    fn throttles_inventory_retries_to_thirty_seconds() {
+        let last = Instant::now();
+        assert!(!super::windows_inventory_scan_due(last, last + Duration::from_secs(29)));
+        assert!(super::windows_inventory_scan_due(last, last + Duration::from_secs(30)));
     }
 }
 

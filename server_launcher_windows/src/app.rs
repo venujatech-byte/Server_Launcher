@@ -12224,12 +12224,24 @@ impl LauncherApp {
                 ui.set_width(ui.available_width());
                 self.render_sensor_hardware_access(ui, host_id);
 
-                let active_gpu_idx = if snap.gpus.is_empty() { 0 } else { self.selected_gpu_idx.min(snap.gpus.len() - 1) };
+                if snap.gpus.is_empty() {
+                    Frame::none()
+                        .fill(p.bg_card)
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new("GPU data unavailable").size(15.0).strong().color(p.text_primary));
+                            ui.label(RichText::new("This host did not report a graphics adapter to the sensor collector.").size(11.0).color(p.text_muted));
+                        });
+                    return;
+                }
+
+                let active_gpu_idx = self.selected_gpu_idx.min(snap.gpus.len() - 1);
                 let gpu = snap.gpus.get(active_gpu_idx).or_else(|| snap.gpus.first());
                 let gpu_name = gpu
                     .map(|g| g.name.as_str())
                     .filter(|n| !n.trim().is_empty() && *n != "Unknown GPU")
-                    .unwrap_or(if is_remote { "GPU information unavailable" } else { "GPU information unavailable" });
+                    .unwrap_or("GPU information unavailable");
 
 
 

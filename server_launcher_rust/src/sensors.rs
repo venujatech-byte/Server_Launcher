@@ -2483,8 +2483,8 @@ pub fn detect_displays() -> Vec<DisplayInfo> {
 
                     let mut edid_mfg = String::new();
                     let mut edid_prod = String::new();
-                    let mut bit_depth = "8-bit RGB".to_string();
-                    let mut refresh_hz = 60.0f32;
+                    let mut bit_depth = "Not reported".to_string();
+                    let mut refresh_hz = 0.0f32;
                     let mut edid_w = 0u32;
                     let mut edid_h = 0u32;
 
@@ -2528,9 +2528,13 @@ pub fn detect_displays() -> Vec<DisplayInfo> {
                         }
                     }
 
-                    let final_w = if mode_w > 0 { mode_w } else if edid_w > 0 { edid_w } else { 1920 };
-                    let final_h = if mode_h > 0 { mode_h } else if edid_h > 0 { edid_h } else { 1080 };
-                    let resolution = format!("{} \u{00D7} {}", final_w, final_h);
+                    let final_w = if mode_w > 0 { mode_w } else { edid_w };
+                    let final_h = if mode_h > 0 { mode_h } else { edid_h };
+                    let resolution = if final_w > 0 && final_h > 0 {
+                        format!("{} \u{00D7} {}", final_w, final_h)
+                    } else {
+                        "Not reported".to_string()
+                    };
 
                     displays.push(DisplayInfo {
                         name,
@@ -2541,11 +2545,11 @@ pub fn detect_displays() -> Vec<DisplayInfo> {
                         height: final_h,
                         refresh_hz,
                         bit_depth,
-                        color_space: "sRGB".to_string(),
+                        color_space: "Not reported".to_string(),
                         connector_type,
                         connector_id,
-                        scaling: "1.0x".to_string(),
-                        vrr_support: "None".to_string(),
+                        scaling: "Not reported".to_string(),
+                        vrr_support: "Not reported".to_string(),
                         manufacturer: edid_mfg,
                         model: edid_prod,
                     });

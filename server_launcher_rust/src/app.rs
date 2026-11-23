@@ -12804,249 +12804,34 @@ impl LauncherApp {
                 ui.add_space(8.0);
                 }
 
-                // 5. Bottom 2-Column Section: Display & Hardware Acceleration
-                ui.columns(2, |cols| {
-                    let active_disp = snap.displays.first();
-
-                    // Left Column: Display / Console
+                // Show only display telemetry reported by the host collector.
+                if let Some(display) = snap.displays.first() {
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(16.0, 14.0))
-                        .show(&mut cols[0], |ui| {
+                        .show(ui, |ui| {
                             ui.set_width(ui.available_width());
-
-                            // Top Header
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 8.0;
-                                Frame::none()
-                                    .fill(accent_with_alpha(accent, 20))
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(5.0, 4.0))
-                                    .show(ui, |ui| {
-                                        ui.label(RichText::new(crate::lucide::MONITOR).size(12.0).color(accent));
-                                    });
-
-                                let disp_title = if let Some(d) = active_disp {
-                                    if d.name.starts_with("eDP") { "Display (eDP)" } else { "Display" }
-                                } else {
-                                    "Display"
-                                };
-                                ui.label(RichText::new(disp_title).size(13.0).strong().color(p.text_primary));
-
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    Frame::none()
-                                        .fill(accent_with_alpha(accent, 22))
-                                        .rounding(Rounding::same(999.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.spacing_mut().item_spacing.x = 4.0;
-                                                let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
-                                                ui.painter().circle_filled(d_rect.center(), 2.2, accent);
-                                                let disp_badge = if let Some(d) = active_disp {
-                                                    format!("Active ({})", d.name)
-                                                } else if is_remote && gpu.is_none() {
-                                                    "Not reported".to_string()
-                                                } else {
-                                                    "Not reported".to_string()
-                                                };
-                                                ui.label(RichText::new(disp_badge).size(9.0).monospace().strong().color(p.text_primary));
-                                            });
-                                        });
-                                });
+                                ui.label(RichText::new(crate::lucide::MONITOR).size(12.0).color(accent));
+                                ui.label(RichText::new(if display.name.starts_with("eDP") { "Display (eDP)" } else { "Display" }).size(13.0).strong().color(p.text_primary));
                             });
-
-                            ui.add_space(14.0);
-
-                            // Hero Resolution & Refresh
-                            if let Some(d) = active_disp {
-                                ui.label(RichText::new(&d.resolution).size(26.0).strong().color(p.text_primary));
-                                ui.add_space(2.0);
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 6.0;
-                                    ui.label(RichText::new(format!("@ {:.0} Hz", d.refresh_hz)).size(10.0).monospace().strong().color(p.text_secondary));
-                                    ui.label(RichText::new("•").size(9.0).color(p.text_muted));
-                                    ui.label(RichText::new(&d.bit_depth).size(10.0).monospace().color(p.text_muted));
-                                });
-                            } else {
-                                ui.label(RichText::new("Display unavailable").size(24.0).strong().color(p.text_primary));
-                                ui.add_space(2.0);
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 6.0;
-                                    ui.label(RichText::new("Display details not reported").size(10.0).monospace().color(p.text_muted));
-                                });
-                            }
-
-                            ui.add_space(14.0);
-
-                            // 2x2 Grid of Tiles
-                            ui.columns(2, |sub_cols| {
-                                sub_cols[0].vertical(|ui| {
-                                    // Tile 1: Color Space
-                                    Frame::none()
-                                        .fill(p.bg_subtle)
-                                        .rounding(Rounding::same(8.0))
-                                        .inner_margin(egui::Margin::symmetric(12.0, 9.0))
-                                        .show(ui, |ui| {
-                                             ui.set_width(ui.available_width());
-                                            ui.label(RichText::new("Color Space").size(9.0).monospace().color(p.text_muted));
-                                            ui.add_space(3.0);
-                                            let cs_txt = active_disp.map(|d| d.color_space.as_str()).unwrap_or("Unavailable");
-                                            ui.label(RichText::new(cs_txt).size(11.0).monospace().strong().color(p.text_primary));
-                                        });
-
-                                    ui.add_space(6.0);
-
-                                    // Tile 3: Connector
-                                    Frame::none()
-                                        .fill(p.bg_subtle)
-                                        .rounding(Rounding::same(8.0))
-                                        .inner_margin(egui::Margin::symmetric(12.0, 9.0))
-                                        .show(ui, |ui| {
-                                            ui.set_width(ui.available_width());
-                                            ui.label(RichText::new("Connector").size(9.0).monospace().color(p.text_muted));
-                                            ui.add_space(3.0);
-                                            let conn_txt = active_disp.map(|d| d.connector_type.as_str()).unwrap_or("Unavailable");
-                                            ui.label(RichText::new(conn_txt).size(11.0).monospace().strong().color(p.text_primary));
-                                        });
-                                });
-
-                                sub_cols[1].vertical(|ui| {
-                                    // Tile 2: Scaling
-                                    Frame::none()
-                                        .fill(p.bg_subtle)
-                                        .rounding(Rounding::same(8.0))
-                                        .inner_margin(egui::Margin::symmetric(12.0, 9.0))
-                                        .show(ui, |ui| {
-                                            ui.set_width(ui.available_width());
-                                            ui.label(RichText::new("Scaling").size(9.0).monospace().color(p.text_muted));
-                                            ui.add_space(3.0);
-                                            let sc_txt = active_disp.map(|d| d.scaling.as_str()).unwrap_or("Unavailable");
-                                            ui.label(RichText::new(sc_txt).size(11.0).monospace().strong().color(p.text_primary));
-                                        });
-
-                                    ui.add_space(6.0);
-
-                                    // Tile 4: VRR
-                                    Frame::none()
-                                        .fill(p.bg_subtle)
-                                        .rounding(Rounding::same(8.0))
-                                        .inner_margin(egui::Margin::symmetric(12.0, 9.0))
-                                        .show(ui, |ui| {
-                                            ui.set_width(ui.available_width());
-                                            ui.label(RichText::new("VRR").size(9.0).monospace().color(p.text_muted));
-                                            ui.add_space(3.0);
-                                            let vrr_txt = active_disp.map(|d| d.vrr_support.as_str()).unwrap_or("Unavailable");
-                                            ui.label(RichText::new(vrr_txt).size(11.0).monospace().strong().color(p.text_primary));
-                                        });
-                                });
-                            });
-
-                            ui.add_space(14.0);
-
-
-                        });
-
-                    // Right Column: Hardware Acceleration
-                    Frame::none()
-                        .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
-                        .inner_margin(egui::Margin::symmetric(16.0, 14.0))
-                        .show(&mut cols[1], |ui| {
-                            ui.set_width(ui.available_width());
-
-                            // Top Header
+                            ui.add_space(10.0);
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 8.0;
-                                ui.label(RichText::new(">_").size(12.0).monospace().strong().color(accent));
-                                ui.label(RichText::new("Graphics session").size(13.0).strong().color(p.text_primary));
-
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    Frame::none()
-                                        .fill(p.bg_subtle)
-                                        .rounding(Rounding::same(999.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.spacing_mut().item_spacing.x = 4.0;
-                                                let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
-                                                ui.painter().circle_filled(d_rect.center(), 2.2, p.info);
-                                                let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
-                                                    || std::env::var("XDG_SESSION_TYPE").map(|s| s == "wayland").unwrap_or(false);
-                                                let is_x11 = std::env::var("DISPLAY").is_ok();
-                                                let acc_badge = if is_remote {
-                                                    "Remote session"
-                                                } else if is_wayland {
-                                                    "Wayland"
-                                                } else if is_x11 {
-                                                    "X11"
-                                                } else if is_remote && gpu.is_none() {
-                                                    "Headless"
-                                                } else {
-                                                    "Session unknown"
-                                                };
-                                                ui.label(RichText::new(acc_badge).size(9.0).monospace().strong().color(p.text_primary));
-                                            });
-                                        });
-                                });
+                                ui.label(RichText::new(&display.resolution).size(22.0).strong().color(p.text_primary));
+                                if display.refresh_hz > 0.0 {
+                                    ui.label(RichText::new(format!("@ {:.1} Hz", display.refresh_hz)).size(10.0).monospace().color(p.text_secondary));
+                                }
+                                if display.bit_depth != "Not reported" {
+                                    ui.label(RichText::new(&display.bit_depth).size(10.0).monospace().color(p.text_muted));
+                                }
+                                ui.label(RichText::new(&display.connector_type).size(10.0).monospace().color(p.text_muted));
                             });
-
-                            ui.add_space(12.0);
-
-                            ui.label(RichText::new("Graphics API capabilities are not collected.").size(10.5).color(p.text_muted));
-                            ui.add_space(8.0);
-
-                            // 2 Micro-cards below API rows
-                            ui.columns(2, |sub_cols| {
-                                sub_cols[0].vertical(|ui| {
-                                    Frame::none()
-                                        .fill(p.bg_subtle)
-                                        .rounding(Rounding::same(8.0))
-                                        .inner_margin(egui::Margin::symmetric(12.0, 9.0))
-                                        .show(ui, |ui| {
-                                            ui.set_width(ui.available_width());
-                                            ui.horizontal(|ui| {
-                                                let mc1_title = "Driver";
-                                                ui.label(RichText::new(mc1_title).size(9.0).monospace().color(p.text_muted));
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
-                                                    ui.painter().circle_filled(dot_rect.center(), 2.0, p.info);
-                                                });
-                                            });
-
-                                            let mc1_val = gpu_spec_label;
-                                            ui.label(RichText::new(mc1_val).size(11.0).monospace().strong().color(p.text_primary));
-                                        });
-                                });
-
-                                sub_cols[1].vertical(|ui| {
-                                    Frame::none()
-                                        .fill(p.bg_subtle)
-                                        .rounding(Rounding::same(8.0))
-                                        .inner_margin(egui::Margin::symmetric(12.0, 9.0))
-                                        .show(ui, |ui| {
-                                            ui.set_width(ui.available_width());
-                                            ui.label(RichText::new("GPU Clock").size(9.0).monospace().color(p.text_muted));
-                                            ui.add_space(3.0);
-                                            let clk_txt = if let Some(clk) = gpu.as_ref().and_then(|g| g.clock_mhz) {
-                                                format!("{} MHz", clk)
-                                            } else if is_remote && gpu.is_none() {
-                                                "Headless".to_string()
-                                            } else {
-                                                "Unavailable".to_string()
-                                            };
-                                            ui.label(RichText::new(clk_txt).size(11.0).monospace().strong().color(p.text_primary));
-                                        });
-                                });
-                            });
-
-                            ui.add_space(14.0);
-
-
                         });
-                });
-
+                    ui.add_space(10.0);
+                }
 
                 ui.add_space(10.0);
             });

@@ -300,6 +300,7 @@ pub struct SystemSensorsSnapshot {
     // Network
     pub networks: Vec<NetInterfaceInfo>,
     pub network_stats_available: bool,
+    pub network_rates_available: bool,
     pub total_rx_rate_bps: f64,
     pub total_tx_rate_bps: f64,
     pub total_rx_bytes: u64,
@@ -357,6 +358,10 @@ fn normalize_total_cpu_percent(total_usage: f32, logical_cpus: usize) -> Option<
     if logical_cpus == 0 || !total_usage.is_finite() || total_usage < 0.0 { return None; }
     let usage = total_usage / logical_cpus as f32;
     (usage <= 100.0).then_some(usage)
+}
+
+fn network_rate_sample_available(previous: Option<(u64, u64)>, current: (u64, u64)) -> bool {
+    previous.is_some_and(|(rx, tx)| current.0 >= rx && current.1 >= tx)
 }
 
 fn parse_socket_stats(content: &str) -> Option<(usize, usize, usize)> {
@@ -417,6 +422,17 @@ mod total_cpu_percent_tests {
         assert_eq!(super::normalize_total_cpu_percent(400.0, 4), Some(100.0));
         assert_eq!(super::normalize_total_cpu_percent(10.0, 0), None);
         assert_eq!(super::normalize_total_cpu_percent(f32::NAN, 4), None);
+    }
+}
+
+#[cfg(test)]
+mod network_rate_availability_tests {
+    #[test]
+    fn first_and_reset_counters_are_unavailable() {
+        assert!(!super::network_rate_sample_available(None, (100, 200)));
+        assert!(super::network_rate_sample_available(Some((100, 200)), (110, 230)));
+        assert!(!super::network_rate_sample_available(Some((100, 200)), (10, 230)));
+        assert!(!super::network_rate_sample_available(Some((100, 200)), (110, 20)));
     }
 }
 
@@ -668,13 +684,15 @@ impl SystemSensorsCollector {
 
         // 5. Networks
         let mut networks = Vec::new();
+        let mut network_rates_available = !self.networks.is_empty();
 
         for (name, net) in &self.networks {
             let rx = net.total_received();
             let tx = net.total_transmitted();
 
-            let prev_rx = *self.prev_net_rx.get(name).unwrap_or(&rx);
-            let prev_tx = *self.prev_net_tx.get(name).unwrap_or(&tx);
+            let previous = self.prev_net_rx.get(name).copied().zip(self.prev_net_tx.get(name).copied());
+            network_rates_available &= network_rate_sample_available(previous, (rx, tx));
+            let (prev_rx, prev_tx) = previous.unwrap_or((rx, tx));
 
             let rx_rate = (rx.saturating_sub(prev_rx) as f64) / elapsed_secs;
             let tx_rate = (tx.saturating_sub(prev_tx) as f64) / elapsed_secs;
@@ -943,6 +961,7 @@ impl SystemSensorsCollector {
             total_disk_rates_available,
             networks,
             network_stats_available,
+            network_rates_available,
             total_rx_rate_bps,
             total_tx_rate_bps,
             total_rx_bytes,
@@ -3246,6 +3265,10 @@ def read_network_addresses():
 
 network_addresses = read_network_addresses() if collect_network_details else {}
 networks = []
+network_rates_available = n_stats_available and bool(n2) and all(
+    ifname in n1 and rx2 >= n1[ifname][0] and tx2 >= n1[ifname][1]
+    for ifname, (rx2, tx2) in n2.items()
+)
 total_rx_rate = 0.0
 total_tx_rate = 0.0
 for ifname, (rx2, tx2) in n2.items():
@@ -3631,6 +3654,7 @@ data = {
     "gpus": gpus,
     "networks": networks,
     "network_stats_available": n_stats_available,
+    "network_rates_available": network_rates_available,
     "total_rx_rate": total_rx_rate,
     "total_tx_rate": total_tx_rate,
     "active_sockets": active_sockets,
@@ -3884,6 +3908,7 @@ print(json.dumps(data))
     }
     let network_stats_available = parsed["network_stats_available"].as_bool() == Some(true)
         && (interfaces.is_empty() || networks.len() == interfaces.len());
+    let network_rates_available = parsed["network_rates_available"].as_bool() == Some(true) && network_stats_available && !networks.is_empty();
 
     let (total_rx_bytes, total_tx_bytes, total_rx_rate_bps, total_tx_rate_bps) = network_totals(&networks);
 
@@ -4047,6 +4072,7 @@ print(json.dumps(data))
         total_disk_rates_available,
         networks,
         network_stats_available,
+        network_rates_available,
         total_rx_rate_bps,
         total_tx_rate_bps,
         total_rx_bytes,
@@ -4359,11 +4385,13 @@ impl SystemSensorsCollector {
             apply_windows_volume_rates(&mut snap.disks, &data["logical_disks"]);
         }
         let elapsed = now.duration_since(self.prev_net_time).as_secs_f64().max(0.001);
+        let mut network_rates_available = !self.networks.is_empty();
         for (name, data) in &self.networks {
             let rx = data.total_received();
             let tx = data.total_transmitted();
-            let prev_rx = self.prev_net_rx.insert(name.clone(), rx).unwrap_or(rx);
-            let prev_tx = self.prev_net_tx.insert(name.clone(), tx).unwrap_or(tx);
+            let previous = self.prev_net_rx.insert(name.clone(), rx).zip(self.prev_net_tx.insert(name.clone(), tx));
+            network_rates_available &= network_rate_sample_available(previous, (rx, tx));
+            let (prev_rx, prev_tx) = previous.unwrap_or((rx, tx));
             let rx_rate = rx.saturating_sub(prev_rx) as f64 / elapsed;
             let tx_rate = tx.saturating_sub(prev_tx) as f64 / elapsed;
             snap.networks.push(NetInterfaceInfo {
@@ -4377,6 +4405,7 @@ impl SystemSensorsCollector {
         self.prev_net_tx.retain(|name, _| self.networks.iter().any(|(current, _)| current == name));
         (snap.total_rx_bytes, snap.total_tx_bytes, snap.total_rx_rate_bps, snap.total_tx_rate_bps) = network_totals(&snap.networks);
         snap.network_stats_available = !snap.networks.is_empty();
+        snap.network_rates_available = network_rates_available;
         self.prev_net_time = now;
         if include_top_apps {
             self.sys.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All,

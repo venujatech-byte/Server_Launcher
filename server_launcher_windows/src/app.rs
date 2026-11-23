@@ -5240,7 +5240,11 @@ fn disk_owns_mount(device: &str, partitions: &[crate::sensors::DiskPartitionInfo
 
 fn mounted_storage_totals(disks: &[crate::sensors::DiskInfo]) -> (u64, u64, u64) {
     let mut seen_devices = std::collections::HashSet::new();
-    disks.iter().filter(|disk| !disk.name.starts_with("/dev/") || seen_devices.insert(disk.name.as_str()))
+    disks.iter().filter(|disk| {
+        if disk.name.starts_with("/dev/") { seen_devices.insert(disk.name.clone()) }
+        else if disk.name.to_ascii_lowercase().starts_with(r"\\?\volume{") { seen_devices.insert(disk.name.to_ascii_lowercase()) }
+        else { true }
+    })
         .fold((0_u64, 0_u64, 0_u64), |(total, used, available), disk| (
             total.saturating_add(disk.total_bytes), used.saturating_add(disk.used_bytes),
             available.saturating_add(disk.available_bytes),
@@ -5268,6 +5272,16 @@ mod mounted_storage_tests {
         let other = DiskInfo { name: "/dev/sdb1".into(), total_bytes: 200, used_bytes: 50, available_bytes: 140, ..Default::default() };
         assert_eq!(super::mounted_storage_totals(&[disk.clone(), disk, other]), (300, 110, 170));
         assert_eq!(super::mounted_storage_totals(&[]), (0, 0, 0));
+    }
+
+    #[test]
+    fn counts_a_windows_volume_once_across_mount_paths() {
+        let volume = r"\\?\Volume{abc123}\";
+        let mounts = [
+            DiskInfo { name: volume.into(), mount_point: "C:".into(), total_bytes: 100, used_bytes: 60, available_bytes: 40, ..Default::default() },
+            DiskInfo { name: r"\\?\VOLUME{ABC123}\".into(), mount_point: "C:\\Data".into(), total_bytes: 100, used_bytes: 60, available_bytes: 40, ..Default::default() },
+        ];
+        assert_eq!(super::mounted_storage_totals(&mounts), (100, 60, 40));
     }
 }
 
@@ -13118,7 +13132,7 @@ impl LauncherApp {
                     let mut seen = std::collections::HashSet::new();
                     let mut synthesized = Vec::new();
                     for d in &snap.disks {
-                        let clean = d.name.trim_start_matches("/dev/").to_string();
+                        let clean = if cfg!(windows) { d.mount_point.clone() } else { d.name.trim_start_matches("/dev/").to_string() };
                         if seen.insert(clean.clone()) {
                             let is_ssd = None;
                             let model = if !d.fs_type.is_empty() {
@@ -13148,7 +13162,7 @@ impl LauncherApp {
                     let physical_disk = snap.physical_disks.iter()
                         .find(|disk| disk.name.trim_start_matches("/dev/") == d_name.trim_start_matches("/dev/"));
                     let partitions = physical_disk.map(|disk| disk.partitions.as_slice()).unwrap_or(&[]);
-                    let d_mount = snap.disks.iter().find(|disk| disk_owns_mount(d_name, partitions, &disk.name));
+                    let d_mount = snap.disks.iter().find(|disk| disk.mount_point == d_name || disk_owns_mount(d_name, partitions, &disk.name));
 
                     let d_read_str = rates_available.then(|| crate::sensors::format_rate(d_read_bps)).unwrap_or_else(|| "—".to_string());
                     let d_write_str = rates_available.then(|| crate::sensors::format_rate(d_write_bps)).unwrap_or_else(|| "—".to_string());

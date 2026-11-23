@@ -4388,10 +4388,11 @@ impl SystemSensorsCollector {
         snap.disks = self.disks.iter().map(|d| {
             let total = d.total_space();
             let available = d.available_space();
+            let mount_point = d.mount_point().display().to_string();
             DiskInfo {
-                // Windows volume labels can be empty or duplicated; mount paths identify the displayed volume.
-                name: d.mount_point().display().to_string(),
-                mount_point: d.mount_point().display().to_string(),
+                // A volume GUID deduplicates mount paths; retain the path for display and drive counters.
+                name: windows_volume_id(&mount_point).unwrap_or_else(|| mount_point.clone()),
+                mount_point,
                 fs_type: d.file_system().to_string_lossy().into_owned(),
                 total_bytes: total, available_bytes: available,
                 used_bytes: total.saturating_sub(available),
@@ -4466,6 +4467,31 @@ fn windows_hardware_query_due(last: Instant, now: Instant) -> bool {
     now.saturating_duration_since(last) >= Duration::from_secs(3)
 }
 
+#[cfg(windows)]
+fn windows_volume_id(mount_point: &str) -> Option<String> {
+    let mount_path = windows_volume_mount_path(mount_point)?;
+    let mount_path: Vec<u16> = mount_path.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut volume_name = [0u16; 261];
+    let succeeded = unsafe {
+        GetVolumeNameForVolumeMountPointW(mount_path.as_ptr(), volume_name.as_mut_ptr(), volume_name.len() as u32)
+    };
+    if succeeded == 0 { return None; }
+    let len = volume_name.iter().position(|unit| *unit == 0).unwrap_or(volume_name.len());
+    Some(String::from_utf16_lossy(&volume_name[..len]))
+}
+
+#[cfg(any(windows, test))]
+fn windows_volume_mount_path(mount_point: &str) -> Option<String> {
+    let path = mount_point.trim_end_matches(|ch| ch == '\\' || ch == '/');
+    (!path.is_empty()).then(|| format!("{path}\\"))
+}
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetVolumeNameForVolumeMountPointW(volume_mount_point: *const u16, volume_name: *mut u16, buffer_length: u32) -> i32;
+}
+
 #[cfg(test)]
 mod windows_hardware_query_schedule_tests {
     use std::time::{Duration, Instant};
@@ -4475,6 +4501,16 @@ mod windows_hardware_query_schedule_tests {
         let last = Instant::now();
         assert!(!super::windows_hardware_query_due(last, last + Duration::from_secs(2)));
         assert!(super::windows_hardware_query_due(last, last + Duration::from_secs(3)));
+    }
+}
+
+#[cfg(test)]
+mod windows_volume_mount_path_tests {
+    #[test]
+    fn adds_the_required_trailing_separator_to_volume_mount_paths() {
+        assert_eq!(super::windows_volume_mount_path("C:"), Some("C:\\".into()));
+        assert_eq!(super::windows_volume_mount_path("C:\\Data\\"), Some("C:\\Data\\".into()));
+        assert_eq!(super::windows_volume_mount_path(""), None);
     }
 }
 

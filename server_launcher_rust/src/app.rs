@@ -3879,6 +3879,67 @@ impl eframe::App for LauncherApp {
                     }),
             )
             .show(ctx, |ui| {
+                if self.active_sidebar_tab == SidebarTab::Servers {
+                    if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == self.selected_machine).cloned() {
+                        let p = self.ssh_servers_palette();
+                        let status = self.remote_connection_status.lock().unwrap().get(&host.id).cloned();
+                        let connecting = self.remote_connecting.lock().unwrap().contains(&host.id);
+                        let (label, color) = match (connecting, &status) {
+                            (true, _) => ("Connecting", p.warning),
+                            (_, Some(Ok(_))) => ("Online", p.success),
+                            (_, Some(Err(_))) => ("Error", p.danger),
+                            _ => ("Idle", p.text_muted),
+                        };
+                        let address = if host.host.contains(':') && !host.host.starts_with('[') {
+                            format!("[{}]", host.host)
+                        } else { host.host.clone() };
+                        let uri = format!("ssh://{}@{}:{}", host.user, address, host.port);
+                        let compact = ui.available_width() < 900.0;
+                        ui.horizontal_wrapped(|ui| {
+                            render_app_logo(ui, 30.0, p.bg_header);
+                            ui.allocate_ui_with_layout(egui::vec2(if compact { 300.0 } else { 310.0 }, 44.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.add_sized([200.0, 22.0], egui::Label::new(RichText::new(&host.name).size(18.0).strong()).truncate()).on_hover_text(&host.name);
+                                    ui.label(RichText::new(format!("● {label}")).color(color)).on_hover_text(match &status { Some(Ok(info)) | Some(Err(info)) => info.as_str(), None => label });
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.add_sized([245.0, 19.0], egui::Label::new(RichText::new(&uri).monospace().size(11.0).color(p.text_muted)).truncate()).on_hover_text(format!("{}\n{}", uri, host.remote_cwd));
+                                    let id = egui::Id::new(("ssh_uri_copied", &host.id));
+                                    let copied = ctx.data(|d| d.get_temp::<Instant>(id)).is_some_and(|t| t.elapsed() < Duration::from_millis(1500));
+                                    if ui.small_button(if copied { crate::lucide::CHECK } else { crate::lucide::COPY }).on_hover_text(if copied { "Copied" } else { "Copy SSH URI" }).clicked() {
+                                        ctx.copy_text(uri.clone());
+                                        ctx.data_mut(|d| d.insert_temp(id, Instant::now()));
+                                        ctx.request_repaint_after(Duration::from_millis(1500));
+                                    }
+                                });
+                            });
+                            if compact { ui.end_row(); }
+                            ui.horizontal(|ui| {
+                                ui.menu_button("Power ▾", |ui| {
+                                    if ui.button("Restart Device").clicked() {
+                                        self.remote_reboot_modal.open_for_host(&host);
+                                        ui.close_menu();
+                                    }
+                                    if ui.button("Shut Down").clicked() {
+                                        self.remote_shutdown_modal.open_for_host(&host);
+                                        ui.close_menu();
+                                    }
+                                });
+                                let scanning = self.remote_scanning.lock().unwrap().contains(&host.id);
+                                if ui.button(if scanning { "Scanning..." } else { "Scan Ports" }).clicked() { self.trigger_remote_scan(&host); }
+                                if ui.button(format!("{} Terminal", crate::lucide::EXTERNAL_LINK)).on_hover_text("Open external SSH terminal").clicked() { let _ = launch_external_ssh_terminal(&host); }
+                                if ui.button("Reconnect").clicked() {
+                                    self.test_remote_host(&host);
+                                    self.trigger_remote_scan(&host);
+                                }
+                                if ui.button("Edit").clicked() { self.ssh_host_modal.open_edit(&host); }
+                                if ui.button(crate::lucide::SETTINGS).on_hover_text("Settings & Preferences").clicked() { self.settings_modal_open = true; }
+                            });
+                        });
+                        return;
+                    }
+                }
+
                 ui.horizontal(|ui| {
                     let remote_host_opt = if self.selected_machine != "local" {
                         self.ssh_hosts.iter().find(|h| h.id == self.selected_machine).cloned()

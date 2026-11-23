@@ -399,9 +399,12 @@ pub fn query_wifi_status(selected: Option<&str>) -> WifiSnapshot {
         .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_WIFI_QUERY])
         .creation_flags(0x08000000)
         .output();
-    let Ok(output) = output.filter(|output| output.status.success()) else {
+    let Ok(output) = output else {
         return WifiSnapshot { state: "Wi-Fi telemetry unavailable".into(), last_updated: Instant::now(), ..Default::default() };
     };
+    if !output.status.success() {
+        return WifiSnapshot { state: "Wi-Fi telemetry unavailable".into(), last_updated: Instant::now(), ..Default::default() };
+    }
     let Ok(data) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
         return WifiSnapshot { state: "Wi-Fi telemetry unavailable".into(), last_updated: Instant::now(), ..Default::default() };
     };

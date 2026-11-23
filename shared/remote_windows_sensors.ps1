@@ -13,6 +13,7 @@ try {
     $collectNetworkRates = __COLLECT_NETWORK_RATES__
     $collectCpuCores = __COLLECT_CPU_CORES__
     $collectDiskRates = __COLLECT_DISK_RATES__
+    $collectThermals = __COLLECT_THERMALS__
     $cpu = @(Get-CimInstance Win32_Processor -ErrorAction Stop)
     $cores = [int](($cpu | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum)
     if ($cores -lt 1) { throw 'No logical CPU count was reported' }
@@ -116,6 +117,35 @@ try {
             }
         }
     })
+
+    $temps = @()
+    if ($collectThermals) {
+        $hardwareNames = @{}
+        $hardwareTypes = @{}
+        try {
+            foreach ($device in @(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Hardware -ErrorAction Stop)) {
+                if ($device.Identifier -and $device.Name) { $hardwareNames[[string]$device.Identifier] = [string]$device.Name }
+                if ($device.Identifier -and $device.HardwareType) { $hardwareTypes[[string]$device.Identifier] = [string]$device.HardwareType }
+            }
+        } catch { }
+        try {
+            $temps = @(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor -ErrorAction Stop |
+                Where-Object { $_.SensorType -eq 'Temperature' } |
+                ForEach-Object {
+                    $value = $_.Value
+                    if ($null -ne $value -and $value -gt -50 -and $value -lt 200) {
+                        $parent = [string]$_.Parent
+                        [pscustomobject]@{
+                            chip = if ($hardwareNames.ContainsKey($parent) -and $hardwareTypes.ContainsKey($parent)) { "$($hardwareNames[$parent]) ($($hardwareTypes[$parent]))" } elseif ($hardwareNames.ContainsKey($parent)) { $hardwareNames[$parent] } else { $parent }
+                            label = [string]$_.Name
+                            temp = [double]$value
+                            crit = $null
+                            max = $null
+                        }
+                    }
+                })
+        } catch { $temps = @() }
+    }
 
     $wlanText = $null
     if ($collectNetworkDetails) { try { $wlanText = (netsh wlan show interfaces 2>$null | Out-String) } catch { } }
@@ -313,7 +343,7 @@ try {
         disks = $disks
         total_disk_read_rate = $totalDiskReadRate
         total_disk_write_rate = $totalDiskWriteRate
-        temps = @()
+        temps = $temps
         gpus = $gpus
         gpu_engines = $gpuEngines
         memory_modules = $memoryModules

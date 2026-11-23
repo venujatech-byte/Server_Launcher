@@ -1145,12 +1145,13 @@ impl LauncherApp {
         let include_network_rates = matches!(self.sensors_subtab, SensorsSubTab::Overview | SensorsSubTab::Wifi | SensorsSubTab::DataUsage);
         let include_cpu_cores = self.sensors_subtab == SensorsSubTab::Cpu;
         let include_disk_rates = matches!(self.sensors_subtab, SensorsSubTab::Overview | SensorsSubTab::Storage);
+        let include_thermals = !matches!(self.sensors_subtab, SensorsSubTab::TopApps | SensorsSubTab::Wifi | SensorsSubTab::DataUsage | SensorsSubTab::Bluetooth);
         let in_flight_arc = self.remote_sensors_in_flight.clone();
         let last_fetch_arc = self.remote_sensors_last_fetch.clone();
         let errors_arc = self.remote_sensors_errors.clone();
 
         std::thread::spawn(move || {
-            match crate::sensors::query_remote_sensors(&host, include_processes, include_process_network, include_network_details, include_gpu_engines, include_ram_modules, include_network_rates, include_cpu_cores, include_disk_rates) {
+            match crate::sensors::query_remote_sensors(&host, include_processes, include_process_network, include_network_details, include_gpu_engines, include_ram_modules, include_network_rates, include_cpu_cores, include_disk_rates, include_thermals) {
                 Ok(snap) => {
                     snapshots_arc.lock().unwrap().insert(hid.clone(), Arc::new(snap));
                     last_fetch_arc.lock().unwrap().insert(hid.clone(), Instant::now());
@@ -16774,7 +16775,7 @@ impl LauncherApp {
                     results.lock().unwrap().push_back(message);
                     ctx.request_repaint();
                     std::thread::sleep(std::time::Duration::from_millis(400));
-                    if let Ok(snap) = crate::sensors::query_remote_sensors(&host, true, true, false, false, false, false, false, false) {
+                    if let Ok(snap) = crate::sensors::query_remote_sensors(&host, true, true, false, false, false, false, false, false, false) {
                         snapshots_arc.lock().unwrap().insert(hid_clone.clone(), Arc::new(snap));
                         last_fetch_arc.lock().unwrap().insert(hid_clone.clone(), Instant::now());
                         errors_arc.lock().unwrap().remove(&hid_clone);

@@ -4512,7 +4512,7 @@ print(json.dumps(data))
         ram_temp,
         memory_hw: parse_remote_windows_memory_modules(&parsed["memory_modules"]),
         gpus,
-        displays: Vec::new(),
+        displays: parse_windows_displays(&parsed["gpus"]),
         power,
         disks,
         physical_disks,
@@ -4988,7 +4988,7 @@ fn collect_windows_hardware(inventory: bool) -> Result<serde_json::Value, String
     let script = r#"$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new();
 $result=@{gpu=@();ram=@();battery=@();temp=@();gpu_engines=@()};
 if (__INVENTORY__) {
-  try { $result.gpu=@(Get-CimInstance Win32_VideoController -ErrorAction Stop | Select-Object Name,DriverVersion) } catch { $result.gpu_error="GPU inventory query failed: $($_.Exception.Message)" }
+  try { $result.gpu=@(Get-CimInstance Win32_VideoController -ErrorAction Stop | Select-Object Name,DriverVersion,CurrentHorizontalResolution,CurrentVerticalResolution,CurrentRefreshRate) } catch { $result.gpu_error="GPU inventory query failed: $($_.Exception.Message)" }
   try { $result.ram=@(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop | Select-Object Manufacturer,Capacity,ConfiguredClockSpeed,SMBIOSMemoryType,FormFactor,DeviceLocator) } catch { $result.ram_error="RAM inventory query failed: $($_.Exception.Message)" }
   try { $result.physical_disks=@(Get-CimInstance Win32_DiskDrive -ErrorAction Stop | Select-Object DeviceID,Model,InterfaceType,Size,Partitions) } catch { $result.disk_inventory_error="Disk inventory query failed: $($_.Exception.Message)" }
   try { $result.network_adapters=@(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Select-Object Name,ifType) } catch { $result.network_adapters=$null }
@@ -5199,7 +5199,10 @@ fn apply_windows_volume_rates(disks: &mut [DiskInfo], samples: &serde_json::Valu
 #[cfg(any(windows, test))]
 fn update_windows_inventory(cached: &mut SystemSensorsSnapshot, data: &serde_json::Value) {
     let inventory = parse_windows_hardware(data);
-    if data["gpu_error"].is_null() { cached.gpus = inventory.gpus; }
+    if data["gpu_error"].is_null() {
+        cached.gpus = inventory.gpus;
+        cached.displays = inventory.displays;
+    }
     if data["ram_error"].is_null() { cached.memory_hw = inventory.memory_hw; }
     if data["disk_inventory_error"].is_null() { cached.physical_disks = inventory.physical_disks; }
 }
@@ -5315,6 +5318,7 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
         snap.total_disk_rates_available = true;
     }
     if let Some(gpus) = data["gpu"].as_array() {
+        snap.displays = parse_windows_displays(&data["gpu"]);
         snap.gpus = gpus.iter().filter_map(|g| {
             let name = g["Name"].as_str().map(str::trim).filter(|name| !name.is_empty())?;
             Some(GpuSensorInfo { device_path: String::new(), engine_loads: Vec::new(),
@@ -5399,6 +5403,47 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
         });
     }
     snap
+}
+
+fn parse_windows_display(controller: &serde_json::Value) -> Option<DisplayInfo> {
+    let dimension = |key: &str| controller[key].as_u64().and_then(|value| u32::try_from(value).ok()).filter(|value| *value > 0);
+    let (width, height) = (dimension("CurrentHorizontalResolution")?, dimension("CurrentVerticalResolution")?);
+    let refresh_hz = dimension("CurrentRefreshRate").map_or(0.0, |value| value as f32);
+    Some(DisplayInfo {
+        name: controller["Name"].as_str().unwrap_or("Display").to_string(),
+        is_connected: true,
+        is_enabled: true,
+        resolution: format!("{width} × {height}"),
+        width,
+        height,
+        refresh_hz,
+        bit_depth: "Not reported".into(),
+        color_space: "Not reported".into(),
+        connector_type: "Not reported".into(),
+        scaling: "Not reported".into(),
+        vrr_support: "Not reported".into(),
+        ..Default::default()
+    })
+}
+
+fn parse_windows_displays(controllers: &serde_json::Value) -> Vec<DisplayInfo> {
+    controllers.as_array().map(|items| items.iter().filter_map(parse_windows_display).collect()).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod windows_display_tests {
+    #[test]
+    fn only_reports_display_modes_returned_by_windows() {
+        let display = super::parse_windows_display(&serde_json::json!({
+            "Name": "Adapter", "CurrentHorizontalResolution": 1920,
+            "CurrentVerticalResolution": 1080, "CurrentRefreshRate": 144
+        })).unwrap();
+        assert_eq!(display.resolution, "1920 × 1080");
+        assert_eq!(display.refresh_hz, 144.0);
+        assert_eq!(display.bit_depth, "Not reported");
+        assert_eq!(display.connector_type, "Not reported");
+        assert!(super::parse_windows_display(&serde_json::json!({"Name":"Adapter"})).is_none());
+    }
 }
 
 #[cfg(any(windows, test))]

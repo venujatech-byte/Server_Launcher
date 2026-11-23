@@ -312,6 +312,9 @@ public static class ServerLauncherWlan {
                 device_path = [string]$_.PNPDeviceID
                 name = [string]$_.Name
                 driver = [string]$_.DriverVersion
+                CurrentHorizontalResolution = $_.CurrentHorizontalResolution
+                CurrentVerticalResolution = $_.CurrentVerticalResolution
+                CurrentRefreshRate = $_.CurrentRefreshRate
                 load = $null
                 temp = $null
                 mem_used = $null

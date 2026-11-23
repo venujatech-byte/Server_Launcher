@@ -2735,6 +2735,31 @@ fn apply_windows_gpu_engine_counters(gpus: &mut [GpuSensorInfo], counters: &serd
     gpu.engine_loads = peaks.into_iter().map(|(kind, load)| (format!("{kind} busiest engine"), load)).collect();
 }
 
+fn parse_windows_display(controller: &serde_json::Value) -> Option<DisplayInfo> {
+    let dimension = |key: &str| controller[key].as_u64().and_then(|value| u32::try_from(value).ok()).filter(|value| *value > 0);
+    let (width, height) = (dimension("CurrentHorizontalResolution")?, dimension("CurrentVerticalResolution")?);
+    let refresh_hz = dimension("CurrentRefreshRate").map_or(0.0, |value| value as f32);
+    Some(DisplayInfo {
+        name: controller["Name"].as_str().unwrap_or("Display").to_string(),
+        is_connected: true,
+        is_enabled: true,
+        resolution: format!("{width} × {height}"),
+        width,
+        height,
+        refresh_hz,
+        bit_depth: "Not reported".into(),
+        color_space: "Not reported".into(),
+        connector_type: "Not reported".into(),
+        scaling: "Not reported".into(),
+        vrr_support: "Not reported".into(),
+        ..Default::default()
+    })
+}
+
+fn parse_windows_displays(controllers: &serde_json::Value) -> Vec<DisplayInfo> {
+    controllers.as_array().map(|items| items.iter().filter_map(parse_windows_display).collect()).unwrap_or_default()
+}
+
 fn parse_remote_windows_memory_modules(modules: &serde_json::Value) -> Option<MemoryHardwareInfo> {
     let modules = modules.as_array().filter(|modules| !modules.is_empty())?;
     let memory_type = |code| match code {
@@ -4400,7 +4425,7 @@ print(json.dumps(data))
         ram_temp,
         memory_hw: parse_remote_windows_memory_modules(&parsed["memory_modules"]),
         gpus,
-        displays: Vec::new(),
+        displays: parse_windows_displays(&parsed["gpus"]),
         power,
         disks,
         physical_disks,

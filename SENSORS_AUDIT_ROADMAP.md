@@ -98,6 +98,7 @@ The findings and proposed sequence above describe the original audit; later impl
 
 - Linux CPU package power now falls back to measured RAPL energy deltas when labeled `hwmon` power is absent. Local, unlocked and SSH collectors discover package-named powercap zones (including AMD) instead of assuming Intel paths, sum all sockets, and reject incomplete counter sets. Regression fixtures compile in both crates; unreadable counters remain unavailable and the privileged unlock path is still required on restricted hosts.
 - Local Linux battery telemetry now rejects non-finite and unrepresentable micro-unit readings, non-positive voltage, negative energy/capacity and overflowing derived values before the Power page sees them. Battery health ratios and multi-battery power totals stay unavailable when their arithmetic is invalid; parser edge cases compile as regression fixtures in both apps.
+- Linux DRM GPU frequency and hwmon power inputs are now finite/range checked before becoming telemetry; hwmon micro-watts use the same checked conversion path as Linux power-supply values.
 
 Initial implementation after approval:
 

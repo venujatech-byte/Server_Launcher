@@ -2014,6 +2014,7 @@ mod linux_power_supply_value_tests {
         assert_eq!(super::linux_micro_value("inf"), None);
         assert_eq!(super::linux_micro_value("1e100"), None);
         assert_eq!(super::linux_micro_value("unknown"), None);
+        assert_eq!(super::linux_micro_value("3250000"), Some(3.25));
         assert_eq!(super::linux_charge_to_wh("2500000", 12.0), Some(30.0));
         assert_eq!(super::linux_charge_to_wh("-1", 12.0), None);
         assert_eq!(super::linux_charge_to_wh("1e100", 12.0), None);
@@ -2416,7 +2417,8 @@ fn detect_gpus() -> Vec<GpuSensorInfo> {
                         .or_else(|_| fs::read_to_string(dev.join("gt_act_freq_mhz")))
                         .or_else(|_| fs::read_to_string(dev.join("gt_cur_freq_mhz")))
                         .ok()
-                        .and_then(|s| s.trim().parse::<f32>().ok());
+                        .and_then(|s| s.trim().parse::<f32>().ok())
+                        .filter(|mhz| mhz.is_finite() && *mhz > 0.0 && *mhz <= u32::MAX as f32);
 
                     // Clock frequency is not a utilization counter.
                     let load_pct = fs::read_to_string(dev.join("gpu_busy_percent"))
@@ -2457,9 +2459,7 @@ fn detect_gpus() -> Vec<GpuSensorInfo> {
                                     if let Ok(s) = fs::read_to_string(hp.join("power1_average"))
                                         .or_else(|_| fs::read_to_string(hp.join("power1_input")))
                                     {
-                                        if let Ok(uw) = s.trim().parse::<f32>() {
-                                            power_watts = Some(uw / 1_000_000.0);
-                                        }
+                                        power_watts = linux_micro_value(&s).filter(|watts| *watts >= 0.0);
                                     }
                                 }
                                 if core_clock.is_none() {

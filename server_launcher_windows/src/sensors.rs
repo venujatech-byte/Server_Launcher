@@ -2004,6 +2004,7 @@ mod linux_power_supply_value_tests {
     }
 }
 
+#[cfg(not(windows))]
 pub fn collect_power_supply() -> PowerSupplyInfo {
     #[cfg(target_os = "linux")]
     let ac_online;

@@ -11105,7 +11105,13 @@ impl LauncherApp {
         ui.vertical(|ui| {
             #[cfg(windows)]
             if host_id.is_none() {
-                ui.label("Windows hardware readings refresh every 3 seconds; inventory refreshes every 30 seconds. Device disk throughput, SMART, socket counts and per-process network counters are unavailable; their zero fields do not indicate measured inactivity.");
+                let sample_age = snap.windows_hardware_sampled_at
+                    .map(|sampled_at| format!("{}s ago", sampled_at.elapsed().as_secs()))
+                    .unwrap_or_else(|| "awaiting first sample".into());
+                ui.label(RichText::new(format!("Hardware sampled {sample_age} · query every 3s · inventory refresh 30s"))
+                    .size(10.5).color(p.text_secondary));
+                ui.label(RichText::new("Device disk throughput, SMART, socket counts and per-process network counters are unavailable; their zero fields do not indicate measured inactivity.")
+                    .size(10.5).color(p.text_muted));
             }
 
             #[cfg(windows)]

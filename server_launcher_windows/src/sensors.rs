@@ -336,6 +336,8 @@ pub struct SystemSensorsSnapshot {
     pub hardware_access_error: Option<String>,
     #[cfg(windows)]
     pub windows_telemetry_error: Option<String>,
+    #[cfg(windows)]
+    pub windows_hardware_sampled_at: Option<Instant>,
     pub timestamp: Option<Instant>,
 }
 
@@ -994,6 +996,8 @@ impl SystemSensorsCollector {
             hardware_access_error: None,
             #[cfg(windows)]
             windows_telemetry_error: None,
+            #[cfg(windows)]
+            windows_hardware_sampled_at: None,
             timestamp: Some(now),
         }
     }
@@ -4105,6 +4109,8 @@ print(json.dumps(data))
             hardware_access_error: None,
             #[cfg(windows)]
             windows_telemetry_error: None,
+        #[cfg(windows)]
+        windows_hardware_sampled_at: None,
             timestamp: Some(Instant::now()),
     })
 }
@@ -4324,7 +4330,11 @@ impl SystemSensorsCollector {
             || windows_hardware_query_due(self.last_windows_hardware_query, now);
         if hardware_query_due {
             let sample = collect_windows_hardware(inventory_due);
-            self.last_windows_hardware_query = now;
+            let sampled_at = Instant::now();
+            self.last_windows_hardware_query = sampled_at;
+            if sample.is_ok() {
+                self.windows_hardware.windows_hardware_sampled_at = Some(sampled_at);
+            }
             if inventory_due {
                 match &sample {
                     Ok(data) => {
@@ -4332,7 +4342,7 @@ impl SystemSensorsCollector {
                         self.windows_network_adapters = data["network_adapters"].clone();
                         let errors: Vec<&str> = ["gpu_error", "ram_error", "disk_inventory_error"].iter().filter_map(|key| data[*key].as_str()).collect();
                         self.windows_hardware.windows_telemetry_error = (!errors.is_empty()).then(|| errors.join(" • "));
-                        self.last_hardware_scan = now;
+                        self.last_hardware_scan = sampled_at;
                     }
                     Err(_) => {
                         self.windows_network_adapters = serde_json::Value::Null;

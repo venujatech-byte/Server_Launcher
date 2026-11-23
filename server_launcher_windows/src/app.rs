@@ -3760,19 +3760,20 @@ impl eframe::App for LauncherApp {
                             format!("[{}]", host.host)
                         } else { host.host.clone() };
                         let uri = format!("ssh://{}@{}:{}", host.user, address, host.port);
-                        let compact = ui.available_width() < 900.0;
+                        let compact = ui.available_width() < 680.0;
                         ui.horizontal_wrapped(|ui| {
                             render_app_logo(ui, 30.0, p.bg_header);
-                            ui.allocate_ui_with_layout(egui::vec2(if compact { 300.0 } else { 310.0 }, 38.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.allocate_ui_with_layout(egui::vec2(if compact { 300.0 } else { 310.0 }, 34.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                                ui.spacing_mut().item_spacing.y = 1.0;
                                 ui.horizontal(|ui| {
-                                    ui.add_sized([200.0, 22.0], egui::Label::new(RichText::new(&host.name).size(17.5).strong()).truncate()).on_hover_text(&host.name);
+                                    ui.add_sized([200.0, 19.0], egui::Label::new(RichText::new(&host.name).size(17.5).strong()).truncate()).on_hover_text(&host.name);
                                     ui.label(RichText::new(format!("● {label}")).size(10.5).color(color)).on_hover_text(match &status { Some(Ok(info)) | Some(Err(info)) => info.as_str(), None => label });
                                 });
                                 ui.horizontal(|ui| {
-                                    ui.add_sized([245.0, 19.0], egui::Label::new(RichText::new(&uri).monospace().size(11.0).color(p.text_muted)).truncate()).on_hover_text(format!("{}\n{}", uri, host.remote_cwd));
+                                    ui.add_sized([245.0, 14.0], egui::Label::new(RichText::new(&uri).monospace().size(11.0).color(p.text_muted)).truncate()).on_hover_text(format!("{}\n{}", uri, host.remote_cwd));
                                     let id = egui::Id::new(("ssh_uri_copied", &host.id));
                                     let copied = ctx.data(|d| d.get_temp::<Instant>(id)).is_some_and(|t| t.elapsed() < Duration::from_millis(1500));
-                                    if ui.small_button(if copied { crate::lucide::CHECK } else { crate::lucide::COPY }).on_hover_text(if copied { "Copied" } else { "Copy SSH URI" }).clicked() {
+                                    if ui.small_button(RichText::new(if copied { crate::lucide::CHECK } else { crate::lucide::COPY }).size(10.5)).on_hover_text(if copied { "Copied" } else { "Copy SSH URI" }).clicked() {
                                         ctx.copy_text(uri.clone());
                                         ctx.data_mut(|d| d.insert_temp(id, Instant::now()));
                                         ctx.request_repaint_after(Duration::from_millis(1500));
@@ -3780,7 +3781,11 @@ impl eframe::App for LauncherApp {
                                 });
                             });
                             if compact { ui.end_row(); }
-                            ui.horizontal(|ui| {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                              ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                ui.spacing_mut().button_padding = egui::vec2(6.0, 2.0);
+                                ui.spacing_mut().interact_size.y = 22.0;
                                 ui.menu_button(RichText::new("Power ▾").size(10.5), |ui| {
                                     if ui.button(RichText::new("Restart Device").size(10.5)).clicked() {
                                         self.remote_reboot_modal.open_for_host(&host);
@@ -3800,6 +3805,7 @@ impl eframe::App for LauncherApp {
                                 }
                                 if ui.button(RichText::new("Edit").size(10.5)).clicked() { self.ssh_host_modal.open_edit(&host); }
                                 if ui.button(RichText::new(crate::lucide::SETTINGS).size(10.5)).on_hover_text("Settings & Preferences").clicked() { self.settings_modal_open = true; }
+                              });
                             });
                         });
                         return;

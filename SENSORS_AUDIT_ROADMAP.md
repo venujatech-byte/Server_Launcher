@@ -219,6 +219,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
   - Overview and Storage request aggregate physical-disk throughput and map drive-letter logical-disk rates by exact volume ID. Per-drive physical-device mapping, process network/disk attribution and remote Windows thermal readings remain unavailable.
   - macOS remote sensors remain unsupported.
 - **Windows local Wi-Fi:** The Windows sensors page now queries `Get-NetAdapter`, IP configuration and adapter counters, with `netsh` for association details; scans use the WLAN API and DNS flush uses the Windows resolver command. Missing SSID/signal details stay unavailable if localized `netsh` output cannot be parsed, and channel labels no longer show a false `0 MHz`.
+- **Remote Windows Wi-Fi:** The remote collector reads `netsh wlan show interfaces` only when network details are requested and matches association fields to the exact wireless adapter. English `netsh` labels may not parse on localized Windows; those fields remain unavailable rather than guessed.
 
 ### Remaining work and validation
 

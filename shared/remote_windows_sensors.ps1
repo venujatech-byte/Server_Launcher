@@ -117,6 +117,8 @@ try {
         }
     })
 
+    $wlanText = $null
+    if ($collectNetworkDetails) { try { $wlanText = (netsh wlan show interfaces 2>$null | Out-String) } catch { } }
     $adapters = @()
     $stats = @()
     try { $adapters = @(Get-NetAdapter -ErrorAction Stop) } catch { }
@@ -318,6 +320,7 @@ try {
         networks = $networks
         network_stats_available = $networkStatsAvailable
         network_rates_available = $networkRatesAvailable
+        wlan_text = $wlanText
         total_rx_rate = if ($networkRatesAvailable) { [double](($networks | Measure-Object -Property rx_rate -Sum).Sum) } else { $null }
         total_tx_rate = if ($networkRatesAvailable) { [double](($networks | Measure-Object -Property tx_rate -Sum).Sum) } else { $null }
         active_sockets = $null

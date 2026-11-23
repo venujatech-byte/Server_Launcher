@@ -153,6 +153,13 @@ pub struct NetInterfaceInfo {
     pub mtu: Option<u32>,
     pub ipv4: Option<String>,
     pub ipv6: Option<String>,
+    pub wifi_state: Option<String>,
+    pub wifi_ssid: Option<String>,
+    pub wifi_bssid: Option<String>,
+    pub wifi_signal_pct: Option<u8>,
+    pub wifi_channel: Option<u32>,
+    pub wifi_rate: Option<String>,
+    pub wifi_security: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -2770,6 +2777,33 @@ fn parse_remote_windows_memory_modules(modules: &serde_json::Value) -> Option<Me
     })
 }
 
+// shortcut: netsh field labels are English-only, upgrade to localized parsing if Windows locale coverage is required.
+fn apply_remote_windows_wlan(interface: &mut NetInterfaceInfo, text: Option<&str>) {
+    let Some(text) = text.filter(|text| !text.trim().is_empty()) else { return; };
+    let mut sections = Vec::<std::collections::HashMap<String, String>>::new();
+    let mut fields = std::collections::HashMap::new();
+    for line in text.lines().chain(std::iter::once("")) {
+        if line.trim().is_empty() {
+            if !fields.is_empty() { sections.push(std::mem::take(&mut fields)); }
+        } else if let Some((key, value)) = line.split_once(':') {
+            fields.insert(key.trim().to_ascii_lowercase(), value.trim().to_string());
+        }
+    }
+    let Some(fields) = sections.into_iter().find(|fields| {
+        fields.get("name").is_some_and(|name| name.eq_ignore_ascii_case(&interface.name))
+    }) else { return; };
+    let get = |key: &str| fields.get(key).map(String::as_str);
+    interface.wifi_state = get("state").filter(|state| matches!(state.to_ascii_lowercase().as_str(), "connected" | "disconnected")).map(str::to_ascii_uppercase);
+    interface.wifi_ssid = get("ssid").filter(|value| !value.is_empty()).map(str::to_owned);
+    interface.wifi_bssid = get("bssid").map(|value| value.replace('-', ":").to_ascii_lowercase()).filter(|value| parse_network_mac(&serde_json::json!(value)).is_some());
+    interface.wifi_signal_pct = get("signal").and_then(|value| value.trim_end_matches('%').parse::<u8>().ok()).filter(|value| *value <= 100);
+    interface.wifi_channel = get("channel").and_then(|value| value.parse::<u32>().ok()).filter(|value| *value > 0);
+    let receive = get("receive rate (mbps)");
+    let transmit = get("transmit rate (mbps)");
+    interface.wifi_rate = (receive.is_some() || transmit.is_some()).then(|| format!("RX {} / TX {} Mbps", receive.unwrap_or("—"), transmit.unwrap_or("—")));
+    interface.wifi_security = get("authentication").filter(|value| !value.is_empty()).map(str::to_owned);
+}
+
 fn parse_remote_network_rows(parsed: &serde_json::Value) -> Result<(Vec<NetInterfaceInfo>, bool, bool), String> {
     let interfaces = parsed["networks"].as_array().ok_or_else(|| "Remote sensor data has no network interface list".to_string())?;
     let mut networks = Vec::new();
@@ -2781,7 +2815,7 @@ fn parse_remote_network_rows(parsed: &serde_json::Value) -> Result<(Vec<NetInter
         let rx_rate = rate("rx_rate");
         let tx_rate = rate("tx_rate");
         rates_available &= rx_rate.is_some() && tx_rate.is_some();
-        networks.push(NetInterfaceInfo {
+        let mut network = NetInterfaceInfo {
             name: name.to_string(), rx_bytes: rx, tx_bytes: tx,
             rx_rate_bps: rx_rate.unwrap_or(0.0), tx_rate_bps: tx_rate.unwrap_or(0.0),
             is_wireless: row["is_wireless"].as_bool(),
@@ -2790,7 +2824,10 @@ fn parse_remote_network_rows(parsed: &serde_json::Value) -> Result<(Vec<NetInter
             mtu: row["mtu"].as_u64().and_then(|value| u32::try_from(value).ok()).filter(|value| *value > 0),
             ipv4: parse_network_address(&row["ipv4"], true),
             ipv6: parse_network_address(&row["ipv6"], false),
-        });
+            ..Default::default()
+        };
+        if network.is_wireless == Some(true) { apply_remote_windows_wlan(&mut network, parsed["wlan_text"].as_str()); }
+        networks.push(network);
     }
     let complete = parsed["network_stats_available"].as_bool() == Some(true)
         && (interfaces.is_empty() || networks.len() == interfaces.len());
@@ -2838,6 +2875,8 @@ mod remote_sensor_command_tests {
         assert!(script.contains("$cpuCoreUsages[$row.index] = $row.usage"));
         assert!(script.contains("$rxRate = $null"));
         assert!(script.contains("[int]$adapter.ifType -eq 71"));
+        assert!(script.contains("netsh wlan show interfaces"));
+        assert!(script.contains("wlan_text = $wlanText"));
         assert!(script.contains("Get-NetIPInterface -InterfaceIndex $adapter.ifIndex"));
         assert!(script.contains("mtu = $mtu"));
         assert!(!command.contains("Get-CimInstance"));
@@ -2879,6 +2918,20 @@ mod remote_sensor_command_tests {
         assert_eq!(rows[0].cpu_usage, 7.5);
         assert_eq!(rows[0].memory_bytes, 2048);
         assert!(!rows[0].disk_rate_available && !rows[0].net_rate_available);
+    }
+
+    #[test]
+    fn remote_windows_wifi_details_are_matched_to_the_adapter_name() {
+        let mut wifi = super::NetInterfaceInfo { name: "Wi-Fi".into(), is_wireless: Some(true), ..Default::default() };
+        let text = "Name                   : Ethernet\nState                  : disconnected\n\nName                   : Wi-Fi\nState                  : connected\nSSID                   : Home\nBSSID                  : 00-11-22-33-44-55\nAuthentication         : WPA2-Personal\nChannel                : 36\nReceive rate (Mbps)    : 433.3\nTransmit rate (Mbps)   : 866.7\nSignal                 : 84%\n";
+        super::apply_remote_windows_wlan(&mut wifi, Some(text));
+        assert_eq!(wifi.wifi_state.as_deref(), Some("CONNECTED"));
+        assert_eq!(wifi.wifi_ssid.as_deref(), Some("Home"));
+        assert_eq!(wifi.wifi_bssid.as_deref(), Some("00:11:22:33:44:55"));
+        assert_eq!(wifi.wifi_signal_pct, Some(84));
+        assert_eq!(wifi.wifi_channel, Some(36));
+        assert_eq!(wifi.wifi_rate.as_deref(), Some("RX 433.3 / TX 866.7 Mbps"));
+        assert_eq!(wifi.wifi_security.as_deref(), Some("WPA2-Personal"));
     }
 
     #[test]

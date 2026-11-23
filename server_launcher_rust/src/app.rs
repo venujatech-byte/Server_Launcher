@@ -13900,8 +13900,10 @@ impl LauncherApp {
         };
         let iface_name = primary_net.map(|n| n.name.as_str()).unwrap_or("Unavailable");
         let is_wireless = if is_remote { primary_net.and_then(|n| n.is_wireless) } else { (!wifi_snap.interface.is_empty()).then_some(true) };
-        let is_connected = !is_remote && wifi_snap.is_connected;
-        let remote_state = primary_net.and_then(|interface| interface.link_state.as_deref()).unwrap_or("Unavailable");
+        let remote_wifi_state = primary_net.and_then(|interface| interface.wifi_state.as_deref());
+        let remote_state = remote_wifi_state.or_else(|| primary_net.and_then(|interface| interface.link_state.as_deref())).unwrap_or("Unavailable");
+        let signal_pct = if is_remote { primary_net.and_then(|interface| interface.wifi_signal_pct) } else { wifi_snap.signal_pct };
+        let is_connected = if is_remote { remote_wifi_state.map_or_else(|| remote_state.eq_ignore_ascii_case("up"), |state| state.eq_ignore_ascii_case("connected")) } else { wifi_snap.is_connected };
 
         ScrollArea::vertical()
             .id_salt("sensors_wifi_scroll_v2")
@@ -13942,7 +13944,12 @@ impl LauncherApp {
                                 _ => "Wireless Network & Wi-Fi",
                             };
                             let (status_text, dot_col) = if is_remote {
-                                if primary_net.is_some() { ("INTERFACE FOUND", accent) } else { ("UNAVAILABLE", p.text_muted) }
+                                match remote_wifi_state {
+                                    Some(state) if state.eq_ignore_ascii_case("connected") => ("CONNECTED", accent),
+                                    Some(state) if state.eq_ignore_ascii_case("disconnected") => ("DISCONNECTED", p.text_muted),
+                                    _ if primary_net.is_some() => ("INTERFACE FOUND", accent),
+                                    _ => ("UNAVAILABLE", p.text_muted),
+                                }
                             } else if wifi_snap.interface.is_empty() {
                                 ("UNAVAILABLE", p.text_muted)
                             } else if is_connected {
@@ -14258,19 +14265,18 @@ impl LauncherApp {
                                 ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     ui.vertical(|ui| {
-                                        let r_title = if is_remote { "TOPOLOGY" } else { "ACCESS POINT" };
-                                        let r_sub = if is_remote { "Host NIC" } else { "Connected AP" };
+                                        let remote_wifi = is_remote && is_wireless == Some(true);
+                                        let r_title = if is_remote && !remote_wifi { "TOPOLOGY" } else { "ACCESS POINT" };
+                                        let r_sub = if is_remote && !remote_wifi { "Host NIC" } else { "Connected AP" };
                                         ui.label(RichText::new(r_title).size(12.5).strong().color(p.text_primary));
                                         ui.label(RichText::new(r_sub).size(9.0).monospace().color(p.text_muted));
                                     });
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        let qual_str = if is_remote {
-                                            if primary_net.is_some() { "INTERFACE FOUND" } else { "UNAVAILABLE" }.to_string()
-                                        } else if let Some(signal) = wifi_snap.signal_pct {
+                                        let qual_str = if let Some(signal) = signal_pct {
                                             let quality = if signal >= 80 { "EXC" } else if signal >= 50 { "GOOD" } else { "FAIR" };
                                             format!("{quality} ({signal}%)")
-                                        } else { "SIGNAL UNAVAILABLE".to_string() };
+                                        } else if is_remote && primary_net.is_some() { "INTERFACE FOUND".to_string() } else { "SIGNAL UNAVAILABLE".to_string() };
                                         Frame::none()
                                             .fill(accent_with_alpha(accent, 16))
                                             .rounding(Rounding::same(4.0))
@@ -14293,9 +14299,13 @@ impl LauncherApp {
                                             ui.label(RichText::new(icon).size(20.0).color(accent));
                                             ui.add_space(6.0);
                                             ui.vertical(|ui| {
-                                                let main_lbl = if is_remote { format!("Interface {}", iface_name) } else if wifi_snap.ssid.is_empty() { "Access point unavailable".to_string() } else { wifi_snap.ssid.clone() };
+                                                let main_lbl = if is_remote { primary_net.and_then(|interface| interface.wifi_ssid.clone()).unwrap_or_else(|| format!("Interface {}", iface_name)) } else if wifi_snap.ssid.is_empty() { "Access point unavailable".to_string() } else { wifi_snap.ssid.clone() };
                                                 ui.label(RichText::new(main_lbl).size(13.0).strong().color(p.text_primary));
-                                                let band_str = if is_remote {
+                                                let band_str = if is_remote && is_wireless == Some(true) {
+                                                    let channel = primary_net.and_then(|interface| interface.wifi_channel).map(|channel| wifi_channel_label(channel, 0)).unwrap_or_else(|| "Channel unavailable".into());
+                                                    let security = primary_net.and_then(|interface| interface.wifi_security.as_deref()).unwrap_or("Security unavailable");
+                                                    format!("{} • {}", channel, security)
+                                                } else if is_remote {
                                                     format!("Interface state: {}", remote_state)
                                                 } else {
                                                     let frequency = if wifi_snap.frequency_mhz > 0 { format!("{:.1} GHz", wifi_snap.frequency_mhz as f32 / 1000.0) } else { "Frequency unavailable".into() };
@@ -14307,7 +14317,7 @@ impl LauncherApp {
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 6.0;
-                                                    if is_remote {
+                                                    if is_remote && signal_pct.is_none() {
                                                         let (d_rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
                                                         ui.painter().circle_filled(d_rect.center(), 3.5, accent);
                                                         ui.label(RichText::new("—").size(12.0).monospace().strong().color(p.text_primary));
@@ -14316,7 +14326,7 @@ impl LauncherApp {
                                                         let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 18.0), egui::Sense::hover());
                                                         let bar_w = 3.5_f32;
                                                         let gap = 2.5_f32;
-                                                        let active_bars = ((wifi_snap.signal_pct.unwrap_or(0) as f32 / 20.0).round() as usize).clamp(0, 5);
+                                                        let active_bars = ((signal_pct.unwrap_or(0) as f32 / 20.0).round() as usize).clamp(0, 5);
                                                         for i in 0..5 {
                                                             let h = 4.0_f32 + (i as f32 + 1.0) * 2.8_f32;
                                                             let x = rect.left() + i as f32 * (bar_w + gap);
@@ -14325,7 +14335,7 @@ impl LauncherApp {
                                                             let col = if i < active_bars { accent } else { p.bg_button_hover };
                                                             ui.painter().rect_filled(b_rect, Rounding::same(1.0), col);
                                                         }
-                                                        ui.label(RichText::new(wifi_snap.signal_pct.map_or_else(|| "—".to_string(), |signal| format!("{signal}%"))).size(12.0).monospace().strong().color(p.text_primary));
+                                                        ui.label(RichText::new(signal_pct.map_or_else(|| "—".to_string(), |signal| format!("{signal}%"))).size(12.0).monospace().strong().color(p.text_primary));
                                                     }
                                                 });
                                             });
@@ -14334,7 +14344,13 @@ impl LauncherApp {
 
                                 ui.add_space(8.0);
                                 ui.columns(3, |cols| {
-                                    let ap_chips: [(&str, &str); 3] = if is_remote {
+                                    let ap_chips: [(&str, &str); 3] = if is_remote && is_wireless == Some(true) {
+                                        [
+                                            ("RATE", primary_net.and_then(|interface| interface.wifi_rate.as_deref()).unwrap_or("Unavailable")),
+                                            ("SECURITY", primary_net.and_then(|interface| interface.wifi_security.as_deref()).unwrap_or("Unavailable")),
+                                            ("BSSID", primary_net.and_then(|interface| interface.wifi_bssid.as_deref()).unwrap_or("Unavailable")),
+                                        ]
+                                    } else if is_remote {
                                         [
                                             ("TYPE", match is_wireless { Some(true) => "Wi-Fi", Some(false) => "Network", None => "Unknown" }),
                                             ("STATE", remote_state),
@@ -14485,7 +14501,7 @@ impl LauncherApp {
 
                 // 4. Top Link State & Telemetry Bar
                 let iface_display = if is_remote { iface_name } else { wifi_snap.interface.as_str() };
-                let link_rate_str = if is_remote { "Unavailable" } else { wifi_snap.rate.as_str() };
+                let link_rate_str = if is_remote { primary_net.and_then(|interface| interface.wifi_rate.as_deref()).unwrap_or("Unavailable") } else { wifi_snap.rate.as_str() };
                 let tunnel_id_str = if is_remote { "SSH telemetry" } else { "Local telemetry" };
 
                 ui.horizontal(|ui| {

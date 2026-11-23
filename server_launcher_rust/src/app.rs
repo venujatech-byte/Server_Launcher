@@ -1199,14 +1199,13 @@ impl LauncherApp {
 
         let collector_arc = Arc::clone(&self.sensors_collector);
         let include_process_network = include_top && self.sensors_subtab == SensorsSubTab::TopApps;
-        let sensor_password = self.local_sudo_password.clone();
         let in_flight_arc = Arc::clone(&self.sensors_in_flight);
         let shared_snap_arc = Arc::clone(&self.sensors_shared_snapshot);
 
         std::thread::spawn(move || {
             let snap = if let Ok(mut coll) = collector_arc.lock() {
                 let mut snapshot = coll.collect_with_top_apps(include_top, include_process_network);
-                coll.refresh_protected_hardware(&mut snapshot, Some(&sensor_password));
+                coll.refresh_protected_hardware(&mut snapshot);
                 snapshot
             } else {
                 crate::sensors::SystemSensorsSnapshot::default()

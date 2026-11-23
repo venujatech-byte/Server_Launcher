@@ -4884,11 +4884,11 @@ impl SystemSensorsCollector {
         Ok(summary)
     }
 
-    pub fn refresh_protected_hardware(&mut self, snapshot: &mut SystemSensorsSnapshot, password: Option<&str>) {
+    pub fn refresh_protected_hardware(&mut self, snapshot: &mut SystemSensorsSnapshot) {
         if self.protected_data.is_none() { return; }
         if self.last_protected_poll.elapsed() >= Duration::from_secs(2) {
             self.last_protected_poll = Instant::now();
-            match read_protected_hardware(password, false) {
+            match read_protected_hardware(None, false) {
                 Ok(mut data) => {
                     data["memory"] = self.protected_data.as_ref().unwrap()["memory"].clone();
                     self.protected_data = Some(data);

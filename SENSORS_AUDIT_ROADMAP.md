@@ -179,6 +179,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Unavailable metric plots:** Sensor card sparklines now distinguish no history, one sample, and repeated unavailable samples; an unsupported GPU engine no longer leaves a blank graph that can be mistaken for a zero reading.
 - **Storage histories:** Mounted usage and read/write charts now append the actual snapshot timestamp once per sample. Missing mounted capacity and unsupported rates remain unavailable; physical drive count is no longer repeated as a fake time series.
 - **Narrow sensor headings:** Wi-Fi title/status and Power host-title rows now wrap within the available width in both apps, covering long interface and remote-host labels.
+- **Top Apps search completeness:** The local Linux and Windows collectors retain every process they collect; filtering and grouping operate on the full snapshot. Both UIs include a regression fixture finding process 300 and asserting that all 300 entries remain searchable. The old 250-row truncation is resolved; the remaining limitation is that the Linux Apps/background grouping is a name heuristic, and process network totals cover visible TCP sockets only.
 
 ### Remaining work and validation
 

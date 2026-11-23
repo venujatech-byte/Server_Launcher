@@ -213,6 +213,7 @@ pub struct ProcessGroupSummary {
     pub cpu_usage_available: bool,
     pub sum_mem: u64,
     pub sum_disk_rate: f64,
+    pub disk_rate_available: bool,
     pub sum_net_rate: f64,
     pub sum_net_bytes: u64,
     pub sum_gpu: f32,
@@ -17044,6 +17045,7 @@ impl LauncherApp {
                         let cpu_usage_available = list.iter().all(|process| process.cpu_usage_available);
                         let sum_mem: u64 = list.iter().map(|p| p.memory_bytes).sum();
                         let sum_disk_rate: f64 = list.iter().map(|p| p.disk_rate_bps).sum();
+                        let disk_rate_available = list.iter().all(|process| process.disk_rate_available);
                         let sum_net_rate: f64 = list.iter().map(|p| p.net_rate_bps).sum();
                         let sum_net_bytes: u64 = list.iter().map(|p| p.net_rx_bytes.saturating_add(p.net_tx_bytes)).sum();
                         let pids: Vec<u32> = list.iter().map(|p| p.pid).collect();
@@ -17057,6 +17059,7 @@ impl LauncherApp {
                             cpu_usage_available,
                             sum_mem,
                             sum_disk_rate,
+                            disk_rate_available,
                             sum_net_rate,
                             sum_net_bytes,
                             sum_gpu,
@@ -17274,7 +17277,7 @@ impl LauncherApp {
                                             let norm_cpu = grp.sum_cpu / norm_factor;
                                             let cpu_fill = if grp.cpu_usage_available { get_tm_cpu_bg(norm_cpu) } else { Color32::TRANSPARENT };
                                             let mem_fill = get_tm_mem_bg(grp.sum_mem);
-                                            let disk_fill = get_tm_disk_bg(grp.sum_disk_rate);
+                                            let disk_fill = if grp.disk_rate_available { get_tm_disk_bg(grp.sum_disk_rate) } else { Color32::TRANSPARENT };
 
                                             let row_start_pos = ui.cursor().min;
                                             let row_rect = egui::Rect::from_min_size(row_start_pos, egui::vec2(row_w, 22.0));
@@ -17430,7 +17433,7 @@ impl LauncherApp {
                                             );
 
                                             // 4. Disk (Heatmap tinted cell, strictly bounded, right aligned)
-                                            let (disk_rect, _disk_resp) = ui.allocate_exact_size(egui::vec2(COL_DISK_W, 22.0), egui::Sense::hover());
+                                            let (disk_rect, disk_resp) = ui.allocate_exact_size(egui::vec2(COL_DISK_W, 22.0), egui::Sense::hover());
                                             if row_bg != Color32::TRANSPARENT {
                                                 let bg_rect = egui::Rect::from_min_max(disk_rect.min, egui::pos2(disk_rect.max.x + COL_SPACING, disk_rect.max.y));
                                                 ui.painter().rect_filled(bg_rect, Rounding::ZERO, row_bg);
@@ -17438,7 +17441,7 @@ impl LauncherApp {
                                             if disk_fill != Color32::TRANSPARENT {
                                                 ui.painter().rect_filled(disk_rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, disk_fill);
                                             }
-                                            let disk_txt = format_tm_disk(grp.sum_disk_rate);
+                                            let disk_txt = if grp.disk_rate_available { format_tm_disk(grp.sum_disk_rate) } else { "—".to_string() };
                                             let disk_color = if disk_fill != Color32::TRANSPARENT {
                                                 p.text_primary
                                             } else {
@@ -17451,6 +17454,7 @@ impl LauncherApp {
                                                 egui::FontId::monospace(11.0),
                                                 disk_color,
                                             );
+                                            let _ = disk_resp.on_hover_text(if grp.disk_rate_available { "Process disk read + write rate" } else { "Waiting for a prior process I/O sample" });
 
                                             // 5. Network (Strictly bounded, right aligned)
                                             let (net_rect, net_resp) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 22.0), egui::Sense::hover());
@@ -17628,7 +17632,7 @@ impl LauncherApp {
                                                     );
 
                                                     // Child Disk
-                                                    let (c_disk_rect, _c_disk_resp) = ui.allocate_exact_size(egui::vec2(COL_DISK_W, 20.0), egui::Sense::hover());
+                                                    let (c_disk_rect, c_disk_resp) = ui.allocate_exact_size(egui::vec2(COL_DISK_W, 20.0), egui::Sense::hover());
                                                     if c_row_bg != Color32::TRANSPARENT {
                                                         let bg_rect = egui::Rect::from_min_max(c_disk_rect.min, egui::pos2(c_disk_rect.max.x + COL_SPACING, c_disk_rect.max.y));
                                                         ui.painter().rect_filled(bg_rect, Rounding::ZERO, c_row_bg);
@@ -17636,10 +17640,11 @@ impl LauncherApp {
                                                     ui.painter().text(
                                                         egui::pos2(c_disk_rect.right() - 8.0, c_disk_rect.center().y),
                                                         egui::Align2::RIGHT_CENTER,
-                                                        format_tm_disk(child.disk_rate_bps),
+                                                        if child.disk_rate_available { format_tm_disk(child.disk_rate_bps) } else { "—".to_string() },
                                                         egui::FontId::monospace(10.5),
-                                                        Color32::from_rgb(160, 165, 175),
+                                                        if child.disk_rate_available { p.text_secondary } else { p.text_muted },
                                                     );
+                                                    let _ = c_disk_resp.on_hover_text(if child.disk_rate_available { "Process disk read + write rate" } else { "Waiting for a prior process I/O sample" });
 
                                                     // Child Network
                                                     let (c_net_rect, c_net_resp) = ui.allocate_exact_size(egui::vec2(COL_NET_W, 20.0), egui::Sense::hover());

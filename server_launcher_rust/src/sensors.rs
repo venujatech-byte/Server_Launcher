@@ -72,6 +72,7 @@ pub struct ProcessSensorInfo {
     pub disk_read_rate_bps: f64,
     pub disk_write_rate_bps: f64,
     pub disk_rate_bps: f64,
+    pub disk_rate_available: bool,
     pub net_rx_bytes: u64,
     pub net_tx_bytes: u64,
     pub net_rate_bps: f64,
@@ -350,6 +351,10 @@ fn process_cpu_sample_available(has_previous_sample: bool, usage: f32) -> bool {
     has_previous_sample && usage.is_finite()
 }
 
+fn process_disk_rate_available(has_previous_sample: bool, elapsed_secs: f64) -> bool {
+    has_previous_sample && elapsed_secs.is_finite() && elapsed_secs > 0.0
+}
+
 fn normalize_total_cpu_percent(total_usage: f32, logical_cpus: usize) -> Option<f32> {
     if logical_cpus == 0 || !total_usage.is_finite() || total_usage < 0.0 { return None; }
     let usage = total_usage / logical_cpus as f32;
@@ -397,6 +402,9 @@ mod process_disk_rate_tests {
         assert_eq!(super::counter_rates(Some((100, 200)), (300, 500), 2.0), (100.0, 150.0));
         assert_eq!(super::counter_rates(Some((300, 500)), (20, 600), 2.0), (0.0, 50.0));
         assert_eq!(super::counter_rates(Some((100, 200)), (300, 500), 0.0), (0.0, 0.0));
+        assert!(!super::process_disk_rate_available(false, 2.0));
+        assert!(!super::process_disk_rate_available(true, 0.0));
+        assert!(super::process_disk_rate_available(true, 2.0));
     }
 }
 
@@ -795,6 +803,7 @@ impl SystemSensorsCollector {
                 let written_b = disk_usage.total_written_bytes;
                 let identity = (pid_u32, proc.start_time());
                 let cpu_usage_available = process_cpu_sample_available(self.prev_proc_disk.contains_key(&identity), cpu_usage);
+                let disk_rate_available = process_disk_rate_available(self.prev_proc_disk.contains_key(&identity), proc_disk_elapsed);
                 current_proc_disk.insert(identity, (read_b, written_b));
                 let (r_rate, w_rate) = counter_rates(self.prev_proc_disk.get(&identity).copied(), (read_b, written_b), proc_disk_elapsed);
                 let disk_rate_bps = r_rate + w_rate;
@@ -827,6 +836,7 @@ impl SystemSensorsCollector {
                     disk_read_rate_bps: r_rate,
                     disk_write_rate_bps: w_rate,
                     disk_rate_bps,
+                    disk_rate_available,
                     net_rx_bytes: proc_net_rx,
                     net_tx_bytes: proc_net_tx,
                     net_rate_bps,
@@ -3450,6 +3460,7 @@ if collect_processes:
                     dr_rate = 0.0
                     dw_rate = 0.0
                     disk_rate = 0.0
+                    disk_rate_available = False
                     current_start = read_proc_start_marker(pid)
                     cpu = process_cpu_rate(p1_cpu.get(pid), cpu_sample, current_start, cpu_ticks_per_second)
                     prior_io = p1_io.get(pid)
@@ -3460,6 +3471,7 @@ if collect_processes:
                         dr_rate = max(0.0, (dr2 - dr1) / io_elapsed)
                         dw_rate = max(0.0, (dw2 - dw1) / io_elapsed)
                         disk_rate = dr_rate + dw_rate
+                        disk_rate_available = io_elapsed > 0
 
                     port = proc_ports.get(pid)
                     top_apps.append({
@@ -3477,6 +3489,7 @@ if collect_processes:
                         "disk_read_rate": dr_rate,
                         "disk_write_rate": dw_rate,
                         "disk_rate": disk_rate,
+                        "disk_rate_available": disk_rate_available,
                         "port": port
                     })
                 except:
@@ -3916,6 +3929,7 @@ print(json.dumps(data))
             disk_read_rate_bps,
             disk_write_rate_bps,
             disk_rate_bps,
+            disk_rate_available: a["disk_rate_available"].as_bool() == Some(true),
             net_rx_bytes,
             net_tx_bytes,
             net_rate_bps,

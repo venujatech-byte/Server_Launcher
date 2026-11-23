@@ -5493,6 +5493,9 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
             let percent = b["EstimatedChargeRemaining"].as_f64().filter(|v| v.is_finite() && (0.0..=100.0).contains(v));
             let energy_full_wh = b["FullChargeCapacity"].as_u64().filter(|value| *value > 0).map(|value| value as f32 / 1000.0);
             let energy_design_wh = b["DesignCapacity"].as_u64().filter(|value| *value > 0).map(|value| value as f32 / 1000.0);
+            let health_pct = energy_full_wh.zip(energy_design_wh)
+                .filter(|(_, design)| *design > 0.0)
+                .map(|(full, design)| ((full / design) * 100.0).clamp(0.0, 100.0));
             snap.power.batteries.push(BatteryInfo {
                 device_id: b["DeviceID"].as_str().filter(|id| !id.trim().is_empty())
                     .or_else(|| b["Name"].as_str().filter(|name| !name.trim().is_empty()))
@@ -5505,6 +5508,7 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
                 energy_full_wh,
                 energy_design_wh,
                 energy_estimated: percent.is_some() && energy_full_wh.is_some(),
+                health_pct,
                 ..Default::default()
             });
         }
@@ -5834,6 +5838,7 @@ mod windows_sensor_tests {
         assert_eq!(battery.energy_design_wh, Some(50.0));
         assert_eq!(battery.energy_full_wh, Some(40.0));
         assert_eq!(battery.energy_wh, Some(20.0));
+        assert_eq!(battery.health_pct, Some(80.0));
         assert!(battery.energy_estimated);
     }
 

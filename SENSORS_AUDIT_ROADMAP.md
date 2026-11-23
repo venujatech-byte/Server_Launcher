@@ -101,6 +101,7 @@ The findings and proposed sequence above describe the original audit; later impl
 - Linux DRM GPU frequency and hwmon power inputs are now finite/range checked before becoming telemetry; hwmon micro-watts use the same checked conversion path as Linux power-supply values.
 - Battery capacity and health percentages from remote sensor payloads now accept only finite values in the reported 0–100% range.
 - CPU and GPU power telemetry no longer drops readings above an arbitrary 800/1000/10000 W ceiling; Linux, remote, NVIDIA and Windows hardware-provider paths still reject negative, non-finite or non-representable values.
+- Windows battery health now uses the WMI full-charge/design-capacity ratio when both are reported; missing design capacity remains unavailable.
 
 Initial implementation after approval:
 

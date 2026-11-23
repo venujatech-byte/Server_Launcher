@@ -1051,6 +1051,7 @@ impl LauncherApp {
                     errors_arc.lock().unwrap().remove(&hid);
                 }
                 Err(e) => {
+                    snapshots_arc.lock().unwrap().remove(&hid);
                     errors_arc.lock().unwrap().insert(hid.clone(), e);
                     last_fetch_arc.lock().unwrap().insert(hid.clone(), Instant::now());
                 }
@@ -5072,9 +5073,25 @@ fn sensor_metric_history(ui: &Ui, host_id: Option<&str>, metric: &str, timestamp
     let id = egui::Id::new(("reported_sensor_history", host_id, metric));
     ui.ctx().data_mut(|data| {
         let history = data.get_temp_mut_or_default::<VecDeque<(Instant, Option<f32>)>>(id);
-        if let Some(timestamp) = timestamp { record_sensor_sample(history, timestamp, value); }
+        update_sensor_history(history, timestamp, value);
         history.iter().map(|sample| sample.1.unwrap_or(f32::NAN)).collect()
     })
+}
+
+fn update_sensor_history(history: &mut VecDeque<(Instant, Option<f32>)>, timestamp: Option<Instant>, value: Option<f32>) {
+    if let Some(timestamp) = timestamp { record_sensor_sample(history, timestamp, value); } else { history.clear(); }
+}
+
+#[cfg(test)]
+mod sensor_history_tests {
+    use super::*;
+
+    #[test]
+    fn missing_snapshot_clears_old_metric_samples() {
+        let mut history = VecDeque::from([(Instant::now(), Some(42.0))]);
+        update_sensor_history(&mut history, None, None);
+        assert!(history.is_empty());
+    }
 }
 
 fn sensor_freshness(age: Option<Duration>, interval_secs: u32, failed: bool) -> &'static str {
@@ -10974,22 +10991,12 @@ impl LauncherApp {
         if self.current_sensors_host != cur_host_str {
             self.sensors_top_apps_selected_pid = None;
             self.current_sensors_host = cur_host_str.clone();
-            self.last_telemetry_sample = None;
-            self.cpu_history.clear();
-            self.cpu_peak_usage = 0.0;
-            self.ram_history.clear();
-            self.storage_history.clear();
-            self.disk_write_history.clear();
-            self.disk_read_history.clear();
-            self.per_disk_write_history.clear();
-            self.per_disk_read_history.clear();
-            self.net_tx_history.clear();
-            self.net_rx_history.clear();
-            self.net_peak_mb = 0.0;
-            self.socket_tcp_history.clear();
-            self.socket_udp_history.clear();
+            self.clear_sensor_telemetry_history();
             self.cpu_core_histories = (0..snap.cpu_core_usages.len())
                 .map(|_| VecDeque::with_capacity(30)).collect();
+        }
+        if host_id.is_some() && snap.timestamp.is_none() {
+            self.clear_sensor_telemetry_history();
         }
 
         // Keep overview histories near a 60-second window at the selected poll interval.
@@ -11127,6 +11134,24 @@ impl LauncherApp {
                 SensorsSubTab::Temperature => self.render_sensors_temperature_page(ui, &snap, host_id),
             }
         });
+    }
+
+    fn clear_sensor_telemetry_history(&mut self) {
+        self.last_telemetry_sample = None;
+        self.cpu_history.clear();
+        self.cpu_peak_usage = 0.0;
+        self.ram_history.clear();
+        self.storage_history.clear();
+        self.disk_write_history.clear();
+        self.disk_read_history.clear();
+        self.per_disk_write_history.clear();
+        self.per_disk_read_history.clear();
+        self.net_tx_history.clear();
+        self.net_rx_history.clear();
+        self.net_peak_mb = 0.0;
+        self.socket_tcp_history.clear();
+        self.socket_udp_history.clear();
+        self.cpu_core_histories.clear();
     }
 
     // ─────────────────────────────────────────────────────────────────────────

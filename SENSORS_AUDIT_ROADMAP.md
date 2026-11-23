@@ -197,6 +197,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Unavailable battery charge:** Charge and energy rails now show a fill only when the underlying reading and denominator are valid; missing state no longer looks like an empty battery.
 - **Battery metric names:** The battery capacity ratio is labeled “Retention,” and its reported charging state is labeled “State,” so charge status is not mistaken for battery condition.
 - **Network rate baselines:** First samples, newly appearing interfaces, and reset counters remain unavailable until a valid interval exists. Cumulative byte counters stay visible; rate charts and labels no longer present the missing baseline as 0 B/s.
+- **Remote sensor query failures:** A failed refresh now drops the last successful snapshot and clears its metric histories, so disconnected hosts no longer leave stale values and charts looking live beneath an error notice.
 
 ### Remaining work and validation
 

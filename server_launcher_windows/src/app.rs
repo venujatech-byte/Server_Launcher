@@ -11929,7 +11929,7 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 4. Physical Memory Composition Card
+                // 4. Physical Memory Overview Card
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(8.0))
@@ -11938,7 +11938,7 @@ impl LauncherApp {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             ui.label(RichText::new(crate::lucide::LAYERS).size(12.0).color(accent));
-                            ui.label(RichText::new("Physical Memory Composition").size(12.5).strong().color(p.text_primary));
+                            ui.label(RichText::new("Physical Memory Overview").size(12.5).strong().color(p.text_primary));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 let pool_mb = snap.mem_total_bytes / (1024 * 1024);
                                 ui.label(RichText::new(format!("{} MB TOTAL RESIDENT POOL", pool_mb)).size(10.0).monospace().color(p.text_muted));
@@ -11947,29 +11947,24 @@ impl LauncherApp {
 
                         ui.add_space(8.0);
 
-                        // Segmented Bar (In Use: cyan, Modified: coral, Standby: soft blue, Free: dark slate)
+                        // Only reported in-use and its remainder are disjoint; other counters below can overlap.
                         let used_frac = (used_pct / 100.0).clamp(0.0, 1.0);
-                        // Dirty pages may overlap available memory, so they are not a separate segment.
-                        let mod_frac = 0.0;
-                        let in_use_frac = used_frac;
-                        let standby_frac = (cache_bytes.unwrap_or(0) as f32 / snap.mem_total_bytes.max(1) as f32).min(1.0 - used_frac);
-                        let free_frac = (1.0 - used_frac - standby_frac).max(0.0);
+                        let remaining_frac = 1.0 - used_frac;
 
                         let (bar_res, bar_p) = ui.allocate_painter(egui::vec2(ui.available_width(), 16.0), egui::Sense::hover());
                         let br = bar_res.rect;
+                        bar_res.on_hover_text("In use versus the remainder of reported total memory. Free, dirty and reclaimable values below are separate counters and may overlap.");
                         bar_p.rect_filled(br, Rounding::same(4.0), Color32::from_rgb(10, 15, 29));
 
-                        let w1 = br.width() * in_use_frac;
-                        let w2 = br.width() * mod_frac;
-                        let w3 = br.width() * standby_frac;
-                        let w4 = br.width() * free_frac;
+                        let w1 = br.width() * used_frac;
+                        let w2 = br.width() * remaining_frac;
 
                         bar_p.rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(w1, br.height())), Rounding::same(3.0), Color32::from_rgb(112, 213, 228));
-                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w1, br.min.y), egui::vec2(w2, br.height())), Rounding::ZERO, Color32::from_rgb(148, 163, 184));
-                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w1 + w2, br.min.y), egui::vec2(w3, br.height())), Rounding::ZERO, Color32::from_rgb(96, 165, 250));
-                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w1 + w2 + w3, br.min.y), egui::vec2(w4, br.height())), Rounding::same(3.0), Color32::from_rgb(51, 65, 85));
+                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w1, br.min.y), egui::vec2(w2, br.height())), Rounding::same(3.0), Color32::from_rgb(51, 65, 85));
 
                         ui.add_space(8.0);
+                        ui.label(RichText::new("Additional counters below can overlap and are not stacked.").size(9.0).monospace().color(p.text_muted));
+                        ui.add_space(5.0);
 
                         // 4-column legend breakdown
                         ui.columns(4, |cols| {

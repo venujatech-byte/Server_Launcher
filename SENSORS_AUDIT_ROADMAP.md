@@ -185,6 +185,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Multi-GPU process-table summary:** The Top Apps GPU summary now displays a measured percentage only for a single adapter; multi-adapter hosts show unavailable rather than presenting the first adapter as a system-wide total. Values are finite and range checked.
 - **Initial local network rates:** Linux and Windows collectors now seed RX/TX baselines from their initial interface snapshot, so the first refresh measures real counter deltas instead of defaulting every interface to 0 B/s.
 - **RAM history series and no-swap hosts:** The RAM history's second series is now identified as swap allocation (it was mislabeled as cached memory). Swap percentage and history are unavailable when the host reports zero swap capacity, while a real 0% remains valid when swap exists.
+- **RAM composition accuracy:** The physical-memory bar now compares reported in-use memory with the remainder of total memory. Dirty, free/available, and reclaimable counters remain separate because collectors can report overlapping values; the UI explains this on both platforms.
 
 ### Remaining work and validation
 

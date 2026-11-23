@@ -2563,110 +2563,110 @@ pub fn render_remote_start_server_modal(
     }
 
     let mut result = None;
+    let title = "Start Remote Server";
     let screen = ctx.screen_rect();
-    let modal_w = 480.0_f32.min(screen.width() - 40.0).max(360.0);
+    let modal_w = 560.0_f32.min((screen.width() - 48.0).max(200.0));
+    let max_h = 640.0_f32.min((screen.height() - 60.0).max(200.0));
+    let mut window_open = state.open;
     let mut is_open = state.open;
-
-    let window_id = egui::Id::new("remote_start_server_modal_dialog");
-    let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
-    Window::new("Start Remote Server")
-        .id(window_id)
-        .title_bar(false)
-        .collapsible(false)
-        .resizable(false)
-        .movable(false)
-        .current_pos(screen.center() + drag_offset)
-        .pivot(egui::Align2::CENTER_CENTER)
-        .min_width(modal_w)
-        .max_width(modal_w)
-        .frame(
-            egui::Frame::none()
-                .fill(Color32::from_rgb(17, 19, 27))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
-                .rounding(Rounding::same(16.0))
-                .shadow(egui::epaint::Shadow {
-                    offset: egui::vec2(0.0, 8.0),
-                    blur: 24.0,
-                    spread: 0.0,
-                    color: Color32::from_black_alpha(160),
-                })
-                .inner_margin(egui::Margin {
-                    left: 20.0,
-                    right: 20.0,
-                    top: 14.0,
-                    bottom: 18.0,
-                }),
-        )
+    Window::new(RichText::new(title).size(17.0).strong())
+        .id(egui::Id::new("remote_start_server_modal_dialog"))
+        .open(&mut window_open)
+        .collapsible(false).resizable(false).movable(true)
+        .default_pos(screen.center()).pivot(egui::Align2::CENTER_CENTER)
+        .min_width(modal_w).max_width(modal_w)
+        .max_height(max_h)
+        .frame(egui::Frame::none().fill(palette.bg_card)
+            .stroke(Stroke::NONE).rounding(Rounding::same(14.0))
+            .shadow(egui::epaint::Shadow { offset: egui::vec2(0.0, 4.0), blur: 16.0, spread: 0.0, color: Color32::from_black_alpha(120) })
+            .inner_margin(egui::Margin::same(18.0)))
         .show(ctx, |ui| {
-            render_modal_titlebar(ui, "Start Remote Server", &mut is_open);
-            ui.add_space(10.0);
+            *ui.visuals_mut() = palette.egui_visuals();
+            ui.spacing_mut().interact_size.y = 26.0;
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+            ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
+            ui.style_mut().text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
+            ui.style_mut().text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(11.5));
+            ui.style_mut().text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.5));
+            ui.visuals_mut().widgets.inactive.weak_bg_fill = palette.bg_button;
+            ui.visuals_mut().widgets.inactive.bg_fill = palette.bg_button;
+            ui.visuals_mut().widgets.hovered.weak_bg_fill = palette.bg_card_active;
+            ui.visuals_mut().widgets.active.weak_bg_fill = palette.accent_subtle;
+            ui.add_space(4.0);
 
+            egui::ScrollArea::vertical().id_salt("remote_start_form")
+                .max_height((max_h - 100.0).max(80.0)).show(ui, |ui| {
             // Subtitle: Target host info
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Target Host:").size(11.0).color(palette.text_muted));
                 egui::Frame::none()
                     .fill(palette.accent_subtle)
-                    .rounding(Rounding::same(999.0))
+                    .rounding(Rounding::same(8.0))
                     .inner_margin(egui::Margin::symmetric(8.0, 2.0))
                     .show(ui, |ui| {
                         ui.label(RichText::new(&state.host_name).size(11.0).strong().color(palette.accent));
                     });
             });
-            ui.add_space(8.0);
+            ui.add_space(4.0);
 
             if let Some(ref err) = state.error {
                 egui::Frame::none()
-                    .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 40))
+                    .fill(palette.danger_subtle)
                     .rounding(Rounding::same(8.0))
                     .inner_margin(egui::Margin::symmetric(10.0, 6.0))
                     .show(ui, |ui| {
-                        ui.label(RichText::new(format!("{} {}", crate::lucide::ALERT_TRIANGLE, err)).size(11.0).color(Color32::from_rgb(252, 165, 165)));
+                        ui.label(RichText::new(format!("{} {}", crate::lucide::ALERT_TRIANGLE, err)).size(11.0).color(palette.danger));
                     });
-                ui.add_space(8.0);
+                ui.add_space(4.0);
             }
 
             // Server Name
             ui.label(RichText::new("Server / Service Name:").size(11.5).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::singleline(&mut state.name)
-                    .hint_text("e.g. web-app, node-backend, nginx")
+                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0))
+                    .hint_text(RichText::new("e.g. web-app, node-backend, nginx").color(palette.text_muted))
                     .desired_width(ui.available_width()),
             );
-            ui.add_space(8.0);
+            ui.add_space(4.0);
 
             // Port (optional)
             ui.label(RichText::new("Port (optional):").size(11.5).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::singleline(&mut state.port)
-                    .hint_text("e.g. 8080 or 3000")
+                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0))
+                    .hint_text(RichText::new("e.g. 8080 or 3000").color(palette.text_muted))
                     .desired_width(ui.available_width()),
             );
-            ui.add_space(8.0);
+            ui.add_space(4.0);
 
             // Command
             ui.label(RichText::new("Launch Command:").size(11.5).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::singleline(&mut state.command)
-                    .hint_text("e.g. python3 -m http.server 8080 or npm run dev")
+                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0))
+                    .hint_text(RichText::new("e.g. python3 -m http.server 8080 or npm run dev").color(palette.text_muted))
                     .desired_width(ui.available_width()),
             );
-            ui.add_space(8.0);
+            ui.add_space(4.0);
 
             // Working directory
             ui.label(RichText::new("Working Directory:").size(11.5).strong().color(palette.text_primary));
             ui.add(
                 egui::TextEdit::singleline(&mut state.cwd)
-                    .hint_text("e.g. /var/www or ~/projects/app")
+                    .text_color(palette.text_secondary).margin(egui::vec2(8.0, 6.0))
+                    .hint_text(RichText::new("e.g. /var/www or ~/projects/app").color(palette.text_muted))
                     .desired_width(ui.available_width()),
             );
             ui.add_space(14.0);
 
+                });
             // Buttons
             ui.horizontal(|ui| {
                 let btn_cancel = egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
-                    .fill(Color32::from_rgb(26, 29, 40))
-                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 58)))
-                    .rounding(Rounding::same(6.0))
+                    .fill(palette.bg_button)
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(8.0))
                     .min_size(egui::vec2(75.0, 28.0));
                 if ui.add(btn_cancel).clicked() {
                     state.open = false;
@@ -2675,10 +2675,10 @@ pub fn render_remote_start_server_modal(
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let btn_start = egui::Button::new(
-                        RichText::new(format!("{} Start Server", crate::lucide::PLAY)).size(12.0).strong().color(Color32::WHITE),
+                        RichText::new(format!("{} Start Server", crate::lucide::PLAY)).size(12.0).strong().color(palette.accent_text),
                     )
-                    .fill(Color32::from_rgb(0x05, 0x96, 0x69))
-                    .rounding(Rounding::same(999.0))
+                    .fill(palette.accent)
+                    .rounding(Rounding::same(8.0))
                     .min_size(egui::vec2(120.0, 28.0));
 
                     if ui.add(btn_start).clicked() {
@@ -2713,7 +2713,7 @@ pub fn render_remote_start_server_modal(
             });
         });
 
-    if !is_open {
+    if !is_open || !window_open {
         state.open = false;
     }
 

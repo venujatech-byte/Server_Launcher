@@ -14964,6 +14964,42 @@ impl LauncherApp {
                         const RATE_W: f32 = 150.0;
                         let max_total = interfaces.iter().map(|net| net.rx_bytes.saturating_add(net.tx_bytes)).max().unwrap_or(1).max(1);
 
+                        if ui.available_width() < 850.0 {
+                            for net in &interfaces {
+                                let kind = if net.name == "lo" { "Loopback" } else { match net.is_wireless { Some(true) => "Wi-Fi", Some(false) => "Other", None => "Unknown" } };
+                                let total = net.rx_bytes.saturating_add(net.tx_bytes);
+                                Frame::none()
+                                    .fill(p.bg_button)
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(&net.name).size(11.5).strong().color(p.text_primary));
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                ui.label(RichText::new(kind).size(10.0).color(p.text_muted));
+                                            });
+                                        });
+                                        ui.add_space(5.0);
+                                        ui.columns(3, |cols| {
+                                            for (column, label, value) in [
+                                                (0, "Received", crate::sensors::format_bytes(net.rx_bytes)),
+                                                (1, "Sent", crate::sensors::format_bytes(net.tx_bytes)),
+                                                (2, "Total", crate::sensors::format_bytes(total)),
+                                            ] {
+                                                cols[column].vertical(|ui| {
+                                                    ui.label(RichText::new(label).size(9.0).color(p.text_muted));
+                                                    ui.label(RichText::new(value).size(10.5).monospace().color(p.text_secondary));
+                                                });
+                                            }
+                                        });
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.label(RichText::new("Live").size(9.0).color(p.text_muted));
+                                            ui.label(RichText::new(format!("↓ {}  ↑ {}", crate::sensors::format_rate(net.rx_rate_bps), crate::sensors::format_rate(net.tx_rate_bps))).size(10.0).monospace().color(p.text_secondary));
+                                        });
+                                    });
+                                ui.add_space(6.0);
+                            }
+                        } else {
                         ScrollArea::horizontal()
                             .id_salt("data_usage_interfaces_h")
                             .auto_shrink([false, false])
@@ -15026,6 +15062,7 @@ impl LauncherApp {
                                         }
                                     });
                             });
+                        }
                     });
             });
     }

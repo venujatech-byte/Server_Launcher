@@ -4780,9 +4780,10 @@ def read_number(path):
 
 zones = []
 unreadable_zones = []
-for path in glob.glob('/sys/class/powercap/*'):
+for name_path in glob.glob('/sys/class/powercap/**/name', recursive=True):
+    path = os.path.dirname(name_path)
     try:
-        name = open(path + '/name').read().strip().lower()
+        name = open(name_path).read().strip().lower()
     except OSError:
         continue
     if not (name.startswith('package') or name.startswith('cpu package')):

@@ -152,6 +152,23 @@ mod wifi_selection_tests {
     }
 
     #[test]
+    fn native_wlan_details_override_only_fields_reported_by_the_api() {
+        let mut snapshot = super::WifiSnapshot { state: "UNKNOWN".into(), ..Default::default() };
+        super::apply_windows_wlan_details(&mut snapshot, super::WindowsWlanInterface {
+            state: Some("CONNECTED".into()), ssid: Some("Office".into()), bssid: Some("AA:BB:CC:DD:EE:FF".into()),
+            signal_pct: Some(0), channel: Some(36), ..Default::default()
+        });
+        assert!(snapshot.is_connected);
+        assert_eq!(snapshot.ssid, "Office");
+        assert_eq!(snapshot.signal_pct, Some(0));
+        assert_eq!(snapshot.channel, 36);
+        assert!(snapshot.rate.is_empty());
+        assert!(snapshot.security.is_empty());
+        assert_eq!(super::format_mac_address([0, 17, 34, 51, 68, 255]), "00:11:22:33:44:FF");
+        assert!(super::WINDOWS_WIFI_QUERY.contains("guid=[string]$adapter.InterfaceGuid"));
+    }
+
+    #[test]
     fn localized_windows_wlan_output_does_not_turn_an_up_adapter_into_disconnected() {
         let data = serde_json::json!({
             "adapters": [{"name":"Wi-Fi", "description":"Wireless", "status":"Up", "profile":"Office"}],
@@ -440,10 +457,16 @@ pub fn query_wifi_status(selected: Option<&str>) -> WifiSnapshot {
     let Ok(data) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
         return WifiSnapshot { state: "Wi-Fi telemetry unavailable".into(), last_updated: Instant::now(), ..Default::default() };
     };
-    parse_windows_wifi_snapshot(&data, selected)
+    let mut snapshot = parse_windows_wifi_snapshot(&data, selected);
+    if let Some(guid) = data["adapters"].as_array().and_then(|rows| rows.iter().find(|row| row["name"].as_str() == Some(snapshot.interface.as_str())))
+        .and_then(|row| row["guid"].as_str()).and_then(parse_windows_wifi_guid)
+    {
+        apply_windows_wlan_details(&mut snapshot, query_windows_wlan_interface(&guid));
+    }
+    snapshot
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 const WINDOWS_WIFI_QUERY: &str = r#"$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new();
 $adapters=@(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Where-Object { $_.ifType -eq 71 });
 $items=@(foreach($adapter in $adapters) {
@@ -452,7 +475,7 @@ $items=@(foreach($adapter in $adapters) {
   $profile=Get-NetConnectionProfile -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue | Select-Object -First 1;
   $stats=Get-NetAdapterStatistics -Name $adapter.Name -ErrorAction SilentlyContinue;
   [pscustomobject]@{
-    name=$adapter.Name; description=$adapter.InterfaceDescription; status=[string]$adapter.Status; profile=$profile.Name;
+    name=$adapter.Name; description=$adapter.InterfaceDescription; status=[string]$adapter.Status; profile=$profile.Name; guid=[string]$adapter.InterfaceGuid;
     mac=$adapter.MacAddress; driver=$adapter.DriverInformation; mtu=$ipif.NlMtu; index=$adapter.ifIndex;
     ipv4=@($ip.IPv4Address | ForEach-Object { @{address=$_.IPAddress; prefix=$_.PrefixLength} });
     ipv6=@($ip.IPv6Address | ForEach-Object { $_.IPAddress });
@@ -545,6 +568,68 @@ fn parse_windows_wlan_interface(text: &str, adapter: &str) -> WindowsWlanInterfa
     WindowsWlanInterface { state, ssid: get("ssid").filter(|value| !value.is_empty()).map(str::to_owned), bssid: get("bssid").map(str::to_owned), signal_pct, channel, rate, security: get("authentication").map(str::to_owned) }
 }
 
+#[cfg(any(windows, test))]
+fn apply_windows_wlan_details(snapshot: &mut WifiSnapshot, wlan: WindowsWlanInterface) {
+    if let Some(state) = wlan.state {
+        snapshot.state = state;
+        snapshot.is_connected = snapshot.state == "CONNECTED";
+    }
+    if let Some(ssid) = wlan.ssid { snapshot.ssid = ssid; }
+    if let Some(bssid) = wlan.bssid { snapshot.bssid = bssid; }
+    if let Some(signal) = wlan.signal_pct { snapshot.signal_pct = Some(signal); }
+    if let Some(channel) = wlan.channel { snapshot.channel = channel; }
+}
+
+#[cfg(windows)]
+fn query_windows_wlan_interface(guid: &WindowsWifiGuid) -> WindowsWlanInterface {
+    use std::ffi::c_void;
+    use std::mem::size_of;
+    use std::ptr;
+
+    let mut version = 0;
+    let mut handle = ptr::null_mut();
+    if unsafe { WlanOpenHandle(2, ptr::null_mut(), &mut version, &mut handle) } != 0 { return WindowsWlanInterface::default(); }
+    let result = (|| {
+        let mut data_size = 0;
+        let mut data = ptr::null_mut::<c_void>();
+        let status = unsafe { WlanQueryInterface(handle, guid, 7, ptr::null_mut(), &mut data_size, &mut data, ptr::null_mut()) };
+        if status != 0 || data.is_null() {
+            if !data.is_null() { unsafe { WlanFreeMemory(data); } }
+            return None;
+        }
+        let connection = if data_size >= size_of::<WindowsWlanConnectionAttributes>() {
+            Some(unsafe { ptr::read_unaligned(data.cast::<WindowsWlanConnectionAttributes>()) })
+        } else { None };
+        unsafe { WlanFreeMemory(data); }
+        let connection = connection?;
+        let mut details = WindowsWlanInterface {
+            state: match connection.state { 1 => Some("CONNECTED".into()), 4 => Some("DISCONNECTED".into()), _ => None },
+            ssid: (connection.association.ssid.length <= 32).then(|| String::from_utf8_lossy(&connection.association.ssid.bytes[..connection.association.ssid.length as usize]).into_owned()).filter(|value| !value.is_empty()),
+            bssid: connection.association.bssid.iter().any(|byte| *byte != 0).then(|| format_mac_address(connection.association.bssid)),
+            signal_pct: (connection.association.signal_quality <= 100).then_some(connection.association.signal_quality as u8),
+            ..Default::default()
+        };
+        let mut channel_data = ptr::null_mut::<c_void>();
+        let mut channel_size = 0;
+        let channel_status = unsafe { WlanQueryInterface(handle, guid, 8, ptr::null_mut(), &mut channel_size, &mut channel_data, ptr::null_mut()) };
+        if !channel_data.is_null() {
+            if channel_status == 0 && channel_size >= size_of::<u32>() {
+                let channel = unsafe { ptr::read_unaligned(channel_data.cast::<u32>()) };
+                if channel > 0 { details.channel = Some(channel); }
+            }
+            unsafe { WlanFreeMemory(channel_data); }
+        }
+        Some(details)
+    })();
+    unsafe { WlanCloseHandle(handle, ptr::null_mut()); }
+    result.unwrap_or_default()
+}
+
+#[cfg(any(windows, test))]
+fn format_mac_address(address: [u8; 6]) -> String {
+    address.iter().map(|byte| format!("{byte:02X}")).collect::<Vec<_>>().join(":")
+}
+
 fn command_result(success: bool, stderr: &str, operation: &str) -> Result<(), String> {
     if success { Ok(()) } else if stderr.trim().is_empty() { Err(format!("{operation} failed")) } else { Err(format!("{operation} failed: {}", stderr.trim())) }
 }
@@ -609,11 +694,51 @@ fn parse_windows_wifi_guid(value: &str) -> Option<WindowsWifiGuid> {
 }
 
 #[cfg(windows)]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WindowsDot11Ssid { length: u32, bytes: [u8; 32] }
+
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WindowsWlanAssociationAttributes {
+    ssid: WindowsDot11Ssid,
+    bss_type: u32,
+    bssid: [u8; 6],
+    phy_type: u32,
+    phy_index: u32,
+    signal_quality: u32,
+    rx_rate: u32,
+    tx_rate: u32,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WindowsWlanSecurityAttributes { enabled: i32, one_x_enabled: i32, auth_algorithm: u32, cipher_algorithm: u32 }
+
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WindowsWlanConnectionAttributes {
+    state: u32,
+    connection_mode: u32,
+    profile_name: [u16; 256],
+    association: WindowsWlanAssociationAttributes,
+    security: WindowsWlanSecurityAttributes,
+}
+
+#[cfg(windows)]
+const _: [(); 604] = [(); std::mem::size_of::<WindowsWlanConnectionAttributes>()];
+
+#[cfg(windows)]
 #[link(name = "wlanapi")]
 extern "system" {
     fn WlanOpenHandle(version: u32, reserved: *mut std::ffi::c_void, negotiated_version: *mut u32, handle: *mut *mut std::ffi::c_void) -> u32;
     fn WlanScan(handle: *mut std::ffi::c_void, interface: *const WindowsWifiGuid, ssid: *const std::ffi::c_void, ie_data: *const std::ffi::c_void, reserved: *mut std::ffi::c_void) -> u32;
     fn WlanCloseHandle(handle: *mut std::ffi::c_void, reserved: *mut std::ffi::c_void) -> u32;
+    fn WlanQueryInterface(handle: *mut std::ffi::c_void, interface: *const WindowsWifiGuid, opcode: u32, reserved: *mut std::ffi::c_void, data_size: *mut u32, data: *mut *mut std::ffi::c_void, value_type: *mut u32) -> u32;
+    fn WlanFreeMemory(memory: *mut std::ffi::c_void);
 }
 
 /// Flush the local resolver cache, preserving errors from the available tool.

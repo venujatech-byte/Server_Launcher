@@ -15594,8 +15594,8 @@ impl LauncherApp {
                                     (total_g_w, total_g_cap.max(total_g_w * 1.25))
                                 } else {
                                     let g_tdp = (profile.nominal_watts * 0.30).clamp(3.0, 35.0);
-                                    let g_load = (snap.cpu_global_usage / 100.0).clamp(0.0, 1.0);
-                                    let igpu_w = (g_tdp * 0.06).max(0.3) + (g_tdp * 0.40) * (g_load * 0.5);
+                                    // CPU utilization is not a proxy for integrated-GPU activity.
+                                    let igpu_w = (g_tdp * 0.06).max(0.3);
                                     (igpu_w, g_tdp)
                                 };
 

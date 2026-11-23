@@ -192,6 +192,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **GPU memory history:** Use timestamped reported used-VRAM samples for the selected adapter instead of an always-empty chart; invalid or incomplete counters remain unavailable.
 - **Unused GPU history state:** Removed three GPU history queues that had no readers; the rendered GPU histories are already stored by host and adapter identity.
 - **Missing local memory totals:** When the OS reports no physical-memory total, Overview and RAM now show unavailable, clear stale RAM history, and avoid drawing a zero-usage allocation bar in both apps.
+- **Power model GPU fallback:** The estimated integrated-GPU component no longer uses CPU utilization as a stand-in for GPU activity when GPU inventory is missing; it stays at the model's estimated baseline.
 
 ### Remaining work and validation
 

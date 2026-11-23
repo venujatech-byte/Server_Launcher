@@ -169,6 +169,25 @@ pub struct GpuSensorInfo {
     pub driver: String,
 }
 
+pub(crate) fn single_gpu_load(gpus: &[GpuSensorInfo]) -> Option<f32> {
+    let [gpu] = gpus else { return None; };
+    gpu.load_pct.filter(|load| load.is_finite() && (0.0..=100.0).contains(load))
+}
+
+#[cfg(test)]
+mod single_gpu_load_tests {
+    use super::GpuSensorInfo;
+
+    #[test]
+    fn only_reports_a_valid_reading_for_one_adapter() {
+        let gpu = GpuSensorInfo { load_pct: Some(42.0), ..Default::default() };
+        assert_eq!(super::single_gpu_load(&[gpu.clone()]), Some(42.0));
+        assert_eq!(super::single_gpu_load(&[gpu.clone(), gpu]), None);
+        assert_eq!(super::single_gpu_load(&[GpuSensorInfo::default()]), None);
+        assert_eq!(super::single_gpu_load(&[GpuSensorInfo { load_pct: Some(f32::NAN), ..Default::default() }]), None);
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct DisplayInfo {
     pub name: String,

@@ -16735,7 +16735,7 @@ impl LauncherApp {
         let total_disk_mb_s = (snap.total_disk_read_rate_bps + snap.total_disk_write_rate_bps) / (1024.0 * 1024.0);
 
         // Total GPU & Power values for header & rows
-        let total_gpu_pct = snap.gpus.iter().find_map(|g| g.load_pct);
+        let total_gpu_pct = crate::sensors::single_gpu_load(&snap.gpus);
 
         // Heatmap color helper: Windows 11 Task Manager uses subtle accent blue tint blocks
         let get_tm_cpu_bg = |norm_cpu: f32| -> Color32 {

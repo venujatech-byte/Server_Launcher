@@ -246,6 +246,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Local Windows Bluetooth:** The Windows Sensors page now shows paired devices and their reported connection state using the same read-only native query. PowerShell polling is limited to 15 seconds and runs without opening a console; radio and pairing controls stay in Windows Settings.
 - **Linux display metadata:** Embedded DisplayPort connectors no longer claim an unverified “Pipe A” identity. Since DRM `modes` lists supported modes rather than the active compositor mode, the page no longer presents its first entry or EDID preferred timing as the current resolution/refresh rate; those fields remain unavailable when no active-mode provider exists. The EDID input bit-depth is also not presented as the active output depth.
 - **Unused CPU governor telemetry:** Removed the unrendered governor field and its local/SSH Linux reads and JSON plumbing from both Sensors collectors. Governor controls remain out of the UI as requested.
+- **Display telemetry cleanup:** Removed display fields that no Sensors view consumed, plus the unused EDID and connector sysfs reads. The display snapshot now keeps only the name, connector label, and Windows-reported current mode data.
 
 ### Remaining work and validation
 

@@ -208,20 +208,9 @@ mod single_gpu_load_tests {
 #[derive(Debug, Clone, Default)]
 pub struct DisplayInfo {
     pub name: String,
-    pub is_connected: bool,
-    pub is_enabled: bool,
     pub resolution: String,
-    pub width: u32,
-    pub height: u32,
     pub refresh_hz: f32,
-    pub bit_depth: String,
-    pub color_space: String,
     pub connector_type: String,
-    pub connector_id: Option<u32>,
-    pub scaling: String,
-    pub vrr_support: String,
-    pub manufacturer: String,
-    pub model: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -2606,14 +2595,6 @@ pub fn detect_displays() -> Vec<DisplayInfo> {
                         .map(|(_, conn)| conn.to_string())
                         .unwrap_or(raw_name.clone());
 
-                    let enabled = fs::read_to_string(p.join("enabled"))
-                        .map(|s| s.trim() == "enabled")
-                        .unwrap_or(true);
-
-                    let connector_id = fs::read_to_string(p.join("connector_id"))
-                        .ok()
-                        .and_then(|s| s.trim().parse::<u32>().ok());
-
                     let connector_type = if name.starts_with("eDP") {
                         "eDP".to_string()
                     } else if name.starts_with("HDMI") {
@@ -2628,39 +2609,11 @@ pub fn detect_displays() -> Vec<DisplayInfo> {
                         name.clone()
                     };
 
-                    let mut edid_mfg = String::new();
-                    let mut edid_prod = String::new();
-
-                    if let Ok(edid_bytes) = fs::read(p.join("edid")) {
-                        if edid_bytes.len() >= 128 {
-                            let c1 = ((edid_bytes[8] & 0x7c) >> 2) + b'@';
-                            let c2 = (((edid_bytes[8] & 0x03) << 3) | ((edid_bytes[9] & 0xe0) >> 5)) + b'@';
-                            let c3 = (edid_bytes[9] & 0x1f) + b'@';
-                            if c1.is_ascii_alphabetic() && c2.is_ascii_alphabetic() && c3.is_ascii_alphabetic() {
-                                edid_mfg = format!("{}{}{}", c1 as char, c2 as char, c3 as char);
-                            }
-                            let prod_code = (edid_bytes[10] as u16) | ((edid_bytes[11] as u16) << 8);
-                            edid_prod = format!("{:#06x}", prod_code);
-
-                        }
-                    }
-
                     displays.push(DisplayInfo {
                         name,
-                        is_connected: true,
-                        is_enabled: enabled,
                         resolution: "Not reported".to_string(),
-                        width: 0,
-                        height: 0,
                         refresh_hz: 0.0,
-                        bit_depth: "Not reported".to_string(),
-                        color_space: "Not reported".to_string(),
                         connector_type,
-                        connector_id,
-                        scaling: "Not reported".to_string(),
-                        vrr_support: "Not reported".to_string(),
-                        manufacturer: edid_mfg,
-                        model: edid_prod,
                     });
                 }
             }
@@ -5486,17 +5439,9 @@ fn parse_windows_display(controller: &serde_json::Value) -> Option<DisplayInfo> 
     let refresh_hz = dimension("CurrentRefreshRate").map_or(0.0, |value| value as f32);
     Some(DisplayInfo {
         name: controller["Name"].as_str().unwrap_or("Display").to_string(),
-        is_connected: true,
-        is_enabled: true,
         resolution: format!("{width} × {height}"),
-        width,
-        height,
         refresh_hz,
-        bit_depth: "Not reported".into(),
-        color_space: "Not reported".into(),
         connector_type: "Not reported".into(),
-        scaling: "Not reported".into(),
-        vrr_support: "Not reported".into(),
         ..Default::default()
     })
 }
@@ -5515,7 +5460,6 @@ mod windows_display_tests {
         })).unwrap();
         assert_eq!(display.resolution, "1920 × 1080");
         assert_eq!(display.refresh_hz, 144.0);
-        assert_eq!(display.bit_depth, "Not reported");
         assert_eq!(display.connector_type, "Not reported");
         assert!(super::parse_windows_display(&serde_json::json!({"Name":"Adapter"})).is_none());
         assert_eq!(super::parse_windows_displays(&serde_json::json!([

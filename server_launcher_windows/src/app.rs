@@ -12701,9 +12701,6 @@ impl LauncherApp {
                                     if display.refresh_hz > 0.0 {
                                         ui.label(RichText::new(format!("@ {:.1} Hz", display.refresh_hz)).size(10.0).monospace().color(p.text_secondary));
                                     }
-                                    if display.bit_depth != "Not reported" {
-                                        ui.label(RichText::new(&display.bit_depth).size(10.0).monospace().color(p.text_muted));
-                                    }
                                     if display.connector_type != "Not reported" {
                                         ui.label(RichText::new(&display.connector_type).size(10.0).monospace().color(p.text_muted));
                                     }

@@ -61,3 +61,18 @@ if (!$makeappx) { throw 'Windows SDK MakeAppx not found' }
 New-Item -ItemType Directory -Path windows-store | Out-Null
 & $makeappx.FullName pack /d $stage /p "windows-store/server-launcher-$version-x64.msix" /o
 if ($LASTEXITCODE -ne 0) { throw "MakeAppx failed with exit code $LASTEXITCODE" }
+
+# Verify what MakeAppx wrote, since only the resulting archive is shipped.
+$unpacked = Join-Path $env:RUNNER_TEMP 'server-launcher-msix-verified'
+& $makeappx.FullName unpack /p "windows-store/server-launcher-$version-x64.msix" /d $unpacked /o
+if ($LASTEXITCODE -ne 0) { throw "MakeAppx unpack failed with exit code $LASTEXITCODE" }
+[xml]$packedManifest = Get-Content (Join-Path $unpacked 'AppxManifest.xml') -Raw
+if ($packedManifest.Package.Identity.Version -ne "$version.0" -or
+    $packedManifest.Package.Identity.ProcessorArchitecture -ne 'x64') {
+    throw 'MSIX identity version or architecture does not match this release'
+}
+foreach ($file in @('server_launcher_windows.exe', 'Assets/Logo44.png', 'Assets/Logo50.png', 'Assets/Logo150.png')) {
+    $source = (Get-FileHash (Join-Path $stage $file) -Algorithm SHA256).Hash
+    $packed = (Get-FileHash (Join-Path $unpacked $file) -Algorithm SHA256).Hash
+    if ($source -ne $packed) { throw "MSIX payload changed: $file" }
+}

@@ -4527,21 +4527,21 @@ fn collect_windows_hardware(inventory: bool) -> Result<serde_json::Value, String
     let script = r#"$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new();
 $result=@{gpu=@();ram=@();battery=@();temp=@();gpu_engines=@()};
 if (__INVENTORY__) {
-  try { $result.gpu=@(Get-CimInstance Win32_VideoController -ErrorAction Stop | Select-Object Name,DriverVersion) } catch { $result.gpu_error='GPU inventory unavailable' }
-  try { $result.ram=@(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop | Select-Object Manufacturer,Capacity,Speed,SMBIOSMemoryType,FormFactor) } catch { $result.ram_error='RAM inventory unavailable' }
-  try { $result.physical_disks=@(Get-CimInstance Win32_DiskDrive -ErrorAction Stop | Select-Object DeviceID,Model,InterfaceType,Size,Partitions) } catch { $result.disk_inventory_error='Physical disk inventory unavailable' }
+  try { $result.gpu=@(Get-CimInstance Win32_VideoController -ErrorAction Stop | Select-Object Name,DriverVersion) } catch { $result.gpu_error="GPU inventory query failed: $($_.Exception.Message)" }
+  try { $result.ram=@(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop | Select-Object Manufacturer,Capacity,Speed,SMBIOSMemoryType,FormFactor) } catch { $result.ram_error="RAM inventory query failed: $($_.Exception.Message)" }
+  try { $result.physical_disks=@(Get-CimInstance Win32_DiskDrive -ErrorAction Stop | Select-Object DeviceID,Model,InterfaceType,Size,Partitions) } catch { $result.disk_inventory_error="Disk inventory query failed: $($_.Exception.Message)" }
   try { $result.network_adapters=@(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Select-Object Name,ifType) } catch { $result.network_adapters=$null }
 }
 try { $result.disk=Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -Filter "Name='_Total'" -ErrorAction Stop | Select-Object -First 1 DiskReadBytesPerSec,DiskWriteBytesPerSec } catch { $result.disk=$null }
 try { $result.gpu_engines=@(Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction Stop | Select-Object Name,UtilizationPercentage) } catch { $result.gpu_engines=@() }
 try { $result.logical_disks=@(Get-CimInstance Win32_PerfFormattedData_PerfDisk_LogicalDisk -ErrorAction Stop | Select-Object Name,DiskReadBytesPerSec,DiskWriteBytesPerSec) } catch { $result.logical_disks=@() }
-try { $result.battery=@(Get-CimInstance Win32_Battery -ErrorAction Stop | Select-Object Name,EstimatedChargeRemaining,BatteryStatus,DesignCapacity,FullChargeCapacity) } catch { $result.battery_error='Battery telemetry unavailable' }
+try { $result.battery=@(Get-CimInstance Win32_Battery -ErrorAction Stop | Select-Object Name,EstimatedChargeRemaining,BatteryStatus,DesignCapacity,FullChargeCapacity) } catch { $result.battery_error="Battery query failed: $($_.Exception.Message)" }
 try {
   $sensors=@(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor -ErrorAction Stop | Select-Object Name,Value,Identifier,Parent,SensorType)
   $result.temp=@($sensors | Where-Object SensorType -eq Temperature)
   $result.hardware_sensors=$sensors
   $result.sensor_hardware=@(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Hardware -ErrorAction Stop | Where-Object { $_.HardwareType -like 'Gpu*' -or $_.HardwareType -eq 'Cpu' } | Select-Object Name,Identifier,HardwareType)
-} catch { $result.temp_error='Hardware readings require the LibreHardwareMonitor WMI provider' }
+} catch { $result.temp_error="Temperature and CPU/GPU sensor query failed: $($_.Exception.Message)" }
 $result | ConvertTo-Json -Depth 4 -Compress"#;
     let script = script.replace("__INVENTORY__", if inventory { "$true" } else { "$false" });
     let mut child = Command::new("powershell.exe")

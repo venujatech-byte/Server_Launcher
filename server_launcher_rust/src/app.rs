@@ -3712,6 +3712,11 @@ fn read_proc_cmd_and_cwd(pid: u32) -> (Option<String>, Option<String>) {
 }
 
 impl eframe::App for LauncherApp {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        self.palette().bg_header.to_normalized_gamma_f32()
+    }
+
+
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         self.apply_systemd_results();
         // Sync background sensors snapshot if newly available
@@ -3838,6 +3843,7 @@ impl eframe::App for LauncherApp {
         // 0. DEDICATED SLIM CUSTOM TITLEBAR (Height 24px)
         // ═════════════════════════════════════════════════════════════════════
         egui::TopBottomPanel::top("custom_titlebar")
+            .show_separator_line(false)
             .exact_height(24.0)
             .frame(
                 Frame::none()

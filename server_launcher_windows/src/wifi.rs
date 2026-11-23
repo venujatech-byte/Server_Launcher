@@ -156,16 +156,24 @@ mod wifi_selection_tests {
         let mut snapshot = super::WifiSnapshot { state: "UNKNOWN".into(), ..Default::default() };
         super::apply_windows_wlan_details(&mut snapshot, super::WindowsWlanInterface {
             state: Some("CONNECTED".into()), ssid: Some("Office".into()), bssid: Some("AA:BB:CC:DD:EE:FF".into()),
-            signal_pct: Some(0), channel: Some(36), ..Default::default()
+            signal_pct: Some(0), channel: Some(36), rate: Some("RX 866.7 / TX 780.0 Mbps".into()),
+            security: Some("WPA2-Personal (CCMP)".into()), ..Default::default()
         });
         assert!(snapshot.is_connected);
         assert_eq!(snapshot.ssid, "Office");
         assert_eq!(snapshot.signal_pct, Some(0));
         assert_eq!(snapshot.channel, 36);
-        assert!(snapshot.rate.is_empty());
-        assert!(snapshot.security.is_empty());
+        assert_eq!(snapshot.rate, "RX 866.7 / TX 780.0 Mbps");
+        assert_eq!(snapshot.security, "WPA2-Personal (CCMP)");
         assert_eq!(super::format_mac_address([0, 17, 34, 51, 68, 255]), "00:11:22:33:44:FF");
         assert!(super::WINDOWS_WIFI_QUERY.contains("guid=[string]$adapter.InterfaceGuid"));
+    }
+
+    #[test]
+    fn native_wlan_security_algorithms_are_named_without_localized_labels() {
+        assert_eq!(super::wlan_auth_name(9), "WPA3-Personal");
+        assert_eq!(super::wlan_cipher_name(4), "CCMP");
+        assert_eq!(super::wlan_auth_name(0xffff), "Other");
     }
 
     #[test]
@@ -544,7 +552,7 @@ struct WindowsWlanInterface {
 
 #[cfg(any(windows, test))]
 fn parse_windows_wlan_interface(text: &str, adapter: &str) -> WindowsWlanInterface {
-    // shortcut: netsh field names are localized; use WLAN API calls if non-English Windows needs reliable association details.
+    // shortcut: keep netsh as a fallback when WLAN API queries fail; non-English field names remain unavailable.
     let mut sections = Vec::<Vec<(String, String)>>::new();
     let mut section = Vec::<(String, String)>::new();
     for line in text.lines().chain(std::iter::once("")) {
@@ -602,11 +610,14 @@ fn query_windows_wlan_interface(guid: &WindowsWifiGuid) -> WindowsWlanInterface 
         } else { None };
         unsafe { WlanFreeMemory(data); }
         let connection = connection?;
+        let connected = connection.state == 1;
         let mut details = WindowsWlanInterface {
             state: match connection.state { 1 => Some("CONNECTED".into()), 4 => Some("DISCONNECTED".into()), _ => None },
-            ssid: (connection.association.ssid.length <= 32).then(|| String::from_utf8_lossy(&connection.association.ssid.bytes[..connection.association.ssid.length as usize]).into_owned()).filter(|value| !value.is_empty()),
-            bssid: connection.association.bssid.iter().any(|byte| *byte != 0).then(|| format_mac_address(connection.association.bssid)),
-            signal_pct: (connection.association.signal_quality <= 100).then_some(connection.association.signal_quality as u8),
+            ssid: (connected && connection.association.ssid.length <= 32).then(|| String::from_utf8_lossy(&connection.association.ssid.bytes[..connection.association.ssid.length as usize]).into_owned()).filter(|value| !value.is_empty()),
+            bssid: (connected && connection.association.bssid.iter().any(|byte| *byte != 0)).then(|| format_mac_address(connection.association.bssid)),
+            signal_pct: (connected && connection.association.signal_quality <= 100).then_some(connection.association.signal_quality as u8),
+            rate: connected.then(|| format!("RX {:.1} / TX {:.1} Mbps", connection.association.rx_rate as f64 / 1000.0, connection.association.tx_rate as f64 / 1000.0)),
+            security: connected.then(|| format!("{} ({})", wlan_auth_name(connection.security.auth_algorithm), wlan_cipher_name(connection.security.cipher_algorithm))),
             ..Default::default()
         };
         let mut channel_data = ptr::null_mut::<c_void>();
@@ -623,6 +634,16 @@ fn query_windows_wlan_interface(guid: &WindowsWifiGuid) -> WindowsWlanInterface 
     })();
     unsafe { WlanCloseHandle(handle, ptr::null_mut()); }
     result.unwrap_or_default()
+}
+
+#[cfg(any(windows, test))]
+fn wlan_auth_name(algorithm: u32) -> &'static str {
+    match algorithm { 1 => "Open", 2 => "Shared Key", 3 => "WPA-Enterprise", 4 => "WPA-Personal", 6 => "WPA2-Enterprise", 7 => "WPA2-Personal", 8 => "WPA3-Enterprise 192-bit", 9 => "WPA3-Personal", 10 => "Enhanced Open", 11 => "WPA3-Enterprise", _ => "Other" }
+}
+
+#[cfg(any(windows, test))]
+fn wlan_cipher_name(algorithm: u32) -> &'static str {
+    match algorithm { 0 => "None", 1 => "WEP-40", 2 => "TKIP", 4 => "CCMP", 5 => "WEP-104", 6 => "BIP", 8 => "GCMP", 9 => "GCMP-256", 10 => "CCMP-256", 11 => "BIP-GMAC-128", 12 => "BIP-GMAC-256", 13 => "BIP-CMAC-256", 256 => "Group key", 257 => "WEP", _ => "Other" }
 }
 
 #[cfg(any(windows, test))]

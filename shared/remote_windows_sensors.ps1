@@ -19,17 +19,23 @@ try {
     $cpuLoad = $null
     $reportedCpuLoads = @($cpu | Where-Object { $null -ne $_.LoadPercentage })
     if ($reportedCpuLoads.Count -gt 0) { $cpuLoad = [double](($reportedCpuLoads | Measure-Object -Property LoadPercentage -Average).Average) }
+    $cpuUsageCounters = @()
+    try { $cpuUsageCounters = @(Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -ErrorAction Stop) } catch { }
+    if ($null -eq $cpuLoad) {
+        $totalCpu = $cpuUsageCounters | Where-Object { $_.Name -eq '_Total' } | Select-Object -First 1
+        if ($null -ne $totalCpu.PercentProcessorTime -and $totalCpu.PercentProcessorTime -ge 0 -and $totalCpu.PercentProcessorTime -le 100) {
+            $cpuLoad = [double]$totalCpu.PercentProcessorTime
+        }
+    }
     $cpuCoreUsages = @()
     if ($collectCpuCores) {
-        try {
-            $cpuCoreUsages = @(Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -ErrorAction Stop |
-                Where-Object { $_.Name -match '^\d+$' } |
-                Sort-Object { [int]$_.Name } |
-                ForEach-Object {
-                    $usage = $_.PercentProcessorTime
-                    if ($null -ne $usage -and $usage -ge 0 -and $usage -le 100) { [double]$usage } else { $null }
-                })
-        } catch { $cpuCoreUsages = @() }
+        $cpuCoreUsages = @($cpuUsageCounters |
+            Where-Object { $_.Name -match '^\d+$' } |
+            Sort-Object { [int]$_.Name } |
+            ForEach-Object {
+                $usage = $_.PercentProcessorTime
+                if ($null -ne $usage -and $usage -ge 0 -and $usage -le 100) { [double]$usage } else { $null }
+            })
     }
     $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
     $memoryTotal = [int64]$os.TotalVisibleMemorySize * 1024

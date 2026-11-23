@@ -2828,6 +2828,8 @@ mod remote_sensor_command_tests {
         assert!(script.contains("Win32_PerfFormattedData_PerfDisk_PhysicalDisk"));
         assert!(script.contains("DiskReadBytesPersec"));
         assert!(script.contains("Win32_PerfFormattedData_PerfOS_Processor"));
+        assert!(script.contains("$_.Name -eq '_Total'"));
+        assert!(script.contains("$totalCpu.PercentProcessorTime"));
         assert!(script.contains("$rxRate = $null"));
         assert!(!command.contains("Get-CimInstance"));
     }

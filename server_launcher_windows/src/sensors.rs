@@ -340,7 +340,18 @@ pub struct SystemSensorsSnapshot {
     pub windows_telemetry_error: Option<String>,
     #[cfg(windows)]
     pub windows_hardware_sampled_at: Option<Instant>,
+    #[cfg(windows)]
+    pub windows_hardware_attempted_at: Option<Instant>,
     pub timestamp: Option<Instant>,
+}
+
+impl SystemSensorsSnapshot {
+    pub fn hardware_history_timestamp(&self) -> Option<Instant> {
+        #[cfg(windows)]
+        { self.windows_hardware_attempted_at.or(self.timestamp) }
+        #[cfg(not(windows))]
+        { self.timestamp }
+    }
 }
 
 fn counter_rates(previous: Option<(u64, u64)>, current: (u64, u64), elapsed: f64) -> (f64, f64) {
@@ -1011,6 +1022,8 @@ impl SystemSensorsCollector {
             windows_telemetry_error: None,
             #[cfg(windows)]
             windows_hardware_sampled_at: None,
+            #[cfg(windows)]
+            windows_hardware_attempted_at: None,
             timestamp: Some(now),
         }
     }
@@ -4125,6 +4138,8 @@ print(json.dumps(data))
             windows_telemetry_error: None,
         #[cfg(windows)]
         windows_hardware_sampled_at: None,
+        #[cfg(windows)]
+        windows_hardware_attempted_at: None,
             timestamp: Some(Instant::now()),
     })
 }
@@ -4346,6 +4361,7 @@ impl SystemSensorsCollector {
             let sample = collect_windows_hardware(inventory_due);
             let sampled_at = Instant::now();
             self.last_windows_hardware_query = sampled_at;
+            self.windows_hardware.windows_hardware_attempted_at = Some(sampled_at);
             if sample.is_ok() {
                 self.windows_hardware.windows_hardware_sampled_at = Some(sampled_at);
             }

@@ -11587,6 +11587,7 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 2. Row of 4 Big Metric Cards (matching Overview page architecture)
+                let hardware_timestamp = snap.hardware_history_timestamp();
                 let readings = [
                     snap.cpu_usage_available.then_some(snap.cpu_global_usage).filter(|_| snap.timestamp.is_some()),
                     (snap.cpu_frequency_mhz > 0).then_some(snap.cpu_frequency_mhz as f32 / 1000.0),
@@ -11597,7 +11598,7 @@ impl LauncherApp {
                 let units = ["%", "GHz", "W", "°C"];
                 let icons = [crate::lucide::ACTIVITY, crate::lucide::GAUGE, crate::lucide::ZAP, crate::lucide::THERMOMETER];
                 let histories: Vec<_> = labels.iter().enumerate().map(|(index, label)|
-                    sensor_metric_history(ui, host_id, label, snap.timestamp, readings[index])).collect();
+                    sensor_metric_history(ui, host_id, label, if index >= 2 { hardware_timestamp } else { snap.timestamp }, readings[index])).collect();
                 sensor_card_columns(ui, 4, |ui, column| {
                     let history = &histories[column];
                     let minimum = history.iter().copied().filter(|value| value.is_finite()).reduce(f32::min);
@@ -12340,15 +12341,16 @@ impl LauncherApp {
                 let clock_val = gpu.and_then(|g| g.clock_mhz).unwrap_or(0);
                 let max_clk = clock_val.max(1);
                 let metric_key = format!("{}:{}", gpu.map(|gpu| gpu.device_path.as_str()).unwrap_or(""), self.selected_gpu_idx);
+                let hardware_timestamp = snap.hardware_history_timestamp();
                 let (display_load, is_engine_peak) = gpu_display_load(gpu);
                 let load_key = if is_engine_peak { "busiest_engine" } else { "load" };
-                let gpu_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:{load_key}"), snap.timestamp, display_load);
+                let gpu_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:{load_key}"), hardware_timestamp, display_load);
                 let render_load = gpu.and_then(|gpu| gpu.engine_loads.iter().filter(|(name, _)| name.to_lowercase().contains("render") || name.contains("3D")).map(|(_, load)| *load).reduce(f32::max));
-                let gpu_3d_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:render"), snap.timestamp, render_load);
-                let gpu_clock_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:clock"), snap.timestamp, gpu.and_then(|gpu| gpu.clock_mhz).map(|value| value as f32));
+                let gpu_3d_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:render"), hardware_timestamp, render_load);
+                let gpu_clock_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:clock"), hardware_timestamp, gpu.and_then(|gpu| gpu.clock_mhz).map(|value| value as f32));
                 let gpu_memory = gpu.and_then(|gpu| gpu.mem_used_mb.zip(gpu.mem_total_mb))
                     .filter(|(used, total)| *total > 0 && used <= total);
-                let gpu_vram_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:vram"), snap.timestamp, gpu_memory.map(|(used, _)| used as f32 / 1024.0));
+                let gpu_vram_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:vram"), hardware_timestamp, gpu_memory.map(|(used, _)| used as f32 / 1024.0));
                 let (vram_val, vram_sub, vram_peak, vram_pwr, total_vram_mb, used_vram_mb) =
                     if let Some((used, total)) = gpu_memory {
                         let pct = used as f64 / total.max(1) as f64 * 100.0;
@@ -12528,7 +12530,7 @@ impl LauncherApp {
                                 let (name, load) = &engines[index];
                                 ui.label(RichText::new(name).size(11.0).color(p.text_secondary));
                                 ui.label(RichText::new(format!("{load:.1}%")).size(20.0).strong().color(p.text_primary));
-                                let history = sensor_metric_history(ui, host_id, &format!("{metric_key}:{name}"), snap.timestamp, Some(*load));
+                                let history = sensor_metric_history(ui, host_id, &format!("{metric_key}:{name}"), hardware_timestamp, Some(*load));
                                 draw_card_sparkline(ui, 48.0, &history, 100.0, None, accent);
                             });
                         }
@@ -12965,8 +12967,9 @@ impl LauncherApp {
 
                 // 2. Top Row of 4 Big Stat Cards (matching Overview page architecture)
                 let st_history = sensor_metric_history(ui, host_id, "storage:mounted_usage_pct", snap.timestamp, st_pct);
-                let rd_history = sensor_metric_history(ui, host_id, "storage:read_rate", snap.timestamp, snap.total_disk_rates_available.then_some(read_mb as f32));
-                let wr_history = sensor_metric_history(ui, host_id, "storage:write_rate", snap.timestamp, snap.total_disk_rates_available.then_some(write_mb as f32));
+                let hardware_timestamp = snap.hardware_history_timestamp();
+                let rd_history = sensor_metric_history(ui, host_id, "storage:read_rate", hardware_timestamp, snap.total_disk_rates_available.then_some(read_mb as f32));
+                let wr_history = sensor_metric_history(ui, host_id, "storage:write_rate", hardware_timestamp, snap.total_disk_rates_available.then_some(write_mb as f32));
                 let st_subtitle = st_pct.map(|pct| format!("{used_gb:.1} GB mounted ({pct:.1}%)"))
                     .unwrap_or_else(|| "Mounted usage unavailable".to_string());
                 let free_stat = if total_bytes > 0 { format!("FREE {free_gb:.1} GB") } else { "Unavailable".to_string() };
@@ -16330,9 +16333,10 @@ impl LauncherApp {
             if gpu.device_path.is_empty() { gpu.name.as_str() } else { gpu.device_path.as_str() }
         }).unwrap_or("unavailable");
         let history_id = egui::Id::new(("thermal_measured_history", host_id, self.selected_gpu_idx, selected_gpu_identity));
+        let hardware_timestamp = snap.hardware_history_timestamp();
         let history = ui.ctx().data_mut(|data| {
             let history = data.get_temp_mut_or_default::<VecDeque<(Instant, f32, f32)>>(history_id);
-            if let Some(timestamp) = snap.timestamp {
+            if let Some(timestamp) = hardware_timestamp {
                 if history.back().map(|sample| sample.0) != Some(timestamp) {
                     history.push_back((timestamp, cpu_temp, gpu_temp));
                 }

@@ -217,6 +217,7 @@ pub struct ProcessGroupSummary {
     pub sum_net_rate: f64,
     pub net_rate_available: bool,
     pub sum_net_bytes: u64,
+    pub sum_net_bytes_available: bool,
     pub sum_gpu: f32,
     pub sum_power_watts: f32,
     pub is_app: bool,
@@ -16854,6 +16855,7 @@ impl LauncherApp {
                         let sum_net_rate: f64 = list.iter().map(|p| p.net_rate_bps).sum();
                         let net_rate_available = list.iter().all(|process| process.net_rate_available);
                         let sum_net_bytes: u64 = list.iter().map(|p| p.net_rx_bytes.saturating_add(p.net_tx_bytes)).sum();
+                        let sum_net_bytes_available = list.iter().all(|process| process.net_counters_available);
                         let pids: Vec<u32> = list.iter().map(|p| p.pid).collect();
                         // Linux does not expose per-process GPU attribution through this collector.
                         let sum_gpu = 0.0;
@@ -16869,6 +16871,7 @@ impl LauncherApp {
                             sum_net_rate,
                             net_rate_available,
                             sum_net_bytes,
+                            sum_net_bytes_available,
                             sum_gpu,
                             sum_power_watts,
                             is_app,
@@ -17269,7 +17272,7 @@ impl LauncherApp {
                                                 let bg_rect = egui::Rect::from_min_max(net_rect.min, egui::pos2(net_rect.max.x + COL_SPACING, net_rect.max.y));
                                                 ui.painter().rect_filled(bg_rect, Rounding::ZERO, row_bg);
                                             }
-                                            let net_txt = if grp.sum_net_bytes > 0 && grp.net_rate_available { crate::sensors::format_rate(grp.sum_net_rate) } else { "—".to_string() };
+                                            let net_txt = if grp.sum_net_bytes_available && grp.net_rate_available { crate::sensors::format_rate(grp.sum_net_rate) } else { "—".to_string() };
                                             let net_color = if grp.sum_net_rate > 1024.0 { Color32::from_rgb(203, 213, 225) } else { Color32::from_rgb(160, 165, 175) };
                                             ui.painter().text(
                                                 egui::pos2(net_rect.right() - 8.0, net_rect.center().y),
@@ -17280,6 +17283,8 @@ impl LauncherApp {
                                             );
                                             let _ = net_resp.on_hover_text(if !snap.process_network_supported {
                                                 "Per-process network counters are unavailable from this host's sensor collector.".to_string()
+                                            } else if !grp.sum_net_bytes_available {
+                                                "Per-process network counters are unavailable for one or more processes.".to_string()
                                             } else {
                                                 format!("{} received + sent across visible TCP sockets{}", crate::sensors::format_bytes(grp.sum_net_bytes), if grp.net_rate_available { "" } else { " • waiting for a prior rate sample" })
                                             });
@@ -17460,7 +17465,7 @@ impl LauncherApp {
                                                         let bg_rect = egui::Rect::from_min_max(c_net_rect.min, egui::pos2(c_net_rect.max.x + COL_SPACING, c_net_rect.max.y));
                                                         ui.painter().rect_filled(bg_rect, Rounding::ZERO, c_row_bg);
                                                     }
-                                                    let c_net_txt = if child.net_rx_bytes.saturating_add(child.net_tx_bytes) > 0 && child.net_rate_available { crate::sensors::format_rate(child.net_rate_bps) } else { "—".to_string() };
+                                                    let c_net_txt = if child.net_counters_available && child.net_rate_available { crate::sensors::format_rate(child.net_rate_bps) } else { "—".to_string() };
                                                     let c_net_color = if child.net_rate_bps > 1024.0 {
                                                         Color32::from_rgb(203, 213, 225)
                                                     } else {
@@ -17475,6 +17480,8 @@ impl LauncherApp {
                                                     );
                                                     let _ = c_net_resp.on_hover_text(if !snap.process_network_supported {
                                                         "Per-process network counters are unavailable from this host's sensor collector.".to_string()
+                                                    } else if !child.net_counters_available {
+                                                        "Per-process network counters are unavailable for this process.".to_string()
                                                     } else {
                                                         format!("{} received + sent across visible TCP sockets{}", crate::sensors::format_bytes(child.net_rx_bytes.saturating_add(child.net_tx_bytes)), if child.net_rate_available { "" } else { " • waiting for a prior rate sample" })
                                                     });

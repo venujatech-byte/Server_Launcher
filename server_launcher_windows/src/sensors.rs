@@ -77,6 +77,7 @@ pub struct ProcessSensorInfo {
     pub disk_rate_available: bool,
     pub net_rx_bytes: u64,
     pub net_tx_bytes: u64,
+    pub net_counters_available: bool,
     pub net_rate_bps: f64,
     pub net_rate_available: bool,
     pub status: String,
@@ -872,6 +873,7 @@ impl SystemSensorsCollector {
                     { Some(proc.start_time()) }
                 };
                 let (proc_net_rx, proc_net_tx) = current_proc_net.get(&pid_u32).copied().unwrap_or_default();
+                let net_counters_available = include_process_network && current_proc_net.contains_key(&pid_u32);
                 let previous = start_marker.filter(|_| include_process_network).and_then(|start| {
                     current_identified_net.insert((pid_u32, start), (proc_net_rx, proc_net_tx));
                     self.prev_proc_net.get(&(pid_u32, start)).copied()
@@ -897,6 +899,7 @@ impl SystemSensorsCollector {
                     disk_rate_available,
                     net_rx_bytes: proc_net_rx,
                     net_tx_bytes: proc_net_tx,
+                    net_counters_available,
                     net_rate_bps,
                     net_rate_available,
                     status,
@@ -2680,14 +2683,10 @@ fn parse_process_tcp_counters(output: &str) -> HashMap<u32, (u64, u64)> {
     let mut counters = HashMap::new();
     for line in output.lines() {
             let sent = line.split_whitespace()
-                .find_map(|field| field.strip_prefix("bytes_sent:")?.parse::<u64>().ok())
-                .unwrap_or(0);
+                .find_map(|field| field.strip_prefix("bytes_sent:")?.parse::<u64>().ok());
             let received = line.split_whitespace()
-                .find_map(|field| field.strip_prefix("bytes_received:")?.parse::<u64>().ok())
-                .unwrap_or(0);
-            if sent == 0 && received == 0 {
-                continue;
-            }
+                .find_map(|field| field.strip_prefix("bytes_received:")?.parse::<u64>().ok());
+            let (Some(sent), Some(received)) = (sent, received) else { continue; };
 
             let mut remaining = line;
             let mut socket_pids = Vec::new();
@@ -2793,6 +2792,8 @@ fn parse_remote_process_rows(parsed: &serde_json::Value, include_processes: bool
         let disk_write_rate_bps = rate("disk_write_rate");
         let disk_rate_bps = rate("disk_rate");
         let net_rate_bps = rate("net_rate");
+        let net_counters_available = process["net_counters_available"].as_bool() == Some(true)
+            && process["net_rx_bytes"].as_u64().is_some() && process["net_tx_bytes"].as_u64().is_some();
         let cpu_reading = parse_process_cpu_usage(&process["cpu"]);
         top_apps.push(ProcessSensorInfo {
             pid,
@@ -2810,8 +2811,10 @@ fn parse_remote_process_rows(parsed: &serde_json::Value, include_processes: bool
                 && disk_read_rate_bps.is_some() && disk_write_rate_bps.is_some() && disk_rate_bps.is_some(),
             net_rx_bytes: counter("net_rx_bytes"),
             net_tx_bytes: counter("net_tx_bytes"),
+            net_counters_available,
             net_rate_bps: net_rate_bps.unwrap_or(0.0),
-            net_rate_available: process["net_rate_available"].as_bool() == Some(true) && net_rate_bps.is_some(),
+            net_rate_available: process["net_rate_available"].as_bool() == Some(true) && net_rate_bps.is_some()
+                && net_counters_available,
             status: process["status"].as_str().unwrap_or("Unknown").to_string(),
         });
     }
@@ -3001,6 +3004,20 @@ mod remote_sensor_command_tests {
         assert_eq!(rows[0].cpu_usage, 7.5);
         assert_eq!(rows[0].memory_bytes, 2048);
         assert!(!rows[0].disk_rate_available && !rows[0].net_rate_available);
+        assert!(!rows[0].net_counters_available);
+    }
+
+    #[test]
+    fn remote_process_rows_preserve_reported_zero_network_counters() {
+        let parsed = serde_json::json!({"top_apps":[{
+            "pid":42,"name":"worker","mem_bytes":2048,"cpu":7.5,"status":"Running",
+            "net_rx_bytes":0,"net_tx_bytes":0,"net_counters_available":true,
+            "net_rate":0.0,"net_rate_available":true
+        }]});
+        let rows = super::parse_remote_process_rows(&parsed, true).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].net_counters_available && rows[0].net_rate_available);
+        assert_eq!(rows[0].net_rx_bytes + rows[0].net_tx_bytes, 0);
     }
 
     #[test]
@@ -3975,6 +3992,7 @@ if collect_processes:
                         "status": process_state_label(cpu_sample[3]) if cpu_sample is not None and start_marker == current_start else "Unknown",
                         "net_rx_bytes": rx2,
                         "net_tx_bytes": tx2,
+                        "net_counters_available": network is not None and network[0] == start_marker,
                         "net_rate": net_rate,
                         "net_rate_available": net_rate_available,
                         "disk_read_bytes": dr2,
@@ -4665,10 +4683,12 @@ mod tests {
         let output = concat!(
             "ESTAB 0 0 a b users:((\"app\",pid=42,fd=3)) bytes_sent:120 bytes_received:80\n",
             "ESTAB 0 0 a b users:((\"app\",pid=42,fd=4)) bytes_sent:30 bytes_received:20\n",
+            "ESTAB 0 0 a b users:((\"idle\",pid=43,fd=5)) bytes_sent:0 bytes_received:0\n",
             "ESTAB 0 0 a b bytes_sent:999 bytes_received:999\n",
         );
         let counters = parse_process_tcp_counters(output);
         assert_eq!(counters.get(&42), Some(&(100, 150)));
+        assert_eq!(counters.get(&43), Some(&(0, 0)));
         assert_eq!(counters.len(), 1);
     }
 

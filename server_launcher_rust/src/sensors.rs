@@ -1343,6 +1343,10 @@ fn parse_reported_temperature(value: &serde_json::Value) -> Option<f32> {
     value.as_f64().filter(|value| value.is_finite() && (-40.0..=150.0).contains(value)).map(|value| value as f32)
 }
 
+fn parse_battery_percentage(value: &serde_json::Value) -> Option<f32> {
+    value.as_f64().filter(|value| value.is_finite() && (0.0..=100.0).contains(value)).map(|value| value as f32)
+}
+
 fn hottest_temperature(current: Option<f32>, candidate: f32) -> Option<f32> {
     Some(current.map_or(candidate, |value| value.max(candidate)))
 }
@@ -2229,6 +2233,14 @@ mod gpu_pci_address_tests {
         assert_eq!(super::parse_nvidia_metric("NaN", 0.0, 100.0), None);
         assert_eq!(super::parse_nvidia_metric("101", 0.0, 100.0), None);
         assert_eq!(super::parse_nvidia_metric("42.5", 0.0, 100.0), Some(42.5));
+    }
+
+    #[test]
+    fn accepts_only_valid_battery_percentages() {
+        assert_eq!(super::parse_battery_percentage(&serde_json::json!(0)), Some(0.0));
+        assert_eq!(super::parse_battery_percentage(&serde_json::json!(100)), Some(100.0));
+        assert_eq!(super::parse_battery_percentage(&serde_json::json!(-1)), None);
+        assert_eq!(super::parse_battery_percentage(&serde_json::json!(101)), None);
     }
 }
 
@@ -4352,14 +4364,14 @@ print(json.dumps(data))
                     name: b["name"].as_str().filter(|name| !name.trim().is_empty()).unwrap_or("Unknown battery").to_string(),
                     present: true,
                     status: b["status"].as_str().unwrap_or("Unknown").to_string(),
-                    capacity_pct: value("capacity_pct").filter(|value| *value <= 100.0),
+                    capacity_pct: parse_battery_percentage(&b["capacity_pct"]),
                     power_watts: value("power_watts"),
                     voltage_volts: value("voltage_volts"),
                     energy_wh: value("energy_wh"),
                     energy_full_wh: value("energy_full_wh"),
                     energy_design_wh: value("energy_design_wh"),
                     energy_estimated: b["energy_estimated"].as_bool().unwrap_or(false),
-                    health_pct: value("health_pct").filter(|value| *value <= 100.0),
+                    health_pct: parse_battery_percentage(&b["health_pct"]),
                     cycle_count: b["cycle_count"].as_u64().and_then(|value| u32::try_from(value).ok()),
                     technology: b["technology"].as_str().unwrap_or("").to_string(),
                     model_name: b["model_name"].as_str().unwrap_or("").to_string(),

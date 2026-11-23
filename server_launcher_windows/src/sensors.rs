@@ -2644,6 +2644,53 @@ fn parse_process_tcp_counters(output: &str) -> HashMap<u32, (u64, u64)> {
 
 use crate::config::SshRemoteHost;
 use crate::remote::build_ssh_command;
+fn remote_windows_sensor_command(include_network_details: bool) -> String {
+    use base64::Engine;
+
+    let script = include_str!("../../shared/remote_windows_sensors.ps1")
+        .replace("__COLLECT_NETWORK_DETAILS__", if include_network_details { "$true" } else { "$false" });
+    let utf16le: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(utf16le);
+    format!("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded}")
+}
+
+// shortcut: cache Windows by endpoint; a non-Windows response evicts it, while transient SSH errors keep it.
+fn known_windows_remote_hosts() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static HOSTS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+    HOSTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+fn remote_sensor_host_key(host: &SshRemoteHost) -> String {
+    format!("{}@{}:{}", host.user.trim(), host.host.trim(), host.port)
+}
+
+fn query_remote_windows_sensors(host: &SshRemoteHost, include_network_details: bool) -> Result<Option<serde_json::Value>, String> {
+    let mut host = host.clone();
+    host.remote_cwd.clear();
+    let mut cmd = build_ssh_command(&host, &remote_windows_sensor_command(include_network_details));
+    let out = cmd.output().map_err(|error| format!("SSH command execution error: {error}"))?;
+    if !out.status.success() {
+        let error = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        if remote_python_is_missing(&error) {
+            return Ok(None);
+        }
+        return Err(if error.is_empty() { format!("Remote PowerShell exited with status {:?}", out.status.code()) } else { error });
+    }
+
+    let parsed: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .map_err(|error| format!("Failed to parse remote Windows sensor JSON: {error}"))?;
+    if parsed["sensor_os"].as_str() == Some("not_windows") {
+        return Ok(None);
+    }
+    Ok(Some(parsed))
+}
+
+fn remote_python_is_missing(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("command not found") || error.contains("not recognized as an internal or external command")
+        || error.contains("not recognized as the name of a cmdlet") || error.contains("not recognized")
+}
+
 fn remote_sensor_command(script: &str, include_processes: bool, include_process_network: bool, include_network_details: bool) -> String {
     format!("{} {} {} {}", script.trim_end(), if include_processes { "1" } else { "0" }, if include_processes && include_process_network { "1" } else { "0" }, if include_network_details { "1" } else { "0" })
 }
@@ -2654,6 +2701,25 @@ mod remote_sensor_command_tests {
     fn scan_flag_is_an_argument_to_the_python_command() {
         assert_eq!(super::remote_sensor_command("python3 -c 'pass'\n", true, true, false), "python3 -c 'pass' 1 1 0");
         assert_eq!(super::remote_sensor_command("python3 -c 'pass'\n", false, true, true), "python3 -c 'pass' 0 0 1");
+    }
+
+    #[test]
+    fn windows_sensor_command_encodes_utf16_powershell_without_shell_payload() {
+        use base64::Engine;
+        let command = super::remote_windows_sensor_command(true);
+        let encoded = command.strip_prefix("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ").unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
+        let words = bytes.chunks_exact(2).map(|word| u16::from_le_bytes([word[0], word[1]])).collect::<Vec<_>>();
+        let script = String::from_utf16(&words).unwrap();
+        assert!(script.contains("$collectNetworkDetails = $true"));
+        assert!(!command.contains("Get-CimInstance"));
+    }
+
+    #[test]
+    fn only_missing_python_falls_back_to_the_windows_collector() {
+        assert!(super::remote_python_is_missing("python3: command not found"));
+        assert!(super::remote_python_is_missing("'python3' is not recognized as an internal or external command"));
+        assert!(!super::remote_python_is_missing("Permission denied (publickey)"));
     }
 }
 
@@ -3712,17 +3778,56 @@ print(json.dumps(data))
 '
 "#;
 
-    let script = remote_sensor_command(script, include_processes, include_process_network, include_network_details);
-    let mut cmd = build_ssh_command(host, &script);
-    let out = cmd.output().map_err(|e| format!("SSH command execution error: {}", e))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("Remote sensor query failed: {}", err.trim()));
-    }
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let parsed: serde_json::Value = serde_json::from_str(stdout.trim())
-        .map_err(|e| format!("Failed to parse remote sensor json: {}", e))?;
+    let host_key = remote_sensor_host_key(host);
+    let known_windows = known_windows_remote_hosts().lock().unwrap().contains(&host_key);
+    let parsed = if known_windows {
+        match query_remote_windows_sensors(host, include_network_details)? {
+            Some(data) => data,
+            None => {
+                known_windows_remote_hosts().lock().unwrap().remove(&host_key);
+                return Err("Remote host no longer reports Windows through PowerShell".to_string());
+            }
+        }
+    } else {
+        let script = remote_sensor_command(script, include_processes, include_process_network, include_network_details);
+        let mut sensor_host = host.clone();
+        sensor_host.remote_cwd.clear();
+        let mut cmd = build_ssh_command(&sensor_host, &script);
+        let out = cmd.output().map_err(|e| format!("SSH command execution error: {}", e))?;
+        let python_failure = format!("{} {}", String::from_utf8_lossy(&out.stderr).trim(), String::from_utf8_lossy(&out.stdout).trim());
+        let mut python_error = if out.status.success() { None } else {
+            Some(format!("Remote sensor query failed: {}", python_failure.trim()))
+        };
+        let python_data: serde_json::Value = if let Some(error) = &python_error {
+            serde_json::json!({ "error": error })
+        } else {
+            match serde_json::from_slice(&out.stdout) {
+                Ok(data) => data,
+                Err(_error) if remote_python_is_missing(&python_failure) => {
+                    python_error = Some(format!("Remote Python sensor collector unavailable: {}", python_failure.trim()));
+                    serde_json::json!({ "error": python_error })
+                }
+                Err(error) => return Err(format!("Failed to parse remote sensor json: {}", error)),
+            }
+        };
+        let windows_host = python_error.as_deref().is_some_and(remote_python_is_missing)
+            || python_data["error"].as_str().is_some_and(|error| error.contains("detected Windows"));
+        if python_error.is_some() && !windows_host {
+            return Err(python_error.unwrap());
+        }
+        if windows_host {
+            match query_remote_windows_sensors(host, include_network_details) {
+                Ok(Some(windows_data)) => {
+                    known_windows_remote_hosts().lock().unwrap().insert(host_key);
+                    windows_data
+                }
+                Ok(None) => return Err(python_error.unwrap_or_else(|| python_data["error"].as_str().unwrap_or("Remote Windows sensor collection is unavailable").to_string())),
+                Err(error) => return Err(if let Some(python_error) = python_error { format!("{python_error}; Windows collector: {error}") } else { error }),
+            }
+        } else {
+            python_data
+        }
+    };
     if let Some(error) = parsed["error"].as_str() { return Err(error.to_string()); }
 
     let cpu_brand = parsed["cpu_model"].as_str().unwrap_or("Remote CPU").to_string();
@@ -4054,7 +4159,7 @@ print(json.dumps(data))
                     });
                 }
             }
-            let partition_count = Some(partitions.len());
+            let partition_count = p["partition_count"].as_u64().and_then(|count| usize::try_from(count).ok());
             let read_rate = p["read_rate"].as_f64().filter(|rate| rate.is_finite() && *rate >= 0.0);
             let write_rate = p["write_rate"].as_f64().filter(|rate| rate.is_finite() && *rate >= 0.0);
             physical_disks.push(PhysicalDiskInfo {
@@ -4119,9 +4224,9 @@ print(json.dumps(data))
         temp_sensors,
         process_count: parsed["process_count"].as_u64().and_then(|value| usize::try_from(value).ok()),
         top_apps,
-        processes_collected: include_processes,
-        process_network_collected: include_processes && include_process_network,
-        network_details_collected: include_network_details,
+        processes_collected: parsed["processes_collected"].as_bool().unwrap_or(include_processes),
+        process_network_collected: parsed["process_network_collected"].as_bool().unwrap_or(include_processes && include_process_network),
+        network_details_collected: parsed["network_details_collected"].as_bool().unwrap_or(include_network_details),
         os_name: parsed["os_name"].as_str().unwrap_or("").to_string(),
         os_version: parsed["os_version"].as_str().unwrap_or("").to_string(),
         cpu_governor,

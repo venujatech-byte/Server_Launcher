@@ -176,6 +176,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Cooling and Bluetooth cleanup:** Removed the unused sysfs fan detector, which had no UI or collector callers, and corrected the Bluetooth toolbar comment so it no longer advertises the removed RSSI filter. Current Bluetooth codec claims are absent; cooling remains explicitly unavailable because fan telemetry is not collected.
 - **Responsive Data Usage table:** Narrow sensor panels switch the fixed-width interface table to compact per-interface cards, keeping byte totals and live rates visible without a horizontal scroll area in both apps.
 - **Metric-card readability and themes:** Shared sensor stat cards now use the active theme's foreground/muted colors and raise secondary labels to a readable 9.5–10.5 px scale in both apps.
+- **Unavailable metric plots:** Sensor card sparklines now distinguish no history, one sample, and repeated unavailable samples; an unsupported GPU engine no longer leaves a blank graph that can be mistaken for a zero reading.
 
 ### Remaining work and validation
 

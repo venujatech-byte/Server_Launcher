@@ -5382,6 +5382,27 @@ fn push_telemetry<T>(history: &mut VecDeque<T>, value: T, capacity: usize) {
     history.push_back(value);
 }
 
+fn card_sparkline_empty_state(history: &[f32]) -> Option<&'static str> {
+    let samples = history.iter().filter(|value| value.is_finite()).count();
+    match (history.is_empty(), samples) {
+        (true, _) => Some("No history"),
+        (false, 0) => Some("Unavailable"),
+        (false, 1) => Some("Collecting history…"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod card_sparkline_state_tests {
+    #[test]
+    fn missing_samples_are_not_rendered_as_empty_or_zero_history() {
+        assert_eq!(super::card_sparkline_empty_state(&[]), Some("No history"));
+        assert_eq!(super::card_sparkline_empty_state(&[f32::NAN, f32::NAN]), Some("Unavailable"));
+        assert_eq!(super::card_sparkline_empty_state(&[f32::NAN, 0.0]), Some("Collecting history…"));
+        assert_eq!(super::card_sparkline_empty_state(&[0.0, 1.0]), None);
+    }
+}
+
 fn draw_card_sparkline(
     ui: &mut Ui,
     height: f32,
@@ -5392,6 +5413,11 @@ fn draw_card_sparkline(
 ) {
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let rect = response.rect;
+
+    if let Some(state) = card_sparkline_empty_state(history) {
+        painter.text(rect.center(), egui::Align2::CENTER_CENTER, state, egui::FontId::monospace(9.0), ui.visuals().weak_text_color());
+        return;
+    }
 
     if let Some(ratio) = dotted_ratio {
         let y = rect.bottom() - rect.height() * ratio.clamp(0.05, 0.95);
@@ -5407,16 +5433,6 @@ fn draw_card_sparkline(
     }
 
     let n = history.len();
-    if n < 2 {
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            if n == 0 { "No history" } else { "Collecting history…" },
-            egui::FontId::monospace(8.5),
-            Color32::from_rgb(100, 116, 139),
-        );
-        return;
-    }
 
     let step_x = rect.width() / (n - 1) as f32;
     let pts: Vec<Option<egui::Pos2>> = history

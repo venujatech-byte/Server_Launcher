@@ -12,6 +12,7 @@ try {
     $collectRamModules = __COLLECT_RAM_MODULES__
     $collectNetworkRates = __COLLECT_NETWORK_RATES__
     $collectCpuCores = __COLLECT_CPU_CORES__
+    $collectDiskRates = __COLLECT_DISK_RATES__
     $cpu = @(Get-CimInstance Win32_Processor -ErrorAction Stop)
     $cores = [int](($cpu | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum)
     if ($cores -lt 1) { throw 'No logical CPU count was reported' }
@@ -59,6 +60,15 @@ try {
             }
         }
     })
+    $totalDiskReadRate = $null
+    $totalDiskWriteRate = $null
+    if ($collectDiskRates) {
+        try {
+            $totalDisk = Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -ErrorAction Stop | Where-Object { $_.Name -eq '_Total' } | Select-Object -First 1
+            if ($null -ne $totalDisk.DiskReadBytesPersec -and $totalDisk.DiskReadBytesPersec -ge 0) { $totalDiskReadRate = [double]$totalDisk.DiskReadBytesPersec }
+            if ($null -ne $totalDisk.DiskWriteBytesPersec -and $totalDisk.DiskWriteBytesPersec -ge 0) { $totalDiskWriteRate = [double]$totalDisk.DiskWriteBytesPersec }
+        } catch { }
+    }
     $physicalDisks = @(Get-CimInstance Win32_DiskDrive -ErrorAction Stop | ForEach-Object {
         if ($_.Size -gt 0) {
             [pscustomobject]@{
@@ -264,8 +274,8 @@ try {
         swap_total = $swapTotal
         swap_free = [int64][math]::Max([int64]0, $swapTotal - $swapUsed)
         disks = $disks
-        total_disk_read_rate = $null
-        total_disk_write_rate = $null
+        total_disk_read_rate = $totalDiskReadRate
+        total_disk_write_rate = $totalDiskWriteRate
         temps = @()
         gpus = $gpus
         gpu_engines = $gpuEngines

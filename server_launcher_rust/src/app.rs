@@ -4253,18 +4253,7 @@ impl eframe::App for LauncherApp {
                 )
                 .show(ctx, |ui| {
                     let machine_id = self.selected_machine.clone();
-                    if self.active_sidebar_tab == SidebarTab::Servers {
-                        ui.scope(|ui| {
-                            ui.visuals_mut().widgets.noninteractive.bg_stroke = Stroke::NONE;
-                            ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
-                            ui.visuals_mut().widgets.hovered.bg_stroke = Stroke::NONE;
-                            ui.visuals_mut().widgets.active.bg_stroke = Stroke::NONE;
-                            ui.visuals_mut().window_stroke = Stroke::NONE;
-                            self.render_remote_pc_dashboard(ui, &machine_id);
-                        });
-                    } else {
-                        self.render_remote_pc_dashboard(ui, &machine_id);
-                    }
+                    self.render_remote_pc_dashboard(ui, &machine_id);
                 });
         }
 

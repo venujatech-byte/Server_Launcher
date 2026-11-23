@@ -2795,6 +2795,8 @@ mod remote_sensor_command_tests {
         assert!(script.contains("physical_cores = $physicalCores"));
         assert!(script.contains("$collectDiskRates = $true"));
         assert!(script.contains("Win32_PerfFormattedData_PerfDisk_PhysicalDisk"));
+        assert!(script.contains("Win32_PerfFormattedData_PerfDisk_LogicalDisk"));
+        assert!(script.contains("read_rate = if ($null -ne $rates)"));
         assert!(script.contains("DiskReadBytesPersec"));
         assert!(script.contains("Win32_PerfFormattedData_PerfOS_Processor"));
         assert!(script.contains("$_.Name -eq '_Total'"));

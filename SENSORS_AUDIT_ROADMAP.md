@@ -216,7 +216,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
   - The GPU page requests OS engine counters only while selected; the UI reports the busiest engine without claiming overall GPU utilization. Aggregate GPU load, memory and power remain unavailable.
   - The RAM page requests WMI module inventory only while selected; RAM channel topology remains unavailable.
   - Overview, Wi-Fi and Data Usage request two-sample adapter rates. Wi-Fi details additionally request reported interface type, IPv4 MTU and available IP addresses.
-  - Overview and Storage request aggregate physical-disk throughput. Per-drive mapping, process network/disk attribution and remote Windows thermal readings remain unavailable.
+  - Overview and Storage request aggregate physical-disk throughput and map drive-letter logical-disk rates by exact volume ID. Per-drive physical-device mapping, process network/disk attribution and remote Windows thermal readings remain unavailable.
   - macOS remote sensors remain unsupported.
 - **Windows local Wi-Fi:** The Windows sensors page now queries `Get-NetAdapter`, IP configuration and adapter counters, with `netsh` for association details; scans use the WLAN API and DNS flush uses the Windows resolver command. Missing SSID/signal details stay unavailable if localized `netsh` output cannot be parsed, and channel labels no longer show a false `0 MHz`.
 

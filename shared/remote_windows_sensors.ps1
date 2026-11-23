@@ -63,15 +63,30 @@ try {
     $swapTotal = [int64]((($pageFiles | Measure-Object -Property AllocatedBaseSize -Sum).Sum) * 1MB)
     $swapUsed = [int64]((($pageFiles | Measure-Object -Property CurrentUsage -Sum).Sum) * 1MB)
     $uptime = [int64]([DateTime]::Now - $os.LastBootUpTime).TotalSeconds
+    $logicalDiskRates = @{}
+    if ($collectDiskRates) {
+        try {
+            foreach ($sample in @(Get-CimInstance Win32_PerfFormattedData_PerfDisk_LogicalDisk -ErrorAction Stop)) {
+                $read = $sample.DiskReadBytesPersec
+                $write = $sample.DiskWriteBytesPersec
+                if ($sample.Name -ne '_Total' -and $null -ne $read -and $read -ge 0 -and $null -ne $write -and $write -ge 0) {
+                    $logicalDiskRates[[string]$sample.Name] = @([double]$read, [double]$write)
+                }
+            }
+        } catch { $logicalDiskRates = @{} }
+    }
 
     $disks = @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction Stop | ForEach-Object {
         if ($_.Size -gt 0 -and $_.FreeSpace -ge 0 -and $_.FreeSpace -le $_.Size) {
+            $rates = $logicalDiskRates[[string]$_.DeviceID]
             [pscustomobject]@{
                 name = [string]$_.DeviceID
                 mount = [string]$_.DeviceID
                 total = [int64]$_.Size
                 used = [int64]($_.Size - $_.FreeSpace)
                 avail = [int64]$_.FreeSpace
+                read_rate = if ($null -ne $rates) { $rates[0] } else { $null }
+                write_rate = if ($null -ne $rates) { $rates[1] } else { $null }
             }
         }
     })

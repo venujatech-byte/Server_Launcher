@@ -191,6 +191,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Windows partition counts:** Preserve a missing WMI partition count as unavailable rather than showing a false zero; a reported zero remains distinguishable.
 - **GPU memory history:** Use timestamped reported used-VRAM samples for the selected adapter instead of an always-empty chart; invalid or incomplete counters remain unavailable.
 - **Unused GPU history state:** Removed three GPU history queues that had no readers; the rendered GPU histories are already stored by host and adapter identity.
+- **Missing local memory totals:** When the OS reports no physical-memory total, Overview and RAM now show unavailable, clear stale RAM history, and avoid drawing a zero-usage allocation bar in both apps.
 
 ### Remaining work and validation
 

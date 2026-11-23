@@ -11000,7 +11000,11 @@ impl LauncherApp {
                 push_telemetry(&mut self.cpu_history, snap.cpu_global_usage, history_capacity);
                 self.cpu_peak_usage = self.cpu_history.iter().copied().fold(0.0_f32, f32::max);
             }
-            push_telemetry(&mut self.ram_history, (snap.mem_usage_pct, reported_swap_usage(snap.swap_total_bytes, snap.swap_usage_pct).unwrap_or(f32::NAN)), history_capacity);
+            if snap.mem_total_bytes > 0 {
+                push_telemetry(&mut self.ram_history, (snap.mem_usage_pct, reported_swap_usage(snap.swap_total_bytes, snap.swap_usage_pct).unwrap_or(f32::NAN)), history_capacity);
+            } else {
+                self.ram_history.clear();
+            }
             let (total_storage, used_storage, _) = mounted_storage_totals(&snap.disks);
             if total_storage > 0 {
                 push_telemetry(&mut self.storage_history, (used_storage as f64 / total_storage as f64 * 100.0) as f32, history_capacity);
@@ -11195,13 +11199,15 @@ impl LauncherApp {
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 2.0;
-                                ui.label(RichText::new(format!("{:.1}", snap.mem_usage_pct)).size(29.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                ui.label(RichText::new("%").size(12.0).color(p.text_muted));
+                                ui.label(RichText::new(reported_sensor_value((snap.mem_total_bytes > 0).then_some(snap.mem_usage_pct), 1)).size(29.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                                if snap.mem_total_bytes > 0 { ui.label(RichText::new("%").size(12.0).color(p.text_muted)); }
                             });
                             ui.add_space(2.0);
                             let used_mb = snap.mem_used_bytes as f64 / (1024.0 * 1024.0);
                             let tot_mb = snap.mem_total_bytes as f64 / (1024.0 * 1024.0);
-                            let ram_str = if tot_mb > 10240.0 {
+                            let ram_str = if snap.mem_total_bytes == 0 {
+                                "Memory telemetry unavailable".to_string()
+                            } else if tot_mb > 10240.0 {
                                 format!("{:.2} GB / {:.2} GB", used_mb / 1024.0, tot_mb / 1024.0)
                             } else {
                                 format!("{:.2} MB / {:.2} MB", used_mb, tot_mb)
@@ -11743,15 +11749,16 @@ impl LauncherApp {
                 let total_ram_gb = snap.mem_total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                 let used_ram_gb = snap.mem_used_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                 let available_ram_gb = snap.mem_available_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-                let cache_bytes = memory_reclaimable_estimate(snap.mem_available_bytes, snap.mem_free_bytes);
+                let memory_available = snap.mem_total_bytes > 0;
+                let cache_bytes = memory_available.then(|| memory_reclaimable_estimate(snap.mem_available_bytes, snap.mem_free_bytes)).flatten();
                 let cache_gb = cache_bytes.map(|bytes| bytes as f64 / (1024.0 * 1024.0 * 1024.0));
 
-                let total_ram_str = format!("{:.1} GB", total_ram_gb);
+                let total_ram_str = if memory_available { format!("{:.1} GB", total_ram_gb) } else { "Unavailable".to_string() };
                 let used_gb_val = used_ram_gb;
                 let avail_gb_val = available_ram_gb;
                 let cached_gb_val = cache_gb;
-                let used_pct = snap.mem_usage_pct.clamp(0.0, 100.0);
-                let avail_pct = (snap.mem_available_bytes as f32 / snap.mem_total_bytes.max(1) as f32 * 100.0).clamp(0.0, 100.0);
+                let used_pct = if memory_available { snap.mem_usage_pct.clamp(0.0, 100.0) } else { f32::NAN };
+                let avail_pct = memory_available.then(|| (snap.mem_available_bytes as f32 / snap.mem_total_bytes as f32 * 100.0).clamp(0.0, 100.0));
 
                 let (slot_label, topol_label, mem_type_str, ram_mod_str) = if let Some(ref hw) = snap.memory_hw {
                     let slot = if host_id.is_some() { "REMOTE : ACTIVE".to_string() } else { if hw.slot_summary.is_empty() { "SLOTS UNAVAILABLE".into() } else { hw.slot_summary.clone() } };
@@ -11812,8 +11819,8 @@ impl LauncherApp {
                 // 2. Row of 4 Big Metric Cards (matching Overview page architecture)
                 let ram_slice: Vec<f32> = self.ram_history.iter().map(|(r, _)| *r).collect();
                 let swap_slice: Vec<f32> = self.ram_history.iter().map(|(_, s)| *s).collect();
-                let ram_avg = if !self.ram_history.is_empty() { self.ram_history.iter().map(|(r, _)| *r).sum::<f32>() / self.ram_history.len() as f32 } else { snap.mem_usage_pct };
-                let ram_peak = self.ram_history.iter().map(|(r, _)| *r).fold(snap.mem_usage_pct, f32::max);
+                let ram_avg = (!self.ram_history.is_empty()).then(|| self.ram_history.iter().map(|(r, _)| *r).sum::<f32>() / self.ram_history.len() as f32);
+                let ram_peak = self.ram_history.iter().map(|(r, _)| *r).reduce(f32::max);
                 let swap_values: Vec<f32> = self.ram_history.iter().map(|(_, s)| *s).filter(|value| value.is_finite()).collect();
                 let swap_avg = if swap_values.is_empty() { reported_swap_usage(snap.swap_total_bytes, snap.swap_usage_pct) } else { Some(swap_values.iter().sum::<f32>() / swap_values.len() as f32) };
                 let swap_peak = swap_values.iter().copied().reduce(f32::max).or_else(|| reported_swap_usage(snap.swap_total_bytes, snap.swap_usage_pct));
@@ -11825,11 +11832,11 @@ impl LauncherApp {
                         ui,
                         crate::lucide::RAM,
                         "MEMORY IN USE",
-                        &format!("{:.1}", used_gb_val),
+                        &reported_sensor_value(memory_available.then_some(used_gb_val as f32), 1),
                         "GB",
-                        &format!("Allocation {:.1}% of total", used_pct),
-                        &format!("AVG {:.0}%", ram_avg),
-                        &format!("PEAK {:.0}%", ram_peak),
+                        &if memory_available { format!("Allocation {:.1}% of total", used_pct) } else { "Memory telemetry unavailable".to_string() },
+                        &format!("AVG {}%", reported_sensor_value(ram_avg, 0)),
+                        &format!("PEAK {}%", reported_sensor_value(ram_peak, 0)),
                         &ram_slice,
                         100.0,
                         None,
@@ -11846,9 +11853,9 @@ impl LauncherApp {
                         ui,
                         crate::lucide::CHECK,
                         "AVAILABLE MEMORY",
-                        &format!("{:.1}", avail_gb_val),
+                        &reported_sensor_value(memory_available.then_some(avail_gb_val as f32), 1),
                         "GB",
-                        &format!("Available {:.1}%", avail_pct),
+                        &format!("Available {}%", reported_sensor_value(avail_pct, 1)),
                         &format!("TOTAL {}", total_ram_str),
                         "",
                         &avail_slice,
@@ -11933,7 +11940,7 @@ impl LauncherApp {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Earlier").size(9.5).monospace().color(p.text_muted));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new(format!("Latest ({:.0}%)", used_pct)).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
+                                ui.label(RichText::new(format!("Latest ({}%)", reported_sensor_value(memory_available.then_some(used_pct), 0))).size(9.5).monospace().strong().color(Color32::from_rgb(226, 232, 240)));
                             });
                         });
                     });
@@ -11952,7 +11959,7 @@ impl LauncherApp {
                             ui.label(RichText::new("Physical Memory Overview").size(12.5).strong().color(p.text_primary));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 let pool_mb = snap.mem_total_bytes / (1024 * 1024);
-                                ui.label(RichText::new(format!("{} MB TOTAL PHYSICAL MEMORY", pool_mb)).size(10.0).monospace().color(p.text_muted));
+                                ui.label(RichText::new(if memory_available { format!("{} MB TOTAL PHYSICAL MEMORY", pool_mb) } else { "PHYSICAL MEMORY UNAVAILABLE".to_string() }).size(10.0).monospace().color(p.text_muted));
                             });
                         });
 
@@ -11967,11 +11974,14 @@ impl LauncherApp {
                         bar_res.on_hover_text("In use versus the remainder of reported total memory. Free, dirty and reclaimable values below are separate counters and may overlap.");
                         bar_p.rect_filled(br, Rounding::same(4.0), Color32::from_rgb(10, 15, 29));
 
-                        let w1 = br.width() * used_frac;
-                        let w2 = br.width() * remaining_frac;
-
-                        bar_p.rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(w1, br.height())), Rounding::same(3.0), Color32::from_rgb(112, 213, 228));
-                        bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w1, br.min.y), egui::vec2(w2, br.height())), Rounding::same(3.0), Color32::from_rgb(51, 65, 85));
+                        if memory_available {
+                            let w1 = br.width() * used_frac;
+                            let w2 = br.width() * remaining_frac;
+                            bar_p.rect_filled(egui::Rect::from_min_size(br.min, egui::vec2(w1, br.height())), Rounding::same(3.0), Color32::from_rgb(112, 213, 228));
+                            bar_p.rect_filled(egui::Rect::from_min_size(egui::pos2(br.min.x + w1, br.min.y), egui::vec2(w2, br.height())), Rounding::same(3.0), Color32::from_rgb(51, 65, 85));
+                        } else {
+                            bar_p.text(br.center(), egui::Align2::CENTER_CENTER, "Memory telemetry unavailable", egui::FontId::proportional(10.0), p.text_muted);
+                        }
 
                         ui.add_space(8.0);
                         ui.label(RichText::new("Additional counters below can overlap and are not stacked.").size(9.0).monospace().color(p.text_muted));
@@ -11986,7 +11996,7 @@ impl LauncherApp {
                                     ui.label(RichText::new("IN USE").size(9.5).monospace().strong().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
-                                ui.label(RichText::new(format!("{:.1} GB", used_gb_val)).size(14.0).strong().color(p.text_primary));
+                                ui.label(RichText::new(reported_sensor_value(memory_available.then_some(used_gb_val as f32), 1) + if memory_available { " GB" } else { "" }).size(14.0).strong().color(p.text_primary));
                                 ui.label(RichText::new("Working set").size(9.0).monospace().color(p.text_muted));
                             });
 
@@ -11997,7 +12007,7 @@ impl LauncherApp {
                                     ui.label(RichText::new("MODIFIED").size(9.5).monospace().strong().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
-                                let dirty_str = if let Some(dirty) = snap.mem_dirty_bytes {
+                                let dirty_str = if !memory_available { "—".to_string() } else if let Some(dirty) = snap.mem_dirty_bytes {
                                     crate::sensors::format_bytes(dirty)
                                 } else {
                                     "—".to_string()
@@ -12024,7 +12034,7 @@ impl LauncherApp {
                                     ui.label(RichText::new(if snap.mem_free_bytes.is_some() { "FREE POOL" } else { "AVAILABLE" }).size(9.5).monospace().strong().color(p.text_muted));
                                 });
                                 ui.add_space(2.0);
-                                let free_label = format!("{} MB", snap.mem_free_bytes.unwrap_or(snap.mem_available_bytes) / (1024 * 1024));
+                                let free_label = if memory_available { format!("{} MB", snap.mem_free_bytes.unwrap_or(snap.mem_available_bytes) / (1024 * 1024)) } else { "—".to_string() };
                                 ui.label(RichText::new(free_label).size(14.0).strong().color(p.text_primary));
                                 ui.label(RichText::new(if snap.mem_free_bytes.is_some() { "Unallocated" } else { "Available for reuse" }).size(9.0).monospace().color(p.text_muted));
                             });

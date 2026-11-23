@@ -4545,6 +4545,15 @@ fn sensor_network_bytes(snap: &crate::sensors::SystemSensorsSnapshot, value: u64
     if snap.network_stats_available { crate::sensors::format_bytes(value) } else { "—".to_string() }
 }
 
+fn wifi_channel_label(channel: u32, frequency_mhz: u32) -> String {
+    match (channel, frequency_mhz) {
+        (channel, frequency) if channel > 0 && frequency > 0 => format!("Channel {channel} ({frequency} MHz)"),
+        (channel, _) if channel > 0 => format!("Channel {channel}"),
+        (_, frequency) if frequency > 0 => format!("{frequency} MHz"),
+        _ => "Channel unavailable".into(),
+    }
+}
+
 #[inline]
 fn accent_with_alpha(color: Color32, alpha: u8) -> Color32 {
     Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
@@ -13884,11 +13893,7 @@ impl LauncherApp {
                                                 });
                                         }
 
-                                        let ch_text = if wifi_snap.channel > 0 {
-                                            format!("Channel {} ({} MHz)", wifi_snap.channel, wifi_snap.frequency_mhz)
-                                        } else {
-                                            "Channel unavailable".to_string()
-                                        };
+                                        let ch_text = wifi_channel_label(wifi_snap.channel, wifi_snap.frequency_mhz);
                                         Frame::none()
                                             .fill(Color32::from_rgb(10, 14, 22))
                                             .stroke(Stroke::NONE)
@@ -13951,11 +13956,7 @@ impl LauncherApp {
                                             }
 
                                             // Channel Badge
-                                            let ch_text = if wifi_snap.channel > 0 {
-                                                format!("Channel {} ({} MHz)", wifi_snap.channel, wifi_snap.frequency_mhz)
-                                            } else {
-                                                "Channel unavailable".to_string()
-                                            };
+                                            let ch_text = wifi_channel_label(wifi_snap.channel, wifi_snap.frequency_mhz);
                                             Frame::none()
                                                 .fill(Color32::from_rgb(10, 14, 22))
                                                 .stroke(Stroke::NONE)

@@ -198,11 +198,13 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Battery metric names:** The battery capacity ratio is labeled “Retention,” and its reported charging state is labeled “State,” so charge status is not mistaken for battery condition.
 - **Network rate baselines:** First samples, newly appearing interfaces, and reset counters remain unavailable until a valid interval exists. Cumulative byte counters stay visible; rate charts and labels no longer present the missing baseline as 0 B/s.
 - **Remote sensor query failures:** A failed refresh now drops the last successful snapshot and clears its metric histories, so disconnected hosts no longer leave stale values and charts looking live beneath an error notice.
+- **Windows local Wi-Fi:** The Windows sensors page now queries `Get-NetAdapter`, IP configuration and adapter counters, with `netsh` for association details; scan and DNS actions use Windows commands. Missing SSID/signal details stay unavailable if localized `netsh` output cannot be parsed, and channel labels no longer show a false `0 MHz`.
 
 ### Remaining work and validation
 
 - GitHub Actions run [45064048593](https://github.com/venujatech-byte/Server_Launcher/actions/runs/45064048593) passed Linux and Windows package builds. Native Windows runtime validation remains pending; the local Windows cross-check cannot validate Windows resources or hardware providers.
 - Validate remote and local readings against real multi-battery PCs, storage stacks, multiple GPUs and wireless adapters.
+- Local Windows Bluetooth still uses the Linux BlueZ command paths; native paired-device/status collection and correct control gating remain outstanding.
 - Priority and affinity setters still use numeric PID commands (`renice`/`taskset`); Linux exposes pidfd-based signal operations but no corresponding pidfd scheduling setter, so identity checks cannot fully close the exit/reuse window. Verify permissions, authorization failure and cancellation on real hosts. Process network attribution is partial and depends on access to socket details.
 - Perform visual checks at the requested desktop size, narrow sizes and display scaling, including the multi-battery selector. Measure idle and scrolling CPU usage before claiming a performance improvement; scan reductions have been checked but not benchmarked end-to-end.
 - Rust verification follows the workspace rule: `cargo check --locked --offline --tests` only. This compiles tests but does not run them. Python fixtures and the explicitly described read-only/temporary-process VPS checks were run separately.

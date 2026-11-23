@@ -1,8 +1,9 @@
 //! Wi-Fi subsystem: telemetry queries, active AP details, link metrics, and socket monitoring.
 
-use std::fs;
 use std::process::Command;
 use std::time::Instant;
+#[cfg(not(windows))]
+use std::fs;
 
 #[derive(Debug, Clone, Default)]
 pub struct WifiActiveSocket {
@@ -123,6 +124,31 @@ fn nmcli_fields(line: &str) -> Vec<String> {
 #[cfg(test)]
 mod wifi_selection_tests {
     #[test]
+    fn windows_adapter_and_wlan_data_use_reported_values_only() {
+        let data = serde_json::json!({
+            "adapters": [{"name":"Wi-Fi", "description":"Intel Wireless", "status":"Up", "mac":"AA:BB:CC:DD:EE:FF", "mtu":1500,
+                "ipv4":[{"address":"192.168.1.5", "prefix":24}], "ipv6":["fe80::1"], "gateway":["192.168.1.1"], "dns":["1.1.1.1"], "sent":2048}],
+            "wlan":"Name : Wi-Fi\nState : connected\nSSID : Office\nBSSID : AA:BB:CC:11:22:33\nSignal : 78%\nChannel : 6\nReceive rate (Mbps) : 144\nTransmit rate (Mbps) : 144\nAuthentication : WPA2-Personal\n"
+        });
+        let snapshot = super::parse_windows_wifi_snapshot(&data, Some("Wi-Fi"));
+        assert!(snapshot.is_connected);
+        assert_eq!(snapshot.state, "CONNECTED");
+        assert_eq!(snapshot.ssid, "Office");
+        assert_eq!(snapshot.signal_pct, Some(78));
+        assert_eq!(snapshot.ip_v4, "192.168.1.5/24");
+        assert_eq!(snapshot.subnet_mask, "255.255.255.0 (/24)");
+        assert_eq!(snapshot.tx_bytes, 2048);
+    }
+
+    #[test]
+    fn missing_windows_wifi_inventory_stays_unavailable() {
+        let snapshot = super::parse_windows_wifi_snapshot(&serde_json::json!({"adapters":[], "wlan":""}), None);
+        assert!(snapshot.interface.is_empty());
+        assert!(!snapshot.is_connected);
+        assert_eq!(snapshot.state, "No wireless adapter reported");
+    }
+
+    #[test]
     fn picks_requested_or_active_wireless_adapter() {
         let devices = vec![("wifi0".to_string(), false), ("wlan1".to_string(), true)];
         assert_eq!(super::choose_wifi_interface(&devices, Some("wifi0")).as_deref(), Some("wifi0"));
@@ -139,6 +165,7 @@ mod wifi_selection_tests {
 }
 
 /// Query the selected Wi-Fi adapter using nmcli, ip and sysfs.
+#[cfg(not(windows))]
 pub fn query_wifi_status(selected: Option<&str>) -> WifiSnapshot {
     let mut snap = WifiSnapshot::default();
     snap.last_updated = Instant::now();
@@ -364,11 +391,125 @@ pub fn query_wifi_status(selected: Option<&str>) -> WifiSnapshot {
     snap
 }
 
+#[cfg(windows)]
+pub fn query_wifi_status(selected: Option<&str>) -> WifiSnapshot {
+    use std::os::windows::process::CommandExt;
+
+    let output = Command::new("powershell.exe")
+        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_WIFI_QUERY])
+        .creation_flags(0x08000000)
+        .output();
+    let Ok(output) = output.filter(|output| output.status.success()) else {
+        return WifiSnapshot { state: "Wi-Fi telemetry unavailable".into(), last_updated: Instant::now(), ..Default::default() };
+    };
+    let Ok(data) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
+        return WifiSnapshot { state: "Wi-Fi telemetry unavailable".into(), last_updated: Instant::now(), ..Default::default() };
+    };
+    parse_windows_wifi_snapshot(&data, selected)
+}
+
+#[cfg(windows)]
+const WINDOWS_WIFI_QUERY: &str = r#"$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new();
+$adapters=@(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Where-Object { $_.ifType -eq 71 });
+$items=@(foreach($adapter in $adapters) {
+  $ip=Get-NetIPConfiguration -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue | Select-Object -First 1;
+  $ipif=Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1;
+  $stats=Get-NetAdapterStatistics -Name $adapter.Name -ErrorAction SilentlyContinue;
+  [pscustomobject]@{
+    name=$adapter.Name; description=$adapter.InterfaceDescription; status=[string]$adapter.Status;
+    mac=$adapter.MacAddress; driver=$adapter.DriverInformation; mtu=$ipif.NlMtu; index=$adapter.ifIndex;
+    ipv4=@($ip.IPv4Address | ForEach-Object { @{address=$_.IPAddress; prefix=$_.PrefixLength} });
+    ipv6=@($ip.IPv6Address | ForEach-Object { $_.IPAddress });
+    gateway=@($ip.IPv4DefaultGateway | ForEach-Object { $_.NextHop });
+    dns=@($ip.DNSServer.ServerAddresses);
+    sent=$stats.SentBytes; received=$stats.ReceivedBytes
+  }
+});
+$wlan=(netsh wlan show interfaces 2>$null | Out-String);
+[pscustomobject]@{adapters=$items; wlan=$wlan} | ConvertTo-Json -Depth 6 -Compress"#;
+
+#[cfg(any(windows, test))]
+fn parse_windows_wifi_snapshot(data: &serde_json::Value, selected: Option<&str>) -> WifiSnapshot {
+    let rows = data["adapters"].as_array().cloned().unwrap_or_default();
+    let candidates: Vec<_> = rows.iter().filter_map(|row| {
+        let name = row["name"].as_str()?.trim();
+        (!name.is_empty()).then(|| (name.to_owned(), row["status"].as_str().is_some_and(|state| state.eq_ignore_ascii_case("up"))))
+    }).collect();
+    let mut snapshot = WifiSnapshot { last_updated: Instant::now(), interfaces: candidates.iter().map(|(name, _)| name.clone()).collect(), ..Default::default() };
+    let Some(interface) = choose_wifi_interface(&candidates, selected) else {
+        snapshot.state = "No wireless adapter reported".into();
+        return snapshot;
+    };
+    let Some(adapter) = rows.iter().find(|row| row["name"].as_str() == Some(interface.as_str())) else { return snapshot; };
+    let wlan = parse_windows_wlan_interface(data["wlan"].as_str().unwrap_or(""), &interface);
+    let adapter_status = adapter["status"].as_str().unwrap_or("Unknown");
+    snapshot.interface = interface;
+    snapshot.product = adapter["description"].as_str().filter(|value| !value.trim().is_empty()).unwrap_or("Wi-Fi adapter").into();
+    snapshot.mac_address = adapter["mac"].as_str().unwrap_or("").into();
+    snapshot.driver = adapter["driver"].as_str().unwrap_or("").into();
+    snapshot.mtu = adapter["mtu"].as_u64().and_then(|value| u32::try_from(value).ok()).unwrap_or(0);
+    snapshot.tx_bytes = adapter["sent"].as_u64().unwrap_or(0);
+    snapshot.state = wlan.state.unwrap_or_else(|| adapter_status.to_ascii_uppercase());
+    snapshot.is_connected = snapshot.state.eq_ignore_ascii_case("connected");
+    snapshot.ssid = wlan.ssid.unwrap_or_default();
+    snapshot.bssid = wlan.bssid.unwrap_or_default();
+    snapshot.signal_pct = wlan.signal_pct;
+    snapshot.channel = wlan.channel.unwrap_or(0);
+    snapshot.rate = wlan.rate.unwrap_or_default();
+    snapshot.security = wlan.security.unwrap_or_default();
+    if let Some(address) = adapter["ipv4"].as_array().and_then(|addresses| addresses.first()) {
+        let ip = address["address"].as_str().unwrap_or("");
+        let prefix = address["prefix"].as_u64().and_then(|value| u8::try_from(value).ok()).filter(|value| *value <= 32);
+        if !ip.is_empty() {
+            snapshot.ip_v4 = prefix.map_or_else(|| ip.into(), |prefix| format!("{ip}/{prefix}"));
+            if let Some(prefix) = prefix { snapshot.subnet_mask = cidr_to_subnet_mask(prefix); }
+        }
+    }
+    snapshot.ip_v6 = adapter["ipv6"].as_array().and_then(|values| values.iter().find_map(|value| value.as_str())).unwrap_or("").into();
+    snapshot.gateway = adapter["gateway"].as_array().and_then(|values| values.iter().find_map(|value| value.as_str())).unwrap_or("").into();
+    snapshot.dns_resolvers = adapter["dns"].as_array().map(|values| values.iter().filter_map(|value| value.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+    snapshot
+}
+
+#[cfg(any(windows, test))]
+#[derive(Default)]
+struct WindowsWlanInterface {
+    state: Option<String>, ssid: Option<String>, bssid: Option<String>, signal_pct: Option<u8>,
+    channel: Option<u32>, rate: Option<String>, security: Option<String>,
+}
+
+#[cfg(any(windows, test))]
+fn parse_windows_wlan_interface(text: &str, adapter: &str) -> WindowsWlanInterface {
+    // shortcut: netsh field names are localized; use WLAN API calls if non-English Windows needs reliable association details.
+    let mut sections = Vec::<Vec<(String, String)>>::new();
+    let mut section = Vec::<(String, String)>::new();
+    for line in text.lines().chain(std::iter::once("")) {
+        if line.trim().is_empty() {
+            if !section.is_empty() { sections.push(section.drain(..).collect()); }
+            continue;
+        }
+        if let Some((key, value)) = line.split_once(':') {
+            section.push((key.trim().to_ascii_lowercase(), value.trim().to_owned()));
+        }
+    }
+    let fields = sections.iter().find(|section| section.iter().any(|(key, value)| key == "name" && value.eq_ignore_ascii_case(adapter)));
+    let Some(fields) = fields else { return WindowsWlanInterface::default(); };
+    let get = |key: &str| fields.iter().find(|(name, _)| name == key).map(|(_, value)| value.as_str());
+    let state = get("state").filter(|value| matches!(value.to_ascii_lowercase().as_str(), "connected" | "disconnected")).map(str::to_ascii_uppercase);
+    let signal_pct = get("signal").and_then(|value| value.trim_end_matches('%').parse::<u8>().ok()).filter(|value| *value <= 100);
+    let channel = get("channel").and_then(|value| value.parse::<u32>().ok()).filter(|value| *value > 0);
+    let rx = get("receive rate (mbps)");
+    let tx = get("transmit rate (mbps)");
+    let rate = (rx.is_some() || tx.is_some()).then(|| format!("RX {} / TX {} Mbps", rx.unwrap_or("—"), tx.unwrap_or("—")));
+    WindowsWlanInterface { state, ssid: get("ssid").filter(|value| !value.is_empty()).map(str::to_owned), bssid: get("bssid").map(str::to_owned), signal_pct, channel, rate, security: get("authentication").map(str::to_owned) }
+}
+
 fn command_result(success: bool, stderr: &str, operation: &str) -> Result<(), String> {
     if success { Ok(()) } else if stderr.trim().is_empty() { Err(format!("{operation} failed")) } else { Err(format!("{operation} failed: {}", stderr.trim())) }
 }
 
 /// Request a NetworkManager scan on one selected interface.
+#[cfg(not(windows))]
 pub fn scan_wifi(interface: &str) -> Result<String, String> {
     if interface.is_empty() || interface.len() > 15 || !interface.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')) {
         return Err("Invalid Wi-Fi interface".into());
@@ -379,7 +520,19 @@ pub fn scan_wifi(interface: &str) -> Result<String, String> {
     Ok(format!("Wi-Fi scan requested for {interface}"))
 }
 
+#[cfg(windows)]
+pub fn scan_wifi(interface: &str) -> Result<String, String> {
+    use std::os::windows::process::CommandExt;
+    if interface.is_empty() || interface.bytes().any(|byte| matches!(byte, b'\r' | b'\n' | 0)) { return Err("Invalid Wi-Fi interface".into()); }
+    let selector = format!("interface={interface}");
+    let output = Command::new("netsh.exe").args(["wlan", "show", "networks", selector.as_str(), "mode=bssid"])
+        .creation_flags(0x08000000).output().map_err(|error| format!("Could not start Wi-Fi scan: {error}"))?;
+    command_result(output.status.success(), &String::from_utf8_lossy(&output.stderr), "Wi-Fi scan")?;
+    Ok(format!("Wi-Fi scan requested for {interface}"))
+}
+
 /// Flush the local resolver cache, preserving errors from the available tool.
+#[cfg(not(windows))]
 pub fn flush_dns() -> Result<String, String> {
     for program in ["resolvectl", "systemd-resolve"] {
         let argument = if program == "systemd-resolve" { "--flush-caches" } else { "flush-caches" };
@@ -393,6 +546,16 @@ pub fn flush_dns() -> Result<String, String> {
         }
     }
     Err("DNS cache flush is unavailable: no supported resolver tool found".into())
+}
+
+#[cfg(windows)]
+pub fn flush_dns() -> Result<String, String> {
+    use std::os::windows::process::CommandExt;
+    let output = Command::new("ipconfig.exe").arg("/flushdns").creation_flags(0x08000000).output()
+        .map_err(|error| format!("Could not start DNS cache flush: {error}"))?;
+    let detail = if output.stderr.is_empty() { String::from_utf8_lossy(&output.stdout) } else { String::from_utf8_lossy(&output.stderr) };
+    command_result(output.status.success(), &detail, "DNS cache flush")?;
+    Ok("DNS resolver cache flushed".into())
 }
 
 #[cfg(test)]

@@ -16740,20 +16740,20 @@ impl LauncherApp {
         // Total GPU & Power values for header & rows
         let total_gpu_pct = crate::sensors::single_gpu_load(&snap.gpus);
 
-        // Heatmap color helper: Windows 11 Task Manager uses subtle accent blue tint blocks
+        // Tint load cells with the selected app accent so custom themes stay consistent.
         let get_tm_cpu_bg = |norm_cpu: f32| -> Color32 {
             if norm_cpu < 0.1 {
                 Color32::TRANSPARENT
             } else if norm_cpu < 2.0 {
-                Color32::from_rgba_unmultiplied(0, 120, 215, 35)
+                accent_with_alpha(accent, 35)
             } else if norm_cpu < 10.0 {
-                Color32::from_rgba_unmultiplied(0, 120, 215, 65)
+                accent_with_alpha(accent, 65)
             } else if norm_cpu < 25.0 {
-                Color32::from_rgba_unmultiplied(0, 120, 215, 110)
+                accent_with_alpha(accent, 110)
             } else if norm_cpu < 50.0 {
-                Color32::from_rgba_unmultiplied(0, 120, 215, 155)
+                accent_with_alpha(accent, 155)
             } else {
-                Color32::from_rgba_unmultiplied(0, 120, 215, 210) // High load accent blue block
+                accent_with_alpha(accent, 210)
             }
         };
 
@@ -16761,13 +16761,13 @@ impl LauncherApp {
             if bytes < 50 * 1024 * 1024 {
                 Color32::TRANSPARENT
             } else if bytes < 250 * 1024 * 1024 {
-                Color32::from_rgba_unmultiplied(0, 120, 215, 35)
+                accent_with_alpha(accent, 35)
             } else if bytes < 700 * 1024 * 1024 {
-                Color32::from_rgba_unmultiplied(0, 120, 215, 65)
+                accent_with_alpha(accent, 65)
             } else if bytes < 1800 * 1024 * 1024 {
-                Color32::from_rgba_unmultiplied(0, 120, 215, 110)
+                accent_with_alpha(accent, 110)
             } else {
-                Color32::from_rgba_unmultiplied(0, 120, 215, 155)
+                accent_with_alpha(accent, 155)
             }
         };
 
@@ -16775,11 +16775,11 @@ impl LauncherApp {
             if rate < 50_000.0 {
                 Color32::TRANSPARENT
             } else if rate < 1_000_000.0 {
-                Color32::from_rgba_unmultiplied(0, 120, 215, 40)
+                accent_with_alpha(accent, 40)
             } else if rate < 10_000_000.0 {
-                Color32::from_rgba_unmultiplied(0, 120, 215, 85)
+                accent_with_alpha(accent, 85)
             } else {
-                Color32::from_rgba_unmultiplied(0, 120, 215, 140)
+                accent_with_alpha(accent, 140)
             }
         };
 
@@ -16787,13 +16787,13 @@ impl LauncherApp {
             if gpu_pct < 0.1 {
                 Color32::TRANSPARENT
             } else if gpu_pct < 2.0 {
-                Color32::from_rgba_unmultiplied(0, 120, 215, 35)
+                accent_with_alpha(accent, 35)
             } else if gpu_pct < 10.0 {
-                Color32::from_rgba_unmultiplied(0, 120, 215, 65)
+                accent_with_alpha(accent, 65)
             } else if gpu_pct < 25.0 {
-                Color32::from_rgba_unmultiplied(0, 120, 215, 110)
+                accent_with_alpha(accent, 110)
             } else {
-                Color32::from_rgba_unmultiplied(0, 120, 215, 175)
+                accent_with_alpha(accent, 175)
             }
         };
 
@@ -17282,7 +17282,7 @@ impl LauncherApp {
                                             }
 
                                             let row_bg = if is_group_selected {
-                                                Color32::from_rgba_unmultiplied(0, 120, 215, 60)
+                                                accent_with_alpha(accent, 60)
                                             } else if is_row_hovered {
                                                 Color32::from_rgba_unmultiplied(255, 255, 255, 8)
                                             } else {
@@ -17390,9 +17390,9 @@ impl LauncherApp {
                                             }
                                             let cpu_txt = if grp.cpu_usage_available { format_tm_cpu(norm_cpu) } else { "—".to_string() };
                                             let cpu_color = if cpu_fill != Color32::TRANSPARENT {
-                                                Color32::from_rgb(245, 245, 250)
+                                                p.text_primary
                                             } else {
-                                                Color32::from_rgb(170, 175, 185)
+                                                p.text_secondary
                                             };
                                             ui.painter().text(
                                                 egui::pos2(cpu_rect.right() - 8.0, cpu_rect.center().y),
@@ -17414,9 +17414,9 @@ impl LauncherApp {
                                             }
                                             let mem_txt = format_tm_mem(grp.sum_mem);
                                             let mem_color = if mem_fill != Color32::TRANSPARENT {
-                                                Color32::from_rgb(245, 245, 250)
+                                                p.text_primary
                                             } else {
-                                                Color32::from_rgb(170, 175, 185)
+                                                p.text_secondary
                                             };
                                             ui.painter().text(
                                                 egui::pos2(mem_rect.right() - 8.0, mem_rect.center().y),
@@ -17437,9 +17437,9 @@ impl LauncherApp {
                                             }
                                             let disk_txt = format_tm_disk(grp.sum_disk_rate);
                                             let disk_color = if disk_fill != Color32::TRANSPARENT {
-                                                Color32::from_rgb(245, 245, 250)
+                                                p.text_primary
                                             } else {
-                                                Color32::from_rgb(170, 175, 185)
+                                                p.text_secondary
                                             };
                                             ui.painter().text(
                                                 egui::pos2(disk_rect.right() - 8.0, disk_rect.center().y),
@@ -17481,9 +17481,9 @@ impl LauncherApp {
                                             }
                                             let gpu_txt = "—";
                                             let gpu_color = if gpu_fill != Color32::TRANSPARENT {
-                                                Color32::from_rgb(245, 245, 250)
+                                                p.text_primary
                                             } else {
-                                                Color32::from_rgb(170, 175, 185)
+                                                p.text_secondary
                                             };
                                             ui.painter().text(
                                                 egui::pos2(gpu_rect.right() - 8.0, gpu_rect.center().y),
@@ -17509,9 +17509,9 @@ impl LauncherApp {
                                             }
                                             let pwr_rating = "—";
                                             let pwr_color = if pwr_fill != Color32::TRANSPARENT {
-                                                Color32::from_rgb(245, 245, 250)
+                                                p.text_primary
                                             } else {
-                                                Color32::from_rgb(170, 175, 185)
+                                                p.text_secondary
                                             };
                                             ui.painter().text(
                                                 egui::pos2(pwr_rect.right() - 8.0, pwr_rect.center().y),
@@ -17568,7 +17568,7 @@ impl LauncherApp {
                                                     }
 
                                                     let c_row_bg = if is_child_sel {
-                                                        Color32::from_rgba_unmultiplied(0, 120, 215, 60)
+                                                        accent_with_alpha(accent, 60)
                                                     } else if is_child_hovered {
                                                         Color32::from_rgba_unmultiplied(255, 255, 255, 8)
                                                     } else {
@@ -17593,7 +17593,7 @@ impl LauncherApp {
                                                         }
                                                         ui.add_space(36.0); // Indent under parent
                                                         let child_txt = format!("↳ PID {}", child.pid);
-                                                        ui.label(RichText::new(child_txt).size(10.5).monospace().color(if is_child_sel { Color32::from_rgb(241, 245, 249) } else { p.text_secondary }));
+                                                        ui.label(RichText::new(child_txt).size(10.5).monospace().color(p.text_primary));
                                                     });
 
                                                     // Child CPU

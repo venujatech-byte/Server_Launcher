@@ -2589,18 +2589,6 @@ fn parse_process_tcp_counters(output: &str) -> HashMap<u32, (u64, u64)> {
 
 use crate::config::SshRemoteHost;
 use crate::remote::build_ssh_command;
-use egui::Color32;
-
-pub fn temp_color(temp: f32) -> Color32 {
-    if temp < 55.0 {
-        crate::theme::current_gtk4_accent_color()
-    } else if temp < 75.0 {
-        Color32::from_rgb(148, 163, 184) // Slate grey
-    } else {
-        Color32::from_rgb(248, 250, 252) // Crisp white
-    }
-}
-
 fn remote_sensor_command(script: &str, include_processes: bool, include_process_network: bool, include_network_details: bool) -> String {
     format!("{} {} {} {}", script.trim_end(), if include_processes { "1" } else { "0" }, if include_processes && include_process_network { "1" } else { "0" }, if include_network_details { "1" } else { "0" })
 }

@@ -12500,7 +12500,7 @@ impl LauncherApp {
                                                         ui.label(RichText::new(format!("{} MHz", clk)).size(10.0).monospace().color(p.text_primary));
                                                     }
                                                     if let Some(t) = g.temp {
-                                                        ui.label(RichText::new(format!("{:.1}°C", t)).size(10.0).monospace().color(crate::sensors::temp_color(t)));
+                                                        ui.label(RichText::new(format!("{:.1}°C", t)).size(10.0).monospace().color(p.text_primary));
                                                     }
                                                     if let Some(ld) = g.load_pct {
                                                         ui.label(RichText::new(format!("LOAD {:.1}%", ld)).size(10.0).monospace().strong().color(p.text_primary));

@@ -76,17 +76,34 @@ fn curl() -> Command {
 fn fetch_update() -> Result<Option<Manifest>, String> {
     let mut curl = curl();
     let output = curl
-        .args(["--max-time", "20", "--max-filesize", "65536", MANIFEST])
+        .args([
+            "--max-time",
+            "20",
+            "--max-filesize",
+            "65536",
+            "--write-out",
+            "\n%{http_code}",
+            MANIFEST,
+        ])
         .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("Could not start curl: {e}"))?;
+    let status_suffix = output.stdout.rsplitn(2, |byte| *byte == b'\n').next();
+    if status_suffix == Some(b"404") {
+        return Err("The latest GitHub release has no update manifest yet.".into());
+    }
     if !output.status.success() {
         return Err(format!(
             "Could not reach the release feed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    let manifest: Manifest = serde_json::from_slice(&output.stdout)
+    let manifest_body = output
+        .stdout
+        .rsplitn(2, |byte| *byte == b'\n')
+        .nth(1)
+        .ok_or("The release feed returned no HTTP status")?;
+    let manifest: Manifest = serde_json::from_slice(manifest_body)
         .map_err(|e| format!("Invalid release manifest: {e}"))?;
     let remote = version_tuple(&manifest.version).ok_or("Invalid release version")?;
     let local = version_tuple(VERSION).ok_or("Invalid installed version")?;

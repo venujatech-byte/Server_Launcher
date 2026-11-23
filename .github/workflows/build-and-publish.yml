@@ -108,6 +108,17 @@ jobs:
         with:
           workspaces: server_launcher_windows
 
+      - name: Validate remote Windows WLAN interop
+        shell: pwsh
+        run: |
+          $script = Get-Content shared/remote_windows_sensors.ps1 -Raw
+          $match = [regex]::Match($script, "(?s)Add-Type -TypeDefinition @'\r?\n(?<source>.*?)\r?\n'@")
+          if (-not $match.Success) { throw 'Remote WLAN interop source was not found' }
+          Add-Type -TypeDefinition $match.Groups['source'].Value -ErrorAction Stop | Out-Null
+          $connectionType = [ServerLauncherWlan+Connection]
+          $size = [Runtime.InteropServices.Marshal]::SizeOf($connectionType)
+          if ($size -ne 604) { throw "WLAN_CONNECTION_ATTRIBUTES layout size is $size, expected 604" }
+
       - name: Check Windows app and tests
         working-directory: server_launcher_windows
         run: cargo check --locked --tests --target x86_64-pc-windows-msvc

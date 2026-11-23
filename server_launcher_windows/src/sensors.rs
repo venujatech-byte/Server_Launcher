@@ -4949,7 +4949,7 @@ impl SystemSensorsCollector {
             Ok(data) => {
                 let live = parse_windows_hardware(data);
                 snap.power = live.power;
-                snap.cpu_temp = windows_cpu_package_metric(&data["sensor_hardware"], &data["hardware_sensors"], "Temperature", -50.0, 200.0);
+                snap.cpu_temp = windows_cpu_package_metric(&data["sensor_hardware"], &data["hardware_sensors"], "Temperature", -40.0, 150.0);
                 snap.cpu_power_watts = windows_cpu_package_metric(&data["sensor_hardware"], &data["hardware_sensors"], "Power", 0.0, f32::MAX as f64);
                 snap.ram_temp = live.ram_temp;
                 snap.storage_temp = live.storage_temp;
@@ -5268,8 +5268,8 @@ fn apply_windows_gpu_sensors(gpus: &mut [GpuSensorInfo], hardware: &serde_json::
         };
         gpu.device_path = identifier.to_owned();
         gpu.load_pct = metric("Load", "GPU Core", 0.0, 100.0).map(|value| value as f32);
-        gpu.temp = metric("Temperature", "GPU Core", -50.0, 200.0)
-            .or_else(|| metric("Temperature", "GPU Temperature", -50.0, 200.0))
+        gpu.temp = metric("Temperature", "GPU Core", -40.0, 150.0)
+            .or_else(|| metric("Temperature", "GPU Temperature", -40.0, 150.0))
             .map(|value| value as f32);
         gpu.clock_mhz = metric("Clock", "GPU Core", 0.0, u32::MAX as f64).map(|value| value.round() as u32);
         gpu.power_watts = metric("Power", "GPU Package", 0.0, f32::MAX as f64).map(|value| value as f32);
@@ -5472,7 +5472,7 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
     }
     if let Some(temps) = data["temp"].as_array() {
         for t in temps {
-            let Some(temp) = t["Value"].as_f64().filter(|v| v.is_finite() && *v > -50.0 && *v < 200.0) else { continue; };
+            let Some(temp) = parse_reported_temperature(&t["Value"]) else { continue; };
             let name = t["Name"].as_str().unwrap_or("Temperature");
             let id = t["Identifier"].as_str().unwrap_or_default();
             let category = categorize_sensor(name, id);
@@ -5731,7 +5731,9 @@ mod windows_sensor_tests {
             {"Parent":"/cpu/1", "SensorType":"Power", "Name":"CPU Package", "Value":90}
         ]);
         assert_eq!(windows_cpu_package_metric(&hardware, &readings, "Power", 0.0, f32::MAX as f64), Some(0.0));
-        assert_eq!(windows_cpu_package_metric(&hardware, &readings, "Temperature", -50.0, 200.0), Some(65.5));
+        assert_eq!(windows_cpu_package_metric(&hardware, &readings, "Temperature", -40.0, 150.0), Some(65.5));
+        let invalid_temp = serde_json::json!([{"Parent":"/cpu/0", "SensorType":"Temperature", "Name":"CPU Package", "Value":190.0}]);
+        assert_eq!(windows_cpu_package_metric(&hardware, &invalid_temp, "Temperature", -40.0, 150.0), None);
         let labeled_power = serde_json::json!([{"Parent":"/cpu/0", "SensorType":"Power", "Name":"CPU Package Power", "Value":8.25}]);
         assert_eq!(windows_cpu_package_metric(&hardware, &labeled_power, "Power", 0.0, f32::MAX as f64), Some(8.25));
         let high_power = serde_json::json!([{"Parent":"/cpu/0", "SensorType":"Power", "Name":"CPU Package", "Value":1250.0}]);

@@ -421,6 +421,8 @@ impl SystemSensorsCollector {
         let networks = Networks::new_with_refreshed_list();
         let components = Components::new_with_refreshed_list();
         let now = Instant::now();
+        let prev_net_rx = networks.iter().map(|(name, net)| (name.clone(), net.total_received())).collect();
+        let prev_net_tx = networks.iter().map(|(name, net)| (name.clone(), net.total_transmitted())).collect();
 
         Self {
             sys,
@@ -430,8 +432,8 @@ impl SystemSensorsCollector {
             cached_physical_disks: Vec::new(),
             cached_displays: Vec::new(),
             last_hardware_scan: now - Duration::from_secs(30),
-            prev_net_rx: HashMap::new(),
-            prev_net_tx: HashMap::new(),
+            prev_net_rx,
+            prev_net_tx,
             prev_net_time: now,
             prev_disk_stats: HashMap::new(),
             prev_disk_time: now,

@@ -2811,7 +2811,7 @@ impl LauncherApp {
     }
 
     fn render_remote_servers_left_panel(&mut self, ui: &mut Ui, host: &SshRemoteHost) {
-        let p = self.ssh_servers_palette();
+        let p = self.palette();
         let pending_id = egui::Id::new(("ssh_listener_confirmation", &host.id));
         let pending = ui.ctx().data(|d| d.get_temp::<(crate::remote::RemoteListener, bool)>(pending_id));
         let mut requested = None;
@@ -2866,7 +2866,7 @@ impl LauncherApp {
                         RichText::new("+ Start Server").size(11.0).strong().color(p.accent_text),
                     )
                     .fill(p.accent)
-                    .rounding(Rounding::same(999.0));
+                    .rounding(Rounding::same(8.0));
                     if ui.add(btn_add).on_hover_text("Start a new server or process on remote host").clicked() {
                         self.remote_start_server_modal.open_for_host(host);
                     }
@@ -2875,7 +2875,7 @@ impl LauncherApp {
             ui.add_space(4.0);
 
             let search_q = self.remote_search_query.entry(host.id.clone()).or_default();
-            Frame::none().fill(p.bg_input).rounding(Rounding::same(8.0))
+            Frame::none().fill(p.bg_button).rounding(Rounding::same(8.0))
                 .inner_margin(egui::Margin::symmetric(8.0, 2.0)).show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(crate::lucide::SEARCH).color(p.text_muted));
@@ -3002,20 +3002,20 @@ impl LauncherApp {
 
                                         // Stop Button
                                         let stop_btn = egui::Button::new(
-                                            RichText::new(format!("{} Stop", crate::lucide::STOP)).size(10.0).strong().color(p.text_primary),
+                                            RichText::new("■ Stop").size(11.0).color(p.text_primary),
                                         )
                                         .fill(p.bg_button)
-                                        .rounding(Rounding::same(999.0));
+                                        .rounding(Rounding::same(8.0));
                                         if ui.add(stop_btn).on_hover_text("Stop this remote server gracefully").clicked() {
                                             requested = Some((l.clone(), false));
                                         }
 
                                         // Restart Button
                                         let restart_btn = egui::Button::new(
-                                            RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW)).size(10.0).strong().color(p.text_secondary),
+                                            RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW)).size(11.0).color(p.accent),
                                         )
-                                        .fill(p.bg_button)
-                                        .rounding(Rounding::same(999.0));
+                                        .fill(p.accent_subtle)
+                                        .rounding(Rounding::same(8.0));
                                         if ui.add(restart_btn).on_hover_text("Restart this remote server").clicked() {
                                             let restart_cmd = build_remote_restart_cmd(&l.name, l.port, l.pid);
                                             self.run_remote_ssh_command(host, &restart_cmd, Some(ui.ctx().clone()));
@@ -3049,7 +3049,7 @@ impl LauncherApp {
                                             RichText::new(format!("{} Info", crate::lucide::INFO)).size(10.0).color(p.text_secondary),
                                         )
                                         .fill(p.bg_button)
-                                        .rounding(Rounding::same(999.0));
+                                        .rounding(Rounding::same(8.0));
                                         if ui.add(ps_btn).on_hover_text("Inspect process details on remote host").clicked() {
                                             let ps_cmd = if let Some(pid) = l.pid {
                                                 format!("ps -u -p {} 2>/dev/null", pid)
@@ -3110,7 +3110,7 @@ impl LauncherApp {
                                             RichText::new(format!("{} Start", crate::lucide::PLAY)).size(10.0).strong().color(p.text_primary),
                                         )
                                         .fill(p.bg_button)
-                                        .rounding(Rounding::same(999.0));
+                                        .rounding(Rounding::same(8.0));
                                         if ui.add(start_btn).on_hover_text("Start this remote server").clicked() {
                                             let start_cmd = build_remote_start_cmd(&s.name, s.port, if s.start_cmd.is_empty() { None } else { Some(&s.start_cmd) });
                                             self.run_remote_ssh_command(host, &start_cmd, Some(ui.ctx().clone()));
@@ -3119,10 +3119,10 @@ impl LauncherApp {
 
                                         // Restart Button
                                         let restart_btn = egui::Button::new(
-                                            RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW)).size(10.0).strong().color(p.text_secondary),
+                                            RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW)).size(11.0).color(p.accent),
                                         )
-                                        .fill(p.bg_button)
-                                        .rounding(Rounding::same(999.0));
+                                        .fill(p.accent_subtle)
+                                        .rounding(Rounding::same(8.0));
                                         if ui.add(restart_btn).on_hover_text("Attempt to restart this remote server").clicked() {
                                             let start_cmd = build_remote_start_cmd(&s.name, s.port, if s.start_cmd.is_empty() { None } else { Some(&s.start_cmd) });
                                             self.run_remote_ssh_command(host, &start_cmd, Some(ui.ctx().clone()));
@@ -3134,7 +3134,7 @@ impl LauncherApp {
                                             RichText::new(format!("{} Dismiss", crate::lucide::X)).size(10.0).color(Color32::from_rgb(148, 163, 184)),
                                         )
                                         .fill(p.bg_button)
-                                        .rounding(Rounding::same(999.0));
+                                        .rounding(Rounding::same(8.0));
                                         if ui.add(dismiss_btn).on_hover_text("Dismiss from stopped servers list").clicked() {
                                             dismiss_port = Some(s.port);
                                         }
@@ -3144,7 +3144,7 @@ impl LauncherApp {
                                             RichText::new(format!("{} Info", crate::lucide::INFO)).size(10.0).color(p.text_secondary),
                                         )
                                         .fill(p.bg_button)
-                                        .rounding(Rounding::same(999.0));
+                                        .rounding(Rounding::same(8.0));
                                         if ui.add(info_btn).on_hover_text("Inspect status on remote host").clicked() {
                                             let info_cmd = format!("lsof -i :{} 2>/dev/null || systemctl status {} 2>/dev/null", s.port, clean_service_name(&s.name));
                                             self.run_remote_ssh_command(host, &info_cmd, Some(ui.ctx().clone()));
@@ -3261,7 +3261,7 @@ impl LauncherApp {
     }
 
     fn render_remote_servers_right_panel(&mut self, ui: &mut Ui, host: &SshRemoteHost) {
-        let p = self.ssh_servers_palette();
+        let p = self.palette();
         let logs = self.get_remote_logs(&host.id);
         Frame::none().fill(p.bg_sidebar).rounding(Rounding::same(8.0))
             .inner_margin(8.0).show(ui, |ui| {
@@ -3336,7 +3336,7 @@ impl LauncherApp {
                                 RichText::new("Execute").strong().color(p.accent_text)
                             ).fill(p.accent).stroke(Stroke::NONE).rounding(8.0));
                             focused = editor.has_focus() || execute.has_focus();
-                            let enter = editor.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                            let enter = ui.is_enabled() && editor.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
                             if (execute.clicked() || enter) && !input.trim().is_empty() {
                                 command = Some(input.trim().to_owned());
                                 input.clear();
@@ -3747,7 +3747,7 @@ impl eframe::App for LauncherApp {
                 if listener_dialog_open { ui.disable(); }
                 if self.active_sidebar_tab == SidebarTab::Servers {
                     if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == self.selected_machine).cloned() {
-                        let p = self.ssh_servers_palette();
+                        let p = self.palette();
                         let status = self.remote_connection_status.lock().unwrap().get(&host.id).cloned();
                         let connecting = self.remote_connecting.lock().unwrap().contains(&host.id);
                         let (label, color) = match (connecting, &status) {
@@ -6668,9 +6668,7 @@ impl LauncherApp {
     }
 
     fn render_sidebar_tabs_bar(&mut self, ui: &mut Ui) {
-        let ssh_servers = self.active_sidebar_tab == SidebarTab::Servers
-            && self.ssh_hosts.iter().any(|host| host.id == self.selected_machine);
-        let p = if ssh_servers { self.ssh_servers_palette() } else { self.palette() };
+        let p = self.palette();
         Frame::none()
             .fill(p.bg_card)
             .stroke(Stroke::NONE)
@@ -6696,12 +6694,12 @@ impl LauncherApp {
                     for (tab, label) in tabs {
                         let is_active = self.active_sidebar_tab == tab;
                         let bg = if is_active {
-                            if ssh_servers { p.accent_subtle } else { p.accent }
+                            p.accent
                         } else {
                             Color32::TRANSPARENT
                         };
                         let fg = if is_active {
-                            if ssh_servers { p.text_primary } else { p.accent_text }
+                            p.accent_text
                         } else {
                             p.text_secondary
                         };
@@ -10752,42 +10750,6 @@ impl LauncherApp {
 
 
     #[inline]
-    fn ssh_servers_palette(&self) -> crate::theme::ThemePalette {
-        let mut p = self.palette();
-        if self.theme == crate::theme::ThemeMode::Dark {
-            p.bg_app = Color32::from_rgb(0x0B, 0x0D, 0x12);
-            p.bg_header = Color32::from_rgb(0x0B, 0x0D, 0x12);
-            p.bg_machines_nav = Color32::from_rgb(0x0B, 0x0D, 0x12);
-            p.bg_sidebar = Color32::from_rgb(0x11, 0x14, 0x1B);
-            p.bg_main = Color32::from_rgb(0x0B, 0x0D, 0x12);
-            p.bg_card = Color32::from_rgb(0x17, 0x1B, 0x24);
-            p.bg_card_hover = Color32::from_rgb(0x1F, 0x25, 0x32);
-            p.bg_card_active = Color32::from_rgba_unmultiplied(0x3B, 0x82, 0xF6, 36);
-            p.bg_subtle = Color32::from_rgb(0x11, 0x14, 0x1B);
-            p.bg_input = Color32::from_rgb(0x17, 0x1B, 0x24);
-            p.bg_button = Color32::from_rgb(0x17, 0x1B, 0x24);
-            p.bg_button_hover = Color32::from_rgb(0x1F, 0x25, 0x32);
-            p.text_primary = Color32::from_rgb(0xF1, 0xF5, 0xF9);
-            p.text_secondary = Color32::from_rgb(0xCB, 0xD5, 0xE1);
-            p.text_muted = Color32::from_rgb(0x94, 0xA3, 0xB8);
-            p.success = Color32::from_rgb(0x10, 0xB9, 0x81);
-            p.success_subtle = Color32::from_rgba_unmultiplied(0x10, 0xB9, 0x81, 31);
-            p.warning = Color32::from_rgb(0xF5, 0x9F, 0x0B);
-            p.warning_subtle = Color32::from_rgba_unmultiplied(0xF5, 0x9F, 0x0B, 31);
-            p.danger = Color32::from_rgb(0xEF, 0x44, 0x44);
-            p.danger_subtle = Color32::from_rgba_unmultiplied(0xEF, 0x44, 0x44, 31);
-            p.terminal_bg = Color32::from_rgb(0x0D, 0x10, 0x17);
-            if self.custom_accent_color.is_none() {
-                p.accent = Color32::from_rgb(0x3B, 0x82, 0xF6);
-                p.accent_hover = Color32::from_rgb(0x25, 0x63, 0xEB);
-                p.accent_light = Color32::from_rgb(0x93, 0xC5, 0xFD);
-                p.accent_subtle = Color32::from_rgba_unmultiplied(0x3B, 0x82, 0xF6, 36);
-                p.accent_text = Color32::from_rgb(0x0B, 0x0D, 0x12);
-            }
-        }
-        p
-    }
-
     pub fn palette(&self) -> crate::theme::ThemePalette {
         let mut p = self.theme.palette();
         if let Some(ref acc_str) = self.custom_accent_color {

@@ -46,24 +46,9 @@ cargo check --manifest-path server_launcher_windows/Cargo.toml --locked --offlin
 
 Run from the corresponding host when necessary. The second Cargo command on Linux checks the Windows crate's host configuration, not its Windows target. Also use the native Windows check when available. From the repo root in Windows PowerShell, run `./server_launcher_windows/verify.ps1`. Report a missing toolchain/cache or unavailable native check explicitly. Cargo check compiles test code without running it. Phase 6 lists native visual checks using an approved executable that contains the changes, if available. Never claim runtime coverage from type checking or from an older binary.
 
-## Exact Design Token Reference
+## Appearance reference
 
-In Phase 1 define a page-local palette in both app files using the existing palette as the starting point. Apply the surface tokens only in Dark, within the gated SSH Servers view. Preserve custom accent preferences. Leave the shared theme files untouched.
-
-| Role | Existing palette assignments |
-|---|---|
-| Canvas and device rail | `bg_app`, `bg_header`, `bg_main`, `bg_machines_nav`: `Color32::from_rgb(0x0B, 0x0D, 0x12)` |
-| Panel | `bg_sidebar`, `bg_subtle`: `Color32::from_rgb(0x11, 0x14, 0x1B)` |
-| Card, input, neutral control | `bg_card`, `bg_input`, `bg_button`: `Color32::from_rgb(0x17, 0x1B, 0x24)` |
-| Hover | `bg_card_hover`, `bg_button_hover`: `Color32::from_rgb(0x1F, 0x25, 0x32)` |
-| Terminal well | `terminal_bg`: `Color32::from_rgb(0x0D, 0x10, 0x17)` |
-| Outlines | Use `Stroke::NONE` for decorative borders on this page. Use a 1-point accent outline for keyboard and editor focus. |
-| Accent | `accent`: `Color32::from_rgb(0x3B, 0x82, 0xF6)`; `accent_hover`: `Color32::from_rgb(0x25, 0x63, 0xEB)`; `accent_subtle`, `bg_card_active`: `Color32::from_rgba_unmultiplied(0x3B, 0x82, 0xF6, 36)`; `accent_light`: `Color32::from_rgb(0x93, 0xC5, 0xFD)`. |
-| Semantic | `success` = `#10B981`, `warning` = `#F59E0B`, `danger` = `#EF4444` (each via `from_rgb`). For soft status fills use the matching color with alpha 31 via `from_rgba_unmultiplied`. Reserve solid red in this workspace for final confirmation. Retain actual log severity distinctions. |
-| Text | `text_primary` = `#F1F5F9`, `text_secondary` = `#CBD5E1`, `text_muted` = `#94A3B8`. On default blue/red filled controls use `#0B0D12`; on hover blue `#2563EB` use white. Existing user accent overrides should keep their computed foreground. |
-| Dimensions and type | Units are egui logical points. Controls 28 high, compact icon targets 28×28, radius 8, spacing 6/8/12, 1-point dividers, 6-point scrollbars. Proportional sizes 18 device heading, 14 panel heading, 13 service name/control, 11–12 metadata. Target weights 600 heading/name, 500 control, 400 metadata. Use current proportional font with `RichText::strong()` for emphasis and normal style for controls/metadata. egui 0.29 has no CSS font weights or font feature declaration, so verify legibility rather than adding font assets. Use `FontId::monospace` for identifiers, port/protocol, terminal commands and output. Monospace gives equal-width digits. |
-
-For local styling, use `ui.scope` and `ui.visuals_mut()` for widget idle, hovered, and active states. Prefer real `Button` and `TextEdit` widgets, with `Response::has_focus()` for a 1-point focus outline. Apply slim bars within the rail, remote listener list, and output viewport by scoping `ui.spacing_mut().scroll`: start with `egui::style::ScrollStyle::solid()`, set `bar_width = 6.0`, `bar_inner_margin = 10.0` for listener cards (4 for other areas), and use palette-compatible muted inactive/hover contrast. Do not modify global spacing, font registration, or the source of user accent preferences.
+Match the existing local Servers page using `LauncherApp::palette()` directly. Use existing theme surfaces for cards, search, and terminal, with the current blue accent and matching compact button geometry. Use neutral Stop triggers and retain the SSH confirmation guard. Keep decorative outlines out of the SSH view and preserve keyboard focus indicators.
 
 ## Phased Implementation Checklist
 
@@ -73,7 +58,7 @@ Each checkbox is one task and one commit. Complete the work and checks under tha
 
 - [x] Define the SSH Servers palette. Both local crate checks passed.
   - **Target files:** `server_launcher_rust/src/app.rs`, `server_launcher_windows/src/app.rs`.
-  - **Exact changes:** Add an SSH Servers palette helper that starts from `LauncherApp::palette()`. Apply the token table to the page-local copy for Dark, keeping the configured accent when present. Use it in the two SSH Servers panel renderers. Later phases use it in the gated SSH header and tab strip. Keep the rail on the shared palette.
+  - **Appearance correction:** The separate palette from this phase was removed in Phase 6 to match the local Servers reference. Both versions now use the existing app palette.
   - **Verification:** Run Check C. Review all call sites for the scope condition.
   - **Commit:**
     ```bash
@@ -135,7 +120,7 @@ Removed from implementation scope. The existing rail is shared across pages and 
 
 ### Phase 6 — Accessibility and verification (F)
 
-- [ ] Complete the focus and responsive layout pass and record verification.
+- [x] Match the local Servers appearance and review focus and scope in source. Both local crate checks passed. Native visual and SSH interaction verification remain pending.
   - **Target files:** `server_launcher_rust/src/app.rs`, `server_launcher_windows/src/app.rs`, `server_launcher_rust/src/modals.rs`, `server_launcher_windows/src/modals.rs`, `UI_OVERHAUL_ROADMAP.md`.
   - **Exact changes:** Audit actual focus rings on each new header/tab/card/menu control and both editors. Paint missing 1-point accent outlines on the response rect via `Stroke::new(1.0, p.accent)`; avoid clipping at container edges. Add missing accessible names to custom and icon-only interactables, retain text with all semantic status colors and give disabled Curl a reason. Verify that open menus close on Escape and click outside, and select only on activation. In modal states, limit keyboard reachability to the enabled modal controls by disabling underlying UIs during that frame; restore focus on cancellation and ensure the closing click is not replayed. Audit IDs for host changes and repeated listeners. Fix any width/height overflow in the phase's widgets only. Record the matrix below and any remaining native verification limits in this document.
   - **Verification:** Run Check C and the native Windows check if available. Use a current executable when available, with an authorized disposable SSH host or fixture for actions. Verify each row below on Linux and native Windows where possible. Record a platform-specific limitation if unavailable. Confirm title-bar hit targets are correct at Windows 125–150% display scaling.

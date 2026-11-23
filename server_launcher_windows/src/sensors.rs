@@ -353,6 +353,12 @@ fn process_cpu_sample_available(has_previous_sample: bool, usage: f32) -> bool {
     has_previous_sample && usage.is_finite()
 }
 
+fn normalize_total_cpu_percent(total_usage: f32, logical_cpus: usize) -> Option<f32> {
+    if logical_cpus == 0 || !total_usage.is_finite() || total_usage < 0.0 { return None; }
+    let usage = total_usage / logical_cpus as f32;
+    (usage <= 100.0).then_some(usage)
+}
+
 fn parse_socket_stats(content: &str) -> Option<(usize, usize, usize)> {
     let value = |prefix: &str, key: &str| content.lines().find_map(|line| {
         if !line.starts_with(prefix) { return None; }
@@ -400,6 +406,17 @@ mod process_cpu_sample_tests {
         assert!(!super::process_cpu_sample_available(false, 0.0));
         assert!(super::process_cpu_sample_available(true, 0.0));
         assert!(!super::process_cpu_sample_available(true, f32::NAN));
+    }
+}
+
+#[cfg(test)]
+mod total_cpu_percent_tests {
+    #[test]
+    fn converts_sysinfo_core_sum_to_system_percent() {
+        assert_eq!(super::normalize_total_cpu_percent(100.0, 4), Some(25.0));
+        assert_eq!(super::normalize_total_cpu_percent(400.0, 4), Some(100.0));
+        assert_eq!(super::normalize_total_cpu_percent(10.0, 0), None);
+        assert_eq!(super::normalize_total_cpu_percent(f32::NAN, 4), None);
     }
 }
 
@@ -503,7 +520,7 @@ impl SystemSensorsCollector {
             .unwrap_or_else(|| "Unknown CPU".to_string());
         let cpu_cores_physical = self.sys.physical_core_count().unwrap_or(0);
         let cpu_cores_logical = self.sys.cpus().len();
-        let cpu_global_usage = self.sys.global_cpu_usage();
+        let cpu_global_usage = normalize_total_cpu_percent(self.sys.global_cpu_usage(), cpu_cores_logical);
         #[cfg(target_os = "linux")]
         let cpu_core_usages: Vec<Option<f32>> = {
             let mut values = Vec::new();
@@ -895,8 +912,8 @@ impl SystemSensorsCollector {
             cpu_brand,
             cpu_cores_physical,
             cpu_cores_logical,
-            cpu_global_usage,
-            cpu_usage_available: true,
+            cpu_global_usage: cpu_global_usage.unwrap_or(0.0),
+            cpu_usage_available: cpu_global_usage.is_some(),
             cpu_core_usages,
             cpu_frequency_mhz,
             cpu_frequencies_mhz,
@@ -4310,8 +4327,9 @@ impl SystemSensorsCollector {
         snap.cpu_brand = self.sys.cpus().first().map(|c| c.brand().to_owned()).unwrap_or_default();
         snap.cpu_cores_physical = self.sys.physical_core_count().unwrap_or(0);
         snap.cpu_cores_logical = self.sys.cpus().len();
-        snap.cpu_global_usage = self.sys.global_cpu_usage();
-        snap.cpu_usage_available = true;
+        let cpu_usage = normalize_total_cpu_percent(self.sys.global_cpu_usage(), snap.cpu_cores_logical);
+        snap.cpu_global_usage = cpu_usage.unwrap_or(0.0);
+        snap.cpu_usage_available = cpu_usage.is_some();
         snap.cpu_core_usages = self.sys.cpus().iter().map(|c| Some(c.cpu_usage())).collect();
         snap.cpu_frequencies_mhz = self.sys.cpus().iter().map(|c| c.frequency()).collect();
         snap.cpu_frequency_mhz = average_cpu_frequency(&snap.cpu_frequencies_mhz);

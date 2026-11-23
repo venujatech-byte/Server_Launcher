@@ -1919,50 +1919,40 @@ pub fn render_close_confirmation_modal(
         return CloseConfirmChoice::None;
     }
 
+    if ctx.input(|i| i.key_pressed(Key::Escape)) {
+        *open = false;
+        return CloseConfirmChoice::Cancel;
+    }
+
     let mut choice = CloseConfirmChoice::None;
     let mut is_open = *open;
 
     let screen = ctx.screen_rect();
     let modal_w = 460.0_f32.min(screen.width() - 40.0).max(320.0);
 
-    let window_id = egui::Id::new("exit_confirmation_modal_dialog");
-    let drag_offset = ctx.data(|d| d.get_temp::<egui::Vec2>(window_id.with("modal_drag_offset"))).unwrap_or_default();
-    Window::new("Exit Confirmation")
-        .id(window_id)
-        .title_bar(false)
-        .collapsible(false)
-        .resizable(false)
-        .movable(false)
-        .current_pos(screen.center() + drag_offset)
-        .pivot(egui::Align2::CENTER_CENTER)
-        .min_width(modal_w)
-        .max_width(modal_w)
-        .default_height(280.0)
-        .frame(
-            egui::Frame::none()
-                .fill(Color32::from_rgb(17, 19, 27))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 38, 54)))
-                .rounding(Rounding::same(16.0))
-                .shadow(egui::epaint::Shadow {
-                    offset: egui::vec2(0.0, 8.0),
-                    blur: 24.0,
-                    spread: 0.0,
-                    color: Color32::from_black_alpha(160),
-                })
-                .inner_margin(egui::Margin::symmetric(14.0, 10.0)),
-        )
+    Window::new(RichText::new("Exit Server Launcher").size(17.0).strong())
+        .id(egui::Id::new("exit_confirmation_modal_dialog"))
+        .open(&mut is_open)
+        .collapsible(false).resizable(false)
+        .default_pos(screen.center()).pivot(egui::Align2::CENTER_CENTER)
+        .min_width(modal_w).max_width(modal_w)
+        .frame(egui::Frame::none().fill(palette.bg_card)
+            .stroke(Stroke::NONE).rounding(Rounding::same(14.0))
+            .shadow(egui::epaint::Shadow { offset: egui::vec2(0.0, 4.0), blur: 16.0, spread: 0.0, color: Color32::from_black_alpha(120) })
+            .inner_margin(egui::Margin::same(18.0)))
         .show(ctx, |ui| {
-            render_modal_titlebar(ui, "Exit Confirmation", &mut is_open);
-            ui.add_space(8.0);
+            *ui.visuals_mut() = palette.egui_visuals();
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+            ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
             ui.vertical(|ui| {
                 // Header with warning icon
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(crate::lucide::ALERT_TRIANGLE).size(24.0).color(palette.warning));
+                    ui.label(RichText::new(crate::lucide::ALERT_TRIANGLE).size(16.0).color(palette.warning));
                     ui.add_space(4.0);
                     ui.vertical(|ui| {
                         ui.label(
                             RichText::new("Active Servers Still Running")
-                                .size(16.0)
+                                .size(13.0)
                                 .strong()
                                 .color(palette.text_primary),
                         );
@@ -1978,12 +1968,10 @@ pub fn render_close_confirmation_modal(
                     });
                 });
 
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(8.0);
+                ui.add_space(4.0);
 
                 ui.label(
-                    RichText::new("Would you like to stop all running servers before exiting, or leave them running in the background?")
+                    RichText::new("You can stop these servers or leave them running in the background.")
                         .size(12.5)
                         .color(palette.text_secondary),
                 );
@@ -1998,10 +1986,11 @@ pub fn render_close_confirmation_modal(
                     .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                     .show(ui, |ui| {
                         egui::ScrollArea::vertical()
-                            .max_height(100.0)
+                            .auto_shrink([false, true])
+                            .max_height(120.0)
                             .show(ui, |ui| {
                                 for (name, port, pid) in running_servers {
-                                    ui.horizontal(|ui| {
+                                    ui.horizontal_wrapped(|ui| {
                                         ui.label(RichText::new("●").size(10.0).color(palette.success));
                                         ui.label(RichText::new(name).size(12.0).strong().color(palette.text_primary));
                                         if let Some(p) = port {
@@ -2017,17 +2006,16 @@ pub fn render_close_confirmation_modal(
                             });
                     });
 
-                ui.add_space(14.0);
-                ui.separator();
-                ui.add_space(10.0);
+                ui.add_space(6.0);
 
                 // Action buttons: Cancel, Keep Running & Exit, Stop & Exit
                 ui.horizontal(|ui| {
                     if ui.add(
-                        egui::Button::new(RichText::new("Cancel").size(12.0).color(palette.text_secondary))
+                        egui::Button::new(RichText::new("Cancel").size(11.5).color(palette.text_secondary))
+                            .min_size(egui::vec2(0.0, 28.0))
                             .fill(palette.bg_button)
                             .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(999.0))
+                            .rounding(Rounding::same(8.0))
                     ).clicked() {
                         choice = CloseConfirmChoice::Cancel;
                     }
@@ -2038,8 +2026,8 @@ pub fn render_close_confirmation_modal(
                         )
                         .fill(palette.danger)
                         .stroke(Stroke::NONE)
-                        .rounding(Rounding::same(999.0))
-                        .min_size(egui::vec2(100.0, 28.0));
+                        .rounding(Rounding::same(8.0))
+                        .min_size(egui::vec2(0.0, 28.0));
 
                         if ui.add(btn_stop).clicked() {
                             choice = CloseConfirmChoice::StopAndExit;
@@ -2050,8 +2038,8 @@ pub fn render_close_confirmation_modal(
                         )
                         .fill(palette.bg_button)
                         .stroke(Stroke::NONE)
-                        .rounding(Rounding::same(999.0))
-                        .min_size(egui::vec2(130.0, 28.0));
+                        .rounding(Rounding::same(8.0))
+                        .min_size(egui::vec2(0.0, 28.0));
 
                         if ui.add(btn_keep).on_hover_text("Leave processes active in the background. Server Launcher will reconnect to them when reopened.").clicked() {
                             choice = CloseConfirmChoice::KeepRunningAndExit;

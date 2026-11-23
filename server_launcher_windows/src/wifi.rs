@@ -597,7 +597,7 @@ fn query_windows_wlan_interface(guid: &WindowsWifiGuid) -> WindowsWlanInterface 
             if !data.is_null() { unsafe { WlanFreeMemory(data); } }
             return None;
         }
-        let connection = if data_size >= size_of::<WindowsWlanConnectionAttributes>() {
+        let connection = if data_size as usize >= size_of::<WindowsWlanConnectionAttributes>() {
             Some(unsafe { ptr::read_unaligned(data.cast::<WindowsWlanConnectionAttributes>()) })
         } else { None };
         unsafe { WlanFreeMemory(data); }
@@ -613,7 +613,7 @@ fn query_windows_wlan_interface(guid: &WindowsWifiGuid) -> WindowsWlanInterface 
         let mut channel_size = 0;
         let channel_status = unsafe { WlanQueryInterface(handle, guid, 8, ptr::null_mut(), &mut channel_size, &mut channel_data, ptr::null_mut()) };
         if !channel_data.is_null() {
-            if channel_status == 0 && channel_size >= size_of::<u32>() {
+            if channel_status == 0 && channel_size as usize >= size_of::<u32>() {
                 let channel = unsafe { ptr::read_unaligned(channel_data.cast::<u32>()) };
                 if channel > 0 { details.channel = Some(channel); }
             }

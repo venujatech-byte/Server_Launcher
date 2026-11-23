@@ -171,6 +171,7 @@ public static class ServerLauncherWlan {
     })
 
     $temps = @()
+    $fans = @()
     if ($collectThermals) {
         $hardwareNames = @{}
         $hardwareTypes = @{}
@@ -181,9 +182,8 @@ public static class ServerLauncherWlan {
             }
         } catch { }
         try {
-            $temps = @(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor -ErrorAction Stop |
-                Where-Object { $_.SensorType -eq 'Temperature' } |
-                ForEach-Object {
+            $hardwareSensors = @(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor -ErrorAction Stop)
+            $temps = @($hardwareSensors | Where-Object { $_.SensorType -eq 'Temperature' } | ForEach-Object {
                     $value = $_.Value
                     if ($null -ne $value -and $value -gt -50 -and $value -lt 200) {
                         $parent = [string]$_.Parent
@@ -196,7 +196,12 @@ public static class ServerLauncherWlan {
                         }
                     }
                 })
-        } catch { $temps = @() }
+            $fans = @($hardwareSensors | Where-Object { $_.SensorType -eq 'Fan' } | ForEach-Object {
+                if ($null -ne $_.Value -and $_.Value -ge 0 -and $_.Value -le 100000) {
+                    [pscustomobject]@{ chip=[string]$_.Parent; label=[string]$_.Name; rpm=[double]$_.Value }
+                }
+            })
+        } catch { $temps = @(); $fans = @() }
     }
 
     $wlanText = $null
@@ -407,6 +412,7 @@ public static class ServerLauncherWlan {
         total_disk_read_rate = $totalDiskReadRate
         total_disk_write_rate = $totalDiskWriteRate
         temps = $temps
+        fans = $fans
         gpus = $gpus
         gpu_engines = $gpuEngines
         memory_modules = $memoryModules

@@ -102,6 +102,13 @@ pub struct TempSensor {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct FanSensorInfo {
+    pub name: String,
+    pub chip: String,
+    pub rpm: f32,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct DiskInfo {
     pub name: String,
     pub mount_point: String,
@@ -317,6 +324,7 @@ pub struct SystemSensorsSnapshot {
 
     // All temperature sensors
     pub temp_sensors: Vec<TempSensor>,
+    pub fan_sensors: Vec<FanSensorInfo>,
 
     // Top Applications & Processes
     pub top_apps: Vec<ProcessSensorInfo>,
@@ -768,6 +776,7 @@ impl SystemSensorsCollector {
 
         // 6. Temperature Sensors (sysinfo + hwmon / thermal fallback)
         let mut temp_sensors = collect_hwmon_sensors();
+        let fan_sensors = collect_hwmon_fans();
 
         // If hwmon didn't find anything, fallback to sysinfo components
         if temp_sensors.is_empty() {
@@ -1009,6 +1018,7 @@ impl SystemSensorsCollector {
             total_rx_bytes,
             total_tx_bytes,
             temp_sensors,
+            fan_sensors,
             process_count: include_top_apps.then_some(top_apps.len()),
             top_apps,
             processes_collected: include_top_apps,
@@ -1547,6 +1557,49 @@ pub fn collect_hwmon_sensors() -> Vec<TempSensor> {
     }
 
     result
+}
+
+fn parse_fan_rpm(value: &str) -> Option<f32> {
+    let rpm = value.trim().parse::<f32>().ok()?;
+    (rpm.is_finite() && (0.0..=100_000.0).contains(&rpm)).then_some(rpm)
+}
+
+pub fn collect_hwmon_fans() -> Vec<FanSensorInfo> {
+    let mut result = Vec::new();
+    #[cfg(target_os = "linux")]
+    if let Ok(entries) = fs::read_dir("/sys/class/hwmon") {
+        let mut paths: Vec<_> = entries.flatten().map(|entry| entry.path()).collect();
+        paths.sort();
+        for path in paths {
+            let chip = fs::read_to_string(path.join("name")).map(|name| name.trim().to_owned())
+                .unwrap_or_else(|_| path.file_name().unwrap_or_default().to_string_lossy().into_owned());
+            let Ok(files) = fs::read_dir(&path) else { continue; };
+            let mut inputs: Vec<_> = files.flatten().map(|entry| entry.path()).collect();
+            inputs.sort();
+            for input in inputs {
+                let file = input.file_name().unwrap_or_default().to_string_lossy();
+                if !file.starts_with("fan") || !file.ends_with("_input") { continue; }
+                let Some(rpm) = fs::read_to_string(&input).ok().and_then(|value| parse_fan_rpm(&value)) else { continue; };
+                let prefix = file.trim_end_matches("_input");
+                let name = fs::read_to_string(path.join(format!("{prefix}_label"))).map(|name| name.trim().to_owned())
+                    .ok().filter(|name| !name.is_empty()).unwrap_or_else(|| prefix.to_owned());
+                result.push(FanSensorInfo { name, chip: chip.clone(), rpm });
+            }
+        }
+    }
+    result
+}
+
+#[cfg(test)]
+mod fan_sensor_tests {
+    #[test]
+    fn accepts_reported_fan_rpm_and_rejects_invalid_values() {
+        assert_eq!(super::parse_fan_rpm("0"), Some(0.0));
+        assert_eq!(super::parse_fan_rpm("1450"), Some(1450.0));
+        assert_eq!(super::parse_fan_rpm("NaN"), None);
+        assert_eq!(super::parse_fan_rpm("-1"), None);
+        assert_eq!(super::parse_fan_rpm("100001"), None);
+    }
 }
 
 /// Dynamically detects the CPU Tjunction Max / critical thermal limit for the specific PC hardware.
@@ -2877,6 +2930,8 @@ mod remote_sensor_command_tests {
         assert!(script.contains("physical_cores = $physicalCores"));
         assert!(script.contains("$collectDiskRates = $true"));
         assert!(script.contains("$collectThermals = $true"));
+        assert!(script.contains("SensorType -eq 'Fan'"));
+        assert!(script.contains("fans = $fans"));
         assert!(script.contains("LibreHardwareMonitor"));
         assert!(script.contains("Win32_PerfFormattedData_PerfDisk_PhysicalDisk"));
         assert!(script.contains("Win32_PerfFormattedData_PerfDisk_LogicalDisk"));
@@ -3313,8 +3368,17 @@ def millidegrees_to_celsius(value):
     return value / 1000.0
 
 temps = []
+fans = []
 for hw in glob.glob("/sys/class/hwmon/hwmon*"):
     name = read_optional_text(hw + "/name") or os.path.basename(hw)
+    for inp in glob.glob(hw + "/fan*_input"):
+        try:
+            rpm = float(open(inp).read().strip())
+            if math.isfinite(rpm) and 0 <= rpm <= 100000:
+                lbl = read_optional_text(inp.replace("_input", "_label")) or os.path.basename(inp).replace("_input", "")
+                fans.append({"chip": name, "label": lbl, "rpm": rpm})
+        except:
+            pass
     for inp in glob.glob(hw + "/temp*_input"):
         lbl_p = inp.replace("_input", "_label")
         lbl = read_optional_text(lbl_p) or os.path.basename(inp)
@@ -4051,6 +4115,7 @@ data = {
     "total_disk_read_rate": tot_disk_read_rate,
     "total_disk_write_rate": tot_disk_write_rate,
     "temps": temps,
+    "fans": fans,
     "gpus": gpus,
     "networks": networks,
     "network_stats_available": n_stats_available,
@@ -4325,6 +4390,7 @@ print(json.dumps(data))
     }
     apply_unambiguous_gpu_temperature(&mut gpus, &gpu_temps);
 
+    let fan_sensors = parse_remote_fan_sensors(&parsed["fans"]);
     let (networks, network_stats_available, network_rates_available) = parse_remote_network_rows(&parsed)?;
 
     let (total_rx_bytes, total_tx_bytes, total_rx_rate_bps, total_tx_rate_bps) = network_totals(&networks);
@@ -4454,6 +4520,7 @@ print(json.dumps(data))
         total_rx_bytes,
         total_tx_bytes,
         temp_sensors,
+        fan_sensors,
         process_count: parsed["process_count"].as_u64().and_then(|value| usize::try_from(value).ok()),
         top_apps,
         processes_collected: parsed["processes_collected"].as_bool().unwrap_or(include_processes),
@@ -4732,6 +4799,7 @@ impl SystemSensorsCollector {
                 snap.ram_temp = live.ram_temp;
                 snap.storage_temp = live.storage_temp;
                 snap.temp_sensors = live.temp_sensors;
+                snap.fan_sensors = live.fan_sensors;
                 snap.total_disk_read_rate_bps = live.total_disk_read_rate_bps;
                 snap.total_disk_write_rate_bps = live.total_disk_write_rate_bps;
                 snap.total_disk_rates_available = live.total_disk_rates_available;
@@ -5130,6 +5198,7 @@ fn clear_windows_live_hardware_readings(snapshot: &mut SystemSensorsSnapshot) {
     snapshot.ram_temp = None;
     snapshot.storage_temp = None;
     snapshot.temp_sensors.clear();
+    snapshot.fan_sensors.clear();
     snapshot.power = PowerSupplyInfo::default();
     snapshot.total_disk_read_rate_bps = 0.0;
     snapshot.total_disk_write_rate_bps = 0.0;
@@ -5259,6 +5328,7 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
                 temp: temp as f32, category, ..Default::default() });
         }
     }
+    snap.fan_sensors = parse_windows_fan_sensors(&data["hardware_sensors"]);
     if let Some(batteries) = data["battery"].as_array() {
         for b in batteries {
             let percent = b["EstimatedChargeRemaining"].as_f64().filter(|v| v.is_finite() && (0.0..=100.0).contains(v));
@@ -5318,9 +5388,46 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
     snap
 }
 
+#[cfg(any(windows, test))]
+fn parse_windows_fan_sensors(sensors: &serde_json::Value) -> Vec<FanSensorInfo> {
+    sensors.as_array().into_iter().flatten().filter_map(|sensor| {
+        if !sensor["SensorType"].as_str().is_some_and(|kind| kind.eq_ignore_ascii_case("Fan")) { return None; }
+        let rpm = sensor["Value"].as_f64().filter(|value| value.is_finite() && (0.0..=100_000.0).contains(value))? as f32;
+        Some(FanSensorInfo {
+            name: sensor["Name"].as_str().filter(|name| !name.trim().is_empty()).unwrap_or("Fan").to_owned(),
+            chip: sensor["Parent"].as_str().unwrap_or("LibreHardwareMonitor").to_owned(),
+            rpm,
+        })
+    }).collect()
+}
+
+fn parse_remote_fan_sensors(sensors: &serde_json::Value) -> Vec<FanSensorInfo> {
+    sensors.as_array().into_iter().flatten().filter_map(|sensor| {
+        let value = sensor.get("rpm").or_else(|| sensor.get("Value"))?.as_f64()
+            .filter(|value| value.is_finite() && (0.0..=100_000.0).contains(value))? as f32;
+        Some(FanSensorInfo {
+            name: sensor.get("label").or_else(|| sensor.get("Name")).and_then(serde_json::Value::as_str)
+                .filter(|name| !name.trim().is_empty()).unwrap_or("Fan").to_owned(),
+            chip: sensor.get("chip").or_else(|| sensor.get("Parent")).and_then(serde_json::Value::as_str).unwrap_or("").to_owned(),
+            rpm: value,
+        })
+    }).collect()
+}
+
 #[cfg(test)]
 mod windows_sensor_tests {
     use super::*;
+    #[test]
+    fn windows_fan_parser_keeps_only_reported_fan_rpm() {
+        let fans = parse_windows_fan_sensors(&serde_json::json!([
+            {"SensorType":"Fan", "Name":"CPU Fan", "Parent":"CPU", "Value":1450.0},
+            {"SensorType":"Temperature", "Name":"CPU", "Value":65.0},
+            {"SensorType":"Fan", "Name":"Invalid", "Value":100001.0}
+        ]));
+        assert_eq!(fans.len(), 1);
+        assert_eq!(fans[0].name, "CPU Fan");
+        assert_eq!(fans[0].rpm, 1450.0);
+    }
     #[test]
     fn windows_gpu_inventory_omits_unnamed_adapters() {
         let snapshot = parse_windows_hardware(&serde_json::json!({"gpu": [{"Name":"  "}, {"Name":"Intel Graphics"}]}));

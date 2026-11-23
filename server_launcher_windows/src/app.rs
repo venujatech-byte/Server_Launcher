@@ -16592,7 +16592,7 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // Fan speeds, acoustic readings, and controls are unavailable from this collector.
+                // Fan RPM is reported when available; acoustic readings and controls are not collected.
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(8.0))
@@ -16602,11 +16602,22 @@ impl LauncherApp {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Cooling telemetry").size(12.5).strong().color(p.text_primary));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new("UNAVAILABLE").size(8.5).monospace().strong().color(p.text_muted));
+                                let status = if snap.fan_sensors.is_empty() { "RPM UNAVAILABLE".to_string() } else { format!("{} FANS", snap.fan_sensors.len()) };
+                                ui.label(RichText::new(status).size(8.5).monospace().strong().color(p.text_muted));
                             });
                         });
-                        ui.label(RichText::new("This hardware collector does not report fan speed, noise, or cooling curves.")
-                            .size(10.0).color(p.text_muted));
+                        if snap.fan_sensors.is_empty() {
+                            ui.label(RichText::new("No fan RPM sensors were reported. Cooling controls remain unavailable.")
+                                .size(10.0).color(p.text_muted));
+                        } else {
+                            ui.horizontal_wrapped(|ui| {
+                                for fan in &snap.fan_sensors {
+                                    let label = if fan.chip.is_empty() { fan.name.clone() } else { format!("{} · {}", fan.chip, fan.name) };
+                                    ui.label(RichText::new(format!("{label}: {:.0} RPM", fan.rpm)).size(10.0).monospace().color(p.text_secondary));
+                                }
+                            });
+                            ui.label(RichText::new("Cooling controls and acoustic readings are unavailable.").size(9.0).color(p.text_muted));
+                        }
                     });
 
                 ui.add_space(8.0);

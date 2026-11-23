@@ -15267,13 +15267,15 @@ impl LauncherApp {
                                                 ui.horizontal(|ui| {
                                                     ui.spacing_mut().item_spacing.x = 2.0;
                                                     ui.label(RichText::new(format!("{}", reported_sensor_value(Some(bat_pct), 0))).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
-                                                    ui.label(RichText::new("%").size(12.0).color(Color32::from_rgb(148, 163, 184)));
+                                                    if bat_pct.is_finite() { ui.label(RichText::new("%").size(12.0).color(Color32::from_rgb(148, 163, 184))); }
                                                 });
                                                 ui.add_space(8.0);
                                                 let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
                                                 ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
-                                                let fill_w = bar_r.width() * ((if bat_pct.is_finite() { bat_pct } else { 0.0 }) / 100.0).clamp(0.0, 1.0);
-                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(2.0), accent);
+                                                if bat_pct.is_finite() {
+                                                    let fill_w = bar_r.width() * (bat_pct / 100.0).clamp(0.0, 1.0);
+                                                    ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(fill_w, bar_r.height())), Rounding::same(2.0), accent);
+                                                }
                                                 ui.add_space(8.0);
 
                                                 let delivery_str = reported_status;
@@ -15314,8 +15316,10 @@ impl LauncherApp {
                                                 ui.add_space(8.0);
                                                 let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
                                                 ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
-                                                let cap_ratio = if full_wh > 0.0 && remaining_wh.is_finite() { (remaining_wh / full_wh).clamp(0.0, 1.0) } else { 0.0 };
-                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * cap_ratio, bar_r.height())), Rounding::same(2.0), accent);
+                                                if full_wh.is_finite() && full_wh > 0.0 && remaining_wh.is_finite() && remaining_wh >= 0.0 {
+                                                    let cap_ratio = (remaining_wh / full_wh).clamp(0.0, 1.0);
+                                                    ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * cap_ratio, bar_r.height())), Rounding::same(2.0), accent);
+                                                }
                                                 ui.add_space(8.0);
 
                                                 let design_wh = bat.and_then(|b| b.energy_design_wh).unwrap_or(f32::NAN);

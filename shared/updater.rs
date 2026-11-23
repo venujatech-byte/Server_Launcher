@@ -37,6 +37,7 @@ enum State {
     Available(Manifest),
     Downloading,
     Ready(Package, tempfile::TempDir, PathBuf),
+    Applying,
     InstallerOpened,
     RestartRequired,
     Failed(String),
@@ -244,8 +245,13 @@ fn launch(package: Package, path: &Path) -> io::Result<()> {
         }
         _ => {
             let mut cmd = Command::new("xdg-open");
-            cmd.arg(path);
-            cmd
+            let status = cmd.arg(path).status()?;
+            if !status.success() {
+                return Err(io::Error::other(format!(
+                    "The system package opener exited with {status}"
+                )));
+            }
+            return Ok(());
         }
     };
     command.spawn()?;
@@ -269,7 +275,10 @@ pub(crate) fn render(ui: &mut egui::Ui) {
     }
     ui.horizontal_wrapped(|ui| {
         ui.label(format!("Installed version {VERSION}"));
-        let busy = matches!(*state.lock().unwrap(), State::Checking | State::Downloading);
+        let busy = matches!(
+            *state.lock().unwrap(),
+            State::Checking | State::Downloading | State::Applying
+        );
         if ui
             .add_enabled(!busy, egui::Button::new("Check for updates"))
             .clicked()
@@ -327,6 +336,9 @@ pub(crate) fn render(ui: &mut egui::Ui) {
             }
             install = ui.button("Open verified update").clicked();
         }
+        State::Applying => {
+            ui.label("Opening the installer or applying the update…");
+        }
         State::RestartRequired => {
             ui.label("AppImage updated. Restart Server Launcher to finish.");
         }
@@ -349,26 +361,33 @@ pub(crate) fn render(ui: &mut egui::Ui) {
     }
     if install {
         if let State::Ready(package, folder, path) = std::mem::take(&mut *current) {
-            let result = if package.key == "linux-x64-appimage" {
-                replace_appimage(&path)
-            } else {
-                Ok(false)
-            };
-            *current = match result.and_then(|replaced| {
-                if replaced {
-                    Ok(true)
+            *current = State::Applying;
+            let state = Arc::clone(&state);
+            let ctx = ui.ctx().clone();
+            std::thread::spawn(move || {
+                let result = if package.key == "linux-x64-appimage" {
+                    replace_appimage(&path)
                 } else {
-                    launch(package, &path).map(|()| false)
-                }
-            }) {
-                Ok(true) => State::RestartRequired,
-                Ok(false) => {
-                    // The installer may still need the package after Server Launcher closes.
-                    let _ = folder.keep();
-                    State::InstallerOpened
-                }
-                Err(error) => State::Failed(format!("Could not open the update: {error}")),
-            };
+                    Ok(false)
+                };
+                let next = match result.and_then(|replaced| {
+                    if replaced {
+                        Ok(true)
+                    } else {
+                        launch(package, &path).map(|()| false)
+                    }
+                }) {
+                    Ok(true) => State::RestartRequired,
+                    Ok(false) => {
+                        // The installer may still need the package after Server Launcher closes.
+                        let _ = folder.keep();
+                        State::InstallerOpened
+                    }
+                    Err(error) => State::Failed(format!("Could not open the update: {error}")),
+                };
+                *state.lock().unwrap() = next;
+                ctx.request_repaint();
+            });
         }
     }
 }

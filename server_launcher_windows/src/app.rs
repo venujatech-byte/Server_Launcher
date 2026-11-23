@@ -12283,7 +12283,7 @@ impl LauncherApp {
                 let gpu_clock_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:clock"), snap.timestamp, gpu.and_then(|gpu| gpu.clock_mhz).map(|value| value as f32));
                 let gpu_memory = gpu.and_then(|gpu| gpu.mem_used_mb.zip(gpu.mem_total_mb))
                     .filter(|(used, total)| *total > 0 && used <= total);
-                let gpu_vram_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:vram"), snap.timestamp, gpu_memory.map(|(used, _)| used as f32));
+                let gpu_vram_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:vram"), snap.timestamp, gpu_memory.map(|(used, _)| used as f32 / 1024.0));
                 let (vram_val, vram_sub, vram_peak, vram_pwr, total_vram_mb, used_vram_mb) =
                     if let Some((used, total)) = gpu_memory {
                         let pct = used as f64 / total.max(1) as f64 * 100.0;

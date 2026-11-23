@@ -279,7 +279,7 @@ pub struct SystemSensorsSnapshot {
     pub cpu_frequency_mhz: u64,
     pub cpu_frequencies_mhz: Vec<u64>,
     pub cpu_power_watts: Option<f32>,
-    pub cpu_tdp_watts: Option<f32>,
+    pub cpu_power_cap_watts: Option<f32>,
     pub cpu_temp: Option<f32>,
     pub cpu_tjunction_max: Option<f32>,
 
@@ -562,7 +562,7 @@ impl SystemSensorsCollector {
         };
         #[cfg(not(target_os = "linux"))]
         let cpu_core_usages: Vec<Option<f32>> = self.sys.cpus().iter().map(|cpu| Some(cpu.cpu_usage())).collect();
-        let (mut cpu_frequencies_mhz, cpu_power_watts, cpu_tdp_watts) = collect_cpu_frequencies_and_power();
+        let (mut cpu_frequencies_mhz, cpu_power_watts, cpu_power_cap_watts) = collect_cpu_frequencies_and_power();
         if cpu_frequencies_mhz.is_empty() {
             #[cfg(target_os = "linux")]
             for cpu in self.sys.cpus() {
@@ -951,7 +951,7 @@ impl SystemSensorsCollector {
             cpu_frequency_mhz,
             cpu_frequencies_mhz,
             cpu_power_watts,
-            cpu_tdp_watts,
+            cpu_power_cap_watts,
             cpu_temp,
             cpu_tjunction_max,
             mem_total_bytes,
@@ -1726,7 +1726,7 @@ fn parse_package_power(label: &str, microwatts: &str) -> Option<f32> {
 pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32>) {
     let mut freqs = Vec::new();
     let mut cpu_power_watts = None;
-    let mut cpu_tdp_watts = None;
+    let mut cpu_power_cap_watts = None;
 
     #[cfg(target_os = "linux")]
     {
@@ -1764,7 +1764,7 @@ pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32
             }
         }
 
-        // 2. Read CPU TDP limit from intel-rapl constraint
+        // 2. Read the reported long-term package power limit from the RAPL constraint.
         let rapl_candidates = [
             "/sys/class/powercap/intel-rapl:0/constraint_0_power_limit_uw",
             "/sys/class/powercap/intel-rapl/intel-rapl:0/constraint_0_power_limit_uw",
@@ -1773,8 +1773,8 @@ pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32
             if let Ok(s) = fs::read_to_string(cand) {
                 if let Ok(uw) = s.trim().parse::<f32>() {
                     let w = uw / 1_000_000.0;
-                    if w > 0.0 {
-                        cpu_tdp_watts = Some(w);
+                    if w.is_finite() && (0.0..1000.0).contains(&w) {
+                        cpu_power_cap_watts = Some(w);
                         break;
                     }
                 }
@@ -1821,7 +1821,7 @@ pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32
         }
     }
 
-    (freqs, cpu_power_watts, cpu_tdp_watts)
+    (freqs, cpu_power_watts, cpu_power_cap_watts)
 }
 
 #[cfg(test)]
@@ -3231,12 +3231,12 @@ def read_cpu_frequencies():
 
 cpu_freqs = read_cpu_frequencies()
 
-cpu_tdp = None
+cpu_power_cap = None
 for p in glob.glob("/sys/class/powercap/intel-rapl*/constraint_0_power_limit_uw") + glob.glob("/sys/class/powercap/intel-rapl*/*/constraint_0_power_limit_uw"):
     try:
         v = int(open(p).read().strip()) / 1e6
         if 2.0 < v < 1000.0:
-            cpu_tdp = round(v, 1)
+            cpu_power_cap = round(v, 1)
             break
     except:
         pass
@@ -3999,7 +3999,7 @@ data = {
     "cpu_usage": cpu_usage,
     "cpu_core_usages": cpu_core_usages,
     "cpu_freqs": cpu_freqs,
-    "cpu_tdp": cpu_tdp,
+    "cpu_power_cap": cpu_power_cap,
     "cpu_power": cpu_power,
     "mem_total": mem.get("MemTotal", 0),
     "mem_avail": mem.get("MemAvailable", mem.get("MemFree", 0)),
@@ -4107,7 +4107,7 @@ print(json.dumps(data))
     }
     let cpu_frequency_mhz = average_cpu_frequency(&cpu_frequencies_mhz);
 
-    let cpu_tdp_watts = parsed["cpu_tdp"].as_f64()
+    let cpu_power_cap_watts = parsed["cpu_power_cap"].as_f64()
         .filter(|value| value.is_finite() && (0.0..1000.0).contains(value)).map(|value| value as f32);
     let cpu_power_watts = parsed["cpu_power"].as_f64().map(|v| v as f32)
         .filter(|value| value.is_finite() && (0.0..1000.0).contains(value));
@@ -4381,7 +4381,7 @@ print(json.dumps(data))
         cpu_frequency_mhz,
         cpu_frequencies_mhz,
         cpu_power_watts,
-        cpu_tdp_watts,
+        cpu_power_cap_watts,
         cpu_temp,
         cpu_tjunction_max,
         mem_total_bytes,

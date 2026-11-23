@@ -401,7 +401,7 @@ public static class ServerLauncherWlan {
         cpu_usage = $cpuLoad
         cpu_core_usages = $cpuCoreUsages
         cpu_freqs = @($cpu | Where-Object { $_.CurrentClockSpeed -gt 0 } | ForEach-Object { [int64]$_.CurrentClockSpeed })
-        cpu_tdp = $null
+        cpu_power_cap = $null
         cpu_power = $null
         mem_total = $memoryTotal
         mem_avail = [int64][math]::Min($memoryAvailable, $memoryTotal)

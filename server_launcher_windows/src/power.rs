@@ -5,7 +5,7 @@ use std::fs;
 /// Power profile inputs for the illustrative system power estimate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CpuTdpProfile {
-    /// Reported package power cap or estimated nominal CPU power (Watts).
+    /// Reported long-term package power cap or estimated nominal CPU power (Watts).
     pub nominal_watts: f32,
     /// Estimated peak CPU power (Watts).
     pub turbo_pl2_watts: f32,

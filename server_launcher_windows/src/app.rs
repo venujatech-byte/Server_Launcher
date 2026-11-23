@@ -5029,7 +5029,7 @@ fn draw_estimated_power_waveform(ui: &mut Ui, height: f32, watts: f32, accent: C
 #[cfg(windows)]
 fn render_animated_power_estimate(ui: &mut Ui, snapshot: &crate::sensors::SystemSensorsSnapshot, accent: Color32) {
     // This user-requested model is illustrative; it never enters measured sensor histories.
-    let profile = crate::power::tdp_profile_from_nominal_or_cpu(snapshot.cpu_tdp_watts, &snapshot.cpu_brand, snapshot.cpu_cores_physical.max(1));
+    let profile = crate::power::tdp_profile_from_nominal_or_cpu(snapshot.cpu_power_cap_watts, &snapshot.cpu_brand, snapshot.cpu_cores_physical.max(1));
     let load = (snapshot.cpu_global_usage / 100.0).clamp(0.0, 1.0);
     let cpu = snapshot.cpu_power_watts.unwrap_or_else(|| {
         let idle = (profile.nominal_watts * 0.12).clamp(1.5, 20.0);
@@ -11579,7 +11579,7 @@ impl LauncherApp {
                                                 ui.spacing_mut().item_spacing.x = 5.0;
                                                 let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
                                                 ui.painter().circle_filled(d_rect.center(), 2.8, accent);
-                                                let pl1 = reported_sensor_value(snap.cpu_tdp_watts, 1);
+                                                let pl1 = reported_sensor_value(snap.cpu_power_cap_watts, 1);
                                                 ui.label(RichText::new(format!("Reported power cap: {} W", pl1)).size(9.5).monospace().strong().color(p.text_primary));
                                             });
                                         });
@@ -11624,7 +11624,7 @@ impl LauncherApp {
                     let subtitle = match column {
                         0 => format!("{} Cores / {} Threads", phys, log),
                         1 => "Reported clock".to_string(),
-                        2 => snap.cpu_tdp_watts.map(|value| format!("Reported power cap: {:.1} W", value)).unwrap_or_else(|| "Power cap unavailable".into()),
+                        2 => snap.cpu_power_cap_watts.map(|value| format!("Reported power cap: {:.1} W", value)).unwrap_or_else(|| "Power cap unavailable".into()),
                         _ => snap.cpu_tjunction_max.map(|value| format!("Reported limit: {:.0}°C", value)).unwrap_or_else(|| "Temperature limit unavailable".into()),
                     };
                     let scale = if column == 0 { 100.0 } else { maximum.unwrap_or(1.0).max(1.0) * 1.1 };
@@ -15202,7 +15202,7 @@ impl LauncherApp {
 
                 let num_cores = snap.cpu_cores_physical.max(snap.cpu_cores_logical).max(1);
                 let profile = if is_remote {
-                    crate::power::tdp_profile_from_nominal_or_cpu(snap.cpu_tdp_watts, &snap.cpu_brand, num_cores)
+                    crate::power::tdp_profile_from_nominal_or_cpu(snap.cpu_power_cap_watts, &snap.cpu_brand, num_cores)
                 } else {
                     self.cpu_tdp_profile
                 };

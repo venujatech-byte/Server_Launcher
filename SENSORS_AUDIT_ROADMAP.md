@@ -188,6 +188,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **RAM composition accuracy:** The physical-memory bar now compares reported in-use memory with the remainder of total memory. Dirty, free/available, and reclaimable counters remain separate because collectors can report overlapping values; the UI explains this on both platforms.
 - **RAM total label:** Renamed the RAM overview's total from “resident pool” to “physical memory,” matching the collected `MemTotal`/system physical-memory value.
 - **Windows partition counts:** Preserve a missing WMI partition count as unavailable rather than showing a false zero; a reported zero remains distinguishable.
+- **GPU memory history:** Use timestamped reported used-VRAM samples for the selected adapter instead of an always-empty chart; invalid or incomplete counters remain unavailable.
 - **Unused GPU history state:** Removed three GPU history queues that had no readers; the rendered GPU histories are already stored by host and adapter identity.
 
 ### Remaining work and validation

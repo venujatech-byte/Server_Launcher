@@ -12722,7 +12722,7 @@ impl LauncherApp {
                                 sub_cols[0].vertical(|ui| {
                                     // Tile 1: Color Space
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 3))
+                                        .fill(p.bg_subtle)
                                         .rounding(Rounding::same(8.0))
                                         .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                                         .show(ui, |ui| {
@@ -12737,7 +12737,7 @@ impl LauncherApp {
 
                                     // Tile 3: Connector
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 3))
+                                        .fill(p.bg_subtle)
                                         .rounding(Rounding::same(8.0))
                                         .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                                         .show(ui, |ui| {
@@ -12752,7 +12752,7 @@ impl LauncherApp {
                                 sub_cols[1].vertical(|ui| {
                                     // Tile 2: Scaling
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 3))
+                                        .fill(p.bg_subtle)
                                         .rounding(Rounding::same(8.0))
                                         .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                                         .show(ui, |ui| {
@@ -12767,7 +12767,7 @@ impl LauncherApp {
 
                                     // Tile 4: VRR
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 3))
+                                        .fill(p.bg_subtle)
                                         .rounding(Rounding::same(8.0))
                                         .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                                         .show(ui, |ui| {
@@ -12797,18 +12797,18 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 8.0;
                                 ui.label(RichText::new(">_").size(12.0).monospace().strong().color(accent));
-                                ui.label(RichText::new("HW Accel").size(13.0).strong().color(p.text_primary));
+                                ui.label(RichText::new("Graphics session").size(13.0).strong().color(p.text_primary));
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(52, 211, 153, 22))
+                                        .fill(p.bg_subtle)
                                         .rounding(Rounding::same(999.0))
                                         .inner_margin(egui::Margin::symmetric(8.0, 3.0))
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 let (d_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
-                                                ui.painter().circle_filled(d_rect.center(), 2.2, p.success);
+                                                ui.painter().circle_filled(d_rect.center(), 2.2, p.info);
                                                 let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
                                                     || std::env::var("XDG_SESSION_TYPE").map(|s| s == "wayland").unwrap_or(false);
                                                 let is_x11 = std::env::var("DISPLAY").is_ok();
@@ -12831,42 +12831,14 @@ impl LauncherApp {
 
                             ui.add_space(12.0);
 
-                            // 3 API status item rows
-                            let apis: [(&str, &str, &str, bool); 3] = [
-                                ("Vulkan", "", "Not queried", false),
-                                ("OpenGL", "", "Not queried", false),
-                                ("Video acceleration", "", "Not queried", false),
-                            ];
-
-                            for (name, driver, status, _is_direct) in apis {
-                                Frame::none()
-                                    .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 3))
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
-                                    .show(ui, |ui| {
-                                        ui.set_width(ui.available_width());
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 6.0;
-                                            ui.label(RichText::new("—").size(11.0).color(p.text_muted));
-                                            ui.label(RichText::new(name).size(10.5).monospace().strong().color(p.text_primary));
-                                            ui.label(RichText::new("•").size(8.0).color(p.text_muted));
-                                            ui.label(RichText::new(driver).size(9.5).monospace().color(p.text_muted));
-
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                ui.label(RichText::new(status).size(10.0).monospace().strong().color(p.text_primary));
-                                            });
-                                        });
-                                    });
-                                ui.add_space(5.0);
-                            }
-
-                            ui.add_space(3.0);
+                            ui.label(RichText::new("Graphics API capabilities are not collected.").size(10.5).color(p.text_muted));
+                            ui.add_space(8.0);
 
                             // 2 Micro-cards below API rows
                             ui.columns(2, |sub_cols| {
                                 sub_cols[0].vertical(|ui| {
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 3))
+                                        .fill(p.bg_subtle)
                                         .rounding(Rounding::same(8.0))
                                         .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                                         .show(ui, |ui| {
@@ -12876,7 +12848,7 @@ impl LauncherApp {
                                                 ui.label(RichText::new(mc1_title).size(9.0).monospace().color(p.text_muted));
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                     let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
-                                                    ui.painter().circle_filled(dot_rect.center(), 2.0, p.success);
+                                                    ui.painter().circle_filled(dot_rect.center(), 2.0, p.info);
                                                 });
                                             });
 
@@ -12887,7 +12859,7 @@ impl LauncherApp {
 
                                 sub_cols[1].vertical(|ui| {
                                     Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 3))
+                                        .fill(p.bg_subtle)
                                         .rounding(Rounding::same(8.0))
                                         .inner_margin(egui::Margin::symmetric(12.0, 9.0))
                                         .show(ui, |ui| {

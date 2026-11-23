@@ -247,6 +247,9 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Linux display metadata:** Embedded DisplayPort connectors no longer claim an unverified “Pipe A” identity. Since DRM `modes` lists supported modes rather than the active compositor mode, the page no longer presents its first entry or EDID preferred timing as the current resolution/refresh rate; those fields remain unavailable when no active-mode provider exists. The EDID input bit-depth is also not presented as the active output depth.
 - **Unused CPU governor telemetry:** Removed the unrendered governor field and its local/SSH Linux reads and JSON plumbing from both Sensors collectors. Governor controls remain out of the UI as requested.
 - **Display telemetry cleanup:** Removed display fields that no Sensors view consumed, plus the unused EDID and connector sysfs reads. The display snapshot now keeps only the name, connector label, and Windows-reported current mode data.
+- **Windows sensor platform guards:** The Linux sysfs power-supply collector is excluded from Windows builds, avoiding a duplicate `collect_power_supply` definition alongside the native Windows collector.
+- **Windows inventory retry cadence:** Failed GPU/RAM/disk inventory attempts now advance the 30-second attempt timer while keeping the last-success timestamp separate, preventing repeated full inventory queries every three seconds.
+- **Windows sensor subprocess output:** PowerShell output is capped at 1 MiB in memory while the pipe continues draining; oversized responses return an explicit error instead of blocking or being parsed as truncated JSON.
 
 ### Remaining work and validation
 

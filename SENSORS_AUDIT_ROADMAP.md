@@ -244,6 +244,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Remote Windows Wi-Fi:** When details are requested, the SSH collector queries each wireless adapter through the Windows WLAN API and returns connection state, SSID, BSSID, signal, channel, negotiated rates and security algorithms. `netsh` remains a fallback when dynamic API loading or the native query is unavailable; `Get-NetConnectionProfile` preserves basic connected state where possible. Windows CI now compiles the embedded interop and checks its native structure size; reading real adapter data on an SSH host remains unverified.
 - **Remote Windows Bluetooth:** The remote query reads authenticated paired-device names, addresses and connected state through the native Bluetooth API without starting discovery or changing device state. The UI does not claim radio power state or expose controls.
 - **Local Windows Bluetooth:** The Windows Sensors page now shows paired devices and their reported connection state using the same read-only native query. PowerShell polling is limited to 15 seconds and runs without opening a console; radio and pairing controls stay in Windows Settings.
+- **Linux display metadata:** Embedded DisplayPort connectors no longer claim an unverified “Pipe A” identity, and unknown/reserved EDID color-depth codes remain unavailable instead of being reported as 8-bit. Parser fixtures cover valid, reserved, and analog-input cases in both app crates.
 
 ### Remaining work and validation
 

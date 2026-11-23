@@ -224,6 +224,30 @@ pub struct DisplayInfo {
     pub model: String,
 }
 
+fn edid_bit_depth(input: u8) -> &'static str {
+    if input & 0x80 == 0 { return "Not reported"; }
+    match (input >> 4) & 0x07 {
+        1 => "6-bit RGB",
+        2 => "8-bit RGB",
+        3 => "10-bit RGB",
+        4 => "12-bit RGB",
+        5 => "14-bit RGB",
+        6 => "16-bit RGB",
+        _ => "Not reported",
+    }
+}
+
+#[cfg(test)]
+mod display_edid_tests {
+    #[test]
+    fn only_reports_defined_digital_color_depths() {
+        assert_eq!(super::edid_bit_depth(0x90), "6-bit RGB");
+        assert_eq!(super::edid_bit_depth(0xA0), "8-bit RGB");
+        assert_eq!(super::edid_bit_depth(0xF0), "Not reported");
+        assert_eq!(super::edid_bit_depth(0x00), "Not reported");
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct BatteryInfo {
     pub device_id: String,
@@ -2629,7 +2653,7 @@ pub fn detect_displays() -> Vec<DisplayInfo> {
                         .and_then(|s| s.trim().parse::<u32>().ok());
 
                     let connector_type = if name.starts_with("eDP") {
-                        "eDP Pipe A".to_string()
+                        "eDP".to_string()
                     } else if name.starts_with("HDMI") {
                         "HDMI".to_string()
                     } else if name.starts_with("DP") {
@@ -2671,18 +2695,7 @@ pub fn detect_displays() -> Vec<DisplayInfo> {
                             let prod_code = (edid_bytes[10] as u16) | ((edid_bytes[11] as u16) << 8);
                             edid_prod = format!("{:#06x}", prod_code);
 
-                            let b20 = edid_bytes[20];
-                            if b20 & 0x80 != 0 {
-                                bit_depth = match (b20 >> 4) & 0x07 {
-                                    1 => "6-bit RGB".to_string(),
-                                    2 => "8-bit RGB".to_string(),
-                                    3 => "10-bit RGB".to_string(),
-                                    4 => "12-bit RGB".to_string(),
-                                    5 => "14-bit RGB".to_string(),
-                                    6 => "16-bit RGB".to_string(),
-                                    _ => "8-bit RGB".to_string(),
-                                };
-                            }
+                            bit_depth = edid_bit_depth(edid_bytes[20]).to_string();
 
                             let pix_clock_10khz = (edid_bytes[54] as u32) | ((edid_bytes[55] as u32) << 8);
                             let h_act = (edid_bytes[56] as u32) | (((edid_bytes[58] as u32) & 0xf0) << 4);

@@ -152,6 +152,27 @@ mod wifi_selection_tests {
     }
 
     #[test]
+    fn localized_windows_wlan_output_does_not_turn_an_up_adapter_into_disconnected() {
+        let data = serde_json::json!({
+            "adapters": [{"name":"Wi-Fi", "description":"Wireless", "status":"Up", "profile":"Office"}],
+            "wlan":"Name : Wi-Fi\nStatus : Verbunden\nSSID : Office\n"
+        });
+        let snapshot = super::parse_windows_wifi_snapshot(&data, Some("Wi-Fi"));
+        assert!(snapshot.is_connected);
+        assert_eq!(snapshot.state, "CONNECTED");
+        assert!(snapshot.ssid.is_empty());
+        assert_eq!(snapshot.signal_pct, None);
+
+        let data = serde_json::json!({
+            "adapters": [{"name":"Wi-Fi", "description":"Wireless", "status":"Up"}],
+            "wlan":"Name : Wi-Fi\nStatus : Getrennt\n"
+        });
+        let snapshot = super::parse_windows_wifi_snapshot(&data, Some("Wi-Fi"));
+        assert_eq!(snapshot.state, "UNKNOWN");
+        assert!(!snapshot.is_connected);
+    }
+
+    #[test]
     fn missing_windows_wifi_inventory_stays_unavailable() {
         let snapshot = super::parse_windows_wifi_snapshot(&serde_json::json!({"adapters":[], "wlan":""}), None);
         assert!(snapshot.interface.is_empty());
@@ -428,9 +449,10 @@ $adapters=@(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Where-Object { $_.
 $items=@(foreach($adapter in $adapters) {
   $ip=Get-NetIPConfiguration -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue | Select-Object -First 1;
   $ipif=Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1;
+  $profile=Get-NetConnectionProfile -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue | Select-Object -First 1;
   $stats=Get-NetAdapterStatistics -Name $adapter.Name -ErrorAction SilentlyContinue;
   [pscustomobject]@{
-    name=$adapter.Name; description=$adapter.InterfaceDescription; status=[string]$adapter.Status;
+    name=$adapter.Name; description=$adapter.InterfaceDescription; status=[string]$adapter.Status; profile=$profile.Name;
     mac=$adapter.MacAddress; driver=$adapter.DriverInformation; mtu=$ipif.NlMtu; index=$adapter.ifIndex;
     ipv4=@($ip.IPv4Address | ForEach-Object { @{address=$_.IPAddress; prefix=$_.PrefixLength} });
     ipv6=@($ip.IPv6Address | ForEach-Object { $_.IPAddress });
@@ -457,13 +479,18 @@ fn parse_windows_wifi_snapshot(data: &serde_json::Value, selected: Option<&str>)
     let Some(adapter) = rows.iter().find(|row| row["name"].as_str() == Some(interface.as_str())) else { return snapshot; };
     let wlan = parse_windows_wlan_interface(data["wlan"].as_str().unwrap_or(""), &interface);
     let adapter_status = adapter["status"].as_str().unwrap_or("Unknown");
+    let profile_connected = adapter["profile"].as_str().is_some_and(|profile| !profile.trim().is_empty());
     snapshot.interface = interface;
     snapshot.product = adapter["description"].as_str().filter(|value| !value.trim().is_empty()).unwrap_or("Wi-Fi adapter").into();
     snapshot.mac_address = adapter["mac"].as_str().unwrap_or("").into();
     snapshot.driver = adapter["driver"].as_str().unwrap_or("").into();
     snapshot.mtu = adapter["mtu"].as_u64().and_then(|value| u32::try_from(value).ok()).unwrap_or(0);
     snapshot.tx_bytes = adapter["sent"].as_u64().unwrap_or(0);
-    snapshot.state = wlan.state.unwrap_or_else(|| adapter_status.to_ascii_uppercase());
+    snapshot.state = wlan.state.unwrap_or_else(|| {
+        if profile_connected { "CONNECTED".into() }
+        else if adapter_status.eq_ignore_ascii_case("disconnected") { "DISCONNECTED".into() }
+        else { "UNKNOWN".into() }
+    });
     snapshot.is_connected = snapshot.state.eq_ignore_ascii_case("connected");
     snapshot.ssid = wlan.ssid.unwrap_or_default();
     snapshot.bssid = wlan.bssid.unwrap_or_default();

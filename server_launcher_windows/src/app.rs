@@ -1123,7 +1123,6 @@ impl LauncherApp {
     }
 
     pub fn trigger_bluetooth_query(&mut self, ctx: Option<egui::Context>) {
-        if cfg!(windows) { return; }
         if self.bluetooth_in_flight.swap(true, std::sync::atomic::Ordering::SeqCst) {
             return;
         }
@@ -15692,11 +15691,45 @@ impl LauncherApp {
     fn render_sensors_bluetooth_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         #[cfg(windows)]
         if host_id.is_none() {
-            ui.heading("Bluetooth");
-            ui.label("Manage Windows radios, pairing and connected devices in Settings.");
-            if ui.button("Open Windows Bluetooth settings").clicked() {
-                let _ = std::process::Command::new("cmd.exe").args(["/D", "/C", "start", "", "ms-settings:bluetooth"]).spawn();
+            if self.bluetooth_last_query.elapsed().as_secs() >= 15 {
+                self.trigger_bluetooth_query(Some(ui.ctx().clone()));
             }
+            let snapshot = self.bluetooth_snapshot.try_lock().map(|snapshot| snapshot.clone()).unwrap_or_default();
+            let query_in_flight = self.bluetooth_in_flight.load(std::sync::atomic::Ordering::SeqCst);
+            let p = self.palette();
+            let accent = self.sensors_accent_color(&p);
+            Frame::none().fill(p.bg_card).rounding(Rounding::same(8.0))
+                .inner_margin(egui::Margin::symmetric(14.0, 12.0)).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Bluetooth devices").size(16.0).strong().color(p.text_primary));
+                        ui.label(RichText::new(format!("{} paired", snapshot.get_paired_count())).size(10.0).color(p.text_muted));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("Open Windows Settings").clicked() {
+                                let _ = std::process::Command::new("cmd.exe").args(["/D", "/C", "start", "", "ms-settings:bluetooth"]).spawn();
+                            }
+                        });
+                    });
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Connection state is read-only here; radio and pairing controls are managed by Windows.").size(10.5).color(p.text_muted));
+                    ui.add_space(10.0);
+                    if let Some((error, _, _)) = &snapshot.status_msg {
+                        ui.label(RichText::new(error).size(11.0).color(p.text_secondary));
+                    } else if snapshot.devices.is_empty() && query_in_flight {
+                        ui.horizontal(|ui| { ui.spinner(); ui.label(RichText::new("Reading paired devices…").size(11.0).color(p.text_secondary)); });
+                    } else if snapshot.devices.is_empty() {
+                        ui.label(RichText::new("No paired devices reported by Windows.").size(11.0).color(p.text_muted));
+                    }
+                    for device in snapshot.devices.iter().filter(|device| device.paired) {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(&device.name).size(11.5).color(p.text_primary));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(RichText::new(if device.connected { "Connected" } else { "Paired" }).size(10.0).color(if device.connected { accent } else { p.text_muted }));
+                            });
+                        });
+                        ui.label(RichText::new(&device.mac).size(9.0).monospace().color(p.text_muted));
+                    }
+                });
             return;
         }
 
@@ -15710,7 +15743,8 @@ impl LauncherApp {
             let windows_host = snap.os_name.to_ascii_lowercase().contains("windows");
             let last_fetch = self.remote_bluetooth_last_fetch.lock().unwrap().get(hid).copied();
             let in_flight = self.remote_bluetooth_in_flight.lock().unwrap().contains(hid);
-            if (linux_host || windows_host) && last_fetch.map_or(true, |time| time.elapsed() >= Duration::from_secs(5)) && !in_flight {
+            let poll_interval = if windows_host { 15 } else { 5 };
+            if (linux_host || windows_host) && last_fetch.map_or(true, |time| time.elapsed() >= Duration::from_secs(poll_interval)) && !in_flight {
                 if let Some(host) = self.ssh_hosts.iter().find(|host| host.id == hid).cloned() {
                     self.trigger_remote_bluetooth_query(host, windows_host);
                 }

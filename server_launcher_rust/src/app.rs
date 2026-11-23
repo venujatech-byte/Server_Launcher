@@ -15820,7 +15820,8 @@ impl LauncherApp {
             let windows_host = snap.os_name.to_ascii_lowercase().contains("windows");
             let last_fetch = self.remote_bluetooth_last_fetch.lock().unwrap().get(hid).copied();
             let in_flight = self.remote_bluetooth_in_flight.lock().unwrap().contains(hid);
-            if (linux_host || windows_host) && last_fetch.map_or(true, |time| time.elapsed() >= Duration::from_secs(5)) && !in_flight {
+            let poll_interval = if windows_host { 15 } else { 5 };
+            if (linux_host || windows_host) && last_fetch.map_or(true, |time| time.elapsed() >= Duration::from_secs(poll_interval)) && !in_flight {
                 if let Some(host) = self.ssh_hosts.iter().find(|host| host.id == hid).cloned() {
                     self.trigger_remote_bluetooth_query(host, windows_host);
                 }

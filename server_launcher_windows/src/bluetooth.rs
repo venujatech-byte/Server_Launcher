@@ -60,6 +60,9 @@ impl BluetoothSnapshot {
 
 /// Query BlueZ via `bluetoothctl` to fetch real adapter state and connected/paired devices.
 pub fn query_bluetooth_status() -> BluetoothSnapshot {
+    if cfg!(windows) {
+        return query_local_windows_bluetooth_status();
+    }
     let mut snap = BluetoothSnapshot::default();
     snap.last_updated = Some(Instant::now());
 
@@ -133,32 +136,22 @@ done"#;
     parse_remote_bluetooth_output(&String::from_utf8_lossy(&output.stdout))
 }
 
-fn remote_windows_bluetooth_command() -> String {
+fn encoded_windows_bluetooth_script() -> String {
     use base64::Engine;
 
     let script = include_str!("../../shared/remote_windows_bluetooth.ps1");
-    let encoded = base64::engine::general_purpose::STANDARD.encode(script.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<_>>());
-    format!("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded}")
+    base64::engine::general_purpose::STANDARD.encode(script.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<_>>())
 }
 
-/// Read remembered Windows Bluetooth devices through the native Bluetooth API.
-pub fn query_remote_windows_bluetooth_status(host: &SshRemoteHost) -> Result<BluetoothSnapshot, String> {
-    let command = remote_windows_bluetooth_command();
-    let output = crate::remote::build_ssh_command(host, &command)
-        .output()
-        .map_err(|error| format!("Failed to run the remote Windows Bluetooth query: {error}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if stderr.is_empty() { "Remote Windows Bluetooth query failed".into() } else { stderr });
-    }
-    parse_remote_windows_bluetooth_output(&String::from_utf8_lossy(&output.stdout))
+fn windows_bluetooth_command() -> String {
+    format!("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {}", encoded_windows_bluetooth_script())
 }
 
-fn parse_remote_windows_bluetooth_output(text: &str) -> Result<BluetoothSnapshot, String> {
+fn parse_windows_bluetooth_output(text: &str) -> Result<BluetoothSnapshot, String> {
     let parsed: serde_json::Value = serde_json::from_str(text)
-        .map_err(|error| format!("Invalid remote Windows Bluetooth response: {error}"))?;
+        .map_err(|error| format!("Invalid Windows Bluetooth response: {error}"))?;
     let devices = parsed["devices"].as_array()
-        .ok_or_else(|| "Remote Windows Bluetooth response has no device list".to_string())?;
+        .ok_or_else(|| "Windows Bluetooth response has no device list".to_string())?;
     let mut snapshot = BluetoothSnapshot { available: parsed["available"].as_bool() == Some(true), last_updated: Some(Instant::now()), ..Default::default() };
     for device in devices {
         let Some(mac) = device["mac"].as_str().filter(|mac| valid_bluetooth_address(mac)) else { continue; };
@@ -171,6 +164,37 @@ fn parse_remote_windows_bluetooth_output(text: &str) -> Result<BluetoothSnapshot
     }
     snapshot.devices.sort_by(|a, b| b.connected.cmp(&a.connected).then_with(|| a.name.cmp(&b.name)));
     Ok(snapshot)
+}
+
+/// Read remembered devices locally or remotely without changing Windows Bluetooth state.
+pub fn query_remote_windows_bluetooth_status(host: &SshRemoteHost) -> Result<BluetoothSnapshot, String> {
+    let command = windows_bluetooth_command();
+    let output = crate::remote::build_ssh_command(host, &command)
+        .output()
+        .map_err(|error| format!("Failed to run the remote Windows Bluetooth query: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() { "Remote Windows Bluetooth query failed".into() } else { stderr });
+    }
+    parse_windows_bluetooth_output(&String::from_utf8_lossy(&output.stdout))
+}
+
+pub fn query_local_windows_bluetooth_status() -> BluetoothSnapshot {
+    let mut command = Command::new("powershell.exe");
+    command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand"])
+        .arg(encoded_windows_bluetooth_script());
+    crate::commands::hide_console(&mut command);
+    let result = command.output();
+    match result {
+        Ok(output) if output.status.success() => parse_windows_bluetooth_output(&String::from_utf8_lossy(&output.stdout)),
+        Ok(output) => Err({
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if stderr.is_empty() { "Windows Bluetooth query failed".into() } else { stderr }
+        }),
+        Err(error) => Err(format!("Failed to run the Windows Bluetooth query: {error}")),
+    }.unwrap_or_else(|error| BluetoothSnapshot {
+        status_msg: Some((error, true, Instant::now())), last_updated: Some(Instant::now()), ..Default::default()
+    })
 }
 
 fn parse_remote_bluetooth_output(text: &str) -> Result<BluetoothSnapshot, String> {
@@ -320,7 +344,7 @@ mod remote_bluetooth_tests {
     #[test]
     fn parses_remote_windows_paired_devices_and_drops_unpaired_rows() {
         let output = r#"{"available":true,"devices":[{"mac":"11:22:33:44:55:66","name":"Headphones","paired":true,"connected":true},{"mac":"invalid","name":"Bad","paired":true},{"mac":"AA:BB:CC:DD:EE:FF","name":"Unpaired","paired":false,"connected":false}]}"#;
-        let snapshot = super::parse_remote_windows_bluetooth_output(output).unwrap();
+        let snapshot = super::parse_windows_bluetooth_output(output).unwrap();
         assert!(snapshot.available);
         assert_eq!(snapshot.devices.len(), 1);
         assert_eq!(snapshot.get_connected_count(), 1);
@@ -330,7 +354,7 @@ mod remote_bluetooth_tests {
     #[test]
     fn remote_windows_bluetooth_command_uses_read_only_native_enumeration() {
         use base64::Engine;
-        let command = super::remote_windows_bluetooth_command();
+        let command = super::windows_bluetooth_command();
         let encoded = command.strip_prefix("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ").unwrap();
         let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
         let words = bytes.chunks_exact(2).map(|word| u16::from_le_bytes([word[0], word[1]])).collect::<Vec<_>>();

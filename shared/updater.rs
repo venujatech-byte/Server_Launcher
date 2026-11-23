@@ -90,11 +90,15 @@ fn fetch_update() -> Result<Option<Manifest>, String> {
         .map_err(|e| format!("Invalid release manifest: {e}"))?;
     let remote = version_tuple(&manifest.version).ok_or("Invalid release version")?;
     let local = version_tuple(VERSION).ok_or("Invalid installed version")?;
+    let asset_prefix = format!(
+        "https://github.com/venujatech-byte/Server_Launcher/releases/download/v{}/",
+        manifest.version
+    );
     if manifest.platforms.is_empty()
         || manifest.platforms.values().any(|asset| {
-            !asset.url.starts_with(
-                "https://github.com/venujatech-byte/Server_Launcher/releases/download/",
-            ) || asset.sha256.len() != 64
+            let filename = asset.url.strip_prefix(&asset_prefix);
+            !filename.is_some_and(|name| !name.is_empty() && !name.contains(['/', '?', '#']))
+                || asset.sha256.len() != 64
                 || !asset.sha256.bytes().all(|b| b.is_ascii_hexdigit())
                 || !(1..=1_073_741_824).contains(&asset.size)
         })
@@ -310,9 +314,16 @@ pub(crate) fn render(ui: &mut egui::Ui) {
         }
         State::Available(manifest) => {
             ui.label(format!("Version {} is available.", manifest.version));
-            ui.label("Choose the same package type you originally installed.");
+            let running_appimage =
+                cfg!(target_os = "linux") && std::env::var_os("APPIMAGE").is_some();
+            if !running_appimage {
+                ui.label("Choose the same package type you originally installed.");
+            }
             ui.horizontal_wrapped(|ui| {
                 for &package in packages() {
+                    if running_appimage && package.key != "linux-x64-appimage" {
+                        continue;
+                    }
                     if let Some(asset) = manifest.platforms.get(package.key) {
                         if ui.button(format!("Download {}", package.name)).clicked() {
                             requested_download = Some((package, asset.clone()));

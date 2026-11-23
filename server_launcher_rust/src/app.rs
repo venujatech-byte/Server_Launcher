@@ -12465,7 +12465,6 @@ impl LauncherApp {
                                             }
                                         }
 
-                                        ui.label(RichText::new("Power controls unavailable").size(9.0).color(p.text_muted));
                                     });
                                 });
                             });
@@ -12474,7 +12473,15 @@ impl LauncherApp {
 
                             // Row 3: Subtitle spanning the full card width underneath Row 2
                             let driver_str = gpu_spec_label;
-                            let topo_str = "PCI topology unavailable";
+                            let topology = gpu.map(|gpu| {
+                                if let Some(address) = gpu.device_path.strip_prefix("pci:") {
+                                    format!("PCI {address}")
+                                } else if !gpu.device_path.is_empty() {
+                                    "Device identity reported".to_string()
+                                } else {
+                                    "Device identity unavailable".to_string()
+                                }
+                            }).unwrap_or_else(|| "Device identity unavailable".to_string());
                             let date_or_link = if is_remote { "Remote telemetry" } else { "Local telemetry" };
 
                             ui.horizontal_wrapped(|ui| {
@@ -12483,7 +12490,7 @@ impl LauncherApp {
                                 ui.label(RichText::new("•").size(9.0).color(p.text_muted));
                                 ui.label(RichText::new(date_or_link).size(9.5).monospace().color(p.text_muted));
                                 ui.label(RichText::new("•").size(9.0).color(p.text_muted));
-                                ui.label(RichText::new(topo_str).size(9.5).monospace().color(p.text_muted));
+                                ui.label(RichText::new(topology).size(9.5).monospace().color(p.text_muted));
                             });
                         });
                     });
@@ -12614,7 +12621,7 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 ui.label(RichText::new(crate::lucide::LAYERS).size(12.0).color(accent));
-                                ui.label(RichText::new(format!("Multi-GPU Cluster Subsystem ({} Accelerators Online)", snap.gpus.len())).size(12.5).strong().color(p.text_primary));
+                                ui.label(RichText::new(format!("Detected GPU adapters ({})", snap.gpus.len())).size(12.5).strong().color(p.text_primary));
                             });
                             ui.add_space(8.0);
 
@@ -12689,6 +12696,7 @@ impl LauncherApp {
                     });
                 ui.add_space(8.0);
 
+                if gpu_memory.is_some() {
                 // 4. Memory Subsystem Breakdown Card
                 let free_vram_mb = total_vram_mb.saturating_sub(used_vram_mb);
                 let ded_mb_val = total_vram_mb;
@@ -12794,6 +12802,7 @@ impl LauncherApp {
                     });
 
                 ui.add_space(8.0);
+                }
 
                 // 5. Bottom 2-Column Section: Display & Hardware Acceleration
                 ui.columns(2, |cols| {

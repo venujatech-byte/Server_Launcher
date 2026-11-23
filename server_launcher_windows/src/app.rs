@@ -16729,11 +16729,8 @@ impl LauncherApp {
         // Total system CPU % normalization: 0 - 100% total system CPU matching Windows Task Manager
         let norm_factor = num_logical_cores;
 
-        let mem_total_pct = if snap.mem_total_bytes > 0 {
-            (snap.mem_used_bytes as f32 / snap.mem_total_bytes as f32) * 100.0
-        } else {
-            0.0
-        };
+        let mem_total_pct = (snap.mem_total_bytes > 0)
+            .then(|| (snap.mem_used_bytes as f32 / snap.mem_total_bytes as f32) * 100.0);
 
         let total_disk_mb_s = (snap.total_disk_read_rate_bps + snap.total_disk_write_rate_bps) / (1024.0 * 1024.0);
 
@@ -17175,7 +17172,7 @@ impl LauncherApp {
                 for (width, title, key, total) in [
                             (col_name_w, "Name", "name", String::new()),
                             (COL_CPU_W, "CPU", "cpu", snap.cpu_usage_available.then(|| format!("{:.0}%", snap.cpu_global_usage)).unwrap_or_else(|| "—".to_string())),
-                            (COL_MEM_W, "Memory", "mem", format!("{:.0}%", mem_total_pct)),
+                            (COL_MEM_W, "Memory", "mem", mem_total_pct.map_or_else(|| "—".to_string(), |pct| format!("{pct:.0}%"))),
                             (COL_DISK_W, "Disk", "disk", snap.total_disk_rates_available.then(|| format_tm_disk(total_disk_mb_s * 1024.0 * 1024.0)).unwrap_or_else(|| "—".to_string())),
                             (COL_NET_W, "Network", "net", sensor_network_rate(snap, snap.total_rx_rate_bps + snap.total_tx_rate_bps)),
                             (COL_GPU_W, "GPU", "gpu", total_gpu_pct.map(|v| format!("{v:.0}%")).unwrap_or_else(|| "—".to_string())),

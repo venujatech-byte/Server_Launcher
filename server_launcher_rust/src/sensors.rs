@@ -1740,8 +1740,8 @@ mod cpu_frequency_tests {
 fn parse_package_power(label: &str, microwatts: &str) -> Option<f32> {
     let label = label.trim().to_ascii_lowercase();
     if !label.starts_with("package") && !label.starts_with("cpu package") { return None; }
-    let watts = microwatts.trim().parse::<f32>().ok()? / 1_000_000.0;
-    (watts.is_finite() && (0.0..1000.0).contains(&watts)).then_some(watts)
+    let watts = microwatts.trim().parse::<f64>().ok()? / 1_000_000.0;
+    (watts.is_finite() && watts >= 0.0 && watts <= f32::MAX as f64).then_some(watts as f32)
 }
 
 #[cfg(target_os = "linux")]
@@ -1777,8 +1777,8 @@ fn read_rapl_package_power_cap() -> Option<f32> {
         caps.push(watts);
     }
     if caps.is_empty() { return None; }
-    let total = caps.into_iter().sum::<f32>();
-    if !total.is_finite() || total >= 1000.0 { None } else { Some(total) }
+    let total = caps.iter().map(|watts| *watts as f64).sum::<f64>();
+    (total.is_finite() && total <= f32::MAX as f64).then_some(total as f32)
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -1791,15 +1791,16 @@ fn rapl_power_watts(previous: u64, current: u64, range: u64, elapsed_secs: f64) 
     if range == 0 || previous > range || current > range || !elapsed_secs.is_finite() || elapsed_secs <= 0.0 { return None; }
     let delta = if current >= previous { current - previous } else { range - previous + current };
     let watts = delta as f64 / 1_000_000.0 / elapsed_secs;
-    (watts.is_finite() && (0.0..1000.0).contains(&watts)).then_some(watts as f32)
+    (watts.is_finite() && watts >= 0.0 && watts <= f32::MAX as f64).then_some(watts as f32)
 }
 
 fn rapl_total_power_watts(previous: &HashMap<String, (u64, u64)>, current: &HashMap<String, (u64, u64)>, elapsed_secs: f64) -> Option<f32> {
     if previous.is_empty() || previous.len() != current.len() { return None; }
-    current.iter().try_fold(0.0_f32, |total, (path, (energy, range))| {
+    let total = current.iter().try_fold(0.0_f64, |total, (path, (energy, range))| {
         let (previous_energy, previous_range) = previous.get(path)?;
-        Some(total + rapl_power_watts(*previous_energy, *energy, (*range).min(*previous_range), elapsed_secs)?)
-    })
+        Some(total + rapl_power_watts(*previous_energy, *energy, (*range).min(*previous_range), elapsed_secs)? as f64)
+    })?;
+    (total.is_finite() && total <= f32::MAX as f64).then_some(total as f32)
 }
 
 #[cfg(test)]
@@ -1810,7 +1811,8 @@ mod rapl_power_tests {
         assert_eq!(super::rapl_power_watts(9_000_000, 1_000_000, 10_000_000, 2.0), Some(1.0));
         assert_eq!(super::rapl_power_watts(1, 1, 0, 1.0), None);
         assert_eq!(super::rapl_power_watts(1, 1, 10, 0.0), None);
-        assert_eq!(super::rapl_power_watts(1, 9_000_000, 10, 1.0), None);
+        assert_eq!(super::rapl_power_watts(1, 10_000_001, 10, 1.0), None);
+        assert_eq!(super::rapl_power_watts(0, 1_250_000_000, 2_000_000_000, 1.0), Some(1250.0));
         let previous = [("socket0".into(), (0, 10_000_000)), ("socket1".into(), (0, 10_000_000))].into();
         let current = [("socket0".into(), (2_000_000, 10_000_000)), ("socket1".into(), (4_000_000, 10_000_000))].into();
         assert_eq!(super::rapl_total_power_watts(&previous, &current, 2.0), Some(3.0));
@@ -1918,6 +1920,7 @@ mod package_power_tests {
         assert_eq!(super::parse_package_power("", "3250000"), None);
         assert_eq!(super::parse_package_power("Package", "NaN"), None);
         assert_eq!(super::parse_package_power("Package", "-1"), None);
+        assert_eq!(super::parse_package_power("Package", "1500000000"), Some(1500.0));
     }
 }
 
@@ -2233,6 +2236,7 @@ mod gpu_pci_address_tests {
         assert_eq!(super::parse_nvidia_metric("NaN", 0.0, 100.0), None);
         assert_eq!(super::parse_nvidia_metric("101", 0.0, 100.0), None);
         assert_eq!(super::parse_nvidia_metric("42.5", 0.0, 100.0), Some(42.5));
+        assert_eq!(super::parse_nvidia_metric("12500", 0.0, f32::MAX), Some(12500.0));
     }
 
     #[test]
@@ -2274,8 +2278,8 @@ fn detect_gpus() -> Vec<GpuSensorInfo> {
                         };
                         let clock_mhz = parts.get(6).and_then(|s| s.parse::<u32>().ok()).filter(|value| *value > 0);
                         let mem_clock_mhz = parts.get(7).and_then(|s| s.parse::<u32>().ok()).filter(|value| *value > 0);
-                        let power_watts = parts.get(8).and_then(|s| parse_nvidia_metric(s, 0.0, 10000.0));
-                        let power_limit_watts = parts.get(9).and_then(|s| parse_nvidia_metric(s, 0.0, 10000.0));
+                        let power_watts = parts.get(8).and_then(|s| parse_nvidia_metric(s, 0.0, f32::MAX));
+                        let power_limit_watts = parts.get(9).and_then(|s| parse_nvidia_metric(s, 0.0, f32::MAX));
 
                         let pci = parts.get(10).and_then(|value| normalize_pci_address(value));
                         if let Some(address) = &pci { nvidia_devices.insert(address.clone()); }
@@ -3382,12 +3386,14 @@ for p in glob.glob("/sys/class/powercap/*/constraint_0_power_limit_uw") + glob.g
         if not (name.startswith("package") or name.startswith("cpu package")):
             continue
         v = int(open(p).read().strip()) / 1e6
-        if 0 <= v < 1000.0:
+        if math.isfinite(v) and v >= 0.0:
             cpu_power_caps.append(v)
     except:
         pass
-if cpu_power_caps and sum(cpu_power_caps) < 1000.0:
-    cpu_power_cap = round(sum(cpu_power_caps), 1)
+if cpu_power_caps:
+    total_cpu_power_cap = sum(cpu_power_caps)
+    if math.isfinite(total_cpu_power_cap):
+        cpu_power_cap = round(total_cpu_power_cap, 1)
 
 cpu_power = None
 
@@ -3811,7 +3817,7 @@ if rapl_sources and len(rapl_e1) == len(rapl_sources):
             if dt <= 0.05 or e2 < e1:
                 break
             watts = (e2 - e1) / 1e6 / dt
-            if not 0.0 <= watts <= 800.0:
+            if not math.isfinite(watts) or watts < 0.0:
                 break
             package_watts.append(watts)
         except:
@@ -3830,7 +3836,7 @@ if cpu_power is None and len(rapl_sources) <= 1:
                     if not (label.startswith("package") or label.startswith("cpu package")):
                         continue
                     v = int(open(pin).read().strip()) / 1e6
-                    if 0 <= v < 1000:
+                    if math.isfinite(v) and v >= 0.0:
                         cpu_power = round(v, 2)
                         break
                 except:
@@ -4258,9 +4264,9 @@ print(json.dumps(data))
     let cpu_frequency_mhz = average_cpu_frequency(&cpu_frequencies_mhz);
 
     let cpu_power_cap_watts = parsed["cpu_power_cap"].as_f64()
-        .filter(|value| value.is_finite() && (0.0..1000.0).contains(value)).map(|value| value as f32);
+        .filter(|value| value.is_finite() && (0.0..=f32::MAX as f64).contains(value)).map(|value| value as f32);
     let cpu_power_watts = parsed["cpu_power"].as_f64().map(|v| v as f32)
-        .filter(|value| value.is_finite() && (0.0..1000.0).contains(value));
+        .filter(|value| value.is_finite() && *value >= 0.0);
 
     let mem_total_bytes = parsed["mem_total"].as_u64().filter(|total| *total > 0)
         .ok_or_else(|| "Remote sensor data has no valid total memory reading".to_string())?;
@@ -4339,8 +4345,8 @@ print(json.dumps(data))
                 mem_total_mb: memory.1,
                 clock_mhz: g["clock_mhz"].as_u64().and_then(|v| u32::try_from(v).ok()),
                 mem_clock_mhz: g["mem_clock_mhz"].as_u64().and_then(|v| u32::try_from(v).ok()),
-                power_watts: g["power_watts"].as_f64().filter(|v| v.is_finite() && (0.0..1000.0).contains(v)).map(|v| v as f32),
-                power_limit_watts: g["power_limit_watts"].as_f64().filter(|v| v.is_finite() && (0.0..1000.0).contains(v)).map(|v| v as f32),
+                power_watts: g["power_watts"].as_f64().filter(|v| v.is_finite() && (0.0..=f32::MAX as f64).contains(v)).map(|v| v as f32),
+                power_limit_watts: g["power_limit_watts"].as_f64().filter(|v| v.is_finite() && (0.0..=f32::MAX as f64).contains(v)).map(|v| v as f32),
                 driver: g["driver"].as_str().unwrap_or("").to_string(),
             });
         }

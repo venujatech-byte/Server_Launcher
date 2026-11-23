@@ -100,6 +100,7 @@ The findings and proposed sequence above describe the original audit; later impl
 - Local Linux battery telemetry now rejects non-finite and unrepresentable micro-unit readings, non-positive voltage, negative energy/capacity and overflowing derived values before the Power page sees them. Battery health ratios and multi-battery power totals stay unavailable when their arithmetic is invalid; parser edge cases compile as regression fixtures in both apps.
 - Linux DRM GPU frequency and hwmon power inputs are now finite/range checked before becoming telemetry; hwmon micro-watts use the same checked conversion path as Linux power-supply values.
 - Battery capacity and health percentages from remote sensor payloads now accept only finite values in the reported 0–100% range.
+- CPU and GPU power telemetry no longer drops readings above an arbitrary 800/1000/10000 W ceiling; Linux, remote, NVIDIA and Windows hardware-provider paths still reject negative, non-finite or non-representable values.
 
 Initial implementation after approval:
 

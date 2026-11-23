@@ -15895,7 +15895,7 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 2. Action Toolbar (Pair New Device, Discoverable Toggle, RSSI Floor Slider)
+                // 2. Action Toolbar (Scan / Pair and Discoverable Toggle)
                 Frame::none()
                     .fill(p.bg_card)
                     .rounding(Rounding::same(8.0))

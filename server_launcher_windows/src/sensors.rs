@@ -1552,29 +1552,6 @@ pub fn detect_hardware_cpu_tjunction_max(temp_sensors: &[TempSensor]) -> Option<
     None
 }
 
-/// Detects if the current system has any active physical fan controllers in hwmon.
-pub fn detect_active_fans() -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        let hwmon_dir = Path::new("/sys/class/hwmon");
-        if hwmon_dir.exists() {
-            if let Ok(entries) = fs::read_dir(hwmon_dir) {
-                for entry in entries.flatten() {
-                    if let Ok(files) = fs::read_dir(entry.path()) {
-                        for f in files.flatten() {
-                            let name = f.file_name().to_string_lossy().to_string();
-                            if name.starts_with("fan") && name.ends_with("_input") {
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    false
-}
-
 #[cfg_attr(windows, allow(unused_mut))]
 fn average_cpu_frequency(frequencies: &[u64]) -> u64 {
     let (sum, count) = frequencies.iter().filter(|value| **value > 0)

@@ -173,6 +173,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Generic GPU temperature fallback:** When exactly one adapter is present but its provider-specific temperature is missing, both app pages now use the hottest categorized GPU sensor instead of choosing an arbitrary first sensor. Multiple-adapter hosts still require an adapter-specific reading.
 - **Local thermal limit validation:** The Temperature page rejects non-finite, non-positive, and implausibly high sensor limits (above 150°C) before displaying them, matching the bounds already applied to sensor readings.
 - **RAM maintenance cleanup:** Removed the uncalled Linux cache-dropping shell command and its obsolete check from both collectors; the RAM pages no longer expose the maintenance buttons, so this privileged command had no remaining caller.
+- **Cooling and Bluetooth cleanup:** Removed the unused sysfs fan detector, which had no UI or collector callers, and corrected the Bluetooth toolbar comment so it no longer advertises the removed RSSI filter. Current Bluetooth codec claims are absent; cooling remains explicitly unavailable because fan telemetry is not collected.
 
 ### Remaining work and validation
 

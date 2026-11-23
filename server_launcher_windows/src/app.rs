@@ -1043,12 +1043,13 @@ impl LauncherApp {
         let include_network_details = self.sensors_subtab == SensorsSubTab::Wifi;
         let include_gpu_engines = self.sensors_subtab == SensorsSubTab::Gpu;
         let include_ram_modules = self.sensors_subtab == SensorsSubTab::Ram;
+        let include_network_rates = matches!(self.sensors_subtab, SensorsSubTab::Overview | SensorsSubTab::Wifi | SensorsSubTab::DataUsage);
         let in_flight_arc = self.remote_sensors_in_flight.clone();
         let last_fetch_arc = self.remote_sensors_last_fetch.clone();
         let errors_arc = self.remote_sensors_errors.clone();
 
         std::thread::spawn(move || {
-            match crate::sensors::query_remote_sensors(&host, include_processes, include_process_network, include_network_details, include_gpu_engines, include_ram_modules) {
+            match crate::sensors::query_remote_sensors(&host, include_processes, include_process_network, include_network_details, include_gpu_engines, include_ram_modules, include_network_rates) {
                 Ok(snap) => {
                     snapshots_arc.lock().unwrap().insert(hid.clone(), Arc::new(snap));
                     last_fetch_arc.lock().unwrap().insert(hid.clone(), Instant::now());
@@ -16641,7 +16642,7 @@ impl LauncherApp {
                     results.lock().unwrap().push_back(message);
                     ctx.request_repaint();
                     std::thread::sleep(std::time::Duration::from_millis(400));
-                    if let Ok(snap) = crate::sensors::query_remote_sensors(&host, true, true, false, false, false) {
+                    if let Ok(snap) = crate::sensors::query_remote_sensors(&host, true, true, false, false, false, false) {
                         snapshots_arc.lock().unwrap().insert(hid_clone.clone(), Arc::new(snap));
                         last_fetch_arc.lock().unwrap().insert(hid_clone.clone(), Instant::now());
                         errors_arc.lock().unwrap().remove(&hid_clone);

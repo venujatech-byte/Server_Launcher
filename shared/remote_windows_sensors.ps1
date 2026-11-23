@@ -10,6 +10,7 @@ try {
     $collectNetworkDetails = __COLLECT_NETWORK_DETAILS__
     $collectGpuEngines = __COLLECT_GPU_ENGINES__
     $collectRamModules = __COLLECT_RAM_MODULES__
+    $collectNetworkRates = __COLLECT_NETWORK_RATES__
     $cpu = @(Get-CimInstance Win32_Processor -ErrorAction Stop)
     $cores = [int](($cpu | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum)
     if ($cores -lt 1) { throw 'No logical CPU count was reported' }
@@ -66,11 +67,23 @@ try {
     $adapters = @()
     $stats = @()
     try { $adapters = @(Get-NetAdapter -ErrorAction Stop) } catch { }
+    $rateBefore = @{}
+    $rateElapsed = $null
+    if ($collectNetworkRates) {
+        try {
+            foreach ($sample in @(Get-NetAdapterStatistics -ErrorAction Stop)) {
+                if ($null -ne $sample.ReceivedBytes -and $null -ne $sample.SentBytes) { $rateBefore[[string]$sample.Name] = @([int64]$sample.ReceivedBytes, [int64]$sample.SentBytes) }
+            }
+            $rateStartedAt = [Diagnostics.Stopwatch]::GetTimestamp()
+            Start-Sleep -Milliseconds 250
+            $rateElapsed = ([Diagnostics.Stopwatch]::GetTimestamp() - $rateStartedAt) / [Diagnostics.Stopwatch]::Frequency
+        } catch { $rateBefore = @{} }
+    }
     try { $stats = @(Get-NetAdapterStatistics -ErrorAction Stop) } catch { }
     $networks = @($adapters | ForEach-Object {
         $adapter = $_
         $stat = $stats | Where-Object { $_.Name -eq $adapter.Name } | Select-Object -First 1
-        if ($null -ne $stat) {
+        if ($null -ne $stat -and $null -ne $stat.ReceivedBytes -and $null -ne $stat.SentBytes -and $stat.ReceivedBytes -ge 0 -and $stat.SentBytes -ge 0) {
             $ipv4 = $null
             $ipv6 = $null
             if ($collectNetworkDetails -and $adapter.ifIndex) {
@@ -83,12 +96,21 @@ try {
             }
             $mac = ([string]$adapter.MacAddress).Replace('-', ':').ToLowerInvariant()
             $linkState = if ($adapter.Status -eq 'Up') { 'up' } elseif ($adapter.Status -eq 'Disabled' -or $adapter.Status -eq 'Disconnected') { 'down' } else { 'unknown' }
+            $rxRate = $null
+            $txRate = $null
+            if ($collectNetworkRates -and $null -ne $rateElapsed -and $rateElapsed -gt 0 -and $rateBefore.ContainsKey([string]$adapter.Name)) {
+                $previous = $rateBefore[[string]$adapter.Name]
+                if ($stat.ReceivedBytes -ge $previous[0] -and $stat.SentBytes -ge $previous[1]) {
+                    $rxRate = [double]($stat.ReceivedBytes - $previous[0]) / $rateElapsed
+                    $txRate = [double]($stat.SentBytes - $previous[1]) / $rateElapsed
+                }
+            }
             [pscustomobject]@{
                 name = [string]$adapter.Name
                 rx_bytes = [int64]$stat.ReceivedBytes
                 tx_bytes = [int64]$stat.SentBytes
-                rx_rate = 0
-                tx_rate = 0
+                rx_rate = $rxRate
+                tx_rate = $txRate
                 is_wireless = $null
                 link_state = $linkState
                 mac_address = if ($mac -match '^([0-9a-f]{2}:){5}[0-9a-f]{2}$') { $mac } else { $null }
@@ -98,6 +120,8 @@ try {
             }
         }
     })
+    $networkStatsAvailable = $adapters.Count -gt 0 -and $networks.Count -eq $adapters.Count
+    $networkRatesAvailable = $collectNetworkRates -and $networkStatsAvailable -and @($networks | Where-Object { $null -eq $_.rx_rate -or $null -eq $_.tx_rate }).Count -eq 0
 
     $batteries = @(Get-CimInstance Win32_Battery -ErrorAction Stop | ForEach-Object {
         $battery = $_
@@ -234,10 +258,10 @@ try {
         gpu_engines = $gpuEngines
         memory_modules = $memoryModules
         networks = $networks
-        network_stats_available = ($networks.Count -gt 0)
-        network_rates_available = $false
-        total_rx_rate = $null
-        total_tx_rate = $null
+        network_stats_available = $networkStatsAvailable
+        network_rates_available = $networkRatesAvailable
+        total_rx_rate = if ($networkRatesAvailable) { [double](($networks | Measure-Object -Property rx_rate -Sum).Sum) } else { $null }
+        total_tx_rate = if ($networkRatesAvailable) { [double](($networks | Measure-Object -Property tx_rate -Sum).Sum) } else { $null }
         active_sockets = $null
         power = @{ ac_online = $null; batteries = $batteries; charge_limit = $null }
         top_apps = $topApps

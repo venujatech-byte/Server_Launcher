@@ -2591,14 +2591,15 @@ fn parse_process_tcp_counters(output: &str) -> HashMap<u32, (u64, u64)> {
 
 use crate::config::SshRemoteHost;
 use crate::remote::build_ssh_command;
-fn remote_windows_sensor_command(include_processes: bool, include_network_details: bool, include_gpu_engines: bool, include_ram_modules: bool) -> String {
+fn remote_windows_sensor_command(include_processes: bool, include_network_details: bool, include_gpu_engines: bool, include_ram_modules: bool, include_network_rates: bool) -> String {
     use base64::Engine;
 
     let script = include_str!("../../shared/remote_windows_sensors.ps1")
         .replace("__COLLECT_NETWORK_DETAILS__", if include_network_details { "$true" } else { "$false" })
         .replace("__COLLECT_PROCESSES__", if include_processes { "$true" } else { "$false" })
         .replace("__COLLECT_GPU_ENGINES__", if include_gpu_engines { "$true" } else { "$false" })
-        .replace("__COLLECT_RAM_MODULES__", if include_ram_modules { "$true" } else { "$false" });
+        .replace("__COLLECT_RAM_MODULES__", if include_ram_modules { "$true" } else { "$false" })
+        .replace("__COLLECT_NETWORK_RATES__", if include_network_rates { "$true" } else { "$false" });
     let utf16le: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let encoded = base64::engine::general_purpose::STANDARD.encode(utf16le);
     format!("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded}")
@@ -2614,10 +2615,10 @@ fn remote_sensor_host_key(host: &SshRemoteHost) -> String {
     format!("{}@{}:{}", host.user.trim(), host.host.trim(), host.port)
 }
 
-fn query_remote_windows_sensors(host: &SshRemoteHost, include_processes: bool, include_network_details: bool, include_gpu_engines: bool, include_ram_modules: bool) -> Result<Option<serde_json::Value>, String> {
+fn query_remote_windows_sensors(host: &SshRemoteHost, include_processes: bool, include_network_details: bool, include_gpu_engines: bool, include_ram_modules: bool, include_network_rates: bool) -> Result<Option<serde_json::Value>, String> {
     let mut host = host.clone();
     host.remote_cwd.clear();
-    let mut cmd = build_ssh_command(&host, &remote_windows_sensor_command(include_processes, include_network_details, include_gpu_engines, include_ram_modules));
+    let mut cmd = build_ssh_command(&host, &remote_windows_sensor_command(include_processes, include_network_details, include_gpu_engines, include_ram_modules, include_network_rates));
     let out = cmd.output().map_err(|error| format!("SSH command execution error: {error}"))?;
     if !out.status.success() {
         let error = String::from_utf8_lossy(&out.stderr).trim().to_string();
@@ -2696,6 +2697,34 @@ fn parse_remote_windows_memory_modules(modules: &serde_json::Value) -> Option<Me
     })
 }
 
+fn parse_remote_network_rows(parsed: &serde_json::Value) -> Result<(Vec<NetInterfaceInfo>, bool, bool), String> {
+    let interfaces = parsed["networks"].as_array().ok_or_else(|| "Remote sensor data has no network interface list".to_string())?;
+    let mut networks = Vec::new();
+    let mut rates_available = true;
+    for row in interfaces {
+        let (Some(name), Some(rx), Some(tx)) = (row["name"].as_str(), row["rx_bytes"].as_u64(), row["tx_bytes"].as_u64()) else { continue; };
+        if name.is_empty() { continue; }
+        let rate = |key| row[key].as_f64().filter(|value| value.is_finite() && *value >= 0.0);
+        let rx_rate = rate("rx_rate");
+        let tx_rate = rate("tx_rate");
+        rates_available &= rx_rate.is_some() && tx_rate.is_some();
+        networks.push(NetInterfaceInfo {
+            name: name.to_string(), rx_bytes: rx, tx_bytes: tx,
+            rx_rate_bps: rx_rate.unwrap_or(0.0), tx_rate_bps: tx_rate.unwrap_or(0.0),
+            is_wireless: row["is_wireless"].as_bool(),
+            link_state: parse_network_link_state(&row["link_state"]),
+            mac_address: parse_network_mac(&row["mac_address"]),
+            mtu: row["mtu"].as_u64().and_then(|value| u32::try_from(value).ok()).filter(|value| *value > 0),
+            ipv4: parse_network_address(&row["ipv4"], true),
+            ipv6: parse_network_address(&row["ipv6"], false),
+        });
+    }
+    let complete = parsed["network_stats_available"].as_bool() == Some(true)
+        && (interfaces.is_empty() || networks.len() == interfaces.len());
+    let rates = parsed["network_rates_available"].as_bool() == Some(true) && rates_available && complete && !networks.is_empty();
+    Ok((networks, complete, rates))
+}
+
 fn parse_remote_process_rows(parsed: &serde_json::Value, include_processes: bool) -> Result<Vec<ProcessSensorInfo>, String> {
     let rows = if include_processes {
         parsed["top_apps"].as_array().map(Vec::as_slice).ok_or_else(|| "Remote sensor data has no process list".to_string())?
@@ -2745,7 +2774,7 @@ mod remote_sensor_command_tests {
     #[test]
     fn windows_sensor_command_encodes_utf16_powershell_without_shell_payload() {
         use base64::Engine;
-        let command = super::remote_windows_sensor_command(true, true, true, true);
+        let command = super::remote_windows_sensor_command(true, true, true, true, true);
         let encoded = command.strip_prefix("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ").unwrap();
         let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
         let words = bytes.chunks_exact(2).map(|word| u16::from_le_bytes([word[0], word[1]])).collect::<Vec<_>>();
@@ -2758,19 +2787,22 @@ mod remote_sensor_command_tests {
         assert!(script.contains("Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine"));
         assert!(script.contains("$collectRamModules = $true"));
         assert!(script.contains("Win32_PhysicalMemory"));
+        assert!(script.contains("$collectNetworkRates = $true"));
+        assert!(script.contains("$rxRate = $null"));
         assert!(!command.contains("Get-CimInstance"));
     }
 
     #[test]
     fn remote_gpu_counter_collection_is_opt_in() {
         use base64::Engine;
-        let command = super::remote_windows_sensor_command(false, false, false, false);
+        let command = super::remote_windows_sensor_command(false, false, false, false, false);
         let encoded = command.strip_prefix("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ").unwrap();
         let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
         let words = bytes.chunks_exact(2).map(|word| u16::from_le_bytes([word[0], word[1]])).collect::<Vec<_>>();
         let script = String::from_utf16(&words).unwrap();
         assert!(script.contains("$collectGpuEngines = $false"));
         assert!(script.contains("$collectRamModules = $false"));
+        assert!(script.contains("$collectNetworkRates = $false"));
     }
 
     #[test]
@@ -2781,7 +2813,7 @@ mod remote_sensor_command_tests {
     }
 }
 
-pub fn query_remote_sensors(host: &SshRemoteHost, include_processes: bool, include_process_network: bool, include_network_details: bool, include_gpu_engines: bool, include_ram_modules: bool) -> Result<SystemSensorsSnapshot, String> {
+pub fn query_remote_sensors(host: &SshRemoteHost, include_processes: bool, include_process_network: bool, include_network_details: bool, include_gpu_engines: bool, include_ram_modules: bool, include_network_rates: bool) -> Result<SystemSensorsSnapshot, String> {
     let script = r#"python3 -c '
 import os, glob, json, time, sys, math, subprocess, ipaddress, platform
 remote_system = platform.system() or "unknown"
@@ -3839,7 +3871,7 @@ print(json.dumps(data))
     let host_key = remote_sensor_host_key(host);
     let known_windows = known_windows_remote_hosts().lock().unwrap().contains(&host_key);
     let parsed = if known_windows {
-        match query_remote_windows_sensors(host, include_processes, include_network_details, include_gpu_engines, include_ram_modules)? {
+        match query_remote_windows_sensors(host, include_processes, include_network_details, include_gpu_engines, include_ram_modules, include_network_rates)? {
             Some(data) => data,
             None => {
                 known_windows_remote_hosts().lock().unwrap().remove(&host_key);
@@ -3874,7 +3906,7 @@ print(json.dumps(data))
             return Err(python_error.unwrap());
         }
         if windows_host {
-            match query_remote_windows_sensors(host, include_processes, include_network_details, include_gpu_engines, include_ram_modules) {
+            match query_remote_windows_sensors(host, include_processes, include_network_details, include_gpu_engines, include_ram_modules, include_network_rates) {
                 Ok(Some(windows_data)) => {
                     known_windows_remote_hosts().lock().unwrap().insert(host_key);
                     windows_data
@@ -4083,32 +4115,7 @@ print(json.dumps(data))
     }
     apply_unambiguous_gpu_temperature(&mut gpus, &gpu_temps);
 
-    let mut networks = Vec::new();
-    let interfaces = parsed["networks"].as_array()
-        .ok_or_else(|| "Remote sensor data has no network interface list".to_string())?;
-    for n in interfaces {
-        let (Some(name), Some(rx), Some(tx), Some(rx_rate), Some(tx_rate)) = (
-            n["name"].as_str(), n["rx_bytes"].as_u64(), n["tx_bytes"].as_u64(),
-            n["rx_rate"].as_f64(), n["tx_rate"].as_f64(),
-        ) else { continue; };
-        if name.is_empty() || !rx_rate.is_finite() || rx_rate < 0.0 || !tx_rate.is_finite() || tx_rate < 0.0 { continue; }
-        networks.push(NetInterfaceInfo {
-            name: name.to_string(),
-            rx_bytes: rx,
-            tx_bytes: tx,
-            rx_rate_bps: rx_rate,
-            tx_rate_bps: tx_rate,
-            is_wireless: n["is_wireless"].as_bool(),
-            link_state: parse_network_link_state(&n["link_state"]),
-            mac_address: parse_network_mac(&n["mac_address"]),
-            mtu: n["mtu"].as_u64().and_then(|value| u32::try_from(value).ok()).filter(|value| *value > 0),
-            ipv4: parse_network_address(&n["ipv4"], true),
-            ipv6: parse_network_address(&n["ipv6"], false),
-        });
-    }
-    let network_stats_available = parsed["network_stats_available"].as_bool() == Some(true)
-        && (interfaces.is_empty() || networks.len() == interfaces.len());
-    let network_rates_available = parsed["network_rates_available"].as_bool() == Some(true) && network_stats_available && !networks.is_empty();
+    let (networks, network_stats_available, network_rates_available) = parse_remote_network_rows(&parsed)?;
 
     let (total_rx_bytes, total_tx_bytes, total_rx_rate_bps, total_tx_rate_bps) = network_totals(&networks);
 
@@ -4270,6 +4277,26 @@ mod tests {
         assert_eq!(rows[0].memory_bytes, 2048);
         assert_eq!(rows[0].cpu_usage, 7.5);
         assert!(!rows[0].net_rate_available && !rows[0].disk_rate_available);
+    }
+
+    #[test]
+    fn remote_windows_network_counters_survive_unavailable_rate_samples() {
+        let parsed = serde_json::json!({
+            "network_stats_available": true,
+            "network_rates_available": false,
+            "networks": [{
+                "name": "Ethernet", "rx_bytes": 1234, "tx_bytes": 5678,
+                "rx_rate": null, "tx_rate": null, "is_wireless": false,
+                "link_state": "up", "mac_address": null, "mtu": null,
+                "ipv4": null, "ipv6": null
+            }]
+        });
+        let (rows, counters_available, rates_available) = super::parse_remote_network_rows(&parsed).unwrap();
+        assert!(counters_available);
+        assert!(!rates_available);
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].rx_bytes, rows[0].tx_bytes), (1234, 5678));
+        assert_eq!((rows[0].rx_rate_bps, rows[0].tx_rate_bps), (0.0, 0.0));
     }
 
     #[test]

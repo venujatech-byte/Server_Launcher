@@ -5443,6 +5443,10 @@ mod windows_display_tests {
         assert_eq!(display.bit_depth, "Not reported");
         assert_eq!(display.connector_type, "Not reported");
         assert!(super::parse_windows_display(&serde_json::json!({"Name":"Adapter"})).is_none());
+        assert_eq!(super::parse_windows_displays(&serde_json::json!([
+            {"Name":"Display 1", "CurrentHorizontalResolution":1920, "CurrentVerticalResolution":1080},
+            {"Name":"Display 2", "CurrentHorizontalResolution":2560, "CurrentVerticalResolution":1440}
+        ])).len(), 2);
     }
 }
 

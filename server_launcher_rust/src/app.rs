@@ -12804,8 +12804,8 @@ impl LauncherApp {
                 ui.add_space(8.0);
                 }
 
-                // Show only display telemetry reported by the host collector.
-                if let Some(display) = snap.displays.first() {
+                // Show every display mode reported by the host collector.
+                if !snap.displays.is_empty() {
                     Frame::none()
                         .fill(p.bg_card)
                         .rounding(Rounding::same(8.0))
@@ -12815,22 +12815,26 @@ impl LauncherApp {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 8.0;
                                 ui.label(RichText::new(crate::lucide::MONITOR).size(12.0).color(accent));
-                                ui.label(RichText::new(if display.name.starts_with("eDP") { "Display (eDP)" } else { "Display" }).size(13.0).strong().color(p.text_primary));
+                                ui.label(RichText::new("Display modes").size(13.0).strong().color(p.text_primary));
                             });
-                            ui.add_space(10.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 8.0;
-                                ui.label(RichText::new(&display.resolution).size(22.0).strong().color(p.text_primary));
-                                if display.refresh_hz > 0.0 {
-                                    ui.label(RichText::new(format!("@ {:.1} Hz", display.refresh_hz)).size(10.0).monospace().color(p.text_secondary));
-                                }
-                                if display.bit_depth != "Not reported" {
-                                    ui.label(RichText::new(&display.bit_depth).size(10.0).monospace().color(p.text_muted));
-                                }
-                                if display.connector_type != "Not reported" {
-                                    ui.label(RichText::new(&display.connector_type).size(10.0).monospace().color(p.text_muted));
-                                }
-                            });
+                            ui.add_space(8.0);
+                            for display in &snap.displays {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 8.0;
+                                    ui.label(RichText::new(&display.name).size(11.0).color(p.text_secondary));
+                                    ui.label(RichText::new(&display.resolution).size(18.0).strong().color(p.text_primary));
+                                    if display.refresh_hz > 0.0 {
+                                        ui.label(RichText::new(format!("@ {:.1} Hz", display.refresh_hz)).size(10.0).monospace().color(p.text_secondary));
+                                    }
+                                    if display.bit_depth != "Not reported" {
+                                        ui.label(RichText::new(&display.bit_depth).size(10.0).monospace().color(p.text_muted));
+                                    }
+                                    if display.connector_type != "Not reported" {
+                                        ui.label(RichText::new(&display.connector_type).size(10.0).monospace().color(p.text_muted));
+                                    }
+                                });
+                                ui.add_space(4.0);
+                            }
                         });
                     ui.add_space(10.0);
                 }

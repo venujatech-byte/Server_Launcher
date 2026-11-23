@@ -6485,11 +6485,6 @@ fn render_modern_toggle_switch(ui: &mut Ui, on: &mut bool, p: &crate::theme::The
     changed
 }
 
-fn draw_rf_frequency_waveform(ui: &mut Ui, height: f32, _accent: Color32) {
-    let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
-    painter.rect_filled(response.rect, Rounding::same(6.0), Color32::from_rgb(10, 14, 22));
-    painter.text(response.rect.center(), egui::Align2::CENTER_CENTER, "RF measurements unavailable", egui::FontId::proportional(11.0), Color32::from_rgb(148, 163, 184));
-}
 
 fn draw_wifi_realtime_waveform(ui: &mut Ui, height: f32, rx_history: &VecDeque<f32>, tx_history: &VecDeque<f32>, accent: Color32) {
     let (response, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
@@ -16376,85 +16371,6 @@ impl LauncherApp {
                         });
                 }
 
-                ui.add_space(8.0);
-
-                // 5. Bottom Two Columns: Radio Diagnostics & Channel Stability vs Audio Profiles & Routing
-                let total_w = ui.available_width();
-                let gap = 10.0_f32;
-                let half_w = (total_w - gap) * 0.50;
-
-                ui.horizontal(|ui| {
-                    // Left Column: Radio Diagnostics & Channel Stability
-                    ui.allocate_ui_with_layout(egui::vec2(half_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-
-                                // Header row with title on left and badge on right (no vertical overlap)
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new("Radio Diagnostics & Channel Stability").size(12.5).strong().color(p.text_primary));
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        Frame::none()
-                                            .fill(accent_with_alpha(accent, 16))
-                                            .rounding(Rounding::same(4.0))
-                                            .inner_margin(egui::Margin::symmetric(7.0, 3.0))
-                                            .show(ui, |ui| {
-                                                ui.label(RichText::new("AFH: UNAVAILABLE").size(8.5).monospace().strong().color(p.text_primary));
-                                            });
-                                    });
-                                });
-                                ui.add_space(2.0);
-                                ui.label(RichText::new("Controller does not report RF channel measurements").size(9.0).monospace().color(p.text_muted));
-
-                                ui.add_space(8.0);
-                                draw_rf_frequency_waveform(ui, 100.0, accent);
-
-                                ui.add_space(10.0);
-                                ui.columns(3, |cols| {
-                                    let diag_items = [
-                                        ("L2CAP MTU", "—", "Not reported"),
-                                        ("HCI BUFFER", "—", "Not reported"),
-                                        ("SCO AUDIO", "—", "Not reported"),
-                                    ];
-                                    for (j, (k, v, sub)) in diag_items.iter().enumerate() {
-                                        let c = &mut cols[j];
-                                        Frame::none()
-                                            .fill(p.bg_input)
-                                            .rounding(Rounding::same(6.0))
-                                            .inner_margin(egui::Margin::symmetric(8.0, 7.0))
-                                            .show(c, |ui| {
-                                                ui.set_width(ui.available_width());
-                                                ui.label(RichText::new(*k).size(8.5).monospace().color(p.text_muted));
-                                                ui.add_space(2.0);
-                                                ui.label(RichText::new(*v).size(11.0).monospace().strong().color(p.text_primary));
-                                                ui.label(RichText::new(*sub).size(7.5).color(p.text_muted));
-                                            });
-                                    }
-                                });
-                            });
-                    });
-
-                    ui.add_space(gap);
-
-                    // Audio routing controls require a sound-server integration.
-                    ui.allocate_ui_with_layout(egui::vec2(half_w, ui.available_height()), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        Frame::none()
-                            .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
-                            .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.label(RichText::new("Audio Routing").size(12.5).strong().color(p.text_primary));
-                                ui.add_space(6.0);
-                                ui.label(RichText::new("No audio routing backend is available on this host.").size(9.5).color(p.text_muted));
-                            });
-                    });
-                });
-
-                ui.add_space(10.0);
             });
     }
 

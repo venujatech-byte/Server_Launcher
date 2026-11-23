@@ -96,7 +96,7 @@ The findings and proposed sequence above describe the original audit; later impl
 
 ## Implementation progress
 
-- Linux CPU package power now falls back to measured RAPL energy deltas when labeled `hwmon` power is absent. Both collectors validate the package counter range, wrap and sample interval; unreadable counters remain unavailable and the existing privileged unlock path remains required on restricted hosts. Regression fixtures are compiled in both crates.
+- Linux CPU package power now falls back to measured RAPL energy deltas when labeled `hwmon` power is absent. Local, unlocked and SSH collectors discover package-named powercap zones (including AMD) instead of assuming Intel paths, sum all sockets, and reject incomplete counter sets. Regression fixtures compile in both crates; unreadable counters remain unavailable and the privileged unlock path is still required on restricted hosts.
 
 Initial implementation after approval:
 

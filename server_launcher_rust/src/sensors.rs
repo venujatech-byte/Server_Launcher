@@ -477,7 +477,8 @@ pub struct SystemSensorsCollector {
     prev_proc_disk_time: Option<Instant>,
     prev_proc_net: HashMap<(u32, u64), (u64, u64)>,
     prev_proc_net_time: Instant,
-    prev_cpu_energy: Option<(u64, u64, Instant)>,
+    prev_cpu_energy: HashMap<String, (u64, u64)>,
+    prev_cpu_energy_at: Option<Instant>,
     protected_data: Option<serde_json::Value>,
     last_protected_poll: Instant,
     protected_sampled_at: Option<Instant>,
@@ -518,7 +519,8 @@ impl SystemSensorsCollector {
             prev_proc_disk_time: None,
             prev_proc_net: HashMap::new(),
             prev_proc_net_time: now,
-            prev_cpu_energy: read_rapl_package_energy().map(|(energy, range)| (energy, range, now)),
+            prev_cpu_energy: read_rapl_package_energy(),
+            prev_cpu_energy_at: Some(now),
             protected_data: None,
             last_protected_poll: now,
             protected_sampled_at: None,
@@ -570,15 +572,11 @@ impl SystemSensorsCollector {
         #[cfg(not(target_os = "linux"))]
         let cpu_core_usages: Vec<Option<f32>> = self.sys.cpus().iter().map(|cpu| Some(cpu.cpu_usage())).collect();
         let (mut cpu_frequencies_mhz, mut cpu_power_watts, cpu_power_cap_watts) = collect_cpu_frequencies_and_power();
-        if let Some((energy, range)) = read_rapl_package_energy() {
-            if let Some((previous, previous_range, sampled_at)) = self.prev_cpu_energy {
-                let elapsed = sampled_at.elapsed().as_secs_f64();
-                if let Some(watts) = rapl_power_watts(previous, energy, range.min(previous_range), elapsed) {
-                    cpu_power_watts.get_or_insert(watts);
-                }
-            }
-            self.prev_cpu_energy = Some((energy, range, now));
-        }
+        let energy = read_rapl_package_energy();
+        let rapl_watts = self.prev_cpu_energy_at.and_then(|sampled_at| rapl_total_power_watts(&self.prev_cpu_energy, &energy, sampled_at.elapsed().as_secs_f64()));
+        self.prev_cpu_energy = energy;
+        self.prev_cpu_energy_at = (!self.prev_cpu_energy.is_empty()).then_some(now);
+        if let Some(watts) = rapl_watts { cpu_power_watts.get_or_insert(watts); }
         if cpu_frequencies_mhz.is_empty() {
             #[cfg(target_os = "linux")]
             for cpu in self.sys.cpus() {
@@ -1743,26 +1741,61 @@ fn parse_package_power(label: &str, microwatts: &str) -> Option<f32> {
 }
 
 #[cfg(target_os = "linux")]
-fn read_rapl_package_energy() -> Option<(u64, u64)> {
-    let entries = fs::read_dir("/sys/class/powercap").ok()?;
-    entries.flatten().find_map(|entry| {
+fn read_rapl_package_energy() -> HashMap<String, (u64, u64)> {
+    let mut packages = HashMap::new();
+    let Ok(entries) = fs::read_dir("/sys/class/powercap") else { return packages; };
+    for entry in entries.flatten() {
         let path = entry.path();
-        let name = fs::read_to_string(path.join("name")).ok()?.trim().to_ascii_lowercase();
-        if !name.starts_with("package") && !name.starts_with("cpu package") { return None; }
-        let energy = fs::read_to_string(path.join("energy_uj")).ok()?.trim().parse().ok()?;
-        let range = fs::read_to_string(path.join("max_energy_range_uj")).ok()?.trim().parse().ok()?;
-        (range > 0 && energy <= range).then_some((energy, range))
-    })
+        let Ok(name) = fs::read_to_string(path.join("name")) else { continue; };
+        let name = name.trim().to_ascii_lowercase();
+        if !name.starts_with("package") && !name.starts_with("cpu package") { continue; }
+        let energy = fs::read_to_string(path.join("energy_uj")).ok().and_then(|value| value.trim().parse().ok());
+        let range = fs::read_to_string(path.join("max_energy_range_uj")).ok().and_then(|value| value.trim().parse().ok());
+        let (Some(energy), Some(range)) = (energy, range) else { return HashMap::new(); };
+        if range == 0 || energy > range { return HashMap::new(); }
+        packages.insert(path.to_string_lossy().into_owned(), (energy, range));
+    }
+    packages
+}
+
+#[cfg(target_os = "linux")]
+fn read_rapl_package_power_cap() -> Option<f32> {
+    let entries = fs::read_dir("/sys/class/powercap").ok()?;
+    let mut caps = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(name) = fs::read_to_string(path.join("name")) else { continue; };
+        let name = name.trim();
+        let lower = name.to_ascii_lowercase();
+        if !lower.starts_with("package") && !lower.starts_with("cpu package") { continue; }
+        let Ok(value) = fs::read_to_string(path.join("constraint_0_power_limit_uw")) else { return None; };
+        let Some(watts) = parse_package_power(name, &value) else { return None; };
+        caps.push(watts);
+    }
+    if caps.is_empty() { return None; }
+    let total = caps.into_iter().sum::<f32>();
+    if !total.is_finite() || total >= 1000.0 { None } else { Some(total) }
 }
 
 #[cfg(not(target_os = "linux"))]
-fn read_rapl_package_energy() -> Option<(u64, u64)> { None }
+fn read_rapl_package_power_cap() -> Option<f32> { None }
+
+#[cfg(not(target_os = "linux"))]
+fn read_rapl_package_energy() -> HashMap<String, (u64, u64)> { HashMap::new() }
 
 fn rapl_power_watts(previous: u64, current: u64, range: u64, elapsed_secs: f64) -> Option<f32> {
     if range == 0 || previous > range || current > range || !elapsed_secs.is_finite() || elapsed_secs <= 0.0 { return None; }
     let delta = if current >= previous { current - previous } else { range - previous + current };
     let watts = delta as f64 / 1_000_000.0 / elapsed_secs;
     (watts.is_finite() && (0.0..1000.0).contains(&watts)).then_some(watts as f32)
+}
+
+fn rapl_total_power_watts(previous: &HashMap<String, (u64, u64)>, current: &HashMap<String, (u64, u64)>, elapsed_secs: f64) -> Option<f32> {
+    if previous.is_empty() || previous.len() != current.len() { return None; }
+    current.iter().try_fold(0.0_f32, |total, (path, (energy, range))| {
+        let (previous_energy, previous_range) = previous.get(path)?;
+        Some(total + rapl_power_watts(*previous_energy, *energy, (*range).min(*previous_range), elapsed_secs)?)
+    })
 }
 
 #[cfg(test)]
@@ -1774,13 +1807,18 @@ mod rapl_power_tests {
         assert_eq!(super::rapl_power_watts(1, 1, 0, 1.0), None);
         assert_eq!(super::rapl_power_watts(1, 1, 10, 0.0), None);
         assert_eq!(super::rapl_power_watts(1, 9_000_000, 10, 1.0), None);
+        let previous = [("socket0".into(), (0, 10_000_000)), ("socket1".into(), (0, 10_000_000))].into();
+        let current = [("socket0".into(), (2_000_000, 10_000_000)), ("socket1".into(), (4_000_000, 10_000_000))].into();
+        assert_eq!(super::rapl_total_power_watts(&previous, &current, 2.0), Some(3.0));
+        let partial = [("socket0".into(), (2_000_000, 10_000_000))].into();
+        assert_eq!(super::rapl_total_power_watts(&previous, &partial, 2.0), None);
     }
 }
 
 pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32>) {
     let mut freqs = Vec::new();
     let mut cpu_power_watts = None;
-    let mut cpu_power_cap_watts = None;
+    let cpu_power_cap_watts;
 
     #[cfg(target_os = "linux")]
     {
@@ -1819,21 +1857,7 @@ pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32
         }
 
         // 2. Read the reported long-term package power limit from the RAPL constraint.
-        let rapl_candidates = [
-            "/sys/class/powercap/intel-rapl:0/constraint_0_power_limit_uw",
-            "/sys/class/powercap/intel-rapl/intel-rapl:0/constraint_0_power_limit_uw",
-        ];
-        for cand in &rapl_candidates {
-            if let Ok(s) = fs::read_to_string(cand) {
-                if let Ok(uw) = s.trim().parse::<f32>() {
-                    let w = uw / 1_000_000.0;
-                    if w.is_finite() && (0.0..1000.0).contains(&w) {
-                        cpu_power_cap_watts = Some(w);
-                        break;
-                    }
-                }
-            }
-        }
+        cpu_power_cap_watts = read_rapl_package_power_cap();
 
         // 3. Read power draw from hwmon if labeled CPU / coretemp / k10temp / rapl
         let hwmon_dir = Path::new("/sys/class/hwmon");
@@ -1874,6 +1898,8 @@ pub fn collect_cpu_frequencies_and_power() -> (Vec<u64>, Option<f32>, Option<f32
             }
         }
     }
+    #[cfg(not(target_os = "linux"))]
+    { cpu_power_cap_watts = None; }
 
     (freqs, cpu_power_watts, cpu_power_cap_watts)
 }
@@ -3243,10 +3269,10 @@ p1_net = read_proc_net_map() if collect_process_network else {}
 p1_net_at = time.monotonic()
 rapl_sources = []
 rapl_e1 = {}
-for p in sorted(set(glob.glob("/sys/class/powercap/intel-rapl*/energy_uj") + glob.glob("/sys/class/powercap/intel-rapl*/*/energy_uj"))):
+for p in sorted(set(glob.glob("/sys/class/powercap/*/energy_uj") + glob.glob("/sys/class/powercap/*/*/energy_uj"))):
     try:
         name = open(os.path.join(os.path.dirname(p), "name")).read().strip().lower()
-        if name != "package" and not name.startswith("package-"):
+        if not (name.startswith("package") or name.startswith("cpu package")):
             continue
         rapl_sources.append(p)
         rapl_e1[p] = (int(open(p).read().strip()), time.monotonic())
@@ -3317,14 +3343,19 @@ def read_cpu_frequencies():
 cpu_freqs = read_cpu_frequencies()
 
 cpu_power_cap = None
-for p in glob.glob("/sys/class/powercap/intel-rapl*/constraint_0_power_limit_uw") + glob.glob("/sys/class/powercap/intel-rapl*/*/constraint_0_power_limit_uw"):
+cpu_power_caps = []
+for p in glob.glob("/sys/class/powercap/*/constraint_0_power_limit_uw") + glob.glob("/sys/class/powercap/*/*/constraint_0_power_limit_uw"):
     try:
+        name = open(os.path.join(os.path.dirname(p), "name")).read().strip().lower()
+        if not (name.startswith("package") or name.startswith("cpu package")):
+            continue
         v = int(open(p).read().strip()) / 1e6
-        if 2.0 < v < 1000.0:
-            cpu_power_cap = round(v, 1)
-            break
+        if 0 <= v < 1000.0:
+            cpu_power_caps.append(v)
     except:
         pass
+if cpu_power_caps and sum(cpu_power_caps) < 1000.0:
+    cpu_power_cap = round(sum(cpu_power_caps), 1)
 
 cpu_power = None
 
@@ -4841,8 +4872,12 @@ def read_number(path):
 
 zones = []
 unreadable_zones = []
-for path in glob.glob('/sys/class/powercap/intel-rapl:*'):
-    if os.path.basename(path).count(':') != 1:
+for path in glob.glob('/sys/class/powercap/*'):
+    try:
+        name = open(path + '/name').read().strip().lower()
+    except OSError:
+        continue
+    if not (name.startswith('package') or name.startswith('cpu package')):
         continue
     energy = read_number(path + '/energy_uj')
     maximum = read_number(path + '/max_energy_range_uj')

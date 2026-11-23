@@ -340,9 +340,6 @@ pub struct SystemSensorsSnapshot {
     pub os_name: String,
     pub os_version: String,
 
-    // CPU Governor
-    pub cpu_governor: Option<String>,
-
     // System uptime & sockets
     pub uptime_secs: u64,
     pub socket_total: usize,
@@ -930,16 +927,6 @@ impl SystemSensorsCollector {
             top_apps.sort_unstable_by(compare_apps);
         }
 
-        let cpu_governor = {
-            #[cfg(target_os = "linux")]
-            {
-                fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
-                    .ok()
-                    .map(|s| s.trim().to_string())
-            }
-            #[cfg(not(target_os = "linux"))]
-            None
-        };
         let uptime_secs = {
             #[cfg(target_os = "linux")]
             {
@@ -1042,7 +1029,6 @@ impl SystemSensorsCollector {
             network_details_collected: false,
             os_name: System::name().unwrap_or_default(),
             os_version: System::os_version().unwrap_or_default(),
-            cpu_governor,
             uptime_secs,
             socket_total,
             socket_tcp,
@@ -4117,14 +4103,6 @@ try:
 except:
     pass
 
-cpu_governor = ""
-for p in ["/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"]:
-    if os.path.exists(p):
-        try:
-            cpu_governor = open(p).read().strip()
-        except:
-            pass
-
 def disk_discard_supported(path):
     try:
         with open(path + "/queue/discard_max_bytes") as value:
@@ -4230,7 +4208,6 @@ data = {
     "os_version": os_version,
     "uptime": uptime,
     "socket_stats": socket_stats,
-    "cpu_governor": cpu_governor,
     "physical_disks": phys_disks
 }
 print(json.dumps(data))
@@ -4512,8 +4489,6 @@ print(json.dumps(data))
         Some((total, tcp, udp)) => (total.max(tcp.saturating_add(udp)), tcp, udp, true),
         None => (0, 0, 0, false),
     };
-    let cpu_governor = parsed["cpu_governor"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string());
-
     let mut physical_disks = Vec::new();
     if let Some(arr) = parsed["physical_disks"].as_array() {
         for p in arr {
@@ -4629,7 +4604,6 @@ print(json.dumps(data))
         network_details_collected: parsed["network_details_collected"].as_bool().unwrap_or(include_network_details),
         os_name: parsed["os_name"].as_str().unwrap_or("").to_string(),
         os_version: parsed["os_version"].as_str().unwrap_or("").to_string(),
-        cpu_governor,
         uptime_secs,
         socket_total,
         socket_tcp,

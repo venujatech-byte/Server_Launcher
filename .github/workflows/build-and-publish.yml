@@ -16,6 +16,8 @@ permissions:
 jobs:
   build:
     name: Build Linux packages (x86_64)
+    outputs:
+      version: ${{ steps.package_version.outputs.version }}
     runs-on: ubuntu-22.04
 
     steps:
@@ -184,8 +186,7 @@ jobs:
       version: ${{ needs.build-windows.outputs.version }}
 
   publish:
-    name: Publish Release
-    if: github.ref_type == 'tag' || github.ref_name == 'main' || github.ref_name == 'design'
+    name: Prepare Release Bundle
     needs: [build, build-windows, build-windows-store]
     runs-on: ubuntu-latest
     permissions:
@@ -240,7 +241,7 @@ jobs:
             printf -- '- **Commit**: [%s](%s/%s/commit/%s)\n' "$BUILD_SHA" "$SERVER_URL" "$REPOSITORY" "$BUILD_SHA"
             printf -- '- **Branch**: `%s`\n' "$BRANCH_NAME"
             printf '%s\n' '- **Linux packages**: `.deb`, `.rpm`, `.AppImage`, and `server_launcher-linux-x86_64.tar.gz`'
-            printf '%s\n' '- **Windows packages**: `.msi`, NSIS `-setup.exe`, and `server_launcher-windows-x86_64.zip`'
+            printf '%s\n' '- **Windows packages**: `.msi`, NSIS `-setup.exe`, Store `.msix`, and `server_launcher-windows-x86_64.zip`'
             printf '\n%s\n' '### Commit messages since the previous build'
             if [[ -n "$PREVIOUS_BUILD" ]]; then
               git log --reverse --format='- %s (`%h`)' "$PREVIOUS_BUILD..$BUILD_SHA"
@@ -251,25 +252,32 @@ jobs:
 
       - name: Determine Release Tag & Metadata
         id: release_info
+        env:
+          LINUX_VERSION: ${{ needs.build.outputs.version }}
+          WINDOWS_VERSION: ${{ needs.build-windows.outputs.version }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            TAG_NAME="$GITHUB_REF_NAME"
-            RELEASE_TITLE="Release ${TAG_NAME}"
-          else
-            CARGO_VERSION=$(grep -m1 '^version = ' server_launcher_rust/Cargo.toml | cut -d '"' -f 2)
-            MAJOR_MINOR=$(echo "$CARGO_VERSION" | cut -d '.' -f 1,2)
-            TAG_NAME="v${MAJOR_MINOR}.${{ github.run_number }}"
-            RELEASE_TITLE="Release ${TAG_NAME}"
+          if [[ -z "$LINUX_VERSION" || "$LINUX_VERSION" != "$WINDOWS_VERSION" ]]; then
+            echo "::error::Linux and Windows package versions do not match"
+            exit 1
           fi
-          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
-          echo "release_title=${RELEASE_TITLE}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=v${LINUX_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release_title=Release v${LINUX_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Generate update manifest
         env:
           RELEASE_TAG: ${{ steps.release_info.outputs.tag_name }}
         run: python3 shared/release_manifest.py release-assets "$RELEASE_TAG"
 
+      - name: Upload release bundle for inspection
+        if: ${{ !(github.ref_type == 'tag' || github.ref_name == 'main' || github.ref_name == 'design') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: server_launcher-release-bundle
+          path: release-assets/
+          if-no-files-found: error
+
       - name: Publish to GitHub Releases
+        if: github.ref_type == 'tag' || github.ref_name == 'main' || github.ref_name == 'design'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release_info.outputs.tag_name }}

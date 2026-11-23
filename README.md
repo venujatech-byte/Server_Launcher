@@ -316,7 +316,8 @@ Linux users need `curl` installed on the host.
 To prepare GitHub release packages, run **Build and Publish Release** from
 Actions. For an official version, push a tag in the form `v1.2.3`. The workflow
 also publishes on `main` and `design`, using the run number as the patch
-version. Runs on `fix/ui-alignment` produce artifacts for inspection.
+version. Runs on `fix/ui-alignment` produce the `server_launcher-release-bundle`
+artifact for inspection, including the normalized packages and `latest.json`.
 Windows artifacts include the NSIS setup EXE, MSI, portable ZIP, and MSIX.
 The upload job waits for the Linux and Windows artifacts before publishing
 `latest.json` alongside them.

@@ -2938,6 +2938,7 @@ impl LauncherApp {
             ui.spacing_mut().scroll.bar_width = 6.0;
             ui.spacing_mut().scroll.floating = false;
             ui.spacing_mut().scroll.bar_inner_margin = 10.0;
+            ui.add_space(8.0);
             // Header with title, counts, and action toolbar
             ui.horizontal(|ui| {
                 ui.label(
@@ -2982,9 +2983,6 @@ impl LauncherApp {
                             .frame(false).id_source(("remote_filter", &host.id))
                             .hint_text(RichText::new("Filter remote servers...").color(p.text_muted))
                             .desired_width((ui.available_width() - 34.0).max(0.0)));
-                        if response.has_focus() {
-                            ui.painter().rect_stroke(response.rect, 4.0, Stroke::new(1.0_f32, p.accent));
-                        }
                         if !search_q.is_empty() && ui.small_button(crate::lucide::X).on_hover_text("Clear server filter").clicked() {
                             search_q.clear();
                             response.request_focus();
@@ -4059,7 +4057,6 @@ impl eframe::App for LauncherApp {
                         }
 
                         if let Some(ref host) = remote_host_opt {
-                            let themed = self.active_sidebar_tab == SidebarTab::Servers;
                             // REMOTE SSH PC CONTROLS (Moved up here)
                             let is_scanning = {
                                 let map = self.remote_scanning.lock().unwrap();
@@ -4099,7 +4096,7 @@ impl eframe::App for LauncherApp {
                                     .strong()
                                     .color(p.info),
                             )
-                            .fill(if themed { p.bg_button } else { p.info_subtle })
+                            .fill(p.bg_button)
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
                             .min_size(egui::vec2(76.0, 22.0));
@@ -4128,10 +4125,10 @@ impl eframe::App for LauncherApp {
                                 RichText::new(format!("{} Shut Down", crate::lucide::POWER))
                                     .size(10.5)
                                     .strong()
-                                    .color(if themed { p.danger } else { Color32::from_rgb(254, 202, 202) }),
+                                    .color(p.danger),
                             )
-                            .fill(if themed { p.bg_button } else { Color32::from_rgb(153, 27, 27) })
-                            .stroke(if themed { Stroke::NONE } else { Stroke::new(1.0_f32, Color32::from_rgb(185, 28, 28)) })
+                            .fill(p.bg_button)
+                            .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
                             .min_size(egui::vec2(86.0, 22.0));
                             if ui.add(btn_shutdown).on_hover_text("Shut down remote device (requires confirmation & sudo password)").clicked() {
@@ -4142,10 +4139,10 @@ impl eframe::App for LauncherApp {
                                 RichText::new(format!("{} Restart Device", crate::lucide::REFRESH_CW))
                                     .size(10.5)
                                     .strong()
-                                    .color(if themed { p.warning } else { Color32::from_rgb(254, 243, 199) }),
+                                    .color(p.warning),
                             )
-                            .fill(if themed { p.bg_button } else { Color32::from_rgb(146, 64, 14) })
-                            .stroke(if themed { Stroke::NONE } else { Stroke::new(1.0_f32, Color32::from_rgb(180, 83, 9)) })
+                            .fill(p.bg_button)
+                            .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
                             .min_size(egui::vec2(98.0, 22.0));
                             if ui.add(btn_reboot).on_hover_text("Restart remote device (requires confirmation & sudo password)").clicked() {

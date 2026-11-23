@@ -11099,10 +11099,10 @@ impl LauncherApp {
                     .unwrap_or_else(|| "awaiting first sample".into());
                 let inventory_age = snap.windows_inventory_sampled_at
                     .map(|sampled_at| format!("{}s ago", sampled_at.elapsed().as_secs()))
-                    .unwrap_or_else(|| "awaiting first scan".into());
+                    .unwrap_or_else(|| "awaiting complete scan".into());
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(format!("Hardware sample {sample_age}")).size(10.5).color(p.text_secondary));
-                    ui.label(RichText::new(format!("Inventory scan {inventory_age}")).size(10.5).color(p.text_muted));
+                    ui.label(RichText::new(format!("Last complete inventory {inventory_age}")).size(10.5).color(p.text_muted));
                 });
                 ui.label(RichText::new("Device disk throughput, SMART, socket counts and per-process network counters are unavailable; their zero fields do not indicate measured inactivity.")
                     .size(10.5).color(p.text_muted));

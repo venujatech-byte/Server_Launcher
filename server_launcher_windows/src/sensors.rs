@@ -4784,7 +4784,9 @@ impl SystemSensorsCollector {
                         self.windows_network_adapters = data["network_adapters"].clone();
                         let errors: Vec<&str> = ["gpu_error", "ram_error", "disk_inventory_error"].iter().filter_map(|key| data[*key].as_str()).collect();
                         self.windows_hardware.windows_telemetry_error = (!errors.is_empty()).then(|| errors.join(" • "));
-                        self.windows_hardware.windows_inventory_sampled_at = Some(sampled_at);
+                        if errors.is_empty() {
+                            self.windows_hardware.windows_inventory_sampled_at = Some(sampled_at);
+                        }
                         self.last_hardware_scan = sampled_at;
                     }
                     Err(_) => {

@@ -76,6 +76,7 @@ pub struct ProcessSensorInfo {
     pub net_rx_bytes: u64,
     pub net_tx_bytes: u64,
     pub net_rate_bps: f64,
+    pub net_rate_available: bool,
     pub status: String,
 }
 
@@ -351,7 +352,7 @@ fn process_cpu_sample_available(has_previous_sample: bool, usage: f32) -> bool {
     has_previous_sample && usage.is_finite()
 }
 
-fn process_disk_rate_available(has_previous_sample: bool, elapsed_secs: f64) -> bool {
+fn process_rate_available(has_previous_sample: bool, elapsed_secs: f64) -> bool {
     has_previous_sample && elapsed_secs.is_finite() && elapsed_secs > 0.0
 }
 
@@ -402,9 +403,9 @@ mod process_disk_rate_tests {
         assert_eq!(super::counter_rates(Some((100, 200)), (300, 500), 2.0), (100.0, 150.0));
         assert_eq!(super::counter_rates(Some((300, 500)), (20, 600), 2.0), (0.0, 50.0));
         assert_eq!(super::counter_rates(Some((100, 200)), (300, 500), 0.0), (0.0, 0.0));
-        assert!(!super::process_disk_rate_available(false, 2.0));
-        assert!(!super::process_disk_rate_available(true, 0.0));
-        assert!(super::process_disk_rate_available(true, 2.0));
+        assert!(!super::process_rate_available(false, 2.0));
+        assert!(!super::process_rate_available(true, 0.0));
+        assert!(super::process_rate_available(true, 2.0));
     }
 }
 
@@ -803,7 +804,7 @@ impl SystemSensorsCollector {
                 let written_b = disk_usage.total_written_bytes;
                 let identity = (pid_u32, proc.start_time());
                 let cpu_usage_available = process_cpu_sample_available(self.prev_proc_disk.contains_key(&identity), cpu_usage);
-                let disk_rate_available = process_disk_rate_available(self.prev_proc_disk.contains_key(&identity), proc_disk_elapsed);
+                let disk_rate_available = process_rate_available(self.prev_proc_disk.contains_key(&identity), proc_disk_elapsed);
                 current_proc_disk.insert(identity, (read_b, written_b));
                 let (r_rate, w_rate) = counter_rates(self.prev_proc_disk.get(&identity).copied(), (read_b, written_b), proc_disk_elapsed);
                 let disk_rate_bps = r_rate + w_rate;
@@ -819,6 +820,7 @@ impl SystemSensorsCollector {
                     current_identified_net.insert((pid_u32, start), (proc_net_rx, proc_net_tx));
                     self.prev_proc_net.get(&(pid_u32, start)).copied()
                 });
+                let net_rate_available = process_rate_available(previous.is_some(), proc_net_elapsed_secs);
                 let (rx_rate, tx_rate) = counter_rates(previous, (proc_net_rx, proc_net_tx), proc_net_elapsed_secs);
                 let net_rate_bps = rx_rate + tx_rate;
 
@@ -840,6 +842,7 @@ impl SystemSensorsCollector {
                     net_rx_bytes: proc_net_rx,
                     net_tx_bytes: proc_net_tx,
                     net_rate_bps,
+                    net_rate_available,
                     status,
                 });
             }
@@ -3455,8 +3458,10 @@ if collect_processes:
                             and previous_network and previous_network[0] == start_marker):
                         _, rx1, tx1 = previous_network
                         net_rate = (max(0, rx2 - rx1) + max(0, tx2 - tx1)) / proc_net_elapsed
+                        net_rate_available = proc_net_elapsed > 0
                     else:
                         net_rate = 0.0
+                        net_rate_available = False
                     dr_rate = 0.0
                     dw_rate = 0.0
                     disk_rate = 0.0
@@ -3484,6 +3489,7 @@ if collect_processes:
                         "net_rx_bytes": rx2,
                         "net_tx_bytes": tx2,
                         "net_rate": net_rate,
+                        "net_rate_available": net_rate_available,
                         "disk_read_bytes": dr2,
                         "disk_write_bytes": dw2,
                         "disk_read_rate": dr_rate,
@@ -3933,6 +3939,7 @@ print(json.dumps(data))
             net_rx_bytes,
             net_tx_bytes,
             net_rate_bps,
+            net_rate_available: a["net_rate_available"].as_bool() == Some(true),
             status,
         });
     }

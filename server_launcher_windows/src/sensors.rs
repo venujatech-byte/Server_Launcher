@@ -2658,7 +2658,11 @@ mod remote_sensor_command_tests {
 
 pub fn query_remote_sensors(host: &SshRemoteHost, include_processes: bool, include_process_network: bool, include_network_details: bool) -> Result<SystemSensorsSnapshot, String> {
     let script = r#"python3 -c '
-import os, glob, json, time, sys, math, subprocess, ipaddress
+import os, glob, json, time, sys, math, subprocess, ipaddress, platform
+remote_system = platform.system() or "unknown"
+if remote_system != "Linux":
+    print(json.dumps({"error": f"Remote sensor collection currently supports Linux hosts; detected {remote_system}."}))
+    sys.exit(0)
 collect_processes = len(sys.argv) > 1 and sys.argv[1] == "1"
 collect_process_network = collect_processes and len(sys.argv) > 2 and sys.argv[2] == "1"
 collect_network_details = len(sys.argv) > 3 and sys.argv[3] == "1"
@@ -3718,6 +3722,7 @@ print(json.dumps(data))
     let stdout = String::from_utf8_lossy(&out.stdout);
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim())
         .map_err(|e| format!("Failed to parse remote sensor json: {}", e))?;
+    if let Some(error) = parsed["error"].as_str() { return Err(error.to_string()); }
 
     let cpu_brand = parsed["cpu_model"].as_str().unwrap_or("Remote CPU").to_string();
     let cpu_cores = parsed["cores"].as_u64()

@@ -206,6 +206,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Battery metric names:** The battery capacity ratio is labeled “Retention,” and its reported charging state is labeled “State,” so charge status is not mistaken for battery condition.
 - **Network rate baselines:** First samples, newly appearing interfaces, and reset counters remain unavailable until a valid interval exists. Cumulative byte counters stay visible; rate charts and labels no longer present the missing baseline as 0 B/s.
 - **Remote sensor query failures:** A failed refresh now drops the last successful snapshot and clears its metric histories, so disconnected hosts no longer leave stale values and charts looking live beneath an error notice.
+- **Remote OS capability gate:** The SSH sensor script now rejects non-Linux hosts with an explicit detected-OS error instead of returning a Linux-shaped partial snapshot. Remote Windows/macOS hardware collection remains unsupported.
 - **Windows local Wi-Fi:** The Windows sensors page now queries `Get-NetAdapter`, IP configuration and adapter counters, with `netsh` for association details; scans use the WLAN API and DNS flush uses the Windows resolver command. Missing SSID/signal details stay unavailable if localized `netsh` output cannot be parsed, and channel labels no longer show a false `0 MHz`.
 
 ### Remaining work and validation

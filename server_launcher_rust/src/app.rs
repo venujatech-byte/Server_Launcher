@@ -17181,7 +17181,8 @@ impl LauncherApp {
                                 egui::pos2(header_x, header_rect.top()),
                                 egui::vec2(width, header_rect.height()),
                             );
-                            let is_sel = self.sensors_top_apps_sort == key;
+                            let sortable = !matches!(key, "gpu" | "power");
+                            let is_sel = sortable && self.sensors_top_apps_sort == key;
                             let arrow = if is_sel {
                                 if self.sensors_top_apps_sort_desc { crate::lucide::ARROW_DOWN } else { crate::lucide::ARROW_UP }
                             } else {
@@ -17210,9 +17211,16 @@ impl LauncherApp {
                             let response = ui.interact(
                                 cell_rect,
                                 ui.id().with(("top_apps_header", key)),
-                                egui::Sense::click(),
+                                if sortable { egui::Sense::click() } else { egui::Sense::hover() },
                             );
-                            if response.clicked() {
+                            let response = if !sortable {
+                                response.on_hover_text(if key == "gpu" {
+                                    "Per-process GPU utilization is unavailable"
+                                } else {
+                                    "Per-process power is unavailable"
+                                })
+                            } else { response };
+                            if sortable && response.clicked() {
                                 new_sort = Some(key);
                             }
                             header_x += width + COL_SPACING;

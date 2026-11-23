@@ -17600,7 +17600,7 @@ impl LauncherApp {
                                             ui.allocate_ui_with_layout(egui::vec2(col_name_w, 28.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                                 let chev = if self.sensors_top_apps_section_apps_expanded { crate::lucide::CHEVRON_DOWN } else { crate::lucide::CHEVRON_RIGHT };
                                                 let btn = egui::Button::new(
-                                                    RichText::new(format!("{} Apps ({})", chev, apps_groups.len()))
+                                                    RichText::new(format!("{} Likely applications ({})", chev, apps_groups.len()))
                                                         .size(12.5)
                                                         .strong()
                                                         .color(p.text_primary),
@@ -17630,7 +17630,7 @@ impl LauncherApp {
                                             ui.allocate_ui_with_layout(egui::vec2(col_name_w, 28.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                                 let chev = if self.sensors_top_apps_section_bg_expanded { crate::lucide::CHEVRON_DOWN } else { crate::lucide::CHEVRON_RIGHT };
                                                 let btn = egui::Button::new(
-                                                    RichText::new(format!("{} {} ({})", chev, if cfg!(windows) { "Processes" } else { "Background processes" }, bg_groups.len()))
+                                                    RichText::new(format!("{} {} ({})", chev, if cfg!(windows) { "Processes" } else { "Other processes" }, bg_groups.len()))
                                                         .size(12.5)
                                                         .strong()
                                                         .color(p.text_secondary),

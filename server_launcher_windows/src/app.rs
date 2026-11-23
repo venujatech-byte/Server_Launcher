@@ -12371,7 +12371,8 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 2. Row of 4 Big Metric Cards
-                let metric_key = format!("{}:{}", gpu.map(|gpu| gpu.device_path.as_str()).unwrap_or(""), self.selected_gpu_idx);
+                let gpu_identity = gpu.map(|gpu| if gpu.device_path.is_empty() { gpu.name.as_str() } else { gpu.device_path.as_str() }).unwrap_or("");
+                let metric_key = format!("{gpu_identity}:{}", self.selected_gpu_idx);
                 let hardware_timestamp = snap.hardware_history_timestamp();
                 let (display_load, is_engine_peak) = gpu_display_load(gpu);
                 let load_key = if is_engine_peak { "busiest_engine" } else { "load" };

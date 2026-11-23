@@ -224,30 +224,6 @@ pub struct DisplayInfo {
     pub model: String,
 }
 
-fn edid_bit_depth(input: u8) -> &'static str {
-    if input & 0x80 == 0 { return "Not reported"; }
-    match (input >> 4) & 0x07 {
-        1 => "6-bit RGB",
-        2 => "8-bit RGB",
-        3 => "10-bit RGB",
-        4 => "12-bit RGB",
-        5 => "14-bit RGB",
-        6 => "16-bit RGB",
-        _ => "Not reported",
-    }
-}
-
-#[cfg(test)]
-mod display_edid_tests {
-    #[test]
-    fn only_reports_defined_digital_color_depths() {
-        assert_eq!(super::edid_bit_depth(0x90), "6-bit RGB");
-        assert_eq!(super::edid_bit_depth(0xA0), "8-bit RGB");
-        assert_eq!(super::edid_bit_depth(0xF0), "Not reported");
-        assert_eq!(super::edid_bit_depth(0x00), "Not reported");
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct BatteryInfo {
     pub device_id: String,
@@ -2666,23 +2642,8 @@ pub fn detect_displays() -> Vec<DisplayInfo> {
                         name.clone()
                     };
 
-                    let mut mode_w = 0u32;
-                    let mut mode_h = 0u32;
-                    if let Ok(modes_str) = fs::read_to_string(p.join("modes")) {
-                        if let Some(first_line) = modes_str.lines().next() {
-                            if let Some((w_s, h_s)) = first_line.trim().split_once('x') {
-                                mode_w = w_s.trim().parse::<u32>().unwrap_or(0);
-                                mode_h = h_s.trim().parse::<u32>().unwrap_or(0);
-                            }
-                        }
-                    }
-
                     let mut edid_mfg = String::new();
                     let mut edid_prod = String::new();
-                    let mut bit_depth = "Not reported".to_string();
-                    let mut refresh_hz = 0.0f32;
-                    let mut edid_w = 0u32;
-                    let mut edid_h = 0u32;
 
                     if let Ok(edid_bytes) = fs::read(p.join("edid")) {
                         if edid_bytes.len() >= 128 {
@@ -2695,41 +2656,18 @@ pub fn detect_displays() -> Vec<DisplayInfo> {
                             let prod_code = (edid_bytes[10] as u16) | ((edid_bytes[11] as u16) << 8);
                             edid_prod = format!("{:#06x}", prod_code);
 
-                            bit_depth = edid_bit_depth(edid_bytes[20]).to_string();
-
-                            let pix_clock_10khz = (edid_bytes[54] as u32) | ((edid_bytes[55] as u32) << 8);
-                            let h_act = (edid_bytes[56] as u32) | (((edid_bytes[58] as u32) & 0xf0) << 4);
-                            let h_blank = (edid_bytes[57] as u32) | (((edid_bytes[58] as u32) & 0x0f) << 8);
-                            let v_act = (edid_bytes[59] as u32) | (((edid_bytes[61] as u32) & 0xf0) << 4);
-                            let v_blank = (edid_bytes[60] as u32) | (((edid_bytes[61] as u32) & 0x0f) << 8);
-                            let h_tot = h_act + h_blank;
-                            let v_tot = v_act + v_blank;
-                            if pix_clock_10khz > 0 && h_tot > 0 && v_tot > 0 {
-                                refresh_hz = ((pix_clock_10khz as f64 * 10_000.0) / (h_tot as f64 * v_tot as f64)) as f32;
-                                refresh_hz = (refresh_hz * 10.0).round() / 10.0;
-                            }
-                            edid_w = h_act;
-                            edid_h = v_act;
                         }
                     }
-
-                    let final_w = if mode_w > 0 { mode_w } else { edid_w };
-                    let final_h = if mode_h > 0 { mode_h } else { edid_h };
-                    let resolution = if final_w > 0 && final_h > 0 {
-                        format!("{} \u{00D7} {}", final_w, final_h)
-                    } else {
-                        "Not reported".to_string()
-                    };
 
                     displays.push(DisplayInfo {
                         name,
                         is_connected: true,
                         is_enabled: enabled,
-                        resolution,
-                        width: final_w,
-                        height: final_h,
-                        refresh_hz,
-                        bit_depth,
+                        resolution: "Not reported".to_string(),
+                        width: 0,
+                        height: 0,
+                        refresh_hz: 0.0,
+                        bit_depth: "Not reported".to_string(),
                         color_space: "Not reported".to_string(),
                         connector_type,
                         connector_id,

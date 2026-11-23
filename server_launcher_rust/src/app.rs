@@ -6063,7 +6063,7 @@ fn render_big_stat_card(
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 ui.label(RichText::new(icon).size(12.0).color(accent_color));
-                ui.add(egui::Label::new(RichText::new(title).size(10.5).monospace().strong().color(text_muted)).truncate()).on_hover_text(title);
+                ui.add(egui::Label::new(RichText::new(title).size(11.0).monospace().strong().color(text_muted)).truncate()).on_hover_text(title);
             });
             ui.add_space(6.0);
             ui.horizontal(|ui| {
@@ -6074,13 +6074,13 @@ fn render_big_stat_card(
                 }
             });
             ui.add_space(2.0);
-            ui.add(egui::Label::new(RichText::new(subtitle).size(10.0).monospace().color(text_muted)).truncate()).on_hover_text(subtitle);
+            ui.add(egui::Label::new(RichText::new(subtitle).size(10.5).monospace().color(text_muted)).truncate()).on_hover_text(subtitle);
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 let width = ((ui.available_width() - ui.spacing().item_spacing.x) * 0.5).max(0.0);
-                ui.add_sized(egui::vec2(width, 16.0), egui::Label::new(RichText::new(left_stat).size(9.5).monospace().color(text_muted)).truncate()).on_hover_text(left_stat);
+                ui.add_sized(egui::vec2(width, 17.0), egui::Label::new(RichText::new(left_stat).size(10.0).monospace().color(text_muted)).truncate()).on_hover_text(left_stat);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add_sized(egui::vec2(width, 16.0), egui::Label::new(RichText::new(right_stat).size(9.5).monospace().color(text_muted)).truncate()).on_hover_text(right_stat);
+                    ui.add_sized(egui::vec2(width, 17.0), egui::Label::new(RichText::new(right_stat).size(10.0).monospace().color(text_muted)).truncate()).on_hover_text(right_stat);
                 });
             });
             ui.add_space(4.0);
@@ -11389,9 +11389,9 @@ impl LauncherApp {
                             ui.label(RichText::new(cores_str).size(9.5).monospace().color(p.text_muted));
                             ui.add_space(8.0);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(if self.cpu_history.is_empty() { "AVG —".to_string() } else { format!("AVG {:.0}%", self.cpu_history.iter().sum::<f32>() / self.cpu_history.len() as f32) }).size(8.5).monospace().color(p.text_muted));
+                                ui.label(RichText::new(if self.cpu_history.is_empty() { "AVG —".to_string() } else { format!("AVG {:.0}%", self.cpu_history.iter().sum::<f32>() / self.cpu_history.len() as f32) }).size(10.0).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(if self.cpu_history.is_empty() { "PEAK —".to_string() } else { format!("PEAK {:.0}%", self.cpu_peak_usage) }).size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(if self.cpu_history.is_empty() { "PEAK —".to_string() } else { format!("PEAK {:.0}%", self.cpu_peak_usage) }).size(10.0).monospace().color(p.text_muted));
                                 });
                             });
                             ui.add_space(4.0);
@@ -11434,9 +11434,9 @@ impl LauncherApp {
                             let ram_avg = self.ram_history.iter().map(|(r, _)| *r).sum::<f32>() / self.ram_history.len().max(1) as f32;
                             let ram_peak = self.ram_history.iter().map(|(r, _)| *r).fold(snap.mem_usage_pct, f32::max);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(if self.ram_history.is_empty() { "AVG —".to_string() } else { format!("AVG {:.0}%", ram_avg) }).size(8.5).monospace().color(p.text_muted));
+                                ui.label(RichText::new(if self.ram_history.is_empty() { "AVG —".to_string() } else { format!("AVG {:.0}%", ram_avg) }).size(10.0).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(if self.ram_history.is_empty() { "PEAK —".to_string() } else { format!("PEAK {:.0}%", ram_peak) }).size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(if self.ram_history.is_empty() { "PEAK —".to_string() } else { format!("PEAK {:.0}%", ram_peak) }).size(10.0).monospace().color(p.text_muted));
                                 });
                             });
                             ui.add_space(4.0);
@@ -11473,9 +11473,9 @@ impl LauncherApp {
                             let swap_avg = (!swap_values.is_empty()).then(|| swap_values.iter().sum::<f32>() / swap_values.len() as f32);
                             let swap_peak = swap_values.iter().copied().reduce(f32::max);
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(format!("AVG {}{}", reported_sensor_value(swap_avg, 1), if swap_avg.is_some() { "%" } else { "" })).size(8.5).monospace().color(p.text_muted));
+                                ui.label(RichText::new(format!("AVG {}{}", reported_sensor_value(swap_avg, 1), if swap_avg.is_some() { "%" } else { "" })).size(10.0).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(format!("PEAK {}{}", reported_sensor_value(swap_peak, 1), if swap_peak.is_some() { "%" } else { "" })).size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(format!("PEAK {}{}", reported_sensor_value(swap_peak, 1), if swap_peak.is_some() { "%" } else { "" })).size(10.0).monospace().color(p.text_muted));
                                 });
                             });
                             ui.add_space(4.0);
@@ -11512,10 +11512,10 @@ impl LauncherApp {
                             ui.add_space(8.0);
                             let free_gb = available_bytes as f64 / 1e9;
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(if total_bytes > 0 { format!("FREE {:.2} GB", free_gb) } else { "FREE —".to_string() }).size(8.5).monospace().color(p.text_muted));
+                                ui.label(RichText::new(if total_bytes > 0 { format!("FREE {:.2} GB", free_gb) } else { "FREE —".to_string() }).size(10.0).monospace().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     let avg = (!self.storage_history.is_empty()).then(|| self.storage_history.iter().sum::<f32>() / self.storage_history.len() as f32);
-                                    ui.label(RichText::new(avg.map_or_else(|| "AVG —".to_string(), |value| format!("AVG {value:.1}%"))).size(8.5).monospace().color(p.text_muted));
+                                    ui.label(RichText::new(avg.map_or_else(|| "AVG —".to_string(), |value| format!("AVG {value:.1}%"))).size(10.0).monospace().color(p.text_muted));
                                 });
                             });
                             ui.add_space(4.0);
@@ -11585,19 +11585,19 @@ impl LauncherApp {
 
                                 ui.columns(3, |fcols| {
                                     fcols[0].vertical(|ui| {
-                                        ui.label(RichText::new("SENT").size(8.5).monospace().color(p.text_muted));
+                                        ui.label(RichText::new("SENT").size(10.0).monospace().color(p.text_muted));
                                         ui.add_space(2.0);
                                         let sent_str = sensor_network_bytes(&snap, snap.total_tx_bytes);
                                         ui.label(RichText::new(sent_str).size(15.0).strong().color(p.text_primary));
                                     });
                                     fcols[1].vertical(|ui| {
-                                        ui.label(RichText::new("RECEIVED").size(8.5).monospace().color(p.text_muted));
+                                        ui.label(RichText::new("RECEIVED").size(10.0).monospace().color(p.text_muted));
                                         ui.add_space(2.0);
                                         let recv_str = sensor_network_bytes(&snap, snap.total_rx_bytes);
                                         ui.label(RichText::new(recv_str).size(15.0).strong().color(p.text_primary));
                                     });
                                     fcols[2].vertical(|ui| {
-                                        ui.label(RichText::new("AVG OVER WINDOW").size(8.5).monospace().color(p.text_muted));
+                                        ui.label(RichText::new("AVG OVER WINDOW").size(10.0).monospace().color(p.text_muted));
                                         ui.add_space(2.0);
                                         let avg_tx = (!self.net_tx_history.is_empty()).then(|| self.net_tx_history.iter().sum::<f32>() / self.net_tx_history.len() as f32);
                                         let avg_rx = (!self.net_rx_history.is_empty()).then(|| self.net_rx_history.iter().sum::<f32>() / self.net_rx_history.len() as f32);

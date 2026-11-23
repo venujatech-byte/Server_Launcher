@@ -15526,7 +15526,7 @@ impl LauncherApp {
                                         let chips = [
                                             ("Terminal Potential", format!("{} V", reported_sensor_value(Some(volts_val), 2)), p.text_primary),
                                             ("Chemistry Stack", chem_str.to_string(), p.text_primary),
-                                            ("Battery Temp", "Unavailable".to_string(), p.text_secondary),
+                                            ("CPU Temp", format!("{} °C", reported_sensor_value(snap.cpu_temp, 1)), p.text_secondary),
                                             ("AC Adapter State", ac_status.to_string(), p.text_secondary),
                                         ];
                                         for (i, (title, val, val_col)) in chips.into_iter().enumerate() {

@@ -13913,7 +13913,7 @@ impl LauncherApp {
                             let status_text_col = if is_connected { Color32::from_rgb(226, 232, 240) } else { Color32::from_rgb(148, 163, 184) };
 
                             let render_title_and_status = |ui: &mut Ui| {
-                                ui.horizontal(|ui| {
+                                ui.horizontal_wrapped(|ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
                                     ui.label(RichText::new(title).size(16.5).strong().color(p.text_primary));
                                     Frame::none()
@@ -15172,7 +15172,7 @@ impl LauncherApp {
                             };
 
                             if is_narrow {
-                                ui.horizontal(|ui| {
+                                ui.horizontal_wrapped(|ui| {
                                     ui.label(RichText::new(title_str).size(16.5).strong().color(p.text_primary));
                                 });
                                 ui.add_space(4.0);

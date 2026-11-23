@@ -178,6 +178,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Metric-card readability and themes:** Shared sensor stat cards now use the active theme's foreground/muted colors and raise secondary labels to a readable 9.5–10.5 px scale in both apps.
 - **Unavailable metric plots:** Sensor card sparklines now distinguish no history, one sample, and repeated unavailable samples; an unsupported GPU engine no longer leaves a blank graph that can be mistaken for a zero reading.
 - **Storage histories:** Mounted usage and read/write charts now append the actual snapshot timestamp once per sample. Missing mounted capacity and unsupported rates remain unavailable; physical drive count is no longer repeated as a fake time series.
+- **Narrow sensor headings:** Wi-Fi title/status and Power host-title rows now wrap within the available width in both apps, covering long interface and remote-host labels.
 
 ### Remaining work and validation
 

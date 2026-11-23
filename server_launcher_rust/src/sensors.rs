@@ -1936,6 +1936,37 @@ mod ac_state_tests {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn linux_micro_value(value: &str) -> Option<f32> {
+    let scaled = value.trim().parse::<f64>().ok()? / 1_000_000.0;
+    (scaled.is_finite() && scaled.abs() <= f32::MAX as f64).then_some(scaled as f32)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_charge_to_wh(charge_micro_ah: &str, voltage_v: f32) -> Option<f32> {
+    let amp_hours = charge_micro_ah.trim().parse::<f64>().ok()? / 1_000_000.0;
+    if !amp_hours.is_finite() || amp_hours < 0.0 || !voltage_v.is_finite() || voltage_v <= 0.0 { return None; }
+    let watt_hours = amp_hours * voltage_v as f64;
+    (watt_hours.is_finite() && watt_hours <= f32::MAX as f64).then_some(watt_hours as f32)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_power_supply_value_tests {
+    #[test]
+    fn rejects_non_finite_and_unrepresentable_micro_unit_values() {
+        assert_eq!(super::linux_micro_value("12000000"), Some(12.0));
+        assert_eq!(super::linux_micro_value("-500000"), Some(-0.5));
+        assert_eq!(super::linux_micro_value("NaN"), None);
+        assert_eq!(super::linux_micro_value("inf"), None);
+        assert_eq!(super::linux_micro_value("1e100"), None);
+        assert_eq!(super::linux_micro_value("unknown"), None);
+        assert_eq!(super::linux_charge_to_wh("2500000", 12.0), Some(30.0));
+        assert_eq!(super::linux_charge_to_wh("-1", 12.0), None);
+        assert_eq!(super::linux_charge_to_wh("1e100", 12.0), None);
+        assert_eq!(super::linux_charge_to_wh("1000000", f32::INFINITY), None);
+    }
+}
+
 pub fn collect_power_supply() -> PowerSupplyInfo {
     #[cfg(target_os = "linux")]
     let ac_online;
@@ -1982,74 +2013,62 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
                             .filter(|value| value.is_finite() && (0.0..=100.0).contains(value));
 
                         let voltage_volts = fs::read_to_string(p.join("voltage_now"))
-                            .ok()
-                            .and_then(|s| s.trim().parse::<f32>().ok())
-                            .map(|uv| uv / 1_000_000.0);
+                            .ok().and_then(|value| linux_micro_value(&value)).filter(|volts| *volts > 0.0);
 
                         let mut power_watts = fs::read_to_string(p.join("power_now"))
-                            .ok()
-                            .and_then(|s| s.trim().parse::<f32>().ok())
-                            .map(|uw| uw / 1_000_000.0);
+                            .ok().and_then(|value| linux_micro_value(&value));
 
                         if power_watts.is_none() {
                             if let (Some(v), Ok(c_str)) = (voltage_volts, fs::read_to_string(p.join("current_now"))) {
-                                if let Ok(ua) = c_str.trim().parse::<f32>() {
-                                    power_watts = Some((ua / 1_000_000.0) * v);
+                                if let Some(amps) = linux_micro_value(&c_str) {
+                                    let watts = amps * v;
+                                    if watts.is_finite() { power_watts = Some(watts); }
                                 }
                             }
                         }
 
                         let nominal_voltage = ["voltage_min_design", "voltage_design", "voltage_nominal"].iter()
                             .filter_map(|name| fs::read_to_string(p.join(name)).ok())
-                            .filter_map(|value| value.trim().parse::<f32>().ok())
-                            .find(|value| value.is_finite() && *value > 0.0)
-                            .map(|value| value / 1_000_000.0);
+                            .filter_map(|value| linux_micro_value(&value))
+                            .find(|value| *value > 0.0);
                         let mut energy_estimated = false;
                         let mut energy_wh = fs::read_to_string(p.join("energy_now"))
-                            .ok()
-                            .and_then(|s| s.trim().parse::<f32>().ok())
-                            .map(|uwh| uwh / 1_000_000.0);
+                            .ok().and_then(|value| linux_micro_value(&value)).filter(|value| *value >= 0.0);
 
                         if energy_wh.is_none() {
                             if let (Some(v), Ok(c_str)) = (nominal_voltage, fs::read_to_string(p.join("charge_now"))) {
-                                if let Ok(uah) = c_str.trim().parse::<f32>() {
-                                    energy_wh = Some((uah / 1_000_000.0) * v);
-                                    energy_estimated = true;
+                                if let Some(estimate) = linux_charge_to_wh(&c_str, v) {
+                                    energy_wh = Some(estimate); energy_estimated = true;
                                 }
                             }
                         }
 
                         let mut energy_full_wh = fs::read_to_string(p.join("energy_full"))
-                            .ok()
-                            .and_then(|s| s.trim().parse::<f32>().ok())
-                            .map(|uwh| uwh / 1_000_000.0);
+                            .ok().and_then(|value| linux_micro_value(&value)).filter(|value| *value >= 0.0);
 
                         if energy_full_wh.is_none() {
                             if let (Some(v), Ok(c_str)) = (nominal_voltage, fs::read_to_string(p.join("charge_full"))) {
-                                if let Ok(uah) = c_str.trim().parse::<f32>() {
-                                    energy_full_wh = Some((uah / 1_000_000.0) * v);
-                                    energy_estimated = true;
+                                if let Some(estimate) = linux_charge_to_wh(&c_str, v) {
+                                    energy_full_wh = Some(estimate); energy_estimated = true;
                                 }
                             }
                         }
 
                         let mut energy_design_wh = fs::read_to_string(p.join("energy_full_design"))
-                            .ok()
-                            .and_then(|s| s.trim().parse::<f32>().ok())
-                            .map(|uwh| uwh / 1_000_000.0);
+                            .ok().and_then(|value| linux_micro_value(&value)).filter(|value| *value >= 0.0);
 
                         if energy_design_wh.is_none() {
                             if let (Some(v), Ok(c_str)) = (nominal_voltage, fs::read_to_string(p.join("charge_full_design"))) {
-                                if let Ok(uah) = c_str.trim().parse::<f32>() {
-                                    energy_design_wh = Some((uah / 1_000_000.0) * v);
-                                    energy_estimated = true;
+                                if let Some(estimate) = linux_charge_to_wh(&c_str, v) {
+                                    energy_design_wh = Some(estimate); energy_estimated = true;
                                 }
                             }
                         }
 
                         let mut health_pct = if let (Some(full), Some(design)) = (energy_full_wh, energy_design_wh) {
                             if design > 0.0 {
-                                Some(((full / design) * 100.0).clamp(0.0, 100.0))
+                                let pct = (full / design) * 100.0;
+                                pct.is_finite().then(|| pct.clamp(0.0, 100.0))
                             } else {
                                 None
                             }
@@ -2062,9 +2081,10 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
                                 fs::read_to_string(p.join("charge_full")),
                                 fs::read_to_string(p.join("charge_full_design")),
                             ) {
-                                if let (Ok(cf_val), Ok(cd_val)) = (cf.trim().parse::<f32>(), cd.trim().parse::<f32>()) {
-                                    if cd_val > 0.0 {
-                                        health_pct = Some(((cf_val / cd_val) * 100.0).clamp(0.0, 100.0));
+                                if let (Some(cf_val), Some(cd_val)) = (linux_micro_value(&cf), linux_micro_value(&cd)) {
+                                    if cf_val >= 0.0 && cd_val > 0.0 {
+                                        let pct = (cf_val / cd_val) * 100.0;
+                                        if pct.is_finite() { health_pct = Some(pct.clamp(0.0, 100.0)); }
                                     }
                                 }
                             }
@@ -2117,7 +2137,7 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
     let total_battery_pct = reported_battery_charge(&batteries);
 
     let total_power_watts = if batteries.is_empty() { None } else {
-        batteries.iter().map(|battery| battery.power_watts).sum::<Option<f32>>()
+        batteries.iter().map(|battery| battery.power_watts).sum::<Option<f32>>().filter(|watts| watts.is_finite())
     };
 
     #[cfg(target_os = "linux")]
@@ -4352,7 +4372,7 @@ print(json.dumps(data))
     let total_battery_pct = reported_battery_charge(&batteries);
 
     let total_power_watts = if batteries.is_empty() { None } else {
-        batteries.iter().map(|battery| battery.power_watts).sum::<Option<f32>>()
+        batteries.iter().map(|battery| battery.power_watts).sum::<Option<f32>>().filter(|watts| watts.is_finite())
     };
 
     let charge_limit = parsed.get("power").and_then(|p| p.get("charge_limit")).and_then(|v| v.as_u64())

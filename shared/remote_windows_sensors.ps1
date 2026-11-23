@@ -23,6 +23,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 public static class ServerLauncherWlan {
+    public static int ConnectionSize() { return Marshal.SizeOf(typeof(Connection)); }
     [StructLayout(LayoutKind.Sequential)] public struct Ssid { public uint length; [MarshalAs(UnmanagedType.ByValArray, SizeConst=32)] public byte[] bytes; }
     [StructLayout(LayoutKind.Sequential)] public struct Association { public Ssid ssid; public uint bss; [MarshalAs(UnmanagedType.ByValArray, SizeConst=6)] public byte[] bssid; public uint phy; public uint phyIndex; public uint signal; public uint rx; public uint tx; }
     [StructLayout(LayoutKind.Sequential)] public struct Security { public int enabled; public int oneX; public uint auth; public uint cipher; }

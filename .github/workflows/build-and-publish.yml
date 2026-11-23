@@ -115,8 +115,7 @@ jobs:
           $match = [regex]::Match($script, "(?s)Add-Type -TypeDefinition @'\r?\n(?<source>.*?)\r?\n'@")
           if (-not $match.Success) { throw 'Remote WLAN interop source was not found' }
           Add-Type -TypeDefinition $match.Groups['source'].Value -ErrorAction Stop | Out-Null
-          $connectionType = [ServerLauncherWlan+Connection]
-          $size = [Runtime.InteropServices.Marshal]::SizeOf($connectionType)
+          $size = [ServerLauncherWlan]::ConnectionSize()
           if ($size -ne 604) { throw "WLAN_CONNECTION_ATTRIBUTES layout size is $size, expected 604" }
 
       - name: Check Windows app and tests

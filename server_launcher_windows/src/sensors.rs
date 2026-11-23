@@ -2396,7 +2396,7 @@ fn detect_gpus() -> Vec<GpuSensorInfo> {
                             "0x3e92" | "0x3e98" | "0x3e9b" => "Intel UHD 630",
                             "0x5912" | "0x5916" | "0x5917" => "Intel HD 620",
                             "0x9a49" | "0x9a40" => "Intel Iris Xe",
-                            _ => if driver_name == "xe" { "Intel Arc / Xe" } else { "Intel UHD Graphics" },
+                            _ => if driver_name == "xe" { "Intel Arc / Xe" } else { "Intel Graphics" },
                         },
                         "0x1002" => "AMD Radeon",
                         "0x10de" => "NVIDIA GPU",
@@ -3617,7 +3617,7 @@ for card in sorted(glob.glob("/sys/class/drm/card[0-9]*")):
             drv_name = os.path.basename(os.readlink(drv_p))
         except OSError:
             drv_name = ""
-        v_name = "Intel HD/UHD Graphics" if v == "0x8086" else ("AMD Radeon Graphics" if v == "0x1002" else ("VirtIO GPU" if v == "0x1af4" else ("VMware SVGA II" if v == "0x15ad" else ("QEMU Standard VGA" if v == "0x1234" else ("ASPEED Graphics (BMC)" if v == "0x1a03" else ("Integrated / Linux GPU" if not drv_name else drv_name.upper() + " GPU"))))))
+        v_name = "Intel Graphics" if v == "0x8086" else ("AMD Radeon Graphics" if v == "0x1002" else ("VirtIO GPU" if v == "0x1af4" else ("VMware SVGA II" if v == "0x15ad" else ("QEMU Standard VGA" if v == "0x1234" else ("ASPEED Graphics (BMC)" if v == "0x1a03" else ("Integrated / Linux GPU" if not drv_name else drv_name.upper() + " GPU"))))))
         act_freq = None
         for f in ["gt_act_freq_mhz", "gt_cur_freq_mhz", "gt/gt0/rps_act_freq_mhz", "gt/gt0/rps_cur_freq_mhz"]:
             if os.path.exists(card + "/" + f):

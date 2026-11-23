@@ -103,6 +103,7 @@ The findings and proposed sequence above describe the original audit; later impl
 - CPU and GPU power telemetry no longer drops readings above an arbitrary 800/1000/10000 W ceiling; Linux, remote, NVIDIA and Windows hardware-provider paths still reject negative, non-finite or non-representable values.
 - Windows battery health now uses the WMI full-charge/design-capacity ratio when both are reported; missing design capacity remains unavailable.
 - Windows CPU, GPU and thermal-provider temperature readings now share the same finite -40°C to 150°C acceptance range as other collectors.
+- Linux GPU inventory uses a vendor-level Intel label for unrecognized PCI IDs instead of guessing the adapter is UHD; recognized device IDs keep their specific labels.
 
 Initial implementation after approval:
 

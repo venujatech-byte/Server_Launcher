@@ -17668,16 +17668,15 @@ impl LauncherApp {
                                                         let bg_rect = egui::Rect::from_min_max(c_gpu_rect.min, egui::pos2(c_gpu_rect.max.x + COL_SPACING, c_gpu_rect.max.y));
                                                         ui.painter().rect_filled(bg_rect, Rounding::ZERO, c_row_bg);
                                                     }
-                                                    let c_gpu = 0.0;
                                                     let c_gpu_txt = "—";
                                                     ui.painter().text(
                                                         egui::pos2(c_gpu_rect.right() - 8.0, c_gpu_rect.center().y),
                                                         egui::Align2::RIGHT_CENTER,
                                                         &c_gpu_txt,
                                                         egui::FontId::monospace(10.5),
-                                                        Color32::from_rgb(140, 145, 155),
+                                                        p.text_muted,
                                                     );
-                                                    let _ = c_gpu_resp.on_hover_text(format!("{:.1}% GPU Load", c_gpu));
+                                                    let _ = c_gpu_resp.on_hover_text("Per-process GPU utilization is unavailable from this collector");
 
                                                     // Child Power
                                                     let (c_pwr_rect, c_pwr_resp) = ui.allocate_exact_size(egui::vec2(COL_POWER_W, 20.0), egui::Sense::hover());

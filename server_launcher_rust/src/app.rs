@@ -5928,23 +5928,23 @@ fn render_big_stat_card(
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 ui.label(RichText::new(icon).size(12.0).color(accent_color));
-                ui.add(egui::Label::new(RichText::new(title).size(9.5).monospace().strong().color(Color32::from_rgb(148, 163, 184))).truncate()).on_hover_text(title);
+                ui.add(egui::Label::new(RichText::new(title).size(10.5).monospace().strong().color(text_muted)).truncate()).on_hover_text(title);
             });
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                ui.label(RichText::new(hero_val).size(24.0).strong().color(Color32::from_rgb(241, 245, 249)));
+                ui.label(RichText::new(hero_val).size(24.0).strong().color(ui.visuals().text_color()));
                 if !hero_unit.is_empty() {
                     ui.add(egui::Label::new(RichText::new(hero_unit).size(12.0).color(text_muted)).truncate()).on_hover_text(hero_unit);
                 }
             });
             ui.add_space(2.0);
-            ui.add(egui::Label::new(RichText::new(subtitle).size(9.5).monospace().color(Color32::from_rgb(148, 163, 184))).truncate()).on_hover_text(subtitle);
+            ui.add(egui::Label::new(RichText::new(subtitle).size(10.0).monospace().color(text_muted)).truncate()).on_hover_text(subtitle);
             ui.add_space(8.0);
             ui.columns(2, |cols| {
-                cols[0].add(egui::Label::new(RichText::new(left_stat).size(8.5).monospace().color(text_muted)).truncate()).on_hover_text(left_stat);
+                cols[0].add(egui::Label::new(RichText::new(left_stat).size(9.5).monospace().color(text_muted)).truncate()).on_hover_text(left_stat);
                 cols[1].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add(egui::Label::new(RichText::new(right_stat).size(8.5).monospace().color(text_muted)).truncate()).on_hover_text(right_stat);
+                    ui.add(egui::Label::new(RichText::new(right_stat).size(9.5).monospace().color(text_muted)).truncate()).on_hover_text(right_stat);
                 });
             });
             ui.add_space(4.0);

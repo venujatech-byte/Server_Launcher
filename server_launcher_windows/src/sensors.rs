@@ -357,6 +357,8 @@ pub struct SystemSensorsSnapshot {
     #[cfg(windows)]
     pub windows_hardware_sampled_at: Option<Instant>,
     #[cfg(windows)]
+    pub windows_inventory_sampled_at: Option<Instant>,
+    #[cfg(windows)]
     pub windows_hardware_attempted_at: Option<Instant>,
     pub timestamp: Option<Instant>,
 }
@@ -1041,6 +1043,8 @@ impl SystemSensorsCollector {
             windows_telemetry_error: None,
             #[cfg(windows)]
             windows_hardware_sampled_at: None,
+            #[cfg(windows)]
+            windows_inventory_sampled_at: None,
             #[cfg(windows)]
             windows_hardware_attempted_at: None,
             timestamp: Some(now),
@@ -4545,6 +4549,8 @@ print(json.dumps(data))
         #[cfg(windows)]
         windows_hardware_sampled_at: None,
         #[cfg(windows)]
+        windows_inventory_sampled_at: None,
+        #[cfg(windows)]
         windows_hardware_attempted_at: None,
             timestamp: Some(Instant::now()),
     })
@@ -4778,6 +4784,7 @@ impl SystemSensorsCollector {
                         self.windows_network_adapters = data["network_adapters"].clone();
                         let errors: Vec<&str> = ["gpu_error", "ram_error", "disk_inventory_error"].iter().filter_map(|key| data[*key].as_str()).collect();
                         self.windows_hardware.windows_telemetry_error = (!errors.is_empty()).then(|| errors.join(" • "));
+                        self.windows_hardware.windows_inventory_sampled_at = Some(sampled_at);
                         self.last_hardware_scan = sampled_at;
                     }
                     Err(_) => {

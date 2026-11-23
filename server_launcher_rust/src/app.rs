@@ -3361,144 +3361,95 @@ impl LauncherApp {
 
     fn render_remote_servers_right_panel(&mut self, ui: &mut Ui, host: &SshRemoteHost) {
         let p = self.ssh_servers_palette();
-        ui.vertical(|ui| {
-            // Interactive SSH Shell Terminal
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new("REMOTE SSH TERMINAL")
-                        .size(11.5)
-                        .strong()
-                        .color(Color32::from_rgb(148, 163, 184)),
-                );
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let btn_clear = egui::Button::new(
-                        RichText::new("Clear")
-                            .size(11.0)
-                            .color(Color32::from_rgb(160, 168, 185)),
-                    )
-                    .fill(Color32::from_rgb(25, 28, 38))
-                    .rounding(Rounding::same(3.0));
-                    if ui.add(btn_clear).clicked() {
-                        self.clear_remote_terminal_logs(&host.id);
-                    }
-
-                    // Quick Command Buttons
-                    let quick_cmds = [
-                        ("df -h", "Disk Usage"),
-                        ("free -m", "Memory Usage"),
-                        ("uptime", "Uptime & Load"),
-                        ("docker ps", "Docker Containers"),
-                        ("ss -tulpn", "Listening Ports"),
-                    ];
-                    for (qcmd, qtip) in quick_cmds {
-                        let btn = egui::Button::new(
-                            RichText::new(qcmd)
-                                .size(10.5)
-                                .color(Color32::from_rgb(162, 155, 254)),
-                        )
-                        .fill(Color32::from_rgb(28, 30, 44))
-                        .rounding(Rounding::same(3.0));
-                        if ui.add(btn).on_hover_text(qtip).clicked() {
-                            self.run_remote_ssh_command(host, qcmd, Some(ui.ctx().clone()));
-                        }
-                    }
-                });
-            });
-            ui.add_space(4.0);
-
-            // Integrated Dark Terminal Window (Output + Prompt at bottom, fills full available height)
-            let total_term_h = (ui.available_height() - 16.0).max(0.0);
-            let prompt_bar_h = 36.0;
-            let scroll_h = (total_term_h - prompt_bar_h - 22.0).max(0.0);
-
-            let term_logs = self.get_remote_logs(&host.id);
-
-            Frame::none()
-                .fill(p.terminal_bg)
-                .stroke(Stroke::NONE)
-                .rounding(Rounding::same(14.0))
-                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.set_height(total_term_h);
-
-                    // 1. Scrollable Output Log Area
-                    ScrollArea::both()
-                        .id_salt(format!("remote_term_scroll_{}", host.id))
-                        .stick_to_bottom(true)
-                        .auto_shrink([false, false])
-                        .max_height(scroll_h)
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.set_min_height(scroll_h);
-                            let logs_guard = term_logs.lock().unwrap();
-                            for entry in logs_guard.iter() {
-                                let (col, bg) = match entry.kind {
-                                    crate::service::LogKind::Stdout => (Color32::from_rgb(220, 225, 235), Color32::TRANSPARENT),
-                                    crate::service::LogKind::Stderr | crate::service::LogKind::Error => (Color32::from_rgb(255, 107, 107), Color32::TRANSPARENT),
-                                    crate::service::LogKind::Stdin => (Color32::from_rgb(162, 155, 254), Color32::TRANSPARENT),
-                                    crate::service::LogKind::Launcher => (Color32::from_rgb(0, 210, 160), Color32::TRANSPARENT),
-                                    crate::service::LogKind::Warning => (Color32::from_rgb(250, 204, 21), Color32::TRANSPARENT),
-                                };
-
-                                let rt = RichText::new(&entry.text)
-                                    .font(egui::FontId::monospace(11.5))
-                                    .color(col)
-                                    .background_color(bg);
-                                ui.add(egui::Label::new(rt).wrap());
+        let logs = self.get_remote_logs(&host.id);
+        Frame::none().fill(p.bg_sidebar).rounding(Rounding::same(8.0))
+            .inner_margin(8.0).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal_top(|ui| {
+                    let tools_width = (ui.available_width() - 84.0).max(0.0);
+                    ui.allocate_ui_with_layout([tools_width, 0.0].into(), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.set_max_width(tools_width);
+                        ui.label(RichText::new("Remote SSH Terminal").size(14.0).strong().color(p.text_primary));
+                        ui.horizontal_wrapped(|ui| {
+                            for (command, hint) in [
+                                ("ss -tulpn", "Listening Ports"), ("docker ps", "Docker Containers"),
+                                ("uptime", "Uptime & Load"), ("free -m", "Memory Usage"), ("df -h", "Disk Usage"),
+                            ] {
+                                let button = egui::Button::new(RichText::new(command).monospace().size(11.0).color(p.text_secondary))
+                                    .fill(p.bg_button).stroke(Stroke::NONE).rounding(8.0);
+                                if ui.add(button).on_hover_text(hint).clicked() {
+                                    self.run_remote_ssh_command(host, command, Some(ui.ctx().clone()));
+                                }
                             }
                         });
-
-                    ui.add_space(4.0);
-                    ui.separator();
-                    ui.add_space(4.0);
-
-                    // 2. Command Input Box anchored at bottom of terminal
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(format!("{}@{}:~$", host.user, host.host))
-                                .font(egui::FontId::monospace(12.0))
-                                .strong()
-                                .color(Color32::from_rgb(0, 210, 160)),
-                        );
-
-                        let (cmd_to_run, execute) = {
-                            let input_text = self.remote_terminal_inputs.entry(host.id.clone()).or_insert_with(String::new);
-                            let text_resp = ui.add(
-                                egui::TextEdit::singleline(input_text)
-                                    .font(egui::FontId::monospace(12.0))
-                                    .desired_width((ui.available_width() - 85.0).max(0.0))
-                                    .hint_text("Type remote command and press Enter (e.g. ls -la, uname -a)..."),
-                            );
-
-                            let btn_run = egui::Button::new(
-                                RichText::new("Execute")
-                                    .size(11.5)
-                                    .strong()
-                                    .color(Color32::WHITE),
-                            )
-                            .fill(Color32::from_rgb(108, 92, 231))
-                            .rounding(Rounding::same(4.0));
-
-                            let run_clicked = ui.add(btn_run).clicked();
-                            let hit_enter = text_resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-                            if (run_clicked || hit_enter) && !input_text.trim().is_empty() {
-                                let cmd = input_text.trim().to_string();
-                                input_text.clear();
-                                text_resp.request_focus();
-                                (Some(cmd), true)
-                            } else {
-                                (None, false)
-                            }
-                        };
-
-                        if let (Some(cmd), true) = (cmd_to_run, execute) {
-                            self.run_remote_ssh_command(host, &cmd, Some(ui.ctx().clone()));
-                        }
                     });
+                    if ui.add_sized([76.0, 28.0], egui::Button::new(format!("{} Clear", crate::lucide::TRASH))
+                        .fill(p.bg_button).stroke(Stroke::NONE).rounding(8.0)).on_hover_text("Clear terminal output").clicked() {
+                        self.clear_remote_terminal_logs(&host.id);
+                    }
                 });
-        });
+                let output_height = (ui.available_height() - 40.0 - ui.spacing().item_spacing.y - 20.0).max(0.0);
+                Frame::none().fill(p.terminal_bg).rounding(Rounding::same(8.0)).inner_margin(10.0).show(ui, |ui| {
+                    ui.spacing_mut().scroll.bar_width = 6.0;
+                    ui.spacing_mut().scroll.floating = false;
+                    ScrollArea::both().id_salt(("remote_term_scroll", &host.id)).stick_to_bottom(true)
+                        .auto_shrink([false, false]).max_height(output_height).show(ui, |ui| {
+                            let width = ui.available_width();
+                            ui.set_width(width);
+                            ui.set_min_height(output_height);
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            for entry in logs.lock().unwrap().iter() {
+                                let color = match entry.kind {
+                                    LogKind::Stdout => p.log_stdout,
+                                    LogKind::Stderr | LogKind::Error => p.log_stderr,
+                                    LogKind::Stdin => p.text_secondary,
+                                    LogKind::Launcher => p.log_launcher,
+                                    LogKind::Warning => p.log_warning,
+                                };
+                                let mut text = egui::text::LayoutJob::single_section(entry.text.clone(), egui::TextFormat {
+                                    font_id: egui::FontId::monospace(13.0), color, line_height: Some(19.5),
+                                    ..Default::default()
+                                });
+                                text.wrap.max_width = width;
+                                ui.add(egui::Label::new(text).selectable(true));
+                            }
+                        });
+                });
+                let mut focused = false;
+                let mut command = None;
+                let composer = Frame::none().fill(p.bg_input).rounding(Rounding::same(8.0))
+                    .inner_margin(egui::Margin::symmetric(8.0, 6.0)).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let prompt = format!("{}@{}:~$", host.user, host.host);
+                            let prompt_width = (ui.available_width() * 0.30).min(180.0);
+                            ui.add_sized([prompt_width, 28.0], egui::Label::new(
+                                RichText::new(&prompt).monospace().size(12.0).color(p.success)
+                            ).truncate()).on_hover_text(&prompt);
+                            let input = self.remote_terminal_inputs.entry(host.id.clone()).or_default();
+                            let input_width = (ui.available_width() - 76.0 - ui.spacing().item_spacing.x).max(0.0);
+                            let editor = ui.add_sized([input_width, 28.0], egui::TextEdit::singleline(input)
+                                .frame(false).id_source(("ssh_remote_composer", &host.id))
+                                .font(egui::FontId::monospace(13.0))
+                                .hint_text(RichText::new("Enter SSH command…").color(p.text_muted)));
+                            let execute = ui.add_sized([76.0, 28.0], egui::Button::new(
+                                RichText::new("Execute").strong().color(p.accent_text)
+                            ).fill(p.accent).stroke(Stroke::NONE).rounding(8.0));
+                            focused = editor.has_focus() || execute.has_focus();
+                            let enter = editor.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                            if (execute.clicked() || enter) && !input.trim().is_empty() {
+                                command = Some(input.trim().to_owned());
+                                input.clear();
+                                editor.request_focus();
+                            }
+                        });
+                    });
+                if focused {
+                    ui.painter().rect_stroke(composer.response.rect, 8.0, Stroke::new(1.0_f32, p.accent));
+                }
+                if let Some(command) = command {
+                    self.run_remote_ssh_command(host, &command, Some(ui.ctx().clone()));
+                }
+            });
     }
 }
 

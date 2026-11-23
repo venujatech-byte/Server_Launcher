@@ -459,6 +459,10 @@ pub struct SystemSensorsCollector {
     windows_hardware: SystemSensorsSnapshot,
     #[cfg(windows)]
     windows_network_adapters: serde_json::Value,
+    #[cfg(windows)]
+    last_windows_hardware_query: Instant,
+    #[cfg(windows)]
+    cached_windows_hardware: Option<Result<serde_json::Value, String>>,
 }
 
 impl Default for SystemSensorsCollector {
@@ -502,6 +506,10 @@ impl SystemSensorsCollector {
             windows_hardware: SystemSensorsSnapshot::default(),
             #[cfg(windows)]
             windows_network_adapters: serde_json::Value::Null,
+            #[cfg(windows)]
+            last_windows_hardware_query: now - WINDOWS_HARDWARE_QUERY_INTERVAL,
+            #[cfg(windows)]
+            cached_windows_hardware: None,
         }
     }
 
@@ -4300,7 +4308,7 @@ mod tests {
 
 #[cfg(windows)]
 impl SystemSensorsCollector {
-    /// Native counters are sampled frequently; CIM hardware discovery is cached separately.
+    /// Native counters are sampled frequently; PowerShell hardware queries are throttled.
     pub fn collect_with_top_apps(&mut self, include_top_apps: bool, _include_process_network: bool) -> SystemSensorsSnapshot {
         self.sys.refresh_cpu_all();
         self.sys.refresh_memory();
@@ -4311,20 +4319,30 @@ impl SystemSensorsCollector {
         if inventory_due {
             self.disks.refresh_list();
             self.networks.refresh_list();
-            self.last_hardware_scan = now;
         }
-        let sample = collect_windows_hardware(inventory_due);
-        if inventory_due {
-            if let Ok(data) = &sample {
-                update_windows_inventory(&mut self.windows_hardware, data);
-                self.windows_network_adapters = data["network_adapters"].clone();
-                let errors: Vec<&str> = ["gpu_error", "ram_error", "disk_inventory_error"].iter().filter_map(|key| data[*key].as_str()).collect();
-                self.windows_hardware.windows_telemetry_error = (!errors.is_empty()).then(|| errors.join(" • "));
-            } else {
-                self.windows_network_adapters = serde_json::Value::Null;
-                self.windows_hardware.windows_telemetry_error = Some("Hardware inventory refresh failed; previous inventory retained".into());
+        let hardware_query_due = self.cached_windows_hardware.is_none()
+            || windows_hardware_query_due(self.last_windows_hardware_query, now);
+        if hardware_query_due {
+            let sample = collect_windows_hardware(inventory_due);
+            self.last_windows_hardware_query = now;
+            if inventory_due {
+                match &sample {
+                    Ok(data) => {
+                        update_windows_inventory(&mut self.windows_hardware, data);
+                        self.windows_network_adapters = data["network_adapters"].clone();
+                        let errors: Vec<&str> = ["gpu_error", "ram_error", "disk_inventory_error"].iter().filter_map(|key| data[*key].as_str()).collect();
+                        self.windows_hardware.windows_telemetry_error = (!errors.is_empty()).then(|| errors.join(" • "));
+                        self.last_hardware_scan = now;
+                    }
+                    Err(_) => {
+                        self.windows_network_adapters = serde_json::Value::Null;
+                        self.windows_hardware.windows_telemetry_error = Some("Hardware inventory refresh failed; previous inventory retained".into());
+                    }
+                }
             }
+            self.cached_windows_hardware = Some(sample);
         }
+        let sample = self.cached_windows_hardware.clone().unwrap_or_else(|| Err("Windows sensor query has not run".into()));
         let mut snap = self.windows_hardware.clone();
         match &sample {
             Ok(data) => {
@@ -4437,6 +4455,26 @@ impl SystemSensorsCollector {
         snap.uptime_secs = System::uptime();
         snap.timestamp = Some(Instant::now());
         snap
+    }
+}
+
+#[cfg(windows)]
+const WINDOWS_HARDWARE_QUERY_INTERVAL: Duration = Duration::from_secs(3);
+
+#[cfg(any(windows, test))]
+fn windows_hardware_query_due(last: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(last) >= Duration::from_secs(3)
+}
+
+#[cfg(test)]
+mod windows_hardware_query_schedule_tests {
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn throttles_hardware_queries_to_three_seconds() {
+        let last = Instant::now();
+        assert!(!super::windows_hardware_query_due(last, last + Duration::from_secs(2)));
+        assert!(super::windows_hardware_query_due(last, last + Duration::from_secs(3)));
     }
 }
 

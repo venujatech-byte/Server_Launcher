@@ -11091,7 +11091,7 @@ impl LauncherApp {
         ui.vertical(|ui| {
             #[cfg(windows)]
             if host_id.is_none() {
-                ui.label("Windows telemetry: hardware inventory refreshes every 30 seconds. Device disk throughput, SMART, socket counts and per-process network counters are unavailable; their zero fields do not indicate measured inactivity.");
+                ui.label("Windows hardware readings refresh every 3 seconds; inventory refreshes every 30 seconds. Device disk throughput, SMART, socket counts and per-process network counters are unavailable; their zero fields do not indicate measured inactivity.");
             }
 
             #[cfg(windows)]

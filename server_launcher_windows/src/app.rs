@@ -12358,8 +12358,6 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 2. Row of 4 Big Metric Cards
-                let clock_val = gpu.and_then(|g| g.clock_mhz).unwrap_or(0);
-                let max_clk = clock_val.max(1);
                 let metric_key = format!("{}:{}", gpu.map(|gpu| gpu.device_path.as_str()).unwrap_or(""), self.selected_gpu_idx);
                 let hardware_timestamp = snap.hardware_history_timestamp();
                 let (display_load, is_engine_peak) = gpu_display_load(gpu);
@@ -12368,6 +12366,7 @@ impl LauncherApp {
                 let render_load = gpu.and_then(|gpu| gpu.engine_loads.iter().filter(|(name, _)| name.to_lowercase().contains("render") || name.contains("3D")).map(|(_, load)| *load).reduce(f32::max));
                 let gpu_3d_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:render"), hardware_timestamp, render_load);
                 let gpu_clock_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:clock"), hardware_timestamp, gpu.and_then(|gpu| gpu.clock_mhz).map(|value| value as f32));
+                let max_clk = gpu_clock_slice.iter().copied().filter(|value| value.is_finite()).reduce(f32::max).unwrap_or(1.0).max(1.0);
                 let gpu_memory = gpu.and_then(|gpu| gpu.mem_used_mb.zip(gpu.mem_total_mb))
                     .filter(|(used, total)| *total > 0 && used <= total);
                 let gpu_vram_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:vram"), hardware_timestamp, gpu_memory.map(|(used, _)| used as f32 / 1024.0));
@@ -12417,7 +12416,7 @@ impl LauncherApp {
                         &min_clk_str,
                         &max_clk_str,
                         &gpu_clock_slice,
-                        max_clk as f32 * 1.05,
+                        max_clk * 1.05,
                         None,
                         accent,
                         p.bg_card,

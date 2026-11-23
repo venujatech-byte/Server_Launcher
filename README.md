@@ -309,7 +309,9 @@ Linux, DEB and RPM files open in the system's associated package installer
 when one is installed. Close the launcher normally if the installer asks for
 it. An AppImage launched from its original file can replace that file if its
 directory is writable. Restart the launcher afterward. Microsoft Store
-installations use the Store's update page.
+installations use the Store's update page. The updater uses the system `curl`
+command, which the DEB and RPM declare as a dependency. AppImage and portable
+Linux users need `curl` installed on the host.
 
 To prepare GitHub release packages, run **Build and Publish Release** from
 Actions. For an official version, push a tag in the form `v1.2.3`. The workflow

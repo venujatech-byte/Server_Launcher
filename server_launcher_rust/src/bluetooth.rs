@@ -6,6 +6,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use crate::config::SshRemoteHost;
 
 #[derive(Debug, Clone, Default)]
 pub struct BluetoothDevice {
@@ -109,6 +110,49 @@ pub fn query_bluetooth_status() -> BluetoothSnapshot {
     snap
 }
 
+/// Read Bluetooth state from a Linux SSH host without changing its radio state.
+pub fn query_remote_bluetooth_status(host: &SshRemoteHost) -> Result<BluetoothSnapshot, String> {
+    let script = r#"export LC_ALL=C
+if ! command -v bluetoothctl >/dev/null 2>&1; then echo 'bluetoothctl is not installed' >&2; exit 127; fi
+printf '__CONTROLLER__\n'
+bluetoothctl show
+printf '\n__DEVICES__\n'
+bluetoothctl devices | while read -r kind mac rest; do
+    [ "$kind" = Device ] || continue
+    case "$mac" in [0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]) ;; *) continue ;; esac
+    printf '\n__DEVICE__%s\n' "$mac"
+    bluetoothctl info "$mac"
+done"#;
+    let output = crate::remote::build_ssh_command(host, script)
+        .output()
+        .map_err(|e| format!("Failed to run remote bluetoothctl: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() { "Remote Bluetooth query failed".into() } else { stderr });
+    }
+    parse_remote_bluetooth_output(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_remote_bluetooth_output(text: &str) -> Result<BluetoothSnapshot, String> {
+    let mut snapshot = BluetoothSnapshot { last_updated: Some(Instant::now()), ..Default::default() };
+    let Some((_, rest)) = text.split_once("__CONTROLLER__\n") else { return Err("Remote Bluetooth response was incomplete".into()) };
+    let Some((controller_text, devices_text)) = rest.split_once("\n__DEVICES__\n") else { return Err("Remote Bluetooth response was incomplete".into()) };
+    snapshot.controller = parse_controller_show(controller_text);
+    snapshot.available = snapshot.controller.is_some();
+    for entry in devices_text.split("\n__DEVICE__").skip(1) {
+        let Some((mac, info)) = entry.split_once('\n') else { continue };
+        if !valid_bluetooth_address(mac) { continue; }
+        let device = parse_device_info(mac, info);
+        if device.paired { snapshot.devices.push(device); }
+    }
+    snapshot.devices.sort_by(|a, b| b.connected.cmp(&a.connected).then_with(|| a.name.cmp(&b.name)));
+    Ok(snapshot)
+}
+
+fn valid_bluetooth_address(mac: &str) -> bool {
+    mac.len() == 17 && mac.split(':').count() == 6 && mac.split(':').all(|part| part.len() == 2 && part.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 /// Parse `bluetoothctl show` output into a BluetoothController struct.
 fn parse_controller_show(output: &str) -> Option<BluetoothController> {
     let mut ctrl = BluetoothController::default();
@@ -164,15 +208,17 @@ mod controller_tests {
 
 /// Query individual device info via `bluetoothctl info <mac>`
 pub fn query_device_info(mac: &str) -> BluetoothDevice {
-    let mut dev = BluetoothDevice {
-        mac: mac.to_string(),
-        ..Default::default()
-    };
-
     if let Ok(out) = Command::new("bluetoothctl").args(["info", mac]).output() {
         if out.status.success() {
-            let text = String::from_utf8_lossy(&out.stdout);
-            for line in text.lines() {
+            return parse_device_info(mac, &String::from_utf8_lossy(&out.stdout));
+        }
+    }
+    parse_device_info(mac, "")
+}
+
+fn parse_device_info(mac: &str, text: &str) -> BluetoothDevice {
+    let mut dev = BluetoothDevice { mac: mac.to_string(), ..Default::default() };
+    for line in text.lines() {
                 let line = line.trim();
                 if let Some(stripped) = line.strip_prefix("Name: ") {
                     dev.name = stripped.trim().to_string();
@@ -206,8 +252,6 @@ pub fn query_device_info(mac: &str) -> BluetoothDevice {
                 } else if let Some(stripped) = line.strip_prefix("UUID: ") {
                     dev.uuids.push(stripped.trim().to_string());
                 }
-            }
-        }
     }
 
     if dev.name.is_empty() && !dev.alias.is_empty() {
@@ -220,6 +264,18 @@ pub fn query_device_info(mac: &str) -> BluetoothDevice {
     dev.name = clean_device_name(&dev.name);
 
     dev
+}
+
+#[cfg(test)]
+mod remote_bluetooth_tests {
+    #[test]
+    fn parses_remote_status_and_ignores_invalid_addresses() {
+        let output = "__CONTROLLER__\nController AA:BB:CC:DD:EE:FF (public)\nPowered: yes\n\n__DEVICES__\n__DEVICE__11:22:33:44:55:66\nDevice 11:22:33:44:55:66 Headphones\nName: Headphones\nPaired: yes\nConnected: yes\n__DEVICE__invalid\nName: ignored\nPaired: yes\n";
+        let snapshot = super::parse_remote_bluetooth_output(output).unwrap();
+        assert!(snapshot.available);
+        assert_eq!(snapshot.get_connected_count(), 1);
+        assert_eq!(snapshot.devices[0].name, "Headphones");
+    }
 }
 
 /// Sanitizes device names to avoid unrenderable Unicode tofu squares (e.g. CJK brand prefixes)

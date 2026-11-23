@@ -519,6 +519,9 @@ pub struct LauncherApp {
     pub remote_sensors_in_flight: Arc<Mutex<HashSet<String>>>,
     pub remote_sensors_last_fetch: Arc<Mutex<HashMap<String, Instant>>>,
     pub remote_sensors_errors: Arc<Mutex<HashMap<String, String>>>,
+    pub remote_bluetooth_snapshots: Arc<Mutex<HashMap<String, crate::bluetooth::BluetoothSnapshot>>>,
+    pub remote_bluetooth_in_flight: Arc<Mutex<HashSet<String>>>,
+    pub remote_bluetooth_last_fetch: Arc<Mutex<HashMap<String, Instant>>>,
     #[allow(dead_code)]
     pub sensors_search_query: String,
     #[allow(dead_code)]
@@ -856,6 +859,9 @@ impl LauncherApp {
             remote_sensors_in_flight: Arc::new(Mutex::new(HashSet::new())),
             remote_sensors_last_fetch: Arc::new(Mutex::new(HashMap::new())),
             remote_sensors_errors: Arc::new(Mutex::new(HashMap::new())),
+            remote_bluetooth_snapshots: Arc::new(Mutex::new(HashMap::new())),
+            remote_bluetooth_in_flight: Arc::new(Mutex::new(HashSet::new())),
+            remote_bluetooth_last_fetch: Arc::new(Mutex::new(HashMap::new())),
             sensors_search_query: String::new(),
             sensors_category_filter: "All".to_string(),
             sensors_top_apps_sort: "cpu".to_string(),
@@ -1050,6 +1056,27 @@ impl LauncherApp {
                 }
             }
             in_flight_arc.lock().unwrap().remove(&hid);
+        });
+    }
+
+    fn trigger_remote_bluetooth_query(&self, host: SshRemoteHost) {
+        let hid = host.id.clone();
+        {
+            let mut in_flight = self.remote_bluetooth_in_flight.lock().unwrap();
+            if !in_flight.insert(hid.clone()) { return; }
+        }
+        let snapshots = self.remote_bluetooth_snapshots.clone();
+        let in_flight = self.remote_bluetooth_in_flight.clone();
+        let last_fetch = self.remote_bluetooth_last_fetch.clone();
+        std::thread::spawn(move || {
+            let snapshot = crate::bluetooth::query_remote_bluetooth_status(&host).unwrap_or_else(|error| {
+                let mut snapshot = crate::bluetooth::BluetoothSnapshot::default();
+                snapshot.status_msg = Some((error, false, Instant::now()));
+                snapshot
+            });
+            snapshots.lock().unwrap().insert(hid.clone(), snapshot);
+            last_fetch.lock().unwrap().insert(hid.clone(), Instant::now());
+            in_flight.lock().unwrap().remove(&hid);
         });
     }
 
@@ -15636,7 +15663,7 @@ impl LauncherApp {
     // ─────────────────────────────────────────────────────────────────────────
     // SENSORS PAGE: Bluetooth Dashboard
     // ─────────────────────────────────────────────────────────────────────────
-    fn render_sensors_bluetooth_page(&mut self, ui: &mut Ui, _snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
+    fn render_sensors_bluetooth_page(&mut self, ui: &mut Ui, snap: &crate::sensors::SystemSensorsSnapshot, host_id: Option<&str>) {
         #[cfg(windows)]
         if host_id.is_none() {
             ui.heading("Bluetooth");
@@ -15652,11 +15679,57 @@ impl LauncherApp {
         let is_remote = host_id.is_some();
 
         if is_remote {
+            let hid = host_id.unwrap_or_default();
+            let linux_host = snap.os_name.to_ascii_lowercase().contains("linux");
+            let last_fetch = self.remote_bluetooth_last_fetch.lock().unwrap().get(hid).copied();
+            let in_flight = self.remote_bluetooth_in_flight.lock().unwrap().contains(hid);
+            if linux_host && last_fetch.map_or(true, |time| time.elapsed() >= Duration::from_secs(5)) && !in_flight {
+                if let Some(host) = self.ssh_hosts.iter().find(|host| host.id == hid).cloned() {
+                    self.trigger_remote_bluetooth_query(host);
+                }
+            }
+            let remote_snapshot = self.remote_bluetooth_snapshots.lock().unwrap().get(hid).cloned();
             Frame::none().fill(p.bg_card).rounding(Rounding::same(8.0))
                 .inner_margin(egui::Margin::symmetric(14.0, 12.0)).show(ui, |ui| {
                     ui.label(RichText::new(format!("Bluetooth · {}", self.host_display_name(host_id))).size(16.0).strong().color(p.text_primary));
                     ui.add_space(6.0);
-                    ui.label(RichText::new("Remote Bluetooth status and controls are not available in Server Launcher yet.").size(11.0).color(p.text_secondary));
+                    if snap.os_name.is_empty() {
+                        ui.label(RichText::new("Waiting for remote operating system details…").size(11.0).color(p.text_secondary));
+                    } else if !linux_host {
+                        ui.label(RichText::new("Remote Bluetooth monitoring requires a Linux host with BlueZ.").size(11.0).color(p.text_secondary));
+                    } else if let Some(remote) = remote_snapshot {
+                        if let Some((error, _, _)) = &remote.status_msg {
+                            ui.label(RichText::new(error).size(11.0).color(p.text_secondary));
+                        } else if let Some(controller) = &remote.controller {
+                            ui.horizontal(|ui| {
+                                let name = if controller.alias.is_empty() { &controller.name } else { &controller.alias };
+                                let state = if controller.powered { "Radio on" } else { "Radio off" };
+                                ui.label(RichText::new(format!("{} · {}", name, state)).size(12.0).strong().color(if controller.powered { accent } else { p.text_secondary }));
+                                ui.label(RichText::new(format!("{} paired", remote.get_paired_count())).size(10.0).color(p.text_muted));
+                            });
+                            ui.add_space(8.0);
+                            if remote.devices.is_empty() {
+                                ui.label(RichText::new("No paired devices reported.").size(11.0).color(p.text_muted));
+                            }
+                            for device in remote.devices.iter().filter(|device| device.paired) {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(&device.name).size(11.5).color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(RichText::new(if device.connected { "Connected" } else { "Paired" }).size(10.0).color(if device.connected { accent } else { p.text_muted }));
+                                        if let Some(battery) = device.battery_pct {
+                                            ui.label(RichText::new(format!("{battery}%")).size(10.0).color(p.text_secondary));
+                                        }
+                                    });
+                                });
+                            }
+                        } else {
+                            ui.label(RichText::new("No Bluetooth adapter is currently reported by BlueZ.").size(11.0).color(p.text_secondary));
+                        }
+                    } else if in_flight {
+                        ui.horizontal(|ui| { ui.spinner(); ui.label(RichText::new("Reading remote Bluetooth status…").size(11.0).color(p.text_secondary)); });
+                    } else {
+                        ui.label(RichText::new("Remote Bluetooth status is not available.").size(11.0).color(p.text_secondary));
+                    }
                 });
             return;
         }

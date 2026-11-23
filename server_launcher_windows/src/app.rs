@@ -10817,32 +10817,6 @@ impl LauncherApp {
             ui.set_width(navigation_width);
             ui.set_max_width(navigation_width);
 
-            let is_fetching = if let Some(hid) = host_id {
-                self.remote_sensors_in_flight.lock().unwrap().contains(hid)
-            } else {
-                false
-            };
-
-            // Fetch or refresh sensors snapshot asynchronously without blocking UI thread
-            let _snap = if let Some(hid) = host_id {
-                let last_fetch = self.remote_sensors_last_fetch.lock().unwrap().get(hid).copied();
-                let failed = self.remote_sensors_errors.lock().unwrap().contains_key(hid);
-                if remote_sensor_due(last_fetch.map(|time| time.elapsed()), self.sensors_refresh_interval, failed) && !is_fetching {
-                    if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == hid).cloned() {
-                        self.trigger_remote_sensors_query(host);
-                    }
-                }
-                self.remote_sensors_snapshots.lock().unwrap().get(hid).cloned().unwrap_or_else(|| Arc::new(crate::sensors::SystemSensorsSnapshot::default()))
-            } else {
-                if self.sensors_refresh_interval > 0 && self.last_sensors_refresh.elapsed() >= Duration::from_secs(self.sensors_refresh_interval as u64) {
-                    let include_top = (self.sensors_subtab == SensorsSubTab::TopApps && self.sensors_top_apps_visited)
-                        || self.sensors_subtab == SensorsSubTab::Ram;
-                    self.trigger_local_sensors_query(include_top, Some(ui.ctx().clone()));
-                    self.last_sensors_refresh = Instant::now();
-                }
-                Arc::clone(&self.sensors_snapshot)
-            };
-
             ScrollArea::vertical()
                 .id_salt("sensors_left_sidebar_scroll")
                 .auto_shrink([false, false])

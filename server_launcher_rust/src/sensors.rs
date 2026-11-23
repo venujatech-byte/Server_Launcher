@@ -2591,12 +2591,13 @@ fn parse_process_tcp_counters(output: &str) -> HashMap<u32, (u64, u64)> {
 
 use crate::config::SshRemoteHost;
 use crate::remote::build_ssh_command;
-fn remote_windows_sensor_command(include_processes: bool, include_network_details: bool) -> String {
+fn remote_windows_sensor_command(include_processes: bool, include_network_details: bool, include_gpu_engines: bool) -> String {
     use base64::Engine;
 
     let script = include_str!("../../shared/remote_windows_sensors.ps1")
         .replace("__COLLECT_NETWORK_DETAILS__", if include_network_details { "$true" } else { "$false" })
-        .replace("__COLLECT_PROCESSES__", if include_processes { "$true" } else { "$false" });
+        .replace("__COLLECT_PROCESSES__", if include_processes { "$true" } else { "$false" })
+        .replace("__COLLECT_GPU_ENGINES__", if include_gpu_engines { "$true" } else { "$false" });
     let utf16le: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let encoded = base64::engine::general_purpose::STANDARD.encode(utf16le);
     format!("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded}")
@@ -2612,10 +2613,10 @@ fn remote_sensor_host_key(host: &SshRemoteHost) -> String {
     format!("{}@{}:{}", host.user.trim(), host.host.trim(), host.port)
 }
 
-fn query_remote_windows_sensors(host: &SshRemoteHost, include_processes: bool, include_network_details: bool) -> Result<Option<serde_json::Value>, String> {
+fn query_remote_windows_sensors(host: &SshRemoteHost, include_processes: bool, include_network_details: bool, include_gpu_engines: bool) -> Result<Option<serde_json::Value>, String> {
     let mut host = host.clone();
     host.remote_cwd.clear();
-    let mut cmd = build_ssh_command(&host, &remote_windows_sensor_command(include_processes, include_network_details));
+    let mut cmd = build_ssh_command(&host, &remote_windows_sensor_command(include_processes, include_network_details, include_gpu_engines));
     let out = cmd.output().map_err(|error| format!("SSH command execution error: {error}"))?;
     if !out.status.success() {
         let error = String::from_utf8_lossy(&out.stderr).trim().to_string();
@@ -2641,6 +2642,28 @@ fn remote_python_is_missing(error: &str) -> bool {
 
 fn remote_sensor_command(script: &str, include_processes: bool, include_process_network: bool, include_network_details: bool) -> String {
     format!("{} {} {} {}", script.trim_end(), if include_processes { "1" } else { "0" }, if include_processes && include_process_network { "1" } else { "0" }, if include_network_details { "1" } else { "0" })
+}
+
+fn apply_windows_gpu_engine_counters(gpus: &mut [GpuSensorInfo], counters: &serde_json::Value) {
+    for gpu in gpus.iter_mut() { gpu.engine_loads.clear(); }
+    let [gpu] = gpus else { return; };
+    let Some(counters) = counters.as_array() else { return; };
+    let mut engines = std::collections::BTreeMap::<(String, String), f32>::new();
+    for counter in counters {
+        let Some(name) = counter["Name"].as_str() else { continue; };
+        let Some((prefix, kind)) = name.rsplit_once("_engtype_") else { continue; };
+        let Some(kind) = kind.split('_').next().filter(|kind| !kind.is_empty()) else { continue; };
+        let Some((_, adapter_engine)) = prefix.split_once("_luid_") else { continue; };
+        let Some((adapter, engine)) = adapter_engine.rsplit_once("_eng_") else { continue; };
+        let Some(value) = counter["UtilizationPercentage"].as_f64().filter(|value| value.is_finite() && (0.0..=100.0).contains(value)) else { continue; };
+        let load = engines.entry((format!("{adapter}_eng_{engine}"), kind.to_owned())).or_default();
+        *load = (*load + value as f32).min(100.0);
+    }
+    let mut peaks = std::collections::BTreeMap::<String, f32>::new();
+    for ((_, kind), load) in engines {
+        peaks.entry(kind).and_modify(|peak| *peak = peak.max(load)).or_insert(load);
+    }
+    gpu.engine_loads = peaks.into_iter().map(|(kind, load)| (format!("{kind} busiest engine"), load)).collect();
 }
 
 fn parse_remote_process_rows(parsed: &serde_json::Value, include_processes: bool) -> Result<Vec<ProcessSensorInfo>, String> {
@@ -2692,7 +2715,7 @@ mod remote_sensor_command_tests {
     #[test]
     fn windows_sensor_command_encodes_utf16_powershell_without_shell_payload() {
         use base64::Engine;
-        let command = super::remote_windows_sensor_command(true, true);
+        let command = super::remote_windows_sensor_command(true, true, true);
         let encoded = command.strip_prefix("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ").unwrap();
         let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
         let words = bytes.chunks_exact(2).map(|word| u16::from_le_bytes([word[0], word[1]])).collect::<Vec<_>>();
@@ -2701,7 +2724,19 @@ mod remote_sensor_command_tests {
         assert!(script.contains("$collectProcesses = $true"));
         assert!(script.contains("function Read-ProcessSample"));
         assert!(script.contains("process_network_supported = $false"));
+        assert!(script.contains("$collectGpuEngines = $true"));
+        assert!(script.contains("Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine"));
         assert!(!command.contains("Get-CimInstance"));
+    }
+
+    #[test]
+    fn remote_gpu_counter_collection_is_opt_in() {
+        use base64::Engine;
+        let command = super::remote_windows_sensor_command(false, false, false);
+        let encoded = command.strip_prefix("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ").unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
+        let words = bytes.chunks_exact(2).map(|word| u16::from_le_bytes([word[0], word[1]])).collect::<Vec<_>>();
+        assert!(String::from_utf16(&words).unwrap().contains("$collectGpuEngines = $false"));
     }
 
     #[test]
@@ -2712,7 +2747,7 @@ mod remote_sensor_command_tests {
     }
 }
 
-pub fn query_remote_sensors(host: &SshRemoteHost, include_processes: bool, include_process_network: bool, include_network_details: bool) -> Result<SystemSensorsSnapshot, String> {
+pub fn query_remote_sensors(host: &SshRemoteHost, include_processes: bool, include_process_network: bool, include_network_details: bool, include_gpu_engines: bool) -> Result<SystemSensorsSnapshot, String> {
     let script = r#"python3 -c '
 import os, glob, json, time, sys, math, subprocess, ipaddress, platform
 remote_system = platform.system() or "unknown"
@@ -3770,7 +3805,7 @@ print(json.dumps(data))
     let host_key = remote_sensor_host_key(host);
     let known_windows = known_windows_remote_hosts().lock().unwrap().contains(&host_key);
     let parsed = if known_windows {
-        match query_remote_windows_sensors(host, include_processes, include_network_details)? {
+        match query_remote_windows_sensors(host, include_processes, include_network_details, include_gpu_engines)? {
             Some(data) => data,
             None => {
                 known_windows_remote_hosts().lock().unwrap().remove(&host_key);
@@ -3805,7 +3840,7 @@ print(json.dumps(data))
             return Err(python_error.unwrap());
         }
         if windows_host {
-            match query_remote_windows_sensors(host, include_processes, include_network_details) {
+            match query_remote_windows_sensors(host, include_processes, include_network_details, include_gpu_engines) {
                 Ok(Some(windows_data)) => {
                     known_windows_remote_hosts().lock().unwrap().insert(host_key);
                     windows_data
@@ -3926,6 +3961,8 @@ print(json.dumps(data))
             });
         }
     }
+
+    if parsed["gpu_engines"].is_array() { apply_windows_gpu_engine_counters(&mut gpus, &parsed["gpu_engines"]); }
 
     let mut batteries = Vec::new();
     let mut ac_online = None;
@@ -4199,6 +4236,22 @@ mod tests {
         assert_eq!(rows[0].memory_bytes, 2048);
         assert_eq!(rows[0].cpu_usage, 7.5);
         assert!(!rows[0].net_rate_available && !rows[0].disk_rate_available);
+    }
+
+    #[test]
+    fn remote_windows_gpu_engine_rows_are_bounded_and_multi_gpu_safe() {
+        let rows = serde_json::json!([
+            {"Name":"pid_1_luid_0x1_phys_0_eng_0_engtype_3D","UtilizationPercentage":35.0},
+            {"Name":"pid_2_luid_0x1_phys_0_eng_0_engtype_3D","UtilizationPercentage":25.0},
+            {"Name":"pid_3_luid_0x1_phys_0_eng_0_engtype_Copy","UtilizationPercentage":70.0},
+            {"Name":"bad","UtilizationPercentage":100.0}
+        ]);
+        let mut gpus = vec![super::GpuSensorInfo::default()];
+        super::apply_windows_gpu_engine_counters(&mut gpus, &rows);
+        assert_eq!(gpus[0].engine_loads, vec![("3D busiest engine".into(), 60.0), ("Copy busiest engine".into(), 70.0)]);
+        gpus.push(super::GpuSensorInfo::default());
+        super::apply_windows_gpu_engine_counters(&mut gpus, &rows);
+        assert!(gpus.iter().all(|gpu| gpu.engine_loads.is_empty()));
     }
 
     #[test]

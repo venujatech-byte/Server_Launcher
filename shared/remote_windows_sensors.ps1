@@ -8,6 +8,7 @@ if ($env:OS -ne 'Windows_NT') {
 
 try {
     $collectNetworkDetails = __COLLECT_NETWORK_DETAILS__
+    $collectGpuEngines = __COLLECT_GPU_ENGINES__
     $cpu = @(Get-CimInstance Win32_Processor -ErrorAction Stop)
     $cores = [int](($cpu | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum)
     if ($cores -lt 1) { throw 'No logical CPU count was reported' }
@@ -136,6 +137,10 @@ try {
             }
         }
     })
+    $gpuEngines = @()
+    if ($collectGpuEngines) {
+        try { $gpuEngines = @(Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction Stop | Select-Object Name, UtilizationPercentage) } catch { }
+    }
     $processCount = @(Get-Process -ErrorAction SilentlyContinue).Count
     $processesCollected = $false
     $processNetworkCollected = $false
@@ -221,6 +226,7 @@ try {
         total_disk_write_rate = $null
         temps = @()
         gpus = $gpus
+        gpu_engines = $gpuEngines
         networks = $networks
         network_stats_available = ($networks.Count -gt 0)
         network_rates_available = $false

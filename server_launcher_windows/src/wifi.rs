@@ -124,6 +124,16 @@ fn nmcli_fields(line: &str) -> Vec<String> {
 #[cfg(test)]
 mod wifi_selection_tests {
     #[test]
+    fn parses_windows_wifi_interface_guid() {
+        let guid = super::parse_windows_wifi_guid("{6f9619ff-8b86-d011-b42d-00c04fc964ff}").unwrap();
+        assert_eq!(guid.data1, 0x6f9619ff);
+        assert_eq!(guid.data2, 0x8b86);
+        assert_eq!(guid.data3, 0xd011);
+        assert_eq!(guid.data4, [0xb4, 0x2d, 0, 0xc0, 0x4f, 0xc9, 0x64, 0xff]);
+        assert!(super::parse_windows_wifi_guid("not-a-guid").is_none());
+    }
+
+    #[test]
     fn windows_adapter_and_wlan_data_use_reported_values_only() {
         let data = serde_json::json!({
             "adapters": [{"name":"Wi-Fi", "description":"Intel Wireless", "status":"Up", "mac":"AA:BB:CC:DD:EE:FF", "mtu":1500,
@@ -527,11 +537,54 @@ pub fn scan_wifi(interface: &str) -> Result<String, String> {
 pub fn scan_wifi(interface: &str) -> Result<String, String> {
     use std::os::windows::process::CommandExt;
     if interface.is_empty() || interface.bytes().any(|byte| matches!(byte, b'\r' | b'\n' | 0)) { return Err("Invalid Wi-Fi interface".into()); }
-    let selector = format!("interface={interface}");
-    let output = Command::new("netsh.exe").args(["wlan", "show", "networks", selector.as_str(), "mode=bssid"])
-        .creation_flags(0x08000000).output().map_err(|error| format!("Could not start Wi-Fi scan: {error}"))?;
-    command_result(output.status.success(), &String::from_utf8_lossy(&output.stderr), "Wi-Fi scan")?;
+
+    let output = Command::new("powershell.exe")
+        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "$adapter=Get-NetAdapter -Name $env:SERVER_LAUNCHER_WIFI_NAME -ErrorAction Stop | Select-Object -First 1; if($null -eq $adapter){exit 1}; $adapter.InterfaceGuid.Guid"])
+        .env("SERVER_LAUNCHER_WIFI_NAME", interface)
+        .creation_flags(0x08000000).output().map_err(|error| format!("Could not query Wi-Fi interface: {error}"))?;
+    command_result(output.status.success(), &String::from_utf8_lossy(&output.stderr), "Wi-Fi interface query")?;
+    let guid = parse_windows_wifi_guid(&String::from_utf8_lossy(&output.stdout))
+        .ok_or_else(|| "Windows did not return a valid Wi-Fi interface ID".to_string())?;
+
+    let mut negotiated_version = 0;
+    let mut handle = std::ptr::null_mut();
+    let status = unsafe { WlanOpenHandle(2, std::ptr::null_mut(), &mut negotiated_version, &mut handle) };
+    if status != 0 { return Err(format!("Could not open Windows WLAN API: {}", std::io::Error::from_raw_os_error(status as i32))); }
+    let status = unsafe { WlanScan(handle, &guid, std::ptr::null(), std::ptr::null(), std::ptr::null_mut()) };
+    unsafe { WlanCloseHandle(handle, std::ptr::null_mut()); }
+    if status != 0 { return Err(format!("Wi-Fi scan failed: {}", std::io::Error::from_raw_os_error(status as i32))); }
     Ok(format!("Wi-Fi scan requested for {interface}"))
+}
+
+#[cfg(any(windows, test))]
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct WindowsWifiGuid { data1: u32, data2: u16, data3: u16, data4: [u8; 8] }
+
+#[cfg(any(windows, test))]
+fn parse_windows_wifi_guid(value: &str) -> Option<WindowsWifiGuid> {
+    let value = value.trim().trim_start_matches('{').trim_end_matches('}');
+    let parts: Vec<_> = value.split('-').collect();
+    if parts.len() != 5 || parts[0].len() != 8 || parts[1].len() != 4 || parts[2].len() != 4 || parts[3].len() != 4 || parts[4].len() != 12 { return None; }
+    let mut data4 = [0; 8];
+    for (index, byte) in data4.iter_mut().enumerate() {
+        let pair = if index < 2 { &parts[3][index * 2..index * 2 + 2] } else { &parts[4][(index - 2) * 2..(index - 2) * 2 + 2] };
+        *byte = u8::from_str_radix(pair, 16).ok()?;
+    }
+    Some(WindowsWifiGuid {
+        data1: u32::from_str_radix(parts[0], 16).ok()?,
+        data2: u16::from_str_radix(parts[1], 16).ok()?,
+        data3: u16::from_str_radix(parts[2], 16).ok()?,
+        data4,
+    })
+}
+
+#[cfg(windows)]
+#[link(name = "wlanapi")]
+extern "system" {
+    fn WlanOpenHandle(version: u32, reserved: *mut std::ffi::c_void, negotiated_version: *mut u32, handle: *mut *mut std::ffi::c_void) -> u32;
+    fn WlanScan(handle: *mut std::ffi::c_void, interface: *const WindowsWifiGuid, ssid: *const std::ffi::c_void, ie_data: *const std::ffi::c_void, reserved: *mut std::ffi::c_void) -> u32;
+    fn WlanCloseHandle(handle: *mut std::ffi::c_void, reserved: *mut std::ffi::c_void) -> u32;
 }
 
 /// Flush the local resolver cache, preserving errors from the available tool.

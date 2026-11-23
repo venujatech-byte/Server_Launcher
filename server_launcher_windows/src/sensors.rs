@@ -2835,6 +2835,7 @@ mod remote_sensor_command_tests {
         assert!(script.contains("index = [int]$_.Name"));
         assert!(script.contains("$cpuCoreUsages[$row.index] = $row.usage"));
         assert!(script.contains("$rxRate = $null"));
+        assert!(script.contains("[int]$adapter.ifType -eq 71"));
         assert!(!command.contains("Get-CimInstance"));
     }
 

@@ -149,7 +149,7 @@ try {
                 tx_bytes = [int64]$stat.SentBytes
                 rx_rate = $rxRate
                 tx_rate = $txRate
-                is_wireless = $null
+                is_wireless = if ($null -ne $adapter.ifType) { [int]$adapter.ifType -eq 71 } else { $null }
                 link_state = $linkState
                 mac_address = if ($mac -match '^([0-9a-f]{2}:){5}[0-9a-f]{2}$') { $mac } else { $null }
                 mtu = $null

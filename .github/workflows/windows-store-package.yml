@@ -1,0 +1,34 @@
+name: Package Windows Store MSIX
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  store-package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: server_launcher-windows-x86_64-packages
+          path: windows-packages
+      - name: Build MSIX
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          STORE_IDENTITY: ${{ vars.WINDOWS_STORE_IDENTITY }}
+          STORE_PUBLISHER: ${{ vars.WINDOWS_STORE_PUBLISHER }}
+          STORE_PUBLISHER_NAME: ${{ vars.WINDOWS_STORE_PUBLISHER_NAME }}
+        run: ./shared/package-windows-store.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server_launcher-windows-store
+          path: windows-store/*.msix
+          if-no-files-found: error

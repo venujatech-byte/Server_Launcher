@@ -299,3 +299,29 @@ All configurations are human-readable and automatically persisted to `servers.js
 ## 🛡️ License
 
 This project is licensed under the MIT License - feel free to use, modify, and distribute for personal and commercial projects.
+## Desktop updates and release packages
+
+In either Rust app, open **Settings → About → Check for updates**. GitHub builds
+publish a versioned update manifest with package sizes and SHA-256 digests.
+Choose your current installer type, download it, then open it from About after
+verification. Windows EXE/MSI updates use their regular installer prompts. On
+Linux, DEB and RPM files open in the system's associated package installer
+when one is installed. Close the launcher normally if the installer asks for
+it. An AppImage launched from its original file can replace that file if its
+directory is writable. Restart the launcher afterward. Microsoft Store
+installations use the Store's update page.
+
+To prepare GitHub release packages, run **Build and Publish Release** from
+Actions. For an official version, push a tag in the form `v1.2.3`. The workflow
+also publishes on `main` and `design`, using the run number as the patch
+version. Runs on `fix/ui-alignment` produce artifacts for inspection.
+Windows artifacts include the NSIS setup EXE, MSI, portable ZIP, and MSIX.
+The upload job waits for the Linux and Windows artifacts before publishing
+`latest.json` alongside them.
+
+For Microsoft Store submission, set the repository variables
+`WINDOWS_STORE_IDENTITY`, `WINDOWS_STORE_PUBLISHER`, and
+`WINDOWS_STORE_PUBLISHER_NAME` to the values in Partner Center, then download
+the `server_launcher-windows-store` artifact. Without those values the
+workflow uses a placeholder identity. The MSIX is unsigned for Store
+submission, so Windows requires a trusted signature for local sideloading.

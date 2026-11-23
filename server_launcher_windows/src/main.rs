@@ -1,4 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
+#[path = "../../shared/updater.rs"]
+mod updater;
 mod app;
 mod config;
 mod modals;

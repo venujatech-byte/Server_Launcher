@@ -9893,6 +9893,8 @@ impl LauncherApp {
                                     });
                             }
                             SettingsTab::About => {
+                                crate::updater::render(ui);
+                                ui.add_space(12.0);
                                 // DIAGNOSTICS & SYSTEM INFO
                                 Frame::none()
                                     .fill(palette.bg_subtle)

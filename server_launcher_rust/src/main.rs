@@ -1,3 +1,5 @@
+#[path = "../../shared/updater.rs"]
+mod updater;
 mod app;
 mod config;
 mod modals;

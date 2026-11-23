@@ -72,6 +72,7 @@ jobs:
       - name: Build Linux packages
         env:
           PACKAGE_VERSION: ${{ steps.package_version.outputs.version }}
+          SERVER_LAUNCHER_RELEASE_VERSION: ${{ steps.package_version.outputs.version }}
         working-directory: server_launcher_rust
         run: cargo tauri build --bundles deb,rpm,appimage --config "{\"version\":\"${PACKAGE_VERSION}\",\"bundle\":{\"linux\":{\"rpm\":{\"release\":\"${GITHUB_RUN_NUMBER}\"}}}}"
 
@@ -92,6 +93,8 @@ jobs:
 
   build-windows:
     name: Build Windows packages (x86_64)
+    outputs:
+      version: ${{ steps.package_version.outputs.version }}
     runs-on: windows-2022
 
     steps:
@@ -142,6 +145,7 @@ jobs:
         shell: bash
         env:
           PACKAGE_VERSION: ${{ steps.package_version.outputs.version }}
+          SERVER_LAUNCHER_RELEASE_VERSION: ${{ steps.package_version.outputs.version }}
         working-directory: server_launcher_windows
         run: cargo tauri build --bundles nsis,msi --config "{\"version\":\"${PACKAGE_VERSION}\"}"
 
@@ -163,10 +167,18 @@ jobs:
             server_launcher_windows/target/release/bundle/msi/*.msi
           if-no-files-found: error
 
+  build-windows-store:
+    needs: build-windows
+    uses: ./.github/workflows/windows-store-package.yml
+    permissions:
+      contents: read
+    with:
+      version: ${{ needs.build-windows.outputs.version }}
+
   publish:
     name: Publish Release
     if: github.ref_type == 'tag' || github.ref_name == 'main' || github.ref_name == 'design'
-    needs: [build, build-windows]
+    needs: [build, build-windows, build-windows-store]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -184,7 +196,7 @@ jobs:
 
       - name: Verify Linux and Windows package assets
         run: |
-          for extension in deb rpm AppImage msi exe zip; do
+          for extension in deb rpm AppImage msi exe zip msix; do
             if ! find release-assets -type f -name "*.${extension}" -print -quit | grep -q .; then
               echo "::error::Missing release package: .${extension}"
               exit 1
@@ -243,6 +255,11 @@ jobs:
           fi
           echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
           echo "release_title=${RELEASE_TITLE}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate update manifest
+        env:
+          RELEASE_TAG: ${{ steps.release_info.outputs.tag_name }}
+        run: python3 shared/release_manifest.py release-assets "$RELEASE_TAG"
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2

@@ -250,7 +250,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Windows sensor platform guards:** The Linux sysfs power-supply collector is excluded from Windows builds, avoiding a duplicate `collect_power_supply` definition alongside the native Windows collector.
 - **Windows inventory retry cadence:** Failed GPU/RAM/disk inventory attempts now advance the 30-second attempt timer while keeping the last-success timestamp separate, preventing repeated full inventory queries every three seconds.
 - **Windows sensor subprocess output:** PowerShell output is capped at 1 MiB in memory while the pipe continues draining; oversized responses return an explicit error instead of blocking or being parsed as truncated JSON.
-- **Nested Linux RAPL zones:** The protected CPU package-power probe recursively discovers powercap `name` files, so package zones nested beneath a control type are sampled instead of being skipped.
+- **Nested Linux RAPL zones:** The protected probe and regular CPU collector now discover package zones directly or beneath a powercap control type, instead of skipping the nested layout used by Intel RAPL.
 
 ### Remaining work and validation
 

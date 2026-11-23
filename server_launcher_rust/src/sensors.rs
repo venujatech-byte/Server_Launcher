@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+#[cfg(target_os = "linux")]
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 use sysinfo::{Components, Disks, Networks, System};
@@ -1720,14 +1722,30 @@ fn parse_package_power(label: &str, microwatts: &str) -> Option<f32> {
 }
 
 #[cfg(target_os = "linux")]
+fn rapl_package_zones() -> Vec<(PathBuf, String)> {
+    let mut zones = Vec::new();
+    let Ok(controls) = fs::read_dir("/sys/class/powercap") else { return zones; };
+    for control in controls.flatten() {
+        let path = control.path();
+        let candidates = std::iter::once(path.clone()).chain(
+            fs::read_dir(&path).into_iter().flatten().flatten().map(|entry| entry.path())
+        );
+        for path in candidates {
+            let Ok(name) = fs::read_to_string(path.join("name")) else { continue; };
+            let name = name.trim().to_owned();
+            let lower = name.to_ascii_lowercase();
+            if lower.starts_with("package") || lower.starts_with("cpu package") {
+                zones.push((path, name));
+            }
+        }
+    }
+    zones
+}
+
+#[cfg(target_os = "linux")]
 fn read_rapl_package_energy() -> HashMap<String, (u64, u64)> {
     let mut packages = HashMap::new();
-    let Ok(entries) = fs::read_dir("/sys/class/powercap") else { return packages; };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Ok(name) = fs::read_to_string(path.join("name")) else { continue; };
-        let name = name.trim().to_ascii_lowercase();
-        if !name.starts_with("package") && !name.starts_with("cpu package") { continue; }
+    for (path, _) in rapl_package_zones() {
         let energy = fs::read_to_string(path.join("energy_uj")).ok().and_then(|value| value.trim().parse().ok());
         let range = fs::read_to_string(path.join("max_energy_range_uj")).ok().and_then(|value| value.trim().parse().ok());
         let (Some(energy), Some(range)) = (energy, range) else { return HashMap::new(); };
@@ -1739,16 +1757,10 @@ fn read_rapl_package_energy() -> HashMap<String, (u64, u64)> {
 
 #[cfg(target_os = "linux")]
 fn read_rapl_package_power_cap() -> Option<f32> {
-    let entries = fs::read_dir("/sys/class/powercap").ok()?;
     let mut caps = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Ok(name) = fs::read_to_string(path.join("name")) else { continue; };
-        let name = name.trim();
-        let lower = name.to_ascii_lowercase();
-        if !lower.starts_with("package") && !lower.starts_with("cpu package") { continue; }
+    for (path, name) in rapl_package_zones() {
         let Ok(value) = fs::read_to_string(path.join("constraint_0_power_limit_uw")) else { return None; };
-        let Some(watts) = parse_package_power(name, &value) else { return None; };
+        let Some(watts) = parse_package_power(&name, &value) else { return None; };
         caps.push(watts);
     }
     if caps.is_empty() { return None; }

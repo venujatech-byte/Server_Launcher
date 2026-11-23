@@ -15356,13 +15356,6 @@ impl LauncherApp {
                                                         ui.label(RichText::new("unavailable").size(11.0).color(Color32::from_rgb(148, 163, 184)));
                                                     }
                                                 });
-                                                ui.add_space(8.0);
-                                                let (bar_r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 4.0), egui::Sense::hover());
-                                                ui.painter().rect_filled(bar_r, Rounding::same(2.0), Color32::from_rgb(18, 28, 42));
-                                                let cycle_ratio = 0.0; // No universal cycle-life limit is reported.
-                                                ui.painter().rect_filled(egui::Rect::from_min_size(bar_r.min, egui::vec2(bar_r.width() * cycle_ratio, bar_r.height())), Rounding::same(2.0), accent);
-                                                ui.add_space(8.0);
-
                                                 let life_label = "Not reported";
                                                 let cond_label = bat.map(|battery| battery.status.as_str()).unwrap_or("Unavailable");
                                                 render_card_meta_row(ui, "Lifespan", life_label, Color32::from_rgb(203, 213, 225));

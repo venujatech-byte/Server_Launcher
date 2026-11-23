@@ -3120,7 +3120,9 @@ impl LauncherApp {
                                         }
 
                                         ui.menu_button(RichText::new("⋯").size(11.0), |ui| {
-                                            if ui.button("Kill").on_hover_text("Force stop this remote process").clicked() {
+                                            ui.set_min_width(88.0);
+                                            ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
+                                            if ui.add_sized([88.0, 24.0], egui::Button::new(RichText::new("Kill").size(11.5))).on_hover_text("Force stop this remote process").clicked() {
                                                 requested = Some((l.clone(), true));
                                                 ui.close_menu();
                                             }
@@ -3132,7 +3134,7 @@ impl LauncherApp {
                                                 && (!command.contains("https://") || command.contains("http://"))
                                                 && (matches!(l.port, 80 | 3000 | 4173 | 5173 | 8000 | 8008 | 8080 | 8081 | 8888)
                                                     || name == "http" || name.starts_with("http /") || command.contains("http://"));
-                                            if ui.add_enabled(http, egui::Button::new("Curl"))
+                                            if ui.add_enabled_ui(http, |ui| ui.add_sized([88.0, 24.0], egui::Button::new(RichText::new("Curl").size(11.5)))).inner
                                                 .on_hover_text("Probe HTTP response")
                                                 .on_disabled_hover_text("Available for HTTP over TCP").clicked() {
                                                 let curl_cmd = format!("curl -I -s --connect-timeout 2 http://localhost:{} | head -n 5", l.port);
@@ -3366,7 +3368,7 @@ impl LauncherApp {
                 ui.horizontal_top(|ui| {
                     let tools_width = (ui.available_width() - 84.0).max(0.0);
                     ui.allocate_ui_with_layout([tools_width, 0.0].into(), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        ui.set_max_width(tools_width);
+                        ui.set_width(tools_width);
                         ui.label(RichText::new("Remote SSH Terminal").size(12.0).strong().color(p.text_primary));
                         ui.horizontal_wrapped(|ui| {
                             for (command, hint) in [
@@ -3427,6 +3429,7 @@ impl LauncherApp {
                             let input_width = (ui.available_width() - 68.0 - ui.spacing().item_spacing.x).max(0.0);
                             let editor = ui.add_sized([input_width, 24.0], egui::TextEdit::singleline(input)
                                 .frame(false).id_source(("ssh_remote_composer", &host.id))
+                                .margin(egui::Margin::ZERO).vertical_align(egui::Align::Center)
                                 .font(egui::FontId::monospace(11.5))
                                 .hint_text(RichText::new("Enter SSH command…").color(p.text_muted)));
                             let execute = ui.add_sized([68.0, 24.0], egui::Button::new(

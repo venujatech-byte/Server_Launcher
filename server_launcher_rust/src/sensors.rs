@@ -2591,7 +2591,7 @@ fn parse_process_tcp_counters(output: &str) -> HashMap<u32, (u64, u64)> {
 
 use crate::config::SshRemoteHost;
 use crate::remote::build_ssh_command;
-fn remote_windows_sensor_command(include_processes: bool, include_network_details: bool, include_gpu_engines: bool, include_ram_modules: bool, include_network_rates: bool) -> String {
+fn remote_windows_sensor_command(include_processes: bool, include_network_details: bool, include_gpu_engines: bool, include_ram_modules: bool, include_network_rates: bool, include_cpu_cores: bool) -> String {
     use base64::Engine;
 
     let script = include_str!("../../shared/remote_windows_sensors.ps1")
@@ -2599,7 +2599,8 @@ fn remote_windows_sensor_command(include_processes: bool, include_network_detail
         .replace("__COLLECT_PROCESSES__", if include_processes { "$true" } else { "$false" })
         .replace("__COLLECT_GPU_ENGINES__", if include_gpu_engines { "$true" } else { "$false" })
         .replace("__COLLECT_RAM_MODULES__", if include_ram_modules { "$true" } else { "$false" })
-        .replace("__COLLECT_NETWORK_RATES__", if include_network_rates { "$true" } else { "$false" });
+        .replace("__COLLECT_NETWORK_RATES__", if include_network_rates { "$true" } else { "$false" })
+        .replace("__COLLECT_CPU_CORES__", if include_cpu_cores { "$true" } else { "$false" });
     let utf16le: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let encoded = base64::engine::general_purpose::STANDARD.encode(utf16le);
     format!("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded}")
@@ -2615,10 +2616,10 @@ fn remote_sensor_host_key(host: &SshRemoteHost) -> String {
     format!("{}@{}:{}", host.user.trim(), host.host.trim(), host.port)
 }
 
-fn query_remote_windows_sensors(host: &SshRemoteHost, include_processes: bool, include_network_details: bool, include_gpu_engines: bool, include_ram_modules: bool, include_network_rates: bool) -> Result<Option<serde_json::Value>, String> {
+fn query_remote_windows_sensors(host: &SshRemoteHost, include_processes: bool, include_network_details: bool, include_gpu_engines: bool, include_ram_modules: bool, include_network_rates: bool, include_cpu_cores: bool) -> Result<Option<serde_json::Value>, String> {
     let mut host = host.clone();
     host.remote_cwd.clear();
-    let mut cmd = build_ssh_command(&host, &remote_windows_sensor_command(include_processes, include_network_details, include_gpu_engines, include_ram_modules, include_network_rates));
+    let mut cmd = build_ssh_command(&host, &remote_windows_sensor_command(include_processes, include_network_details, include_gpu_engines, include_ram_modules, include_network_rates, include_cpu_cores));
     let out = cmd.output().map_err(|error| format!("SSH command execution error: {error}"))?;
     if !out.status.success() {
         let error = String::from_utf8_lossy(&out.stderr).trim().to_string();
@@ -2774,7 +2775,7 @@ mod remote_sensor_command_tests {
     #[test]
     fn windows_sensor_command_encodes_utf16_powershell_without_shell_payload() {
         use base64::Engine;
-        let command = super::remote_windows_sensor_command(true, true, true, true, true);
+        let command = super::remote_windows_sensor_command(true, true, true, true, true, true);
         let encoded = command.strip_prefix("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ").unwrap();
         let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
         let words = bytes.chunks_exact(2).map(|word| u16::from_le_bytes([word[0], word[1]])).collect::<Vec<_>>();
@@ -2788,6 +2789,8 @@ mod remote_sensor_command_tests {
         assert!(script.contains("$collectRamModules = $true"));
         assert!(script.contains("Win32_PhysicalMemory"));
         assert!(script.contains("$collectNetworkRates = $true"));
+        assert!(script.contains("$collectCpuCores = $true"));
+        assert!(script.contains("Win32_PerfFormattedData_PerfOS_Processor"));
         assert!(script.contains("$rxRate = $null"));
         assert!(!command.contains("Get-CimInstance"));
     }
@@ -2795,7 +2798,7 @@ mod remote_sensor_command_tests {
     #[test]
     fn remote_gpu_counter_collection_is_opt_in() {
         use base64::Engine;
-        let command = super::remote_windows_sensor_command(false, false, false, false, false);
+        let command = super::remote_windows_sensor_command(false, false, false, false, false, false);
         let encoded = command.strip_prefix("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ").unwrap();
         let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
         let words = bytes.chunks_exact(2).map(|word| u16::from_le_bytes([word[0], word[1]])).collect::<Vec<_>>();
@@ -2803,6 +2806,7 @@ mod remote_sensor_command_tests {
         assert!(script.contains("$collectGpuEngines = $false"));
         assert!(script.contains("$collectRamModules = $false"));
         assert!(script.contains("$collectNetworkRates = $false"));
+        assert!(script.contains("$collectCpuCores = $false"));
     }
 
     #[test]
@@ -2813,7 +2817,7 @@ mod remote_sensor_command_tests {
     }
 }
 
-pub fn query_remote_sensors(host: &SshRemoteHost, include_processes: bool, include_process_network: bool, include_network_details: bool, include_gpu_engines: bool, include_ram_modules: bool, include_network_rates: bool) -> Result<SystemSensorsSnapshot, String> {
+pub fn query_remote_sensors(host: &SshRemoteHost, include_processes: bool, include_process_network: bool, include_network_details: bool, include_gpu_engines: bool, include_ram_modules: bool, include_network_rates: bool, include_cpu_cores: bool) -> Result<SystemSensorsSnapshot, String> {
     let script = r#"python3 -c '
 import os, glob, json, time, sys, math, subprocess, ipaddress, platform
 remote_system = platform.system() or "unknown"
@@ -3871,7 +3875,7 @@ print(json.dumps(data))
     let host_key = remote_sensor_host_key(host);
     let known_windows = known_windows_remote_hosts().lock().unwrap().contains(&host_key);
     let parsed = if known_windows {
-        match query_remote_windows_sensors(host, include_processes, include_network_details, include_gpu_engines, include_ram_modules, include_network_rates)? {
+        match query_remote_windows_sensors(host, include_processes, include_network_details, include_gpu_engines, include_ram_modules, include_network_rates, include_cpu_cores)? {
             Some(data) => data,
             None => {
                 known_windows_remote_hosts().lock().unwrap().remove(&host_key);
@@ -3906,7 +3910,7 @@ print(json.dumps(data))
             return Err(python_error.unwrap());
         }
         if windows_host {
-            match query_remote_windows_sensors(host, include_processes, include_network_details, include_gpu_engines, include_ram_modules, include_network_rates) {
+            match query_remote_windows_sensors(host, include_processes, include_network_details, include_gpu_engines, include_ram_modules, include_network_rates, include_cpu_cores) {
                 Ok(Some(windows_data)) => {
                     known_windows_remote_hosts().lock().unwrap().insert(host_key);
                     windows_data

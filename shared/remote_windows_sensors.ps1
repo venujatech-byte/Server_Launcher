@@ -11,12 +11,25 @@ try {
     $collectGpuEngines = __COLLECT_GPU_ENGINES__
     $collectRamModules = __COLLECT_RAM_MODULES__
     $collectNetworkRates = __COLLECT_NETWORK_RATES__
+    $collectCpuCores = __COLLECT_CPU_CORES__
     $cpu = @(Get-CimInstance Win32_Processor -ErrorAction Stop)
     $cores = [int](($cpu | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum)
     if ($cores -lt 1) { throw 'No logical CPU count was reported' }
     $cpuLoad = $null
     $reportedCpuLoads = @($cpu | Where-Object { $null -ne $_.LoadPercentage })
     if ($reportedCpuLoads.Count -gt 0) { $cpuLoad = [double](($reportedCpuLoads | Measure-Object -Property LoadPercentage -Average).Average) }
+    $cpuCoreUsages = @()
+    if ($collectCpuCores) {
+        try {
+            $cpuCoreUsages = @(Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -ErrorAction Stop |
+                Where-Object { $_.Name -match '^\d+$' } |
+                Sort-Object { [int]$_.Name } |
+                ForEach-Object {
+                    $usage = $_.PercentProcessorTime
+                    if ($null -ne $usage -and $usage -ge 0 -and $usage -le 100) { [double]$usage } else { $null }
+                })
+        } catch { $cpuCoreUsages = @() }
+    }
     $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
     $memoryTotal = [int64]$os.TotalVisibleMemorySize * 1024
     $memoryFree = [int64]$os.FreePhysicalMemory * 1024
@@ -241,7 +254,7 @@ try {
         cpu_model = (($cpu | ForEach-Object { $_.Name } | Where-Object { $_ } | Select-Object -Unique) -join ' / ')
         cores = $cores
         cpu_usage = $cpuLoad
-        cpu_core_usages = @()
+        cpu_core_usages = $cpuCoreUsages
         cpu_freqs = @($cpu | Where-Object { $_.CurrentClockSpeed -gt 0 } | ForEach-Object { [int64]$_.CurrentClockSpeed })
         cpu_tdp = $null
         cpu_power = $null

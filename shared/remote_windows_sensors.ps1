@@ -172,6 +172,7 @@ try {
             $ipv4 = $null
             $ipv6 = $null
             $mtu = $null
+            $wifiState = $null
             if ($collectNetworkDetails -and $adapter.ifIndex) {
                 $ipInterface = $null
                 try { $ipInterface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction Stop | Select-Object -First 1 } catch { }
@@ -182,6 +183,12 @@ try {
                 try { $ipv6Address = Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv6 -ErrorAction Stop | Where-Object { $_.IPAddress -ne '::1' -and $_.IPAddress -notlike 'fe80:*' } | Select-Object -First 1 } catch { }
                 if ($ipv4Address) { $ipv4 = "$($ipv4Address.IPAddress)/$($ipv4Address.PrefixLength)" }
                 if ($ipv6Address) { $ipv6 = "$($ipv6Address.IPAddress)/$($ipv6Address.PrefixLength)" }
+                if ([int]$adapter.ifType -eq 71) {
+                    $profile = $null
+                    try { $profile = Get-NetConnectionProfile -InterfaceIndex $adapter.ifIndex -ErrorAction Stop | Select-Object -First 1 } catch { }
+                    if ($null -ne $profile) { $wifiState = 'CONNECTED' }
+                    elseif ($adapter.Status -eq 'Disconnected') { $wifiState = 'DISCONNECTED' }
+                }
             }
             $mac = ([string]$adapter.MacAddress).Replace('-', ':').ToLowerInvariant()
             $linkState = if ($adapter.Status -eq 'Up') { 'up' } elseif ($adapter.Status -eq 'Disabled' -or $adapter.Status -eq 'Disconnected') { 'down' } else { 'unknown' }
@@ -201,6 +208,7 @@ try {
                 rx_rate = $rxRate
                 tx_rate = $txRate
                 is_wireless = if ($null -ne $adapter.ifType) { [int]$adapter.ifType -eq 71 } else { $null }
+                wifi_state = $wifiState
                 link_state = $linkState
                 mac_address = if ($mac -match '^([0-9a-f]{2}:){5}[0-9a-f]{2}$') { $mac } else { $null }
                 mtu = $mtu

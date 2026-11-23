@@ -2825,6 +2825,7 @@ fn parse_remote_network_rows(parsed: &serde_json::Value) -> Result<(Vec<NetInter
             mtu: row["mtu"].as_u64().and_then(|value| u32::try_from(value).ok()).filter(|value| *value > 0),
             ipv4: parse_network_address(&row["ipv4"], true),
             ipv6: parse_network_address(&row["ipv6"], false),
+            wifi_state: row["wifi_state"].as_str().filter(|state| matches!(state.to_ascii_uppercase().as_str(), "CONNECTED" | "DISCONNECTED")).map(str::to_ascii_uppercase),
             ..Default::default()
         };
         if network.is_wireless == Some(true) { apply_remote_windows_wlan(&mut network, parsed["wlan_text"].as_str()); }
@@ -2936,6 +2937,25 @@ mod remote_sensor_command_tests {
         assert_eq!(wifi.wifi_channel, Some(36));
         assert_eq!(wifi.wifi_rate.as_deref(), Some("RX 433.3 / TX 866.7 Mbps"));
         assert_eq!(wifi.wifi_security.as_deref(), Some("WPA2-Personal"));
+    }
+
+    #[test]
+    fn localized_remote_windows_wifi_output_keeps_profile_connection_state() {
+        let parsed = serde_json::json!({
+            "network_stats_available": true,
+            "network_rates_available": false,
+            "networks": [{
+                "name":"Wi-Fi", "rx_bytes":12, "tx_bytes":34,
+                "rx_rate":null, "tx_rate":null, "is_wireless":true,
+                "link_state":"up", "wifi_state":"CONNECTED"
+            }],
+            "wlan_text":"Name : Wi-Fi\nStatus : Verbunden\nSSID : Zuhause\n"
+        });
+        let (networks, complete, _) = super::parse_remote_network_rows(&parsed).unwrap();
+        assert!(complete);
+        assert_eq!(networks[0].wifi_state.as_deref(), Some("CONNECTED"));
+        assert_eq!(networks[0].wifi_ssid, None);
+        assert_eq!(networks[0].wifi_signal_pct, None);
     }
 
     #[test]

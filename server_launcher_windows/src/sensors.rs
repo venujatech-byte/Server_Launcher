@@ -225,6 +225,7 @@ pub struct DisplayInfo {
 
 #[derive(Debug, Clone, Default)]
 pub struct BatteryInfo {
+    pub device_id: String,
     pub name: String,
     pub present: bool,
     pub status: String,
@@ -2068,6 +2069,7 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
                             .to_string();
 
                         batteries.push(BatteryInfo {
+                            device_id: name.clone(),
                             name,
                             present,
                             status,
@@ -3663,6 +3665,7 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
             except: pass
         
         batteries.append({
+            "device_id": os.path.basename(ps),
             "name": os.path.basename(ps),
             "status": status,
             "capacity_pct": cap,
@@ -4321,6 +4324,9 @@ print(json.dumps(data))
                     .filter(|value| value.is_finite() && *value >= 0.0 && *value <= f32::MAX as f64)
                     .map(|value| value as f32);
                 batteries.push(BatteryInfo {
+                    device_id: b["device_id"].as_str().filter(|id| !id.trim().is_empty())
+                        .or_else(|| b["name"].as_str().filter(|name| !name.trim().is_empty()))
+                        .unwrap_or("Unknown battery").to_string(),
                     name: b["name"].as_str().filter(|name| !name.trim().is_empty()).unwrap_or("Unknown battery").to_string(),
                     present: true,
                     status: b["status"].as_str().unwrap_or("Unknown").to_string(),
@@ -4996,7 +5002,7 @@ if (__INVENTORY__) {
 try { $result.disk=Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -Filter "Name='_Total'" -ErrorAction Stop | Select-Object -First 1 DiskReadBytesPerSec,DiskWriteBytesPerSec } catch { $result.disk=$null }
 try { $result.gpu_engines=@(Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction Stop | Select-Object Name,UtilizationPercentage) } catch { $result.gpu_engines=@() }
 try { $result.logical_disks=@(Get-CimInstance Win32_PerfFormattedData_PerfDisk_LogicalDisk -ErrorAction Stop | Select-Object Name,DiskReadBytesPerSec,DiskWriteBytesPerSec) } catch { $result.logical_disks=@() }
-try { $result.battery=@(Get-CimInstance Win32_Battery -ErrorAction Stop | Select-Object Name,EstimatedChargeRemaining,BatteryStatus,DesignCapacity,FullChargeCapacity) } catch { $result.battery_error="Battery query failed: $($_.Exception.Message)" }
+try { $result.battery=@(Get-CimInstance Win32_Battery -ErrorAction Stop | Select-Object DeviceID,Name,EstimatedChargeRemaining,BatteryStatus,DesignCapacity,FullChargeCapacity) } catch { $result.battery_error="Battery query failed: $($_.Exception.Message)" }
 try {
   $sensors=@(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor -ErrorAction Stop | Select-Object Name,Value,Identifier,Parent,SensorType)
   $result.temp=@($sensors | Where-Object SensorType -eq Temperature)
@@ -5352,6 +5358,9 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
             let energy_full_wh = b["FullChargeCapacity"].as_u64().filter(|value| *value > 0).map(|value| value as f32 / 1000.0);
             let energy_design_wh = b["DesignCapacity"].as_u64().filter(|value| *value > 0).map(|value| value as f32 / 1000.0);
             snap.power.batteries.push(BatteryInfo {
+                device_id: b["DeviceID"].as_str().filter(|id| !id.trim().is_empty())
+                    .or_else(|| b["Name"].as_str().filter(|name| !name.trim().is_empty()))
+                    .unwrap_or("Battery").to_string(),
                 name: b["Name"].as_str().unwrap_or("Battery").into(), present: true,
                 capacity_pct: percent.map(|value| value as f32),
                 status: windows_battery_status(b["BatteryStatus"].as_u64()).into(),
@@ -5676,10 +5685,11 @@ mod windows_sensor_tests {
     #[test]
     fn windows_battery_capacity_uses_reported_wmi_design_and_full_charge() {
         let snapshot = parse_windows_hardware(&serde_json::json!({"battery": [
-            {"Name":"Battery", "EstimatedChargeRemaining":50, "BatteryStatus":2,
+            {"DeviceID":"ACPI\\PNP0C0A\\0", "Name":"Battery", "EstimatedChargeRemaining":50, "BatteryStatus":2,
              "DesignCapacity":50000, "FullChargeCapacity":40000}
         ]}));
         let battery = &snapshot.power.batteries[0];
+        assert_eq!(battery.device_id, "ACPI\\PNP0C0A\\0");
 
         assert_eq!(battery.energy_design_wh, Some(50.0));
         assert_eq!(battery.energy_full_wh, Some(40.0));

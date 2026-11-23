@@ -14834,8 +14834,10 @@ impl LauncherApp {
             ScrollArea::vertical().id_salt("windows_power_scroll").auto_shrink([false, false]).show(ui, |ui| {
             ui.heading("Windows power and battery");
             if snap.power.batteries.is_empty() { ui.label("No battery telemetry is available."); }
-            for battery in &snap.power.batteries {
-                ui.label(format!("{} · {}% · {}", battery.name, reported_sensor_value(battery.capacity_pct, 0), battery.status));
+            for (index, battery) in snap.power.batteries.iter().enumerate() {
+                let duplicate_name = snap.power.batteries.iter().filter(|item| item.name == battery.name).count() > 1;
+                let label = if duplicate_name { format!("{} · {}", battery.name, index + 1) } else { battery.name.clone() };
+                ui.label(format!("{} · {}% · {}", label, reported_sensor_value(battery.capacity_pct, 0), battery.status));
             }
             ui.label("Package watts, battery health and charging limits require a supported hardware provider. Linux governor and firmware controls are unavailable here.");
             render_animated_power_estimate(ui, snap, self.palette().accent);

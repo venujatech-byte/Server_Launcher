@@ -223,6 +223,7 @@ pub struct DisplayInfo {
 
 #[derive(Debug, Clone, Default)]
 pub struct BatteryInfo {
+    pub device_id: String,
     pub name: String,
     pub present: bool,
     pub status: String,
@@ -2014,6 +2015,7 @@ pub fn collect_power_supply() -> PowerSupplyInfo {
                             .to_string();
 
                         batteries.push(BatteryInfo {
+                            device_id: name.clone(),
                             name,
                             present,
                             status,
@@ -3583,6 +3585,7 @@ for ps in sorted(glob.glob("/sys/class/power_supply/*")):
             except: pass
         
         batteries.append({
+            "device_id": os.path.basename(ps),
             "name": os.path.basename(ps),
             "status": status,
             "capacity_pct": cap,
@@ -4241,6 +4244,9 @@ print(json.dumps(data))
                     .filter(|value| value.is_finite() && *value >= 0.0 && *value <= f32::MAX as f64)
                     .map(|value| value as f32);
                 batteries.push(BatteryInfo {
+                    device_id: b["device_id"].as_str().filter(|id| !id.trim().is_empty())
+                        .or_else(|| b["name"].as_str().filter(|name| !name.trim().is_empty()))
+                        .unwrap_or("Unknown battery").to_string(),
                     name: b["name"].as_str().filter(|name| !name.trim().is_empty()).unwrap_or("Unknown battery").to_string(),
                     present: true,
                     status: b["status"].as_str().unwrap_or("Unknown").to_string(),

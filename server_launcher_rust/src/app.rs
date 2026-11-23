@@ -5192,6 +5192,29 @@ fn all_batteries_have_status(batteries: &[crate::sensors::BatteryInfo], status: 
     !batteries.is_empty() && batteries.iter().all(|battery| battery.status.trim().eq_ignore_ascii_case(status))
 }
 
+fn battery_identity(battery: &crate::sensors::BatteryInfo) -> &str {
+    if battery.device_id.trim().is_empty() { &battery.name } else { &battery.device_id }
+}
+
+fn battery_device_key(batteries: &[crate::sensors::BatteryInfo], index: usize) -> String {
+    let identity = battery_identity(&batteries[index]);
+    if batteries.iter().filter(|item| battery_identity(item) == identity).count() > 1 {
+        let ordinal = batteries[..index].iter().filter(|item| battery_identity(item) == identity).count() + 1;
+        format!("{identity}\u{1f}{ordinal}")
+    } else {
+        identity.to_owned()
+    }
+}
+
+fn battery_selector_label(batteries: &[crate::sensors::BatteryInfo], index: usize) -> String {
+    let battery = &batteries[index];
+    if batteries.iter().filter(|item| item.name == battery.name).count() > 1 {
+        format!("{} · {}", battery.name, index + 1)
+    } else {
+        battery.name.clone()
+    }
+}
+
 fn battery_capacity_retention(battery: &crate::sensors::BatteryInfo) -> Option<f32> {
     battery.health_pct.filter(|value| value.is_finite() && (0.0..=100.0).contains(value)).or_else(|| {
         let full = battery.energy_full_wh?;
@@ -5604,6 +5627,19 @@ mod layout_tests {
         assert!(all_batteries_have_status(&[charging.clone()], "charging"));
         assert!(!all_batteries_have_status(&[charging, discharging], "charging"));
         assert!(!all_batteries_have_status(&[crate::sensors::BatteryInfo::default()], "discharging"));
+    }
+
+    #[test]
+    fn duplicate_battery_names_keep_distinct_selector_identity() {
+        let batteries = vec![
+            crate::sensors::BatteryInfo { device_id: "BAT0".into(), name: "Battery".into(), ..Default::default() },
+            crate::sensors::BatteryInfo { device_id: "ACPI\\BAT1".into(), name: "Battery".into(), ..Default::default() },
+        ];
+        assert_ne!(battery_device_key(&batteries, 0), battery_device_key(&batteries, 1));
+        assert_eq!(battery_selector_label(&batteries, 0), "Battery · 1");
+        assert_eq!(battery_selector_label(&batteries, 1), "Battery · 2");
+        let unknown_ids = vec![crate::sensors::BatteryInfo { name: "Battery".into(), ..Default::default() }; 2];
+        assert_ne!(battery_device_key(&unknown_ids, 0), battery_device_key(&unknown_ids, 1));
     }
 
     #[test]
@@ -14975,24 +15011,30 @@ impl LauncherApp {
 
                 let battery_id = egui::Id::new(("power_selected_battery", host_id));
                 let mut selected = ui.ctx().data(|data| data.get_temp::<String>(battery_id))
-                    .filter(|name| snap.power.batteries.iter().any(|battery| &battery.name == name))
-                    .or_else(|| snap.power.batteries.first().map(|battery| battery.name.clone()));
+                    .filter(|id| snap.power.batteries.iter().enumerate().any(|(index, _)| battery_device_key(&snap.power.batteries, index).as_str() == id.as_str()))
+                    .or_else(|| (!snap.power.batteries.is_empty()).then(|| battery_device_key(&snap.power.batteries, 0)));
                 if snap.power.batteries.len() > 1 {
+                    let selected_label = selected.as_deref()
+                        .and_then(|id| snap.power.batteries.iter().enumerate().position(|(index, _)| battery_device_key(&snap.power.batteries, index) == id))
+                        .map(|index| battery_selector_label(&snap.power.batteries, index))
+                        .unwrap_or_else(|| "Battery".to_string());
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Battery").size(11.0).color(p.text_muted));
                         egui::ComboBox::from_id_salt(("power_battery_selector", host_id))
-                            .selected_text(selected.as_deref().unwrap_or("Battery"))
+                            .selected_text(selected_label)
                             .width(180.0)
                             .show_ui(ui, |ui| {
-                                for battery in &snap.power.batteries {
-                                    ui.selectable_value(&mut selected, Some(battery.name.clone()), &battery.name);
+                                for (index, _) in snap.power.batteries.iter().enumerate() {
+                                    ui.selectable_value(&mut selected, Some(battery_device_key(&snap.power.batteries, index)), battery_selector_label(&snap.power.batteries, index));
                                 }
                             });
                     });
                     ui.add_space(6.0);
                 }
-                if let Some(name) = &selected { ui.ctx().data_mut(|data| data.insert_temp(battery_id, name.clone())); }
-                let bat = selected.as_ref().and_then(|name| snap.power.batteries.iter().find(|battery| &battery.name == name));
+                if let Some(id) = &selected { ui.ctx().data_mut(|data| data.insert_temp(battery_id, id.clone())); }
+                let bat = selected.as_ref().and_then(|id| snap.power.batteries.iter().enumerate()
+                    .find(|(index, _)| battery_device_key(&snap.power.batteries, *index).as_str() == id.as_str())
+                    .map(|(_, battery)| battery));
                 let has_battery = bat.is_some();
                 let bat_pct = bat.and_then(|battery| battery.capacity_pct).unwrap_or(f32::NAN);
                 let full_wh = bat.and_then(|battery| battery.energy_full_wh).unwrap_or(f32::NAN);

@@ -3745,73 +3745,6 @@ impl eframe::App for LauncherApp {
             )
             .show(ctx, |ui| {
                 if listener_dialog_open { ui.disable(); }
-                if self.active_sidebar_tab == SidebarTab::Servers {
-                    if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == self.selected_machine).cloned() {
-                        let p = self.palette();
-                        let status = self.remote_connection_status.lock().unwrap().get(&host.id).cloned();
-                        let connecting = self.remote_connecting.lock().unwrap().contains(&host.id);
-                        let (label, color) = match (connecting, &status) {
-                            (true, _) => ("Connecting", p.warning),
-                            (_, Some(Ok(_))) => ("Online", p.success),
-                            (_, Some(Err(_))) => ("Error", p.danger),
-                            _ => ("Idle", p.text_muted),
-                        };
-                        let address = if host.host.contains(':') && !host.host.starts_with('[') {
-                            format!("[{}]", host.host)
-                        } else { host.host.clone() };
-                        let uri = format!("ssh://{}@{}:{}", host.user, address, host.port);
-                        let compact = ui.available_width() < 680.0;
-                        ui.horizontal_wrapped(|ui| {
-                            render_app_logo(ui, 30.0, p.bg_header);
-                            ui.allocate_ui_with_layout(egui::vec2(if compact { 300.0 } else { 310.0 }, 34.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                                ui.spacing_mut().item_spacing.y = 1.0;
-                                ui.horizontal(|ui| {
-                                    ui.add_sized([200.0, 19.0], egui::Label::new(RichText::new(&host.name).size(17.5).strong()).truncate()).on_hover_text(&host.name);
-                                    ui.label(RichText::new(format!("● {label}")).size(10.5).color(color)).on_hover_text(match &status { Some(Ok(info)) | Some(Err(info)) => info.as_str(), None => label });
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.add_sized([245.0, 14.0], egui::Label::new(RichText::new(&uri).monospace().size(11.0).color(p.text_muted)).truncate()).on_hover_text(format!("{}\n{}", uri, host.remote_cwd));
-                                    let id = egui::Id::new(("ssh_uri_copied", &host.id));
-                                    let copied = ctx.data(|d| d.get_temp::<Instant>(id)).is_some_and(|t| t.elapsed() < Duration::from_millis(1500));
-                                    if ui.small_button(RichText::new(if copied { crate::lucide::CHECK } else { crate::lucide::COPY }).size(10.5)).on_hover_text(if copied { "Copied" } else { "Copy SSH URI" }).clicked() {
-                                        ctx.copy_text(uri.clone());
-                                        ctx.data_mut(|d| d.insert_temp(id, Instant::now()));
-                                        ctx.request_repaint_after(Duration::from_millis(1500));
-                                    }
-                                });
-                            });
-                            if compact { ui.end_row(); }
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                              ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.spacing_mut().button_padding = egui::vec2(6.0, 2.0);
-                                ui.spacing_mut().interact_size.y = 22.0;
-                                ui.menu_button(RichText::new("Power ▾").size(10.5), |ui| {
-                                    if ui.button(RichText::new("Restart Device").size(10.5)).clicked() {
-                                        self.remote_reboot_modal.open_for_host(&host);
-                                        ui.close_menu();
-                                    }
-                                    if ui.button(RichText::new("Shut Down").size(10.5)).clicked() {
-                                        self.remote_shutdown_modal.open_for_host(&host);
-                                        ui.close_menu();
-                                    }
-                                });
-                                let scanning = self.remote_scanning.lock().unwrap().contains(&host.id);
-                                if ui.button(RichText::new(if scanning { "Scanning..." } else { "Scan Ports" }).size(10.5)).clicked() { self.trigger_remote_scan(&host); }
-                                if ui.button(RichText::new(format!("{} Terminal", crate::lucide::EXTERNAL_LINK)).size(10.5)).on_hover_text("Open external SSH terminal").clicked() { let _ = launch_external_ssh_terminal(&host); }
-                                if ui.button(RichText::new("Reconnect").size(10.5)).clicked() {
-                                    self.test_remote_host(&host);
-                                    self.trigger_remote_scan(&host);
-                                }
-                                if ui.button(RichText::new("Edit").size(10.5)).clicked() { self.ssh_host_modal.open_edit(&host); }
-                                if ui.button(RichText::new(crate::lucide::SETTINGS).size(10.5)).on_hover_text("Settings & Preferences").clicked() { self.settings_modal_open = true; }
-                              });
-                            });
-                        });
-                        return;
-                    }
-                }
-
                 ui.horizontal(|ui| {
                     let remote_host_opt = if self.selected_machine != "local" {
                         self.ssh_hosts.iter().find(|h| h.id == self.selected_machine).cloned()
@@ -3963,6 +3896,7 @@ impl eframe::App for LauncherApp {
                         }
 
                         if let Some(ref host) = remote_host_opt {
+                            let themed = self.active_sidebar_tab == SidebarTab::Servers;
                             // REMOTE SSH PC CONTROLS (Moved up here)
                             let is_scanning = {
                                 let map = self.remote_scanning.lock().unwrap();
@@ -4002,7 +3936,7 @@ impl eframe::App for LauncherApp {
                                     .strong()
                                     .color(p.info),
                             )
-                            .fill(p.info_subtle)
+                            .fill(if themed { p.bg_button } else { p.info_subtle })
                             .stroke(Stroke::NONE)
                             .rounding(Rounding::same(999.0))
                             .min_size(egui::vec2(76.0, 22.0));
@@ -4031,10 +3965,10 @@ impl eframe::App for LauncherApp {
                                 RichText::new(format!("{} Shut Down", crate::lucide::POWER))
                                     .size(10.5)
                                     .strong()
-                                    .color(Color32::from_rgb(254, 202, 202)),
+                                    .color(if themed { p.danger } else { Color32::from_rgb(254, 202, 202) }),
                             )
-                            .fill(Color32::from_rgb(153, 27, 27))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(185, 28, 28)))
+                            .fill(if themed { p.bg_button } else { Color32::from_rgb(153, 27, 27) })
+                            .stroke(if themed { Stroke::NONE } else { Stroke::new(1.0_f32, Color32::from_rgb(185, 28, 28)) })
                             .rounding(Rounding::same(999.0))
                             .min_size(egui::vec2(86.0, 22.0));
                             if ui.add(btn_shutdown).on_hover_text("Shut down remote device (requires confirmation & sudo password)").clicked() {
@@ -4045,10 +3979,10 @@ impl eframe::App for LauncherApp {
                                 RichText::new(format!("{} Restart Device", crate::lucide::REFRESH_CW))
                                     .size(10.5)
                                     .strong()
-                                    .color(Color32::from_rgb(254, 243, 199)),
+                                    .color(if themed { p.warning } else { Color32::from_rgb(254, 243, 199) }),
                             )
-                            .fill(Color32::from_rgb(146, 64, 14))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(180, 83, 9)))
+                            .fill(if themed { p.bg_button } else { Color32::from_rgb(146, 64, 14) })
+                            .stroke(if themed { Stroke::NONE } else { Stroke::new(1.0_f32, Color32::from_rgb(180, 83, 9)) })
                             .rounding(Rounding::same(999.0))
                             .min_size(egui::vec2(98.0, 22.0));
                             if ui.add(btn_reboot).on_hover_text("Restart remote device (requires confirmation & sudo password)").clicked() {

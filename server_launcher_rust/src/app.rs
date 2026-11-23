@@ -5209,7 +5209,8 @@ fn battery_device_key(batteries: &[crate::sensors::BatteryInfo], index: usize) -
 fn battery_selector_label(batteries: &[crate::sensors::BatteryInfo], index: usize) -> String {
     let battery = &batteries[index];
     if batteries.iter().filter(|item| item.name == battery.name).count() > 1 {
-        format!("{} · {}", battery.name, index + 1)
+        let ordinal = batteries[..index].iter().filter(|item| item.name == battery.name).count() + 1;
+        format!("{} · {}", battery.name, ordinal)
     } else {
         battery.name.clone()
     }

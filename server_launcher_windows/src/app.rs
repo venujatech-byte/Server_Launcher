@@ -1067,7 +1067,7 @@ impl LauncherApp {
         });
     }
 
-    fn trigger_remote_bluetooth_query(&self, host: SshRemoteHost) {
+    fn trigger_remote_bluetooth_query(&self, host: SshRemoteHost, windows_host: bool) {
         let hid = host.id.clone();
         {
             let mut in_flight = self.remote_bluetooth_in_flight.lock().unwrap();
@@ -1077,7 +1077,12 @@ impl LauncherApp {
         let in_flight = self.remote_bluetooth_in_flight.clone();
         let last_fetch = self.remote_bluetooth_last_fetch.clone();
         std::thread::spawn(move || {
-            let snapshot = crate::bluetooth::query_remote_bluetooth_status(&host).unwrap_or_else(|error| {
+            let result = if windows_host {
+                crate::bluetooth::query_remote_windows_bluetooth_status(&host)
+            } else {
+                crate::bluetooth::query_remote_bluetooth_status(&host)
+            };
+            let snapshot = result.unwrap_or_else(|error| {
                 let mut snapshot = crate::bluetooth::BluetoothSnapshot::default();
                 snapshot.status_msg = Some((error, false, Instant::now()));
                 snapshot
@@ -15702,11 +15707,12 @@ impl LauncherApp {
         if is_remote {
             let hid = host_id.unwrap_or_default();
             let linux_host = snap.os_name.to_ascii_lowercase().contains("linux");
+            let windows_host = snap.os_name.to_ascii_lowercase().contains("windows");
             let last_fetch = self.remote_bluetooth_last_fetch.lock().unwrap().get(hid).copied();
             let in_flight = self.remote_bluetooth_in_flight.lock().unwrap().contains(hid);
-            if linux_host && last_fetch.map_or(true, |time| time.elapsed() >= Duration::from_secs(5)) && !in_flight {
+            if (linux_host || windows_host) && last_fetch.map_or(true, |time| time.elapsed() >= Duration::from_secs(5)) && !in_flight {
                 if let Some(host) = self.ssh_hosts.iter().find(|host| host.id == hid).cloned() {
-                    self.trigger_remote_bluetooth_query(host);
+                    self.trigger_remote_bluetooth_query(host, windows_host);
                 }
             }
             let remote_snapshot = self.remote_bluetooth_snapshots.lock().unwrap().get(hid).cloned();
@@ -15716,16 +15722,29 @@ impl LauncherApp {
                     ui.add_space(6.0);
                     if snap.os_name.is_empty() {
                         ui.label(RichText::new("Waiting for remote operating system details…").size(11.0).color(p.text_secondary));
-                    } else if !linux_host {
-                        let message = if snap.os_name.to_ascii_lowercase().contains("windows") {
-                            "Remote Windows Bluetooth telemetry is not available yet."
-                        } else {
-                            "Remote Bluetooth monitoring requires a Linux host with BlueZ."
-                        };
-                        ui.label(RichText::new(message).size(11.0).color(p.text_secondary));
+                    } else if !linux_host && !windows_host {
+                        ui.label(RichText::new("Remote Bluetooth monitoring requires Linux with BlueZ or Windows Bluetooth support.").size(11.0).color(p.text_secondary));
                     } else if let Some(remote) = remote_snapshot {
                         if let Some((error, _, _)) = &remote.status_msg {
                             ui.label(RichText::new(error).size(11.0).color(p.text_secondary));
+                        } else if windows_host {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new(format!("{} paired", remote.get_paired_count())).size(12.0).strong().color(p.text_primary));
+                                ui.label(RichText::new("Windows reports device connection state; radio power is unavailable.").size(10.0).color(p.text_muted));
+                            });
+                            ui.add_space(8.0);
+                            if remote.devices.is_empty() {
+                                ui.label(RichText::new("No paired devices reported by Windows.").size(11.0).color(p.text_muted));
+                            }
+                            for device in remote.devices.iter().filter(|device| device.paired) {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(&device.name).size(11.5).color(p.text_primary));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(RichText::new(if device.connected { "Connected" } else { "Paired" }).size(10.0).color(if device.connected { accent } else { p.text_muted }));
+                                    });
+                                });
+                                ui.label(RichText::new(&device.mac).size(9.0).monospace().color(p.text_muted));
+                            }
                         } else if let Some(controller) = &remote.controller {
                             ui.horizontal(|ui| {
                                 let name = if controller.alias.is_empty() { &controller.name } else { &controller.alias };

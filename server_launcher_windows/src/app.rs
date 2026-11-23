@@ -11792,7 +11792,7 @@ impl LauncherApp {
                 let (slot_label, topol_label, mem_type_str, ram_mod_str) = if let Some(ref hw) = snap.memory_hw {
                     let slot = if host_id.is_some() { "REMOTE : ACTIVE".to_string() } else { if hw.slot_summary.is_empty() { "SLOTS UNAVAILABLE".into() } else { hw.slot_summary.clone() } };
                     let topol = if host_id.is_some() { "HOST MEMORY POOL".to_string() } else { if hw.topology.is_empty() { "TOPOLOGY UNAVAILABLE".into() } else { hw.topology.clone() } };
-                    let mtype = format!("{} {}", total_ram_str, hw.memory_type);
+                    let mtype = format!("{} {} {}", total_ram_str, hw.memory_type, hw.form_factor).trim().to_string();
                     let mspec = hw.module_spec.clone();
                     (slot, topol, mtype, mspec)
                 } else {

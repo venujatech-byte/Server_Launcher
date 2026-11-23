@@ -4569,7 +4569,7 @@ fn collect_windows_hardware(inventory: bool) -> Result<serde_json::Value, String
 $result=@{gpu=@();ram=@();battery=@();temp=@();gpu_engines=@()};
 if (__INVENTORY__) {
   try { $result.gpu=@(Get-CimInstance Win32_VideoController -ErrorAction Stop | Select-Object Name,DriverVersion) } catch { $result.gpu_error="GPU inventory query failed: $($_.Exception.Message)" }
-  try { $result.ram=@(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop | Select-Object Manufacturer,Capacity,Speed,SMBIOSMemoryType,FormFactor) } catch { $result.ram_error="RAM inventory query failed: $($_.Exception.Message)" }
+  try { $result.ram=@(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop | Select-Object Manufacturer,Capacity,ConfiguredClockSpeed,SMBIOSMemoryType,FormFactor,DeviceLocator) } catch { $result.ram_error="RAM inventory query failed: $($_.Exception.Message)" }
   try { $result.physical_disks=@(Get-CimInstance Win32_DiskDrive -ErrorAction Stop | Select-Object DeviceID,Model,InterfaceType,Size,Partitions) } catch { $result.disk_inventory_error="Disk inventory query failed: $($_.Exception.Message)" }
   try { $result.network_adapters=@(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Select-Object Name,ifType) } catch { $result.network_adapters=$null }
 }
@@ -4636,6 +4636,40 @@ fn windows_cpu_package_metric(hardware: &serde_json::Value, sensors: &serde_json
 fn normalize_windows_hardware_name(name: &str) -> String {
     name.to_ascii_lowercase().replace("(r)", "").replace("(tm)", "")
         .chars().filter(|ch| ch.is_ascii_alphanumeric()).collect()
+}
+
+#[cfg(any(windows, test))]
+fn windows_memory_type(code: u64) -> Option<&'static str> {
+    match code {
+        18 => Some("DDR"),
+        19 => Some("DDR2"),
+        20 => Some("DDR2 FB-DIMM"),
+        24 => Some("DDR3"),
+        25 => Some("FBD2"),
+        26 => Some("DDR4"),
+        27 => Some("LPDDR"),
+        28 => Some("LPDDR2"),
+        29 => Some("LPDDR3"),
+        30 => Some("LPDDR4"),
+        32 => Some("HBM"),
+        33 => Some("HBM2"),
+        34 => Some("DDR5"),
+        35 => Some("LPDDR5"),
+        36 => Some("HBM3"),
+        _ => None,
+    }
+}
+
+#[cfg(any(windows, test))]
+fn windows_memory_form_factor(code: u64) -> Option<&'static str> {
+    match code {
+        7 => Some("SIMM"),
+        8 => Some("DIMM"),
+        11 => Some("RIMM"),
+        12 => Some("SODIMM"),
+        13 => Some("SRIMM"),
+        _ => None,
+    }
 }
 
 #[cfg(any(windows, test))]
@@ -4910,18 +4944,35 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
         }
     }
     if let Some(ram) = data["ram"].as_array().filter(|r| !r.is_empty()) {
+        let memory_types: std::collections::BTreeSet<_> = ram.iter()
+            .filter_map(|module| module["SMBIOSMemoryType"].as_u64().and_then(windows_memory_type))
+            .collect();
+        let form_factors: std::collections::BTreeSet<_> = ram.iter()
+            .filter_map(|module| module["FormFactor"].as_u64().and_then(windows_memory_form_factor))
+            .collect();
         snap.memory_hw = Some(MemoryHardwareInfo {
             slot_summary: format!("{} populated modules", ram.len()),
+            memory_type: memory_types.into_iter().collect::<Vec<_>>().join(" / "),
+            form_factor: form_factors.into_iter().collect::<Vec<_>>().join(" / "),
             module_spec: ram.iter().map(|module| {
                 let mut details = Vec::new();
                 if let Some(manufacturer) = module["Manufacturer"].as_str().map(str::trim).filter(|value| !value.is_empty()) {
                     details.push(manufacturer.to_string());
                 }
-                if let Some(speed) = module["Speed"].as_u64().filter(|value| *value > 0) {
+                if let Some(kind) = module["SMBIOSMemoryType"].as_u64().and_then(windows_memory_type) {
+                    details.push(kind.to_string());
+                }
+                if let Some(speed) = module["ConfiguredClockSpeed"].as_u64().filter(|value| *value > 0) {
                     details.push(format!("{speed} MHz"));
                 }
                 if let Some(capacity) = module["Capacity"].as_u64().filter(|value| *value > 0) {
                     details.push(format_bytes(capacity));
+                }
+                if let Some(form) = module["FormFactor"].as_u64().and_then(windows_memory_form_factor) {
+                    details.push(form.to_string());
+                }
+                if let Some(locator) = module["DeviceLocator"].as_str().map(str::trim).filter(|value| !value.is_empty()) {
+                    details.push(locator.to_string());
                 }
                 if details.is_empty() { "Module details unavailable".to_string() } else { details.join(" · ") }
             }).collect::<Vec<_>>().join("; "),
@@ -5180,14 +5231,18 @@ mod windows_sensor_tests {
     #[test]
     fn memory_inventory_omits_missing_module_fields() {
         let snap = parse_windows_hardware(&serde_json::json!({"ram": [
-            {"Manufacturer": "Example", "Speed": 3200, "Capacity": 8589934592_u64},
-            {"Manufacturer": "", "Speed": null, "Capacity": 0}
+            {"Manufacturer": "Example", "Speed": 9999, "ConfiguredClockSpeed": 3200, "SMBIOSMemoryType": 26, "FormFactor": 12, "DeviceLocator": "DIMM 0", "Capacity": 8589934592_u64},
+            {"Manufacturer": "", "ConfiguredClockSpeed": null, "SMBIOSMemoryType": 0, "FormFactor": 0, "Capacity": 0}
         ]}));
         let memory = snap.memory_hw.unwrap();
         assert_eq!(memory.slot_summary, "2 populated modules");
-        assert!(memory.module_spec.contains("Example · 3200 MHz"));
+        assert_eq!(memory.memory_type, "DDR4");
+        assert_eq!(memory.form_factor, "SODIMM");
+        assert_eq!(windows_memory_type(34), Some("DDR5"));
+        assert_eq!(windows_memory_type(255), None);
+        assert!(memory.module_spec.contains("Example · DDR4 · 3200 MHz · 8.0 GB · SODIMM · DIMM 0"));
         assert!(memory.module_spec.contains("Module details unavailable"));
-        assert!(!memory.module_spec.contains("null MHz") && !memory.module_spec.contains("0 B"));
+        assert!(!memory.module_spec.contains("9999 MHz") && !memory.module_spec.contains("null MHz") && !memory.module_spec.contains("0 B"));
     }
     #[test]
     fn live_battery_samples_are_independent_of_inventory() {

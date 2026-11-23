@@ -349,6 +349,10 @@ fn counter_rates(previous: Option<(u64, u64)>, current: (u64, u64), elapsed: f64
     }
 }
 
+fn process_cpu_sample_available(has_previous_sample: bool, usage: f32) -> bool {
+    has_previous_sample && usage.is_finite()
+}
+
 fn parse_socket_stats(content: &str) -> Option<(usize, usize, usize)> {
     let value = |prefix: &str, key: &str| content.lines().find_map(|line| {
         if !line.starts_with(prefix) { return None; }
@@ -386,6 +390,16 @@ mod process_disk_rate_tests {
         assert_eq!(super::counter_rates(Some((100, 200)), (300, 500), 2.0), (100.0, 150.0));
         assert_eq!(super::counter_rates(Some((300, 500)), (20, 600), 2.0), (0.0, 50.0));
         assert_eq!(super::counter_rates(Some((100, 200)), (300, 500), 0.0), (0.0, 0.0));
+    }
+}
+
+#[cfg(test)]
+mod process_cpu_sample_tests {
+    #[test]
+    fn first_and_invalid_process_cpu_samples_are_unavailable() {
+        assert!(!super::process_cpu_sample_available(false, 0.0));
+        assert!(super::process_cpu_sample_available(true, 0.0));
+        assert!(!super::process_cpu_sample_available(true, f32::NAN));
     }
 }
 
@@ -760,6 +774,7 @@ impl SystemSensorsCollector {
                 let read_b = disk_usage.total_read_bytes;
                 let written_b = disk_usage.total_written_bytes;
                 let identity = (pid_u32, proc.start_time());
+                let cpu_usage_available = process_cpu_sample_available(self.prev_proc_disk.contains_key(&identity), cpu_usage);
                 current_proc_disk.insert(identity, (read_b, written_b));
                 let (r_rate, w_rate) = counter_rates(self.prev_proc_disk.get(&identity).copied(), (read_b, written_b), proc_disk_elapsed);
                 let disk_rate_bps = r_rate + w_rate;
@@ -785,7 +800,7 @@ impl SystemSensorsCollector {
                     start_marker,
                     name,
                     cpu_usage,
-                    cpu_usage_available: true,
+                    cpu_usage_available,
                     memory_bytes,
                     disk_read_bytes: read_b,
                     disk_written_bytes: written_b,

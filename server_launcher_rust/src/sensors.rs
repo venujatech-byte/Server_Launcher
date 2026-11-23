@@ -2707,31 +2707,41 @@ fn parse_remote_windows_memory_modules(modules: &serde_json::Value) -> Option<Me
     })
 }
 
-// shortcut: netsh field labels are English-only, upgrade to localized parsing if Windows locale coverage is required.
-fn apply_remote_windows_wlan(interface: &mut NetInterfaceInfo, text: Option<&str>) {
-    let Some(text) = text.filter(|text| !text.trim().is_empty()) else { return; };
-    let mut sections = Vec::<std::collections::HashMap<String, String>>::new();
-    let mut fields = std::collections::HashMap::new();
-    for line in text.lines().chain(std::iter::once("")) {
-        if line.trim().is_empty() {
-            if !fields.is_empty() { sections.push(std::mem::take(&mut fields)); }
-        } else if let Some((key, value)) = line.split_once(':') {
-            fields.insert(key.trim().to_ascii_lowercase(), value.trim().to_string());
+// shortcut: netsh remains a fallback when the optional native WLAN query is unavailable.
+fn apply_remote_windows_wlan(interface: &mut NetInterfaceInfo, text: Option<&str>, native: &serde_json::Value) {
+    if let Some(text) = text.filter(|text| !text.trim().is_empty()) {
+        let mut sections = Vec::<std::collections::HashMap<String, String>>::new();
+        let mut fields = std::collections::HashMap::new();
+        for line in text.lines().chain(std::iter::once("")) {
+            if line.trim().is_empty() {
+                if !fields.is_empty() { sections.push(std::mem::take(&mut fields)); }
+            } else if let Some((key, value)) = line.split_once(':') {
+                fields.insert(key.trim().to_ascii_lowercase(), value.trim().to_string());
+            }
+        }
+        if let Some(fields) = sections.into_iter().find(|fields| {
+            fields.get("name").is_some_and(|name| name.eq_ignore_ascii_case(&interface.name))
+        }) {
+            let get = |key: &str| fields.get(key).map(String::as_str);
+            interface.wifi_state = get("state").filter(|state| matches!(state.to_ascii_lowercase().as_str(), "connected" | "disconnected")).map(str::to_ascii_uppercase);
+            interface.wifi_ssid = get("ssid").filter(|value| !value.is_empty()).map(str::to_owned);
+            interface.wifi_bssid = get("bssid").map(|value| value.replace('-', ":").to_ascii_lowercase()).filter(|value| parse_network_mac(&serde_json::json!(value)).is_some());
+            interface.wifi_signal_pct = get("signal").and_then(|value| value.trim_end_matches('%').parse::<u8>().ok()).filter(|value| *value <= 100);
+            interface.wifi_channel = get("channel").and_then(|value| value.parse::<u32>().ok()).filter(|value| *value > 0);
+            let receive = get("receive rate (mbps)");
+            let transmit = get("transmit rate (mbps)");
+            interface.wifi_rate = (receive.is_some() || transmit.is_some()).then(|| format!("RX {} / TX {} Mbps", receive.unwrap_or("—"), transmit.unwrap_or("—")));
+            interface.wifi_security = get("authentication").filter(|value| !value.is_empty()).map(str::to_owned);
         }
     }
-    let Some(fields) = sections.into_iter().find(|fields| {
-        fields.get("name").is_some_and(|name| name.eq_ignore_ascii_case(&interface.name))
-    }) else { return; };
-    let get = |key: &str| fields.get(key).map(String::as_str);
-    interface.wifi_state = get("state").filter(|state| matches!(state.to_ascii_lowercase().as_str(), "connected" | "disconnected")).map(str::to_ascii_uppercase);
-    interface.wifi_ssid = get("ssid").filter(|value| !value.is_empty()).map(str::to_owned);
-    interface.wifi_bssid = get("bssid").map(|value| value.replace('-', ":").to_ascii_lowercase()).filter(|value| parse_network_mac(&serde_json::json!(value)).is_some());
-    interface.wifi_signal_pct = get("signal").and_then(|value| value.trim_end_matches('%').parse::<u8>().ok()).filter(|value| *value <= 100);
-    interface.wifi_channel = get("channel").and_then(|value| value.parse::<u32>().ok()).filter(|value| *value > 0);
-    let receive = get("receive rate (mbps)");
-    let transmit = get("transmit rate (mbps)");
-    interface.wifi_rate = (receive.is_some() || transmit.is_some()).then(|| format!("RX {} / TX {} Mbps", receive.unwrap_or("—"), transmit.unwrap_or("—")));
-    interface.wifi_security = get("authentication").filter(|value| !value.is_empty()).map(str::to_owned);
+    let state = native["state"].as_str().map(str::to_ascii_uppercase);
+    if let Some(state) = state.filter(|state| matches!(state.as_str(), "CONNECTED" | "DISCONNECTED")) { interface.wifi_state = Some(state); }
+    if let Some(ssid) = native["ssid"].as_str().filter(|value| !value.is_empty()) { interface.wifi_ssid = Some(ssid.to_owned()); }
+    if let Some(bssid) = native["bssid"].as_str().filter(|value| parse_network_mac(&serde_json::json!(value)).is_some()) { interface.wifi_bssid = Some(bssid.replace('-', ":").to_ascii_lowercase()); }
+    if let Some(signal) = native["signal_pct"].as_u64().and_then(|value| u8::try_from(value).ok()).filter(|value| *value <= 100) { interface.wifi_signal_pct = Some(signal); }
+    if let Some(channel) = native["channel"].as_u64().and_then(|value| u32::try_from(value).ok()).filter(|value| *value > 0) { interface.wifi_channel = Some(channel); }
+    if let Some(rate) = native["rate"].as_str().filter(|value| !value.is_empty()) { interface.wifi_rate = Some(rate.to_owned()); }
+    if let Some(security) = native["security"].as_str().filter(|value| !value.is_empty()) { interface.wifi_security = Some(security.to_owned()); }
 }
 
 fn parse_remote_network_rows(parsed: &serde_json::Value) -> Result<(Vec<NetInterfaceInfo>, bool, bool), String> {
@@ -2756,7 +2766,7 @@ fn parse_remote_network_rows(parsed: &serde_json::Value) -> Result<(Vec<NetInter
             ipv6: parse_network_address(&row["ipv6"], false),
             ..Default::default()
         };
-        if network.is_wireless == Some(true) { apply_remote_windows_wlan(&mut network, parsed["wlan_text"].as_str()); }
+        if network.is_wireless == Some(true) { apply_remote_windows_wlan(&mut network, parsed["wlan_text"].as_str(), &row["wlan"]); }
         networks.push(network);
     }
     let complete = parsed["network_stats_available"].as_bool() == Some(true)
@@ -2846,6 +2856,8 @@ mod remote_sensor_command_tests {
         assert!(script.contains("$rxRate = $null"));
         assert!(script.contains("[int]$adapter.ifType -eq 71"));
         assert!(script.contains("netsh wlan show interfaces"));
+        assert!(script.contains("[ServerLauncherWlan]::Read"));
+        assert!(script.contains("WlanQueryInterface"));
         assert!(script.contains("wlan_text = $wlanText"));
         assert!(script.contains("Get-NetIPInterface -InterfaceIndex $adapter.ifIndex"));
         assert!(script.contains("mtu = $mtu"));
@@ -4346,7 +4358,7 @@ mod tests {
     fn remote_windows_wifi_details_are_matched_to_the_adapter_name() {
         let mut wifi = super::NetInterfaceInfo { name: "Wi-Fi".into(), is_wireless: Some(true), ..Default::default() };
         let text = "Name                   : Ethernet\nState                  : disconnected\n\nName                   : Wi-Fi\nState                  : connected\nSSID                   : Home\nBSSID                  : 00-11-22-33-44-55\nAuthentication         : WPA2-Personal\nChannel                : 36\nReceive rate (Mbps)    : 433.3\nTransmit rate (Mbps)   : 866.7\nSignal                 : 84%\n";
-        super::apply_remote_windows_wlan(&mut wifi, Some(text));
+        super::apply_remote_windows_wlan(&mut wifi, Some(text), &serde_json::Value::Null);
         assert_eq!(wifi.wifi_state.as_deref(), Some("CONNECTED"));
         assert_eq!(wifi.wifi_ssid.as_deref(), Some("Home"));
         assert_eq!(wifi.wifi_bssid.as_deref(), Some("00:11:22:33:44:55"));
@@ -4354,6 +4366,24 @@ mod tests {
         assert_eq!(wifi.wifi_channel, Some(36));
         assert_eq!(wifi.wifi_rate.as_deref(), Some("RX 433.3 / TX 866.7 Mbps"));
         assert_eq!(wifi.wifi_security.as_deref(), Some("WPA2-Personal"));
+    }
+
+    #[test]
+    fn remote_native_windows_wifi_fields_override_localized_fallback() {
+        let parsed = serde_json::json!({
+            "network_stats_available": true, "network_rates_available": false,
+            "wlan_text":"Name : Wi-Fi\nState : disconnected\n",
+            "networks":[{"name":"Wi-Fi","rx_bytes":1,"tx_bytes":2,"rx_rate":null,"tx_rate":null,"is_wireless":true,
+                "link_state":"up","wlan":{"state":"CONNECTED","ssid":"Home","bssid":"00:11:22:33:44:55","signal_pct":84,
+                    "channel":36,"rate":"RX 433.3 / TX 866.7 Mbps","security":"WPA2-Personal (CCMP)"}}]
+        });
+        let (networks, _, _) = super::parse_remote_network_rows(&parsed).unwrap();
+        assert_eq!(networks[0].wifi_state.as_deref(), Some("CONNECTED"));
+        assert_eq!(networks[0].wifi_ssid.as_deref(), Some("Home"));
+        assert_eq!(networks[0].wifi_signal_pct, Some(84));
+        assert_eq!(networks[0].wifi_channel, Some(36));
+        assert_eq!(networks[0].wifi_rate.as_deref(), Some("RX 433.3 / TX 866.7 Mbps"));
+        assert_eq!(networks[0].wifi_security.as_deref(), Some("WPA2-Personal (CCMP)"));
     }
 
     #[test]

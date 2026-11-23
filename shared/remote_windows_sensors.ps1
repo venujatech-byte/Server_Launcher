@@ -14,6 +14,57 @@ try {
     $collectCpuCores = __COLLECT_CPU_CORES__
     $collectDiskRates = __COLLECT_DISK_RATES__
     $collectThermals = __COLLECT_THERMALS__
+    if ($collectNetworkDetails) {
+        try {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class ServerLauncherWlan {
+    [StructLayout(LayoutKind.Sequential)] public struct Ssid { public uint length; [MarshalAs(UnmanagedType.ByValArray, SizeConst=32)] public byte[] bytes; }
+    [StructLayout(LayoutKind.Sequential)] public struct Association { public Ssid ssid; public uint bss; [MarshalAs(UnmanagedType.ByValArray, SizeConst=6)] public byte[] bssid; public uint phy; public uint phyIndex; public uint signal; public uint rx; public uint tx; }
+    [StructLayout(LayoutKind.Sequential)] public struct Security { public int enabled; public int oneX; public uint auth; public uint cipher; }
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] public struct Connection { public uint state; public uint mode; [MarshalAs(UnmanagedType.ByValArray, SizeConst=512)] public byte[] profile; public Association association; public Security security; }
+    [DllImport("wlanapi.dll")] static extern uint WlanOpenHandle(uint version, IntPtr reserved, out uint negotiated, out IntPtr handle);
+    [DllImport("wlanapi.dll")] static extern uint WlanQueryInterface(IntPtr handle, ref Guid id, uint opcode, IntPtr reserved, out uint size, out IntPtr data, IntPtr valueType);
+    [DllImport("wlanapi.dll")] static extern void WlanFreeMemory(IntPtr memory);
+    [DllImport("wlanapi.dll")] static extern uint WlanCloseHandle(IntPtr handle, IntPtr reserved);
+    static string Auth(uint value) { switch(value) { case 1:return "Open"; case 2:return "Shared Key"; case 3:return "WPA-Enterprise"; case 4:return "WPA-Personal"; case 6:return "WPA2-Enterprise"; case 7:return "WPA2-Personal"; case 8:return "WPA3-Enterprise 192-bit"; case 9:return "WPA3-Personal"; case 10:return "Enhanced Open"; case 11:return "WPA3-Enterprise"; default:return "Other"; } }
+    static string Cipher(uint value) { switch(value) { case 0:return "None"; case 1:return "WEP-40"; case 2:return "TKIP"; case 4:return "CCMP"; case 5:return "WEP-104"; case 6:return "BIP"; case 8:return "GCMP"; case 9:return "GCMP-256"; case 10:return "CCMP-256"; case 11:return "BIP-GMAC-128"; case 12:return "BIP-GMAC-256"; case 13:return "BIP-CMAC-256"; case 256:return "Group key"; case 257:return "WEP"; default:return "Other"; } }
+    public static Dictionary<string, object> Read(string value) {
+        uint negotiated; IntPtr handle;
+        if (WlanOpenHandle(2, IntPtr.Zero, out negotiated, out handle) != 0) return null;
+        try {
+            Guid id = new Guid(value); uint size; IntPtr data;
+            uint status = WlanQueryInterface(handle, ref id, 7, IntPtr.Zero, out size, out data, IntPtr.Zero);
+            if (data == IntPtr.Zero) return null;
+            try {
+                if (status != 0 || size < Marshal.SizeOf(typeof(Connection))) return null;
+                Connection c = (Connection)Marshal.PtrToStructure(data, typeof(Connection));
+                Dictionary<string, object> result = new Dictionary<string, object>();
+                result["state"] = c.state == 1 ? "CONNECTED" : c.state == 4 ? "DISCONNECTED" : "UNKNOWN";
+                if (c.state != 1 || c.association.ssid.length > 32) return result;
+                result["ssid"] = Encoding.UTF8.GetString(c.association.ssid.bytes, 0, (int)c.association.ssid.length);
+                result["bssid"] = BitConverter.ToString(c.association.bssid).Replace('-', ':');
+                if (c.association.signal <= 100) result["signal_pct"] = c.association.signal;
+                result["rate"] = String.Format(CultureInfo.InvariantCulture, "RX {0:0.0} / TX {1:0.0} Mbps", c.association.rx / 1000.0, c.association.tx / 1000.0);
+                result["security"] = Auth(c.security.auth) + " (" + Cipher(c.security.cipher) + ")";
+                uint channelSize; IntPtr channelData;
+                uint channelStatus = WlanQueryInterface(handle, ref id, 8, IntPtr.Zero, out channelSize, out channelData, IntPtr.Zero);
+                if (channelData != IntPtr.Zero) {
+                    try { if (channelStatus == 0 && channelSize >= 4) result["channel"] = (uint)Marshal.ReadInt32(channelData); }
+                    finally { WlanFreeMemory(channelData); }
+                }
+                return result;
+            } finally { WlanFreeMemory(data); }
+        } finally { WlanCloseHandle(handle, IntPtr.Zero); }
+    }
+}
+'@ -ErrorAction Stop | Out-Null
+        } catch { }
+    }
     $cpu = @(Get-CimInstance Win32_Processor -ErrorAction Stop)
     $cores = [int](($cpu | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum)
     if ($cores -lt 1) { throw 'No logical CPU count was reported' }
@@ -173,6 +224,7 @@ try {
             $ipv6 = $null
             $mtu = $null
             $wifiState = $null
+            $wlan = $null
             if ($collectNetworkDetails -and $adapter.ifIndex) {
                 $ipInterface = $null
                 try { $ipInterface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction Stop | Select-Object -First 1 } catch { }
@@ -184,6 +236,7 @@ try {
                 if ($ipv4Address) { $ipv4 = "$($ipv4Address.IPAddress)/$($ipv4Address.PrefixLength)" }
                 if ($ipv6Address) { $ipv6 = "$($ipv6Address.IPAddress)/$($ipv6Address.PrefixLength)" }
                 if ([int]$adapter.ifType -eq 71) {
+                    if ($adapter.InterfaceGuid) { try { $wlan = [ServerLauncherWlan]::Read([string]$adapter.InterfaceGuid) } catch { } }
                     $profile = $null
                     try { $profile = Get-NetConnectionProfile -InterfaceIndex $adapter.ifIndex -ErrorAction Stop | Select-Object -First 1 } catch { }
                     if ($null -ne $profile) { $wifiState = 'CONNECTED' }
@@ -209,6 +262,7 @@ try {
                 tx_rate = $txRate
                 is_wireless = if ($null -ne $adapter.ifType) { [int]$adapter.ifType -eq 71 } else { $null }
                 wifi_state = $wifiState
+                wlan = $wlan
                 link_state = $linkState
                 mac_address = if ($mac -match '^([0-9a-f]{2}:){5}[0-9a-f]{2}$') { $mac } else { $null }
                 mtu = $mtu

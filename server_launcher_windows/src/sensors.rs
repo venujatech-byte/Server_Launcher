@@ -2646,13 +2646,14 @@ fn parse_process_tcp_counters(output: &str) -> HashMap<u32, (u64, u64)> {
 
 use crate::config::SshRemoteHost;
 use crate::remote::build_ssh_command;
-fn remote_windows_sensor_command(include_processes: bool, include_network_details: bool, include_gpu_engines: bool) -> String {
+fn remote_windows_sensor_command(include_processes: bool, include_network_details: bool, include_gpu_engines: bool, include_ram_modules: bool) -> String {
     use base64::Engine;
 
     let script = include_str!("../../shared/remote_windows_sensors.ps1")
         .replace("__COLLECT_NETWORK_DETAILS__", if include_network_details { "$true" } else { "$false" })
         .replace("__COLLECT_PROCESSES__", if include_processes { "$true" } else { "$false" })
-        .replace("__COLLECT_GPU_ENGINES__", if include_gpu_engines { "$true" } else { "$false" });
+        .replace("__COLLECT_GPU_ENGINES__", if include_gpu_engines { "$true" } else { "$false" })
+        .replace("__COLLECT_RAM_MODULES__", if include_ram_modules { "$true" } else { "$false" });
     let utf16le: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let encoded = base64::engine::general_purpose::STANDARD.encode(utf16le);
     format!("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded}")
@@ -2668,10 +2669,10 @@ fn remote_sensor_host_key(host: &SshRemoteHost) -> String {
     format!("{}@{}:{}", host.user.trim(), host.host.trim(), host.port)
 }
 
-fn query_remote_windows_sensors(host: &SshRemoteHost, include_processes: bool, include_network_details: bool, include_gpu_engines: bool) -> Result<Option<serde_json::Value>, String> {
+fn query_remote_windows_sensors(host: &SshRemoteHost, include_processes: bool, include_network_details: bool, include_gpu_engines: bool, include_ram_modules: bool) -> Result<Option<serde_json::Value>, String> {
     let mut host = host.clone();
     host.remote_cwd.clear();
-    let mut cmd = build_ssh_command(&host, &remote_windows_sensor_command(include_processes, include_network_details, include_gpu_engines));
+    let mut cmd = build_ssh_command(&host, &remote_windows_sensor_command(include_processes, include_network_details, include_gpu_engines, include_ram_modules));
     let out = cmd.output().map_err(|error| format!("SSH command execution error: {error}"))?;
     if !out.status.success() {
         let error = String::from_utf8_lossy(&out.stderr).trim().to_string();
@@ -2743,6 +2744,29 @@ fn parse_remote_process_rows(parsed: &serde_json::Value, include_processes: bool
     Ok(top_apps)
 }
 
+fn parse_remote_windows_memory_modules(modules: &serde_json::Value) -> Option<MemoryHardwareInfo> {
+    let modules = modules.as_array().filter(|modules| !modules.is_empty())?;
+    let types: std::collections::BTreeSet<_> = modules.iter().filter_map(|module| module["SMBIOSMemoryType"].as_u64().and_then(windows_memory_type)).collect();
+    let forms: std::collections::BTreeSet<_> = modules.iter().filter_map(|module| module["FormFactor"].as_u64().and_then(windows_memory_form_factor)).collect();
+    Some(MemoryHardwareInfo {
+        slot_summary: format!("{} populated modules", modules.len()),
+        memory_type: types.into_iter().collect::<Vec<_>>().join(" / "),
+        form_factor: forms.into_iter().collect::<Vec<_>>().join(" / "),
+        module_spec: modules.iter().map(|module| {
+            let mut details = Vec::new();
+            if let Some(value) = module["Manufacturer"].as_str().map(str::trim).filter(|value| !value.is_empty()) { details.push(value.to_string()); }
+            if let Some(value) = module["SMBIOSMemoryType"].as_u64().and_then(windows_memory_type) { details.push(value.to_string()); }
+            if let Some(speed) = module["ConfiguredClockSpeed"].as_u64().filter(|speed| *speed > 0) { details.push(format!("{speed} MHz")); }
+            if let Some(capacity) = module["Capacity"].as_u64().filter(|capacity| *capacity > 0) { details.push(format_bytes(capacity)); }
+            if let Some(value) = module["FormFactor"].as_u64().and_then(windows_memory_form_factor) { details.push(value.to_string()); }
+            if let Some(value) = module["DeviceLocator"].as_str().map(str::trim).filter(|value| !value.is_empty()) { details.push(value.to_string()); }
+            if details.is_empty() { "Module details unavailable".to_string() } else { details.join(" · ") }
+        }).collect::<Vec<_>>().join("; "),
+        topology: "Channel topology unavailable".into(),
+        ..Default::default()
+    })
+}
+
 #[cfg(test)]
 mod remote_sensor_command_tests {
     #[test]
@@ -2754,7 +2778,7 @@ mod remote_sensor_command_tests {
     #[test]
     fn windows_sensor_command_encodes_utf16_powershell_without_shell_payload() {
         use base64::Engine;
-        let command = super::remote_windows_sensor_command(true, true, true);
+        let command = super::remote_windows_sensor_command(true, true, true, true);
         let encoded = command.strip_prefix("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ").unwrap();
         let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
         let words = bytes.chunks_exact(2).map(|word| u16::from_le_bytes([word[0], word[1]])).collect::<Vec<_>>();
@@ -2765,17 +2789,21 @@ mod remote_sensor_command_tests {
         assert!(script.contains("process_network_supported = $false"));
         assert!(script.contains("$collectGpuEngines = $true"));
         assert!(script.contains("Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine"));
+        assert!(script.contains("$collectRamModules = $true"));
+        assert!(script.contains("Win32_PhysicalMemory"));
         assert!(!command.contains("Get-CimInstance"));
     }
 
     #[test]
     fn remote_gpu_counter_collection_is_opt_in() {
         use base64::Engine;
-        let command = super::remote_windows_sensor_command(false, false, false);
+        let command = super::remote_windows_sensor_command(false, false, false, false);
         let encoded = command.strip_prefix("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ").unwrap();
         let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
         let words = bytes.chunks_exact(2).map(|word| u16::from_le_bytes([word[0], word[1]])).collect::<Vec<_>>();
-        assert!(String::from_utf16(&words).unwrap().contains("$collectGpuEngines = $false"));
+        let script = String::from_utf16(&words).unwrap();
+        assert!(script.contains("$collectGpuEngines = $false"));
+        assert!(script.contains("$collectRamModules = $false"));
     }
 
     #[test]
@@ -2800,9 +2828,21 @@ mod remote_sensor_command_tests {
         assert_eq!(rows[0].memory_bytes, 2048);
         assert!(!rows[0].disk_rate_available && !rows[0].net_rate_available);
     }
+
+    #[test]
+    fn remote_windows_ram_inventory_uses_reported_module_metadata() {
+        let memory = super::parse_remote_windows_memory_modules(&serde_json::json!([
+            {"Manufacturer":"Vendor","Capacity":8589934592_u64,"ConfiguredClockSpeed":3200,"SMBIOSMemoryType":26,"FormFactor":12,"DeviceLocator":"DIMM 0"}
+        ])).unwrap();
+        assert_eq!(memory.slot_summary, "1 populated modules");
+        assert_eq!(memory.memory_type, "DDR4");
+        assert_eq!(memory.form_factor, "SODIMM");
+        assert!(memory.module_spec.contains("3200 MHz") && memory.module_spec.contains("DIMM 0"));
+        assert!(super::parse_remote_windows_memory_modules(&serde_json::json!([])).is_none());
+    }
 }
 
-pub fn query_remote_sensors(host: &SshRemoteHost, include_processes: bool, include_process_network: bool, include_network_details: bool, include_gpu_engines: bool) -> Result<SystemSensorsSnapshot, String> {
+pub fn query_remote_sensors(host: &SshRemoteHost, include_processes: bool, include_process_network: bool, include_network_details: bool, include_gpu_engines: bool, include_ram_modules: bool) -> Result<SystemSensorsSnapshot, String> {
     let script = r#"python3 -c '
 import os, glob, json, time, sys, math, subprocess, ipaddress, platform
 remote_system = platform.system() or "unknown"
@@ -3860,7 +3900,7 @@ print(json.dumps(data))
     let host_key = remote_sensor_host_key(host);
     let known_windows = known_windows_remote_hosts().lock().unwrap().contains(&host_key);
     let parsed = if known_windows {
-        match query_remote_windows_sensors(host, include_processes, include_network_details, include_gpu_engines)? {
+        match query_remote_windows_sensors(host, include_processes, include_network_details, include_gpu_engines, include_ram_modules)? {
             Some(data) => data,
             None => {
                 known_windows_remote_hosts().lock().unwrap().remove(&host_key);
@@ -3895,7 +3935,7 @@ print(json.dumps(data))
             return Err(python_error.unwrap());
         }
         if windows_host {
-            match query_remote_windows_sensors(host, include_processes, include_network_details, include_gpu_engines) {
+            match query_remote_windows_sensors(host, include_processes, include_network_details, include_gpu_engines, include_ram_modules) {
                 Ok(Some(windows_data)) => {
                     known_windows_remote_hosts().lock().unwrap().insert(host_key);
                     windows_data
@@ -4242,7 +4282,7 @@ print(json.dumps(data))
         swap_used_bytes,
         swap_usage_pct,
         ram_temp,
-        memory_hw: None,
+        memory_hw: parse_remote_windows_memory_modules(&parsed["memory_modules"]),
         gpus,
         displays: Vec::new(),
         power,
@@ -4783,7 +4823,6 @@ fn normalize_windows_hardware_name(name: &str) -> String {
         .chars().filter(|ch| ch.is_ascii_alphanumeric()).collect()
 }
 
-#[cfg(any(windows, test))]
 fn windows_memory_type(code: u64) -> Option<&'static str> {
     match code {
         18 => Some("DDR"),
@@ -4805,7 +4844,6 @@ fn windows_memory_type(code: u64) -> Option<&'static str> {
     }
 }
 
-#[cfg(any(windows, test))]
 fn windows_memory_form_factor(code: u64) -> Option<&'static str> {
     match code {
         7 => Some("SIMM"),

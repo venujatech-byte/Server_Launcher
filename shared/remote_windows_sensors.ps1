@@ -9,6 +9,7 @@ if ($env:OS -ne 'Windows_NT') {
 try {
     $collectNetworkDetails = __COLLECT_NETWORK_DETAILS__
     $collectGpuEngines = __COLLECT_GPU_ENGINES__
+    $collectRamModules = __COLLECT_RAM_MODULES__
     $cpu = @(Get-CimInstance Win32_Processor -ErrorAction Stop)
     $cores = [int](($cpu | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum)
     if ($cores -lt 1) { throw 'No logical CPU count was reported' }
@@ -23,6 +24,10 @@ try {
         $memoryCounter = Get-CimInstance Win32_PerfRawData_PerfOS_Memory -ErrorAction Stop
         if ($memoryCounter.AvailableBytes -gt 0) { $memoryAvailable = [int64]$memoryCounter.AvailableBytes }
     } catch { }
+    $memoryModules = @()
+    if ($collectRamModules) {
+        try { $memoryModules = @(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop | Select-Object Manufacturer, Capacity, ConfiguredClockSpeed, SMBIOSMemoryType, FormFactor, DeviceLocator) } catch { }
+    }
 
     $pageFiles = @(Get-CimInstance Win32_PageFileUsage -ErrorAction Stop)
     $swapTotal = [int64]((($pageFiles | Measure-Object -Property AllocatedBaseSize -Sum).Sum) * 1MB)
@@ -227,6 +232,7 @@ try {
         temps = @()
         gpus = $gpus
         gpu_engines = $gpuEngines
+        memory_modules = $memoryModules
         networks = $networks
         network_stats_available = ($networks.Count -gt 0)
         network_rates_available = $false

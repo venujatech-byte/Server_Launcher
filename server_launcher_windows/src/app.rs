@@ -2872,14 +2872,14 @@ impl LauncherApp {
                     }
                 });
             });
-            ui.add_space(4.0);
+            ui.add_space(2.0);
 
             let search_q = self.remote_search_query.entry(host.id.clone()).or_default();
             Frame::none().fill(p.bg_button).rounding(Rounding::same(8.0))
                 .inner_margin(egui::Margin::symmetric(8.0, 2.0)).show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(crate::lucide::SEARCH).color(p.text_muted));
-                        let response = ui.add(egui::TextEdit::singleline(search_q)
+                        let response = ui.add(egui::TextEdit::singleline(search_q).font(egui::FontId::proportional(12.0))
                             .frame(false).id_source(("remote_filter", &host.id))
                             .hint_text(RichText::new("Filter remote servers...").color(p.text_muted))
                             .desired_width((ui.available_width() - 34.0).max(0.0)));
@@ -2933,7 +2933,7 @@ impl LauncherApp {
                     .fill(p.bg_card)
                     .stroke(Stroke::NONE)
                     .rounding(Rounding::same(12.0))
-                    .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                    .inner_margin(egui::Margin::symmetric(10.0, 5.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         if is_scanning {
@@ -2958,14 +2958,14 @@ impl LauncherApp {
                                 .fill(p.bg_card)
                                 .stroke(Stroke::NONE)
                                 .rounding(Rounding::same(12.0))
-                                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                                .inner_margin(egui::Margin::symmetric(10.0, 5.0))
                                 .show(ui, |ui| {
                                     ui.set_width(ui.available_width());
                                     ui.set_max_width(ui.available_width());
                                     ui.horizontal(|ui| {
                                         let name_width = (ui.available_width() - 78.0).max(0.0);
                                         ui.add_sized([name_width, 18.0], egui::Label::new(
-                                            RichText::new(&l.name).size(13.0).strong().color(p.text_primary)
+                                            RichText::new(&l.name).size(11.5).strong().color(p.text_primary)
                                         ).truncate()).on_hover_text(&l.name);
                                         ui.label(RichText::new("● Running").size(11.0).color(p.success));
                                     });
@@ -2994,7 +2994,7 @@ impl LauncherApp {
                                         );
                                     }
 
-                                    ui.add_space(4.0);
+                                    ui.add_space(2.0);
 
                                     // Row 3: Action Buttons (Stop, Restart, Kill, Curl, Info)
                                     ui.horizontal(|ui| {
@@ -3022,7 +3022,7 @@ impl LauncherApp {
                                             self.schedule_remote_scan(host, 2000, ui.ctx().clone());
                                         }
 
-                                        ui.menu_button("⋯", |ui| {
+                                        ui.menu_button(RichText::new("⋯").size(11.0), |ui| {
                                             if ui.button("Kill").on_hover_text("Force stop this remote process").clicked() {
                                                 requested = Some((l.clone(), true));
                                                 ui.close_menu();
@@ -3060,7 +3060,7 @@ impl LauncherApp {
                                         }
                                     });
                                 });
-                            ui.add_space(4.0);
+                            ui.add_space(2.0);
                         }
 
                         // 2. STOPPED SERVERS
@@ -3069,7 +3069,7 @@ impl LauncherApp {
                                 .fill(p.bg_card)
                                 .stroke(Stroke::NONE)
                                 .rounding(Rounding::same(12.0))
-                                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                                .inner_margin(egui::Margin::symmetric(10.0, 5.0))
                                 .show(ui, |ui| {
                                     ui.set_width(ui.available_width());
                                     ui.set_max_width(ui.available_width());
@@ -3077,7 +3077,7 @@ impl LauncherApp {
                                     ui.horizontal(|ui| {
                                         let name_width = (ui.available_width() - 78.0).max(0.0);
                                         ui.add_sized([name_width, 18.0], egui::Label::new(
-                                            RichText::new(&s.name).size(13.0).strong().color(p.text_primary)
+                                            RichText::new(&s.name).size(11.5).strong().color(p.text_primary)
                                         ).truncate()).on_hover_text(&s.name);
                                         ui.label(RichText::new("● Stopped").size(11.0).color(p.text_muted));
                                     });
@@ -3099,7 +3099,7 @@ impl LauncherApp {
                                         .truncate(),
                                     );
 
-                                    ui.add_space(4.0);
+                                    ui.add_space(2.0);
 
                                     // Row 3: Action Buttons (Start, Restart, Dismiss, Info)
                                     ui.horizontal(|ui| {
@@ -3151,7 +3151,7 @@ impl LauncherApp {
                                         }
                                     });
                                 });
-                            ui.add_space(4.0);
+                            ui.add_space(2.0);
                         }
                     });
             }
@@ -3270,7 +3270,7 @@ impl LauncherApp {
                     let tools_width = (ui.available_width() - 84.0).max(0.0);
                     ui.allocate_ui_with_layout([tools_width, 0.0].into(), egui::Layout::top_down(egui::Align::Min), |ui| {
                         ui.set_max_width(tools_width);
-                        ui.label(RichText::new("Remote SSH Terminal").size(14.0).strong().color(p.text_primary));
+                        ui.label(RichText::new("Remote SSH Terminal").size(12.0).strong().color(p.text_primary));
                         ui.horizontal_wrapped(|ui| {
                             for (command, hint) in [
                                 ("ss -tulpn", "Listening Ports"), ("docker ps", "Docker Containers"),
@@ -3284,12 +3284,12 @@ impl LauncherApp {
                             }
                         });
                     });
-                    if ui.add_sized([76.0, 28.0], egui::Button::new(format!("{} Clear", crate::lucide::TRASH))
+                    if ui.add_sized([68.0, 24.0], egui::Button::new(RichText::new(format!("{} Clear", crate::lucide::TRASH)).size(11.0))
                         .fill(p.bg_button).stroke(Stroke::NONE).rounding(8.0)).on_hover_text("Clear terminal output").clicked() {
                         self.clear_remote_terminal_logs(&host.id);
                     }
                 });
-                let output_height = (ui.available_height() - 40.0 - ui.spacing().item_spacing.y - 20.0).max(0.0);
+                let output_height = (ui.available_height() - 32.0 - ui.spacing().item_spacing.y - 20.0).max(0.0);
                 Frame::none().fill(p.terminal_bg).rounding(Rounding::same(8.0)).inner_margin(10.0).show(ui, |ui| {
                     ui.spacing_mut().scroll.bar_width = 6.0;
                     ui.spacing_mut().scroll.floating = false;
@@ -3308,7 +3308,7 @@ impl LauncherApp {
                                     LogKind::Warning => p.log_warning,
                                 };
                                 let mut text = egui::text::LayoutJob::single_section(entry.text.clone(), egui::TextFormat {
-                                    font_id: egui::FontId::monospace(13.0), color, line_height: Some(19.5),
+                                    font_id: egui::FontId::monospace(11.5), color, line_height: Some(16.0),
                                     ..Default::default()
                                 });
                                 text.wrap.max_width = width;
@@ -3319,21 +3319,21 @@ impl LauncherApp {
                 let mut focused = false;
                 let mut command = None;
                 let composer = Frame::none().fill(p.bg_input).rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(8.0, 6.0)).show(ui, |ui| {
+                    .inner_margin(egui::Margin::symmetric(8.0, 4.0)).show(ui, |ui| {
                         ui.horizontal(|ui| {
                             let prompt = format!("{}@{}:~$", host.user, host.host);
                             let prompt_width = (ui.available_width() * 0.30).min(180.0);
-                            ui.add_sized([prompt_width, 28.0], egui::Label::new(
+                            ui.add_sized([prompt_width, 24.0], egui::Label::new(
                                 RichText::new(&prompt).monospace().size(12.0).color(p.success)
                             ).truncate()).on_hover_text(&prompt);
                             let input = self.remote_terminal_inputs.entry(host.id.clone()).or_default();
-                            let input_width = (ui.available_width() - 76.0 - ui.spacing().item_spacing.x).max(0.0);
-                            let editor = ui.add_sized([input_width, 28.0], egui::TextEdit::singleline(input)
+                            let input_width = (ui.available_width() - 68.0 - ui.spacing().item_spacing.x).max(0.0);
+                            let editor = ui.add_sized([input_width, 24.0], egui::TextEdit::singleline(input)
                                 .frame(false).id_source(("ssh_remote_composer", &host.id))
-                                .font(egui::FontId::monospace(13.0))
+                                .font(egui::FontId::monospace(11.5))
                                 .hint_text(RichText::new("Enter SSH command…").color(p.text_muted)));
-                            let execute = ui.add_sized([76.0, 28.0], egui::Button::new(
-                                RichText::new("Execute").strong().color(p.accent_text)
+                            let execute = ui.add_sized([68.0, 24.0], egui::Button::new(
+                                RichText::new("Execute").size(11.5).strong().color(p.accent_text)
                             ).fill(p.accent).stroke(Stroke::NONE).rounding(8.0));
                             focused = editor.has_focus() || execute.has_focus();
                             let enter = ui.is_enabled() && editor.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
@@ -3763,10 +3763,10 @@ impl eframe::App for LauncherApp {
                         let compact = ui.available_width() < 900.0;
                         ui.horizontal_wrapped(|ui| {
                             render_app_logo(ui, 30.0, p.bg_header);
-                            ui.allocate_ui_with_layout(egui::vec2(if compact { 300.0 } else { 310.0 }, 44.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.allocate_ui_with_layout(egui::vec2(if compact { 300.0 } else { 310.0 }, 38.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.add_sized([200.0, 22.0], egui::Label::new(RichText::new(&host.name).size(18.0).strong()).truncate()).on_hover_text(&host.name);
-                                    ui.label(RichText::new(format!("● {label}")).color(color)).on_hover_text(match &status { Some(Ok(info)) | Some(Err(info)) => info.as_str(), None => label });
+                                    ui.add_sized([200.0, 22.0], egui::Label::new(RichText::new(&host.name).size(17.5).strong()).truncate()).on_hover_text(&host.name);
+                                    ui.label(RichText::new(format!("● {label}")).size(10.5).color(color)).on_hover_text(match &status { Some(Ok(info)) | Some(Err(info)) => info.as_str(), None => label });
                                 });
                                 ui.horizontal(|ui| {
                                     ui.add_sized([245.0, 19.0], egui::Label::new(RichText::new(&uri).monospace().size(11.0).color(p.text_muted)).truncate()).on_hover_text(format!("{}\n{}", uri, host.remote_cwd));
@@ -3781,25 +3781,25 @@ impl eframe::App for LauncherApp {
                             });
                             if compact { ui.end_row(); }
                             ui.horizontal(|ui| {
-                                ui.menu_button("Power ▾", |ui| {
-                                    if ui.button("Restart Device").clicked() {
+                                ui.menu_button(RichText::new("Power ▾").size(10.5), |ui| {
+                                    if ui.button(RichText::new("Restart Device").size(10.5)).clicked() {
                                         self.remote_reboot_modal.open_for_host(&host);
                                         ui.close_menu();
                                     }
-                                    if ui.button("Shut Down").clicked() {
+                                    if ui.button(RichText::new("Shut Down").size(10.5)).clicked() {
                                         self.remote_shutdown_modal.open_for_host(&host);
                                         ui.close_menu();
                                     }
                                 });
                                 let scanning = self.remote_scanning.lock().unwrap().contains(&host.id);
-                                if ui.button(if scanning { "Scanning..." } else { "Scan Ports" }).clicked() { self.trigger_remote_scan(&host); }
-                                if ui.button(format!("{} Terminal", crate::lucide::EXTERNAL_LINK)).on_hover_text("Open external SSH terminal").clicked() { let _ = launch_external_ssh_terminal(&host); }
-                                if ui.button("Reconnect").clicked() {
+                                if ui.button(RichText::new(if scanning { "Scanning..." } else { "Scan Ports" }).size(10.5)).clicked() { self.trigger_remote_scan(&host); }
+                                if ui.button(RichText::new(format!("{} Terminal", crate::lucide::EXTERNAL_LINK)).size(10.5)).on_hover_text("Open external SSH terminal").clicked() { let _ = launch_external_ssh_terminal(&host); }
+                                if ui.button(RichText::new("Reconnect").size(10.5)).clicked() {
                                     self.test_remote_host(&host);
                                     self.trigger_remote_scan(&host);
                                 }
-                                if ui.button("Edit").clicked() { self.ssh_host_modal.open_edit(&host); }
-                                if ui.button(crate::lucide::SETTINGS).on_hover_text("Settings & Preferences").clicked() { self.settings_modal_open = true; }
+                                if ui.button(RichText::new("Edit").size(10.5)).clicked() { self.ssh_host_modal.open_edit(&host); }
+                                if ui.button(RichText::new(crate::lucide::SETTINGS).size(10.5)).on_hover_text("Settings & Preferences").clicked() { self.settings_modal_open = true; }
                             });
                         });
                         return;

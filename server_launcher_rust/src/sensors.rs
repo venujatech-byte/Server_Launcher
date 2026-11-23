@@ -350,6 +350,7 @@ pub struct SystemSensorsSnapshot {
 
     pub hardware_access_unlocked: bool,
     pub hardware_access_error: Option<String>,
+    pub hardware_access_sampled_at: Option<Instant>,
     pub timestamp: Option<Instant>,
 }
 
@@ -476,6 +477,7 @@ pub struct SystemSensorsCollector {
     prev_proc_net_time: Instant,
     protected_data: Option<serde_json::Value>,
     last_protected_poll: Instant,
+    protected_sampled_at: Option<Instant>,
 }
 
 impl Default for SystemSensorsCollector {
@@ -515,6 +517,7 @@ impl SystemSensorsCollector {
             prev_proc_net_time: now,
             protected_data: None,
             last_protected_poll: now,
+            protected_sampled_at: None,
         }
     }
 
@@ -1001,6 +1004,7 @@ impl SystemSensorsCollector {
             active_sockets_available: false,
             hardware_access_unlocked: false,
             hardware_access_error: None,
+            hardware_access_sampled_at: None,
             timestamp: Some(now),
         }
     }
@@ -4460,8 +4464,9 @@ print(json.dumps(data))
         active_sockets,
         active_sockets_available,
         hardware_access_unlocked: false,
-            hardware_access_error: None,
-            timestamp: Some(Instant::now()),
+        hardware_access_error: None,
+        hardware_access_sampled_at: None,
+        timestamp: Some(Instant::now()),
     })
 }
 
@@ -4909,14 +4914,15 @@ impl SystemSensorsCollector {
         let data = read_protected_hardware(password, true)?;
         let summary = protected_hardware_summary(&data)?;
         self.protected_data = Some(data);
-        self.last_protected_poll = Instant::now();
+        let sampled_at = Instant::now();
+        self.last_protected_poll = sampled_at;
+        self.protected_sampled_at = Some(sampled_at);
         Ok(summary)
     }
 
     pub fn refresh_protected_hardware(&mut self, snapshot: &mut SystemSensorsSnapshot) {
         if self.protected_data.is_none() { return; }
         if self.last_protected_poll.elapsed() >= Duration::from_secs(2) {
-            self.last_protected_poll = Instant::now();
             match read_protected_hardware(None, false) {
                 Ok(mut data) => {
                     data["memory"] = self.protected_data.as_ref().unwrap()["memory"].clone();
@@ -4930,9 +4936,13 @@ impl SystemSensorsCollector {
                     data["notes"] = serde_json::json!([error]);
                 }
             }
+            let sampled_at = Instant::now();
+            self.last_protected_poll = sampled_at;
+            self.protected_sampled_at = Some(sampled_at);
         }
         let data = self.protected_data.as_ref().unwrap();
         snapshot.hardware_access_unlocked = true;
+        snapshot.hardware_access_sampled_at = self.protected_sampled_at;
         snapshot.hardware_access_error = data["notes"].as_array().filter(|notes| !notes.is_empty()).map(|notes| notes.iter().filter_map(|note| note.as_str()).collect::<Vec<_>>().join("; "));
         apply_protected_hardware(snapshot, data);
     }

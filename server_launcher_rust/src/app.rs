@@ -12513,9 +12513,10 @@ impl LauncherApp {
                 let metric_key = format!("{}:{}", gpu.map(|gpu| gpu.device_path.as_str()).unwrap_or(""), self.selected_gpu_idx);
                 let (display_load, is_engine_peak) = gpu_display_load(gpu);
                 let load_key = if is_engine_peak { "busiest_engine" } else { "load" };
-                let gpu_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:{load_key}"), snap.timestamp, display_load);
+                let engine_timestamp = snap.hardware_access_sampled_at.or(snap.timestamp);
+                let gpu_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:{load_key}"), if is_engine_peak { engine_timestamp } else { snap.timestamp }, display_load);
                 let render_load = gpu.and_then(|gpu| gpu.engine_loads.iter().filter(|(name, _)| name.to_lowercase().contains("render") || name.contains("3D")).map(|(_, load)| *load).reduce(f32::max));
-                let gpu_3d_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:render"), snap.timestamp, render_load);
+                let gpu_3d_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:render"), engine_timestamp, render_load);
                 let gpu_clock_slice = sensor_metric_history(ui, host_id, &format!("{metric_key}:clock"), snap.timestamp, gpu.and_then(|gpu| gpu.clock_mhz).map(|value| value as f32));
                 let max_clk = gpu_clock_slice.iter().copied().filter(|value| value.is_finite()).reduce(f32::max).unwrap_or(1.0).max(1.0);
                 let gpu_memory = gpu.and_then(|gpu| gpu.mem_used_mb.zip(gpu.mem_total_mb))
@@ -12700,7 +12701,7 @@ impl LauncherApp {
                                 let (name, load) = &engines[index];
                                 ui.label(RichText::new(name).size(11.0).color(p.text_secondary));
                                 ui.label(RichText::new(format!("{load:.1}%")).size(20.0).strong().color(p.text_primary));
-                                let history = sensor_metric_history(ui, host_id, &format!("{metric_key}:{name}"), snap.timestamp, Some(*load));
+                                let history = sensor_metric_history(ui, host_id, &format!("{metric_key}:{name}"), engine_timestamp, Some(*load));
                                 draw_card_sparkline(ui, 48.0, &history, 100.0, None, accent);
                             });
                         }

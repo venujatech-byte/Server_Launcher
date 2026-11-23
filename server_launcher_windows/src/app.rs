@@ -12878,7 +12878,7 @@ impl LauncherApp {
                 let drive_count = snap.physical_disks.len();
                 let read_mb = snap.total_disk_read_rate_bps / 1_000_000.0;
                 let write_mb = snap.total_disk_write_rate_bps / 1_000_000.0;
-                let st_pct = if total_bytes > 0 { (used_bytes as f64 / total_bytes as f64 * 100.0) as f32 } else { 0.0 };
+                let st_pct = (total_bytes > 0).then(|| (used_bytes as f64 / total_bytes as f64 * 100.0) as f32);
 
                 // 1. Top Header Banner
                 Frame::none()
@@ -12931,10 +12931,12 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // 2. Top Row of 4 Big Stat Cards (matching Overview page architecture)
-                let st_history = [st_pct; 5];
-                let rd_history = [read_mb as f32; 5];
-                let wr_history = [write_mb as f32; 5];
-                let dr_history = [drive_count as f32; 5];
+                let st_history = sensor_metric_history(ui, host_id, "storage:mounted_usage_pct", snap.timestamp, st_pct);
+                let rd_history = sensor_metric_history(ui, host_id, "storage:read_rate", snap.timestamp, snap.total_disk_rates_available.then_some(read_mb as f32));
+                let wr_history = sensor_metric_history(ui, host_id, "storage:write_rate", snap.timestamp, snap.total_disk_rates_available.then_some(write_mb as f32));
+                let st_subtitle = st_pct.map(|pct| format!("{used_gb:.1} GB mounted ({pct:.1}%)"))
+                    .unwrap_or_else(|| "Mounted usage unavailable".to_string());
+                let free_stat = if total_bytes > 0 { format!("FREE {free_gb:.1} GB") } else { "Unavailable".to_string() };
 
                 let ssd_count = snap.physical_disks.iter().filter(|d| d.is_ssd == Some(true)).count();
                 let hdd_count = snap.physical_disks.iter().filter(|d| d.is_ssd == Some(false)).count();
@@ -12962,14 +12964,14 @@ impl LauncherApp {
                         ui,
                         crate::lucide::STORAGE,
                         "MOUNTED STORAGE",
-                        &format!("{:.1}", total_gb),
+                        &if total_bytes > 0 { format!("{total_gb:.1}") } else { "—".to_string() },
                         "GB",
-                        &format!("{:.1} GB Mounted ({:.1}%)", used_gb, st_pct),
+                        &st_subtitle,
                         "CAPACITY",
-                        &format!("FREE {:.1} GB", free_gb),
+                        &free_stat,
                         &st_history,
                         100.0,
-                        if total_gb > 0.0 { Some(st_pct / 100.0) } else { None },
+                        st_pct.map(|pct| pct / 100.0),
                         accent,
                         p.bg_card,
                         p.text_muted,
@@ -12987,7 +12989,7 @@ impl LauncherApp {
                         &drives_sub,
                         "ONLINE",
                         "Not queried",
-                        if drive_count > 0 { &dr_history } else { &[] },
+                        &[],
                         (drive_count as f32 * 1.5).max(1.0),
                         (drive_count > 0).then_some(1.0),
                         accent,

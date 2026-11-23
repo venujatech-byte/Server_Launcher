@@ -177,6 +177,7 @@ The changes have been made in focused commits on `fix/ui-alignment` in both appl
 - **Responsive Data Usage table:** Narrow sensor panels switch the fixed-width interface table to compact per-interface cards, keeping byte totals and live rates visible without a horizontal scroll area in both apps.
 - **Metric-card readability and themes:** Shared sensor stat cards now use the active theme's foreground/muted colors and raise secondary labels to a readable 9.5–10.5 px scale in both apps.
 - **Unavailable metric plots:** Sensor card sparklines now distinguish no history, one sample, and repeated unavailable samples; an unsupported GPU engine no longer leaves a blank graph that can be mistaken for a zero reading.
+- **Storage histories:** Mounted usage and read/write charts now append the actual snapshot timestamp once per sample. Missing mounted capacity and unsupported rates remain unavailable; physical drive count is no longer repeated as a fake time series.
 
 ### Remaining work and validation
 

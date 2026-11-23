@@ -283,6 +283,7 @@ public static class ServerLauncherWlan {
     $batteries = @(Get-CimInstance Win32_Battery -ErrorAction Stop | ForEach-Object {
         $battery = $_
         $entry = [ordered]@{
+            device_id = if ($battery.DeviceID) { [string]$battery.DeviceID } else { $null }
             name = if ($battery.Name) { [string]$battery.Name } else { 'Battery' }
             status = if ($battery.BatteryStatus -eq 1) { 'Discharging' } elseif ($battery.BatteryStatus -eq 2) { 'AC connected' } elseif ($battery.BatteryStatus -eq 3) { 'Fully charged' } elseif ($battery.BatteryStatus -in 6, 7, 8, 9) { 'Charging' } elseif ($battery.BatteryStatus -eq 4) { 'Low' } elseif ($battery.BatteryStatus -eq 5) { 'Critical' } elseif ($battery.BatteryStatus -eq 11) { 'Partially charged' } else { 'Unknown' }
             capacity_pct = if ($null -ne $battery.EstimatedChargeRemaining -and $battery.EstimatedChargeRemaining -le 100) { [double]$battery.EstimatedChargeRemaining } else { $null }

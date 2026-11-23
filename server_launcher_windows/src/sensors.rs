@@ -2940,6 +2940,7 @@ mod remote_sensor_command_tests {
         assert!(script.contains("physical_cores = $physicalCores"));
         assert!(script.contains("$collectDiskRates = $true"));
         assert!(script.contains("$collectThermals = $true"));
+        assert!(script.contains("device_id = if ($battery.DeviceID)"));
         assert!(script.contains("SensorType -eq 'Fan'"));
         assert!(script.contains("fans = $fans"));
         assert!(script.contains("LibreHardwareMonitor"));

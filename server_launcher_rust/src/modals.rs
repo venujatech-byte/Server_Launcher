@@ -1374,6 +1374,8 @@ pub fn render_command_palette(
         })
         .collect();
 
+    state.selected_idx = state.selected_idx.min(filtered.len().saturating_sub(1));
+
     // Key navigation
     if ctx.input(|i| i.key_pressed(Key::Escape)) {
         state.open = false;
@@ -1403,7 +1405,8 @@ pub fn render_command_palette(
     let max_h = (screen.height() - 100.0).max(300.0);
 
     let mut is_open = state.open;
-    Window::new(format!("{} Quick Launch (Ctrl+P)", crate::lucide::ZAP))
+    Window::new("Quick Launch")
+        .title_bar(false)
         .open(&mut is_open)
         .collapsible(false)
         .resizable(false)
@@ -1412,15 +1415,15 @@ pub fn render_command_palette(
         .anchor(egui::Align2::CENTER_TOP, [0.0, 70.0])
         .default_height(400.0)
         .max_height(max_h)
+        .frame(egui::Frame::none().fill(palette.bg_card).rounding(14.0)
+            .inner_margin(14.0).shadow(egui::epaint::Shadow {
+                offset: egui::vec2(0.0, 4.0), blur: 16.0, spread: 0.0,
+                color: Color32::from_black_alpha(120),
+            }))
         .show(ctx, |ui| {
-            ui.visuals_mut().override_text_color = Some(Color32::from_rgb(215, 220, 230));
-            ui.visuals_mut().widgets.inactive.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 220));
-            ui.visuals_mut().widgets.hovered.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(230, 235, 245));
-            ui.visuals_mut().widgets.active.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(240, 242, 250));
-            ui.visuals_mut().widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 220));
-            ui.visuals_mut().widgets.noninteractive.weak_bg_fill = Color32::from_rgb(180, 185, 195);
-            ui.visuals_mut().text_cursor.stroke = Stroke::new(1.0_f32, Color32::from_rgb(205, 210, 220));
-            ui.visuals_mut().extreme_bg_color = Color32::from_rgb(22, 25, 35);
+            *ui.visuals_mut() = palette.egui_visuals();
+            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.visuals_mut().extreme_bg_color = palette.bg_input;
 
             ui.horizontal(|ui| {
                 ui.label(
@@ -1448,7 +1451,9 @@ pub fn render_command_palette(
 
             let res = ui.add(
                 egui::TextEdit::singleline(&mut state.query)
-                    .hint_text("Search servers, actions, groups, or links…")
+                    .hint_text(RichText::new("Search servers, actions, groups, or links…").color(palette.text_muted))
+                    .font(egui::FontId::proportional(12.0))
+                    .margin(egui::vec2(8.0, 6.0))
                     .desired_width(f32::INFINITY),
             );
             res.request_focus();
@@ -1464,16 +1469,19 @@ pub fn render_command_palette(
                     } else {
                         for (i, (label, act)) in filtered.iter().enumerate() {
                             let selected = i == state.selected_idx;
-                            let text = if selected {
-                                RichText::new(format!("{}  {}", crate::lucide::CHEVRON_RIGHT, label))
-                                    .color(palette.accent_light)
-                                    .strong()
-                            } else {
-                                RichText::new(format!("   {}", label))
-                                    .color(palette.text_secondary)
-                            };
-
-                            let resp = ui.selectable_label(selected, text);
+                            let text = RichText::new(label).size(12.0)
+                                .color(if selected { palette.accent_text } else { palette.text_secondary });
+                            let row = egui::Button::new(text)
+                                .fill(if selected { palette.accent } else { palette.bg_card })
+                                .stroke(Stroke::NONE).rounding(8.0)
+                                .wrap_mode(egui::TextWrapMode::Truncate);
+                            let width = ui.available_width();
+                            let resp = ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                                ui.add_sized([width, 27.0], row)
+                            }).inner.on_hover_text(label);
+                            if selected && ui.input(|i| i.key_pressed(Key::ArrowDown) || i.key_pressed(Key::ArrowUp)) {
+                                resp.scroll_to_me(None);
+                            }
                             if resp.clicked() {
                                 action = ModalAction::ExecutePaletteAction((*act).clone());
                                 state.open = false;
@@ -1490,14 +1498,6 @@ pub fn render_command_palette(
                         .size(10.0)
                         .color(palette.text_muted),
                 );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .button(RichText::new("Close").size(11.0).color(palette.text_secondary))
-                        .clicked()
-                    {
-                        state.open = false;
-                    }
-                });
             });
         });
 

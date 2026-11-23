@@ -5017,7 +5017,6 @@ fn percentage(used: u64, total: u64) -> f32 {
 #[cfg(windows)]
 fn collect_windows_hardware(inventory: bool) -> Result<serde_json::Value, String> {
     use std::os::windows::process::CommandExt;
-    use std::io::Read;
     // shortcut: temperature telemetry needs LibreHardwareMonitor's WMI provider; add a native driver only if required.
     let script = r#"$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new();
 $result=@{gpu=@();ram=@();battery=@();temp=@();gpu_engines=@()};
@@ -5047,9 +5046,10 @@ $result | ConvertTo-Json -Depth 4 -Compress"#;
     // Drain output concurrently so a large inventory cannot block on a full pipe.
     let stdout = child.stdout.take();
     let reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        if let Some(stdout) = stdout { let _ = stdout.take(1024 * 1024).read_to_end(&mut bytes); }
-        bytes
+        match stdout {
+            Some(stdout) => read_limited_sensor_output(stdout, 1024 * 1024),
+            None => Ok((Vec::new(), false)),
+        }
     });
     let started = Instant::now();
     loop {
@@ -5064,8 +5064,42 @@ $result | ConvertTo-Json -Depth 4 -Compress"#;
             _ => std::thread::sleep(Duration::from_millis(50)),
         }
     }
-    let bytes = reader.join().map_err(|_| "Could not read Windows sensor query output".to_string())?;
+    let (bytes, overflowed) = reader.join().map_err(|_| "Could not read Windows sensor query output".to_string())?
+        .map_err(|error| format!("Could not read Windows sensor query output: {error}"))?;
+    if overflowed { return Err("Windows sensor response exceeded 1 MiB".into()); }
     serde_json::from_slice(&bytes).map_err(|error| format!("Invalid Windows sensor data: {error}"))
+}
+
+#[cfg(any(windows, test))]
+fn read_limited_sensor_output(mut reader: impl std::io::Read, limit: usize) -> std::io::Result<(Vec<u8>, bool)> {
+    let mut output = Vec::with_capacity(limit.min(8192));
+    let mut chunk = [0; 8192];
+    let mut overflowed = false;
+    loop {
+        let count = reader.read(&mut chunk)?;
+        if count == 0 { break; }
+        if !overflowed {
+            let kept = count.min(limit.saturating_sub(output.len()));
+            output.extend_from_slice(&chunk[..kept]);
+            overflowed = kept < count;
+        }
+    }
+    Ok((output, overflowed))
+}
+
+#[cfg(test)]
+mod windows_sensor_output_tests {
+    use std::io::Cursor;
+
+    #[test]
+    fn caps_stored_output_but_drains_the_reader() {
+        let input = b"sensor output larger than the limit";
+        let mut reader = Cursor::new(input);
+        let (output, overflowed) = super::read_limited_sensor_output(&mut reader, 8).unwrap();
+        assert_eq!(output, input[..8]);
+        assert!(overflowed);
+        assert_eq!(reader.position(), input.len() as u64);
+    }
 }
 
 #[cfg(any(windows, test))]

@@ -29,13 +29,20 @@ try {
     }
     $cpuCoreUsages = @()
     if ($collectCpuCores) {
-        $cpuCoreUsages = @($cpuUsageCounters |
+        $coreRows = @($cpuUsageCounters |
             Where-Object { $_.Name -match '^\d+$' } |
             Sort-Object { [int]$_.Name } |
             ForEach-Object {
                 $usage = $_.PercentProcessorTime
-                if ($null -ne $usage -and $usage -ge 0 -and $usage -le 100) { [double]$usage } else { $null }
+                [pscustomobject]@{
+                    index = [int]$_.Name
+                    usage = if ($null -ne $usage -and $usage -ge 0 -and $usage -le 100) { [double]$usage } else { $null }
+                }
             })
+        if ($coreRows.Count -gt 0) {
+            $cpuCoreUsages = @($null) * ($coreRows[-1].index + 1)
+            foreach ($row in $coreRows) { $cpuCoreUsages[$row.index] = $row.usage }
+        }
     }
     $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
     $memoryTotal = [int64]$os.TotalVisibleMemorySize * 1024

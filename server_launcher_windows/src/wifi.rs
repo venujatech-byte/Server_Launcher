@@ -131,6 +131,7 @@ mod wifi_selection_tests {
         assert_eq!(guid.data3, 0xd011);
         assert_eq!(guid.data4, [0xb4, 0x2d, 0, 0xc0, 0x4f, 0xc9, 0x64, 0xff]);
         assert!(super::parse_windows_wifi_guid("not-a-guid").is_none());
+        assert!(super::parse_windows_wifi_guid("00000000-0000-0000-0000-0000000000é0").is_none());
     }
 
     #[test]
@@ -566,6 +567,7 @@ fn parse_windows_wifi_guid(value: &str) -> Option<WindowsWifiGuid> {
     let value = value.trim().trim_start_matches('{').trim_end_matches('}');
     let parts: Vec<_> = value.split('-').collect();
     if parts.len() != 5 || parts[0].len() != 8 || parts[1].len() != 4 || parts[2].len() != 4 || parts[3].len() != 4 || parts[4].len() != 12 { return None; }
+    if parts.iter().any(|part| !part.bytes().all(|byte| byte.is_ascii_hexdigit())) { return None; }
     let mut data4 = [0; 8];
     for (index, byte) in data4.iter_mut().enumerate() {
         let pair = if index < 2 { &parts[3][index * 2..index * 2 + 2] } else { &parts[4][(index - 2) * 2..(index - 2) * 2 + 2] };

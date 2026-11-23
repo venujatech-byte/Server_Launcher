@@ -533,8 +533,43 @@ pub fn send_local_signal(pid: u32, sig: &str, _expected_start: Option<u64>) -> R
 }
 
 pub fn send_remote_signal(host: &SshRemoteHost, pid: u32, sig: &str, expected_start: Option<u64>) -> Result<(), String> {
+    if !valid_process_signal(sig) { return Err("Unsupported process signal".to_string()); }
+    if matches!(sig, "TERM" | "KILL") {
+        if let Some(expected) = expected_start {
+            let windows = remote_windows_signal_command(pid, sig, expected);
+            match run_remote_windows_process_command(host, &windows) {
+                Ok(()) => return Ok(()),
+                Err(error) if remote_powershell_missing(&error) => {},
+                Err(error) => return Err(error),
+            }
+        }
+    }
     let command = remote_signal_command(pid, sig, expected_start)?;
     run_remote_process_command(host, &command)
+}
+
+fn run_remote_windows_process_command(host: &SshRemoteHost, command: &str) -> Result<(), String> {
+    let mut host = host.clone();
+    host.remote_cwd.clear();
+    let mut cmd = build_ssh_command(&host, command);
+    let out = cmd.output().map_err(|error| format!("SSH command failed: {error}"))?;
+    if out.status.success() { return Ok(()); }
+    let error = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    Err(if error.is_empty() { "Remote PowerShell process action failed".into() } else { error })
+}
+
+fn remote_windows_signal_command(pid: u32, sig: &str, expected_start: u64) -> String {
+    use base64::Engine;
+    let force = if sig == "KILL" { " -Force" } else { "" };
+    let script = format!("$ErrorActionPreference='Stop'; try {{ if ($env:OS -ne 'Windows_NT') {{ throw 'not Windows' }}; $p=Get-Process -Id {pid}; if ([int64]$p.StartTime.ToUniversalTime().ToFileTimeUtc() -ne [int64]{expected_start}) {{ throw 'Process changed or exited; refresh the list' }}; Stop-Process -Id {pid}{force} }} catch {{ [Console]::Error.WriteLine($_.Exception.Message); exit 1 }}");
+    let encoded = base64::engine::general_purpose::STANDARD.encode(script.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<_>>());
+    format!("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded}")
+}
+
+fn remote_powershell_missing(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    (error.contains("powershell") && (error.contains("command not found") || error.contains("not found") || error.contains("not recognized") || error.contains("not windows")))
+        || error.contains("sudo: command not found")
 }
 
 fn remote_signal_command(pid: u32, sig: &str, expected_start: Option<u64>) -> Result<String, String> {
@@ -713,6 +748,20 @@ mod tests {
         assert!(valid_process_signal("TERM"));
         assert!(!valid_process_signal("TERM; id"));
         assert!(!valid_process_signal(""));
+    }
+
+    #[test]
+    fn remote_windows_signal_is_encoded_and_checks_process_identity() {
+        use base64::Engine;
+        let command = super::remote_windows_signal_command(42, "KILL", 1337);
+        let encoded = command.strip_prefix("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ").unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
+        let words = bytes.chunks_exact(2).map(|word| u16::from_le_bytes([word[0], word[1]])).collect::<Vec<_>>();
+        let script = String::from_utf16(&words).unwrap();
+        assert!(script.contains("ToFileTimeUtc() -ne [int64]1337"));
+        assert!(script.contains("Stop-Process -Id 42 -Force"));
+        assert!(super::remote_powershell_missing("powershell.exe: command not found"));
+        assert!(!super::remote_powershell_missing("Process changed or exited; refresh the list"));
     }
 
     #[test]

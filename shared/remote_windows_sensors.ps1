@@ -9,6 +9,8 @@ if ($env:OS -ne 'Windows_NT') {
 try {
     $collectNetworkDetails = __COLLECT_NETWORK_DETAILS__
     $cpu = @(Get-CimInstance Win32_Processor -ErrorAction Stop)
+    $cores = [int](($cpu | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum)
+    if ($cores -lt 1) { throw 'No logical CPU count was reported' }
     $cpuLoad = $null
     $reportedCpuLoads = @($cpu | Where-Object { $null -ne $_.LoadPercentage })
     if ($reportedCpuLoads.Count -gt 0) { $cpuLoad = [double](($reportedCpuLoads | Measure-Object -Property LoadPercentage -Average).Average) }
@@ -135,6 +137,67 @@ try {
         }
     })
     $processCount = @(Get-Process -ErrorAction SilentlyContinue).Count
+    $processesCollected = $false
+    $processNetworkCollected = $false
+    $topApps = @()
+    $collectProcesses = __COLLECT_PROCESSES__
+    if ($collectProcesses) {
+        try {
+            function Read-ProcessSample {
+                @(Get-Process -ErrorAction Stop | ForEach-Object {
+                    $startMarker = $null
+                    $cpuSeconds = $null
+                    try { $startMarker = [int64]$_.StartTime.ToUniversalTime().ToFileTimeUtc() } catch { }
+                    try { $cpuSeconds = [double]$_.CPU } catch { }
+                    [pscustomobject]@{
+                        pid = [uint32]$_.Id
+                        name = [string]$_.ProcessName
+                        start_marker = $startMarker
+                        cpu_seconds = $cpuSeconds
+                        mem_bytes = [int64]$_.WorkingSet64
+                    }
+                })
+            }
+            $sampleStartedAt = [Diagnostics.Stopwatch]::GetTimestamp()
+            $before = @(Read-ProcessSample)
+            Start-Sleep -Milliseconds 200
+            $after = @(Read-ProcessSample)
+            $elapsed = ([Diagnostics.Stopwatch]::GetTimestamp() - $sampleStartedAt) / [Diagnostics.Stopwatch]::Frequency
+            $beforeByIdentity = @{}
+            foreach ($process in $before) {
+                if ($null -ne $process.start_marker) { $beforeByIdentity["$($process.pid):$($process.start_marker)"] = $process }
+            }
+            $topApps = @($after | ForEach-Object {
+                $process = $_
+                $prior = $null
+                if ($null -ne $process.start_marker) { $prior = $beforeByIdentity["$($process.pid):$($process.start_marker)"] }
+                $cpu = $null
+                if ($prior -and $null -ne $prior.cpu_seconds -and $null -ne $process.cpu_seconds -and $elapsed -gt 0 -and $process.cpu_seconds -ge $prior.cpu_seconds) {
+                    $cpu = [math]::Min(100, [math]::Max(0, 100 * ($process.cpu_seconds - $prior.cpu_seconds) / ($elapsed * [math]::Max(1, $cores))))
+                }
+                [pscustomobject]@{
+                    pid = $process.pid
+                    name = $process.name
+                    start_marker = $process.start_marker
+                    cpu = $cpu
+                    mem_bytes = $process.mem_bytes
+                    status = 'Unknown'
+                    net_rx_bytes = $null
+                    net_tx_bytes = $null
+                    net_rate = $null
+                    net_rate_available = $false
+                    disk_read_bytes = $null
+                    disk_write_bytes = $null
+                    disk_read_rate = $null
+                    disk_write_rate = $null
+                    disk_rate = $null
+                    disk_rate_available = $false
+                }
+            })
+            $processCount = $after.Count
+            $processesCollected = $true
+        } catch { }
+    }
     $tcpCount = $null
     $udpCount = $null
     try { $tcpCount = @(Get-NetTCPConnection -ErrorAction Stop).Count } catch { }
@@ -142,7 +205,7 @@ try {
 
     $result = [ordered]@{
         cpu_model = (($cpu | ForEach-Object { $_.Name } | Where-Object { $_ } | Select-Object -Unique) -join ' / ')
-        cores = [int](($cpu | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum)
+        cores = $cores
         cpu_usage = $cpuLoad
         cpu_core_usages = @()
         cpu_freqs = @($cpu | Where-Object { $_.CurrentClockSpeed -gt 0 } | ForEach-Object { [int64]$_.CurrentClockSpeed })
@@ -165,9 +228,10 @@ try {
         total_tx_rate = $null
         active_sockets = $null
         power = @{ ac_online = $null; batteries = $batteries; charge_limit = $null }
-        top_apps = @()
-        processes_collected = $false
-        process_network_collected = $false
+        top_apps = $topApps
+        processes_collected = $processesCollected
+        process_network_collected = $processNetworkCollected
+        process_network_supported = $false
         process_count = $processCount
         os_name = [string]$os.Caption
         os_version = [string]$os.Version

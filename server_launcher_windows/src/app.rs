@@ -4380,6 +4380,7 @@ fn render_process_context_menu(
     mem: u64,
     proc_action: &mut Option<ProcAction>,
     p: &crate::theme::ThemePalette,
+    windows_process_host: bool,
 ) {
     ui.scope(|ui| {
         ui.visuals_mut().widgets.inactive.bg_fill = Color32::TRANSPARENT;
@@ -4413,6 +4414,7 @@ fn render_process_context_menu(
             resp
         };
 
+        if !windows_process_host {
         // 1. Properties (Alt+Return)
         if item(ui, "Properties", "Alt+Return").clicked() {
             *proc_action = Some(ProcAction::Properties {
@@ -4493,6 +4495,7 @@ fn render_process_context_menu(
         if item(ui, "Resume", "Ctrl+C").clicked() {
             *proc_action = Some(ProcAction::Resume { pid });
             ui.close_menu();
+        }
         }
 
         // 8. Terminate... (Ctrl+T)
@@ -10972,7 +10975,7 @@ impl LauncherApp {
         };
         if let Some(hid) = host_id {
             let needs_processes = matches!(self.sensors_subtab, SensorsSubTab::TopApps | SensorsSubTab::Ram);
-            let needs_network = self.sensors_subtab == SensorsSubTab::TopApps;
+            let needs_network = self.sensors_subtab == SensorsSubTab::TopApps && snap.process_network_supported;
             let needs_network_details = self.sensors_subtab == SensorsSubTab::Wifi;
             if snap.timestamp.is_some() && !is_fetching
                 && ((needs_processes && !snap.processes_collected) || (needs_network && !snap.process_network_collected) || (needs_network_details && !snap.network_details_collected))
@@ -17423,11 +17426,11 @@ impl LauncherApp {
                                                 egui::FontId::monospace(11.0),
                                                 net_color,
                                             );
-                                            let _ = net_resp.on_hover_text(format!(
-                                                "{} received + sent across visible TCP sockets{}",
-                                                crate::sensors::format_bytes(grp.sum_net_bytes),
-                                                if grp.net_rate_available { "" } else { " • waiting for a prior rate sample" },
-                                            ));
+                                            let _ = net_resp.on_hover_text(if !snap.process_network_supported {
+                                                "Per-process network counters are unavailable from this host's sensor collector.".to_string()
+                                            } else {
+                                                format!("{} received + sent across visible TCP sockets{}", crate::sensors::format_bytes(grp.sum_net_bytes), if grp.net_rate_available { "" } else { " • waiting for a prior rate sample" })
+                                            });
 
                                             // 6. GPU (Heatmap tinted cell, strictly bounded, right aligned)
                                             let (gpu_rect, gpu_resp) = ui.allocate_exact_size(egui::vec2(COL_GPU_W, 22.0), egui::Sense::hover());
@@ -17502,7 +17505,7 @@ impl LauncherApp {
                                                 right_clicked_pid = Some(grp.pids[0]);
                                             }
                                             row_resp.context_menu(|ui| {
-                                                render_process_context_menu(ui, grp.pids[0], &grp.display_name, if grp.cpu_usage_available { norm_cpu } else { f32::NAN }, grp.sum_mem, &mut proc_action, &p);
+                                                render_process_context_menu(ui, grp.pids[0], &grp.display_name, if grp.cpu_usage_available { norm_cpu } else { f32::NAN }, grp.sum_mem, &mut proc_action, &p, snap.os_name.to_ascii_lowercase().contains("windows"));
                                             });
 
                                             if row_clicked {
@@ -17618,11 +17621,11 @@ impl LauncherApp {
                                                         egui::FontId::monospace(10.5),
                                                         c_net_color,
                                                     );
-                                                    let _ = c_net_resp.on_hover_text(format!(
-                                                        "{} received + sent across visible TCP sockets{}",
-                                                        crate::sensors::format_bytes(child.net_rx_bytes.saturating_add(child.net_tx_bytes)),
-                                                        if child.net_rate_available { "" } else { " • waiting for a prior rate sample" },
-                                                    ));
+                                                    let _ = c_net_resp.on_hover_text(if !snap.process_network_supported {
+                                                        "Per-process network counters are unavailable from this host's sensor collector.".to_string()
+                                                    } else {
+                                                        format!("{} received + sent across visible TCP sockets{}", crate::sensors::format_bytes(child.net_rx_bytes.saturating_add(child.net_tx_bytes)), if child.net_rate_available { "" } else { " • waiting for a prior rate sample" })
+                                                    });
 
                                                     // Child GPU
                                                     let (c_gpu_rect, c_gpu_resp) = ui.allocate_exact_size(egui::vec2(COL_GPU_W, 20.0), egui::Sense::hover());
@@ -17663,7 +17666,7 @@ impl LauncherApp {
                                                         right_clicked_pid = Some(child.pid);
                                                     }
                                                     c_row_resp.context_menu(|ui| {
-                                                        render_process_context_menu(ui, child.pid, &grp.display_name, if child.cpu_usage_available { child_norm_cpu } else { f32::NAN }, child.memory_bytes, &mut proc_action, &p);
+                                                        render_process_context_menu(ui, child.pid, &grp.display_name, if child.cpu_usage_available { child_norm_cpu } else { f32::NAN }, child.memory_bytes, &mut proc_action, &p, snap.os_name.to_ascii_lowercase().contains("windows"));
                                                     });
 
                                                     if child_clicked {
@@ -17749,21 +17752,26 @@ impl LauncherApp {
                 let sel_cpu = sel_proc.filter(|p| p.cpu_usage_available).map(|p| p.cpu_usage).unwrap_or(f32::NAN);
                 let sel_mem = sel_proc.map(|p| p.memory_bytes).unwrap_or(0);
 
-                if alt && ui.ctx().input(|i| i.key_pressed(Key::Enter)) {
-                    proc_action = Some(ProcAction::Properties { pid: sel_pid, name: sel_name, cpu: sel_cpu, mem: sel_mem });
-                } else if ctrl && ui.ctx().input(|i| i.key_pressed(Key::M)) {
-                    proc_action = Some(ProcAction::MemoryMaps { pid: sel_pid, name: sel_name });
-                } else if ctrl && ui.ctx().input(|i| i.key_pressed(Key::O)) {
-                    proc_action = Some(ProcAction::OpenFiles { pid: sel_pid, name: sel_name });
-                } else if alt && ui.ctx().input(|i| i.key_pressed(Key::S)) {
-                    proc_action = Some(ProcAction::SetAffinity { pid: sel_pid, name: sel_name });
-                } else if ctrl && ui.ctx().input(|i| i.key_pressed(Key::S)) {
-                    proc_action = Some(ProcAction::Stop { pid: sel_pid });
-                } else if ctrl && ui.ctx().input(|i| i.key_pressed(Key::C)) {
-                    proc_action = Some(ProcAction::Resume { pid: sel_pid });
-                } else if ctrl && ui.ctx().input(|i| i.key_pressed(Key::T)) {
+                let windows_process_host = snap.os_name.to_ascii_lowercase().contains("windows");
+                if windows_process_host && ctrl && ui.ctx().input(|i| i.key_pressed(Key::T)) {
                     proc_action = Some(ProcAction::Terminate { pid: sel_pid });
-                } else if ctrl && ui.ctx().input(|i| i.key_pressed(Key::K)) {
+                } else if windows_process_host && ctrl && ui.ctx().input(|i| i.key_pressed(Key::K)) {
+                    proc_action = Some(ProcAction::ForceStop { pid: sel_pid });
+                } else if !windows_process_host && alt && ui.ctx().input(|i| i.key_pressed(Key::Enter)) {
+                    proc_action = Some(ProcAction::Properties { pid: sel_pid, name: sel_name, cpu: sel_cpu, mem: sel_mem });
+                } else if !windows_process_host && ctrl && ui.ctx().input(|i| i.key_pressed(Key::M)) {
+                    proc_action = Some(ProcAction::MemoryMaps { pid: sel_pid, name: sel_name });
+                } else if !windows_process_host && ctrl && ui.ctx().input(|i| i.key_pressed(Key::O)) {
+                    proc_action = Some(ProcAction::OpenFiles { pid: sel_pid, name: sel_name });
+                } else if !windows_process_host && alt && ui.ctx().input(|i| i.key_pressed(Key::S)) {
+                    proc_action = Some(ProcAction::SetAffinity { pid: sel_pid, name: sel_name });
+                } else if !windows_process_host && ctrl && ui.ctx().input(|i| i.key_pressed(Key::S)) {
+                    proc_action = Some(ProcAction::Stop { pid: sel_pid });
+                } else if !windows_process_host && ctrl && ui.ctx().input(|i| i.key_pressed(Key::C)) {
+                    proc_action = Some(ProcAction::Resume { pid: sel_pid });
+                } else if !windows_process_host && ctrl && ui.ctx().input(|i| i.key_pressed(Key::T)) {
+                    proc_action = Some(ProcAction::Terminate { pid: sel_pid });
+                } else if !windows_process_host && ctrl && ui.ctx().input(|i| i.key_pressed(Key::K)) {
                     proc_action = Some(ProcAction::ForceStop { pid: sel_pid });
                 }
             }

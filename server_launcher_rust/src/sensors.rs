@@ -314,6 +314,7 @@ pub struct SystemSensorsSnapshot {
     pub process_count: Option<usize>,
     pub processes_collected: bool,
     pub process_network_collected: bool,
+    pub process_network_supported: bool,
     pub network_details_collected: bool,
 
     // OS info
@@ -969,6 +970,7 @@ impl SystemSensorsCollector {
             top_apps,
             processes_collected: include_top_apps,
             process_network_collected: include_top_apps && include_process_network,
+            process_network_supported: cfg!(target_os = "linux"),
             network_details_collected: false,
             os_name: System::name().unwrap_or_default(),
             os_version: System::os_version().unwrap_or_default(),
@@ -2589,11 +2591,12 @@ fn parse_process_tcp_counters(output: &str) -> HashMap<u32, (u64, u64)> {
 
 use crate::config::SshRemoteHost;
 use crate::remote::build_ssh_command;
-fn remote_windows_sensor_command(include_network_details: bool) -> String {
+fn remote_windows_sensor_command(include_processes: bool, include_network_details: bool) -> String {
     use base64::Engine;
 
     let script = include_str!("../../shared/remote_windows_sensors.ps1")
-        .replace("__COLLECT_NETWORK_DETAILS__", if include_network_details { "$true" } else { "$false" });
+        .replace("__COLLECT_NETWORK_DETAILS__", if include_network_details { "$true" } else { "$false" })
+        .replace("__COLLECT_PROCESSES__", if include_processes { "$true" } else { "$false" });
     let utf16le: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let encoded = base64::engine::general_purpose::STANDARD.encode(utf16le);
     format!("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded}")
@@ -2609,10 +2612,10 @@ fn remote_sensor_host_key(host: &SshRemoteHost) -> String {
     format!("{}@{}:{}", host.user.trim(), host.host.trim(), host.port)
 }
 
-fn query_remote_windows_sensors(host: &SshRemoteHost, include_network_details: bool) -> Result<Option<serde_json::Value>, String> {
+fn query_remote_windows_sensors(host: &SshRemoteHost, include_processes: bool, include_network_details: bool) -> Result<Option<serde_json::Value>, String> {
     let mut host = host.clone();
     host.remote_cwd.clear();
-    let mut cmd = build_ssh_command(&host, &remote_windows_sensor_command(include_network_details));
+    let mut cmd = build_ssh_command(&host, &remote_windows_sensor_command(include_processes, include_network_details));
     let out = cmd.output().map_err(|error| format!("SSH command execution error: {error}"))?;
     if !out.status.success() {
         let error = String::from_utf8_lossy(&out.stderr).trim().to_string();
@@ -2640,6 +2643,44 @@ fn remote_sensor_command(script: &str, include_processes: bool, include_process_
     format!("{} {} {} {}", script.trim_end(), if include_processes { "1" } else { "0" }, if include_processes && include_process_network { "1" } else { "0" }, if include_network_details { "1" } else { "0" })
 }
 
+fn parse_remote_process_rows(parsed: &serde_json::Value, include_processes: bool) -> Result<Vec<ProcessSensorInfo>, String> {
+    let rows = if include_processes {
+        parsed["top_apps"].as_array().map(Vec::as_slice).ok_or_else(|| "Remote sensor data has no process list".to_string())?
+    } else { &[] };
+    let mut processes = Vec::new();
+    for row in rows {
+        let (Some(pid), Some(name), Some(memory_bytes)) = (row["pid"].as_u64(), row["name"].as_str(), row["mem_bytes"].as_u64()) else { continue; };
+        let Ok(pid) = u32::try_from(pid) else { continue; };
+        if pid == 0 || name.trim().is_empty() { continue; }
+        let rate = |key: &str| row[key].as_f64().filter(|value| value.is_finite() && *value >= 0.0);
+        let read_rate = rate("disk_read_rate");
+        let write_rate = rate("disk_write_rate");
+        let disk_rate = rate("disk_rate");
+        let net_rate = rate("net_rate");
+        let cpu = parse_process_cpu_usage(&row["cpu"]);
+        processes.push(ProcessSensorInfo {
+            pid,
+            start_marker: row["start_marker"].as_u64(),
+            name: name.to_string(),
+            cpu_usage: cpu.unwrap_or(0.0),
+            cpu_usage_available: cpu.is_some(),
+            memory_bytes,
+            disk_read_bytes: row["disk_read_bytes"].as_u64().unwrap_or(0),
+            disk_written_bytes: row["disk_write_bytes"].as_u64().unwrap_or(0),
+            disk_read_rate_bps: read_rate.unwrap_or(0.0),
+            disk_write_rate_bps: write_rate.unwrap_or(0.0),
+            disk_rate_bps: disk_rate.unwrap_or(0.0),
+            disk_rate_available: row["disk_rate_available"].as_bool() == Some(true) && read_rate.is_some() && write_rate.is_some() && disk_rate.is_some(),
+            net_rx_bytes: row["net_rx_bytes"].as_u64().unwrap_or(0),
+            net_tx_bytes: row["net_tx_bytes"].as_u64().unwrap_or(0),
+            net_rate_bps: net_rate.unwrap_or(0.0),
+            net_rate_available: row["net_rate_available"].as_bool() == Some(true) && net_rate.is_some(),
+            status: row["status"].as_str().unwrap_or("Unknown").to_string(),
+        });
+    }
+    Ok(processes)
+}
+
 #[cfg(test)]
 mod remote_sensor_command_tests {
     #[test]
@@ -2651,12 +2692,15 @@ mod remote_sensor_command_tests {
     #[test]
     fn windows_sensor_command_encodes_utf16_powershell_without_shell_payload() {
         use base64::Engine;
-        let command = super::remote_windows_sensor_command(true);
+        let command = super::remote_windows_sensor_command(true, true);
         let encoded = command.strip_prefix("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ").unwrap();
         let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
         let words = bytes.chunks_exact(2).map(|word| u16::from_le_bytes([word[0], word[1]])).collect::<Vec<_>>();
         let script = String::from_utf16(&words).unwrap();
         assert!(script.contains("$collectNetworkDetails = $true"));
+        assert!(script.contains("$collectProcesses = $true"));
+        assert!(script.contains("function Read-ProcessSample"));
+        assert!(script.contains("process_network_supported = $false"));
         assert!(!command.contains("Get-CimInstance"));
     }
 
@@ -3726,7 +3770,7 @@ print(json.dumps(data))
     let host_key = remote_sensor_host_key(host);
     let known_windows = known_windows_remote_hosts().lock().unwrap().contains(&host_key);
     let parsed = if known_windows {
-        match query_remote_windows_sensors(host, include_network_details)? {
+        match query_remote_windows_sensors(host, include_processes, include_network_details)? {
             Some(data) => data,
             None => {
                 known_windows_remote_hosts().lock().unwrap().remove(&host_key);
@@ -3761,7 +3805,7 @@ print(json.dumps(data))
             return Err(python_error.unwrap());
         }
         if windows_host {
-            match query_remote_windows_sensors(host, include_network_details) {
+            match query_remote_windows_sensors(host, include_processes, include_network_details) {
                 Ok(Some(windows_data)) => {
                     known_windows_remote_hosts().lock().unwrap().insert(host_key);
                     windows_data
@@ -3997,51 +4041,7 @@ print(json.dumps(data))
 
     let (total_rx_bytes, total_tx_bytes, total_rx_rate_bps, total_tx_rate_bps) = network_totals(&networks);
 
-    let mut top_apps = Vec::new();
-    let process_rows: &[serde_json::Value] = if include_processes {
-        parsed["top_apps"].as_array().map(Vec::as_slice).ok_or_else(|| "Remote sensor data has no process list".to_string())?
-    } else {
-        &[]
-    };
-    for a in process_rows {
-        let (Some(pid), Some(name), Some(memory_bytes), Some(net_rx_bytes), Some(net_tx_bytes),
-            Some(net_rate_bps), Some(disk_read_bytes), Some(disk_written_bytes),
-            Some(disk_read_rate_bps), Some(disk_write_rate_bps), Some(disk_rate_bps)) = (
-            a["pid"].as_u64(), a["name"].as_str(), a["mem_bytes"].as_u64(),
-            a["net_rx_bytes"].as_u64(), a["net_tx_bytes"].as_u64(), a["net_rate"].as_f64(),
-            a["disk_read_bytes"].as_u64(), a["disk_write_bytes"].as_u64(),
-            a["disk_read_rate"].as_f64(), a["disk_write_rate"].as_f64(), a["disk_rate"].as_f64(),
-        ) else { continue; };
-        let Ok(pid) = u32::try_from(pid) else { continue; };
-        if pid == 0 || name.trim().is_empty()
-            || [net_rate_bps, disk_read_rate_bps, disk_write_rate_bps, disk_rate_bps].iter().any(|rate| !rate.is_finite() || *rate < 0.0) {
-            continue;
-        }
-        let name = name.to_string();
-        let cpu_reading = parse_process_cpu_usage(&a["cpu"]);
-        let cpu_usage = cpu_reading.unwrap_or(0.0);
-        let status = a["status"].as_str().unwrap_or("Unknown").to_string();
-        top_apps.push(ProcessSensorInfo {
-            pid,
-            start_marker: a["start_marker"].as_u64(),
-            name,
-            cpu_usage,
-            cpu_usage_available: cpu_reading.is_some(),
-            memory_bytes,
-            disk_read_bytes,
-            disk_written_bytes,
-            disk_read_rate_bps,
-            disk_write_rate_bps,
-            disk_rate_bps,
-            disk_rate_available: a["disk_rate_available"].as_bool() == Some(true),
-            net_rx_bytes,
-            net_tx_bytes,
-            net_rate_bps,
-            net_rate_available: a["net_rate_available"].as_bool() == Some(true),
-            status,
-        });
-    }
-
+    let top_apps = parse_remote_process_rows(&parsed, include_processes)?;
     let active_socket_rows = parse_active_sockets(&parsed["active_sockets"]);
     let active_sockets_available = active_socket_rows.is_some();
     let active_sockets = active_socket_rows.unwrap_or_default();
@@ -4169,6 +4169,8 @@ print(json.dumps(data))
         top_apps,
         processes_collected: parsed["processes_collected"].as_bool().unwrap_or(include_processes),
         process_network_collected: parsed["process_network_collected"].as_bool().unwrap_or(include_processes && include_process_network),
+        process_network_supported: parsed["process_network_supported"].as_bool()
+            .unwrap_or(parsed["os_name"].as_str().is_some_and(|name| name.to_ascii_lowercase().contains("linux"))),
         network_details_collected: parsed["network_details_collected"].as_bool().unwrap_or(include_network_details),
         os_name: parsed["os_name"].as_str().unwrap_or("").to_string(),
         os_version: parsed["os_version"].as_str().unwrap_or("").to_string(),
@@ -4188,6 +4190,17 @@ print(json.dumps(data))
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn remote_windows_process_rows_keep_cpu_memory_and_identity_without_fake_io() {
+        let parsed = serde_json::json!({"top_apps":[{"pid":42,"name":"worker","start_marker":1337,"cpu":7.5,"mem_bytes":2048,"status":"Unknown","net_rx_bytes":null,"net_tx_bytes":null,"net_rate":null,"net_rate_available":false,"disk_read_bytes":null,"disk_write_bytes":null,"disk_read_rate":null,"disk_write_rate":null,"disk_rate":null,"disk_rate_available":false}]});
+        let rows = super::parse_remote_process_rows(&parsed, true).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].start_marker, Some(1337));
+        assert_eq!(rows[0].memory_bytes, 2048);
+        assert_eq!(rows[0].cpu_usage, 7.5);
+        assert!(!rows[0].net_rate_available && !rows[0].disk_rate_available);
+    }
+
     #[test]
     fn memory_summary_uses_hottest_sensor_independent_of_order() {
         assert_eq!(super::hottest_temperature(Some(43.0), 51.0), Some(51.0));

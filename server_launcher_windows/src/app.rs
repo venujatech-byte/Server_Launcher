@@ -14831,16 +14831,43 @@ impl LauncherApp {
         }
         #[cfg(windows)]
         if host_id.is_none() {
+            let p = self.palette();
+            let accent = self.sensors_accent_color(&p);
             ScrollArea::vertical().id_salt("windows_power_scroll").auto_shrink([false, false]).show(ui, |ui| {
             ui.heading("Windows power and battery");
             if snap.power.batteries.is_empty() { ui.label("No battery telemetry is available."); }
             for (index, battery) in snap.power.batteries.iter().enumerate() {
                 let duplicate_name = snap.power.batteries.iter().filter(|item| item.name == battery.name).count() > 1;
                 let label = if duplicate_name { format!("{} · {}", battery.name, index + 1) } else { battery.name.clone() };
-                ui.label(format!("{} · {}% · {}", label, reported_sensor_value(battery.capacity_pct, 0), battery.status));
+                let energy_label = if battery.energy_estimated { "Remaining energy (est.)" } else { "Remaining energy" };
+                let metrics = [
+                    ("Charge", battery.capacity_pct.map(|value| format!("{value:.0}%"))),
+                    (energy_label, battery.energy_wh.map(|value| format!("{value:.1} Wh"))),
+                    ("Full-charge capacity", battery.energy_full_wh.map(|value| format!("{value:.1} Wh"))),
+                    ("Design capacity", battery.energy_design_wh.map(|value| format!("{value:.1} Wh"))),
+                    ("Retention", battery_capacity_retention(battery).map(|value| format!("{value:.1}%"))),
+                    ("Design voltage", battery.voltage_volts.map(|value| format!("{value:.2} V"))),
+                ];
+                Frame::none().fill(p.bg_card).rounding(Rounding::same(8.0))
+                    .inner_margin(egui::Margin::symmetric(12.0, 10.0)).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(label).size(12.0).strong().color(p.text_primary));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(RichText::new(&battery.status).size(10.0).color(p.text_secondary));
+                                ui.label(RichText::new("●").size(7.0).color(accent));
+                            });
+                        });
+                        ui.add_space(8.0);
+                        sensor_card_columns(ui, metrics.len(), |ui, column| {
+                            let (name, value) = &metrics[column];
+                            ui.label(RichText::new(*name).size(9.5).color(p.text_muted));
+                            ui.label(RichText::new(value.as_deref().unwrap_or("—")).size(13.0).monospace().color(p.text_primary));
+                        });
+                    });
+                ui.add_space(6.0);
             }
-            ui.label("Package watts, battery health and charging limits require a supported hardware provider. Linux governor and firmware controls are unavailable here.");
-            render_animated_power_estimate(ui, snap, self.palette().accent);
+            ui.label(RichText::new("Battery cycle count, charge limits, and measured package power are not reported by this Windows provider.").size(10.0).color(p.text_muted));
+            render_animated_power_estimate(ui, snap, accent);
             if ui.button("Open Windows power settings").clicked() {
                 let _ = std::process::Command::new("cmd.exe").args(["/D", "/C", "start", "", "ms-settings:powersleep"]).spawn();
             }

@@ -5003,7 +5003,7 @@ if (__INVENTORY__) {
 try { $result.disk=Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -Filter "Name='_Total'" -ErrorAction Stop | Select-Object -First 1 DiskReadBytesPerSec,DiskWriteBytesPerSec } catch { $result.disk=$null }
 try { $result.gpu_engines=@(Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction Stop | Select-Object Name,UtilizationPercentage) } catch { $result.gpu_engines=@() }
 try { $result.logical_disks=@(Get-CimInstance Win32_PerfFormattedData_PerfDisk_LogicalDisk -ErrorAction Stop | Select-Object Name,DiskReadBytesPerSec,DiskWriteBytesPerSec) } catch { $result.logical_disks=@() }
-try { $result.battery=@(Get-CimInstance Win32_Battery -ErrorAction Stop | Select-Object DeviceID,Name,EstimatedChargeRemaining,BatteryStatus,DesignCapacity,FullChargeCapacity) } catch { $result.battery_error="Battery query failed: $($_.Exception.Message)" }
+try { $result.battery=@(Get-CimInstance Win32_Battery -ErrorAction Stop | Select-Object DeviceID,Name,EstimatedChargeRemaining,BatteryStatus,DesignVoltage,DesignCapacity,FullChargeCapacity) } catch { $result.battery_error="Battery query failed: $($_.Exception.Message)" }
 try {
   $sensors=@(Get-CimInstance -Namespace root/LibreHardwareMonitor -ClassName Sensor -ErrorAction Stop | Select-Object Name,Value,Identifier,Parent,SensorType)
   $result.temp=@($sensors | Where-Object SensorType -eq Temperature)
@@ -5365,6 +5365,7 @@ fn parse_windows_hardware(data: &serde_json::Value) -> SystemSensorsSnapshot {
                 name: b["Name"].as_str().unwrap_or("Battery").into(), present: true,
                 capacity_pct: percent.map(|value| value as f32),
                 status: windows_battery_status(b["BatteryStatus"].as_u64()).into(),
+                voltage_volts: b["DesignVoltage"].as_u64().filter(|value| *value > 0).map(|value| value as f32 / 1000.0),
                 energy_wh: percent.zip(energy_full_wh).map(|(percent, full)| percent as f32 * full / 100.0),
                 energy_full_wh,
                 energy_design_wh,
@@ -5686,11 +5687,12 @@ mod windows_sensor_tests {
     #[test]
     fn windows_battery_capacity_uses_reported_wmi_design_and_full_charge() {
         let snapshot = parse_windows_hardware(&serde_json::json!({"battery": [
-            {"DeviceID":"ACPI\\PNP0C0A\\0", "Name":"Battery", "EstimatedChargeRemaining":50, "BatteryStatus":2,
+            {"DeviceID":"ACPI\\PNP0C0A\\0", "Name":"Battery", "EstimatedChargeRemaining":50, "BatteryStatus":2, "DesignVoltage":12000,
              "DesignCapacity":50000, "FullChargeCapacity":40000}
         ]}));
         let battery = &snapshot.power.batteries[0];
         assert_eq!(battery.device_id, "ACPI\\PNP0C0A\\0");
+        assert_eq!(battery.voltage_volts, Some(12.0));
 
         assert_eq!(battery.energy_design_wh, Some(50.0));
         assert_eq!(battery.energy_full_wh, Some(40.0));

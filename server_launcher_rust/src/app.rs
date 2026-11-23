@@ -2899,7 +2899,7 @@ impl LauncherApp {
     }
 
     fn render_remote_servers_left_panel(&mut self, ui: &mut Ui, host: &SshRemoteHost) {
-        let p = self.palette();
+        let p = self.ssh_servers_palette();
         let is_scanning = {
             let map = self.remote_scanning.lock().unwrap();
             map.contains(&host.id)
@@ -3308,7 +3308,7 @@ impl LauncherApp {
     }
 
     fn render_remote_servers_right_panel(&mut self, ui: &mut Ui, host: &SshRemoteHost) {
-        let p = self.palette();
+        let p = self.ssh_servers_palette();
         ui.vertical(|ui| {
             // Interactive SSH Shell Terminal
             ui.horizontal(|ui| {
@@ -10857,6 +10857,42 @@ impl LauncherApp {
 
 
     #[inline]
+    fn ssh_servers_palette(&self) -> crate::theme::ThemePalette {
+        let mut p = self.palette();
+        if self.theme == crate::theme::ThemeMode::Dark {
+            p.bg_app = Color32::from_rgb(0x0B, 0x0D, 0x12);
+            p.bg_header = Color32::from_rgb(0x0B, 0x0D, 0x12);
+            p.bg_machines_nav = Color32::from_rgb(0x0B, 0x0D, 0x12);
+            p.bg_sidebar = Color32::from_rgb(0x11, 0x14, 0x1B);
+            p.bg_main = Color32::from_rgb(0x0B, 0x0D, 0x12);
+            p.bg_card = Color32::from_rgb(0x17, 0x1B, 0x24);
+            p.bg_card_hover = Color32::from_rgb(0x1F, 0x25, 0x32);
+            p.bg_card_active = Color32::from_rgba_unmultiplied(0x3B, 0x82, 0xF6, 36);
+            p.bg_subtle = Color32::from_rgb(0x11, 0x14, 0x1B);
+            p.bg_input = Color32::from_rgb(0x17, 0x1B, 0x24);
+            p.bg_button = Color32::from_rgb(0x17, 0x1B, 0x24);
+            p.bg_button_hover = Color32::from_rgb(0x1F, 0x25, 0x32);
+            p.text_primary = Color32::from_rgb(0xF1, 0xF5, 0xF9);
+            p.text_secondary = Color32::from_rgb(0xCB, 0xD5, 0xE1);
+            p.text_muted = Color32::from_rgb(0x94, 0xA3, 0xB8);
+            p.success = Color32::from_rgb(0x10, 0xB9, 0x81);
+            p.success_subtle = Color32::from_rgba_unmultiplied(0x10, 0xB9, 0x81, 31);
+            p.warning = Color32::from_rgb(0xF5, 0x9F, 0x0B);
+            p.warning_subtle = Color32::from_rgba_unmultiplied(0xF5, 0x9F, 0x0B, 31);
+            p.danger = Color32::from_rgb(0xEF, 0x44, 0x44);
+            p.danger_subtle = Color32::from_rgba_unmultiplied(0xEF, 0x44, 0x44, 31);
+            p.terminal_bg = Color32::from_rgb(0x0D, 0x10, 0x17);
+            if self.custom_accent_color.is_none() {
+                p.accent = Color32::from_rgb(0x3B, 0x82, 0xF6);
+                p.accent_hover = Color32::from_rgb(0x25, 0x63, 0xEB);
+                p.accent_light = Color32::from_rgb(0x93, 0xC5, 0xFD);
+                p.accent_subtle = Color32::from_rgba_unmultiplied(0x3B, 0x82, 0xF6, 36);
+                p.accent_text = Color32::from_rgb(0x0B, 0x0D, 0x12);
+            }
+        }
+        p
+    }
+
     pub fn palette(&self) -> crate::theme::ThemePalette {
         let mut p = self.theme.palette();
         if let Some(ref acc_str) = self.custom_accent_color {

@@ -545,17 +545,17 @@ impl Service {
             let logs_clone = Arc::clone(&self.logs);
             let max_logs = self.max_logs;
             thread::spawn(move || {
-                if let Ok(output) = Command::new("journalctl")
-                    .args(["-q", &format!("_PID={}", pid), "-n", "25", "--no-pager"])
-                    .output()
+                if let Ok(mut journal) = Command::new("journalctl")
+                    .args(["-q", "-b", &format!("_PID={}", pid), "-n", "25", "--no-pager"])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .spawn()
                 {
-                    let out = String::from_utf8_lossy(&output.stdout);
-                    for line in out.lines() {
-                        let trimmed = line.trim();
-                        if !trimmed.is_empty() {
-                            push_log_line(trimmed, &logs_clone, max_logs, LogKind::Stdout);
-                        }
+                    if let Some(stdout) = journal.stdout.take() {
+                        spawn_stream_reader(stdout, logs_clone, max_logs, LogKind::Stdout);
                     }
+                    let _ = journal.wait();
                 }
             });
         }

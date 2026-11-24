@@ -108,3 +108,5 @@ The saved Commands list caches category counts by host and matching row indexes 
 Systemd journal and dependency commands now cap captured output at 2 MiB per stream. Oversized output is drained without retaining the excess and returns a clear error instead of caching incomplete content.
 
 Command terminals now reuse the bounded stream reader used by server and SSH output. Retained terminal entries are capped at 8 KiB on a UTF-8 boundary, with a visible truncation marker. This limits individual entries while retaining the existing per-stream row limits.
+
+Linux server reattachment now streams recent journal lines through the bounded terminal reader and reaps the journal reader process. The query stays within the current boot to avoid showing logs for the same numeric PID from earlier boots.

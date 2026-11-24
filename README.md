@@ -303,6 +303,8 @@ This project is licensed under the MIT License - feel free to use, modify, and d
 
 In either Rust app, open **Settings → About → Check for updates**. GitHub builds
 publish a versioned update manifest with package sizes and SHA-256 digests.
+For older releases without a manifest, About uses GitHub-provided SHA-256
+digests for recognized installers.
 Choose your current installer type, download it, then open it from About after
 verification. Windows EXE/MSI updates use their regular installer prompts. On
 Linux, DEB and RPM files open in the system's associated package installer

@@ -9,6 +9,8 @@ use std::sync::{Arc, Mutex};
 
 const MANIFEST: &str =
     "https://github.com/venujatech-byte/Server_Launcher/releases/latest/download/latest.json";
+const RELEASE_API: &str =
+    "https://api.github.com/repos/venujatech-byte/Server_Launcher/releases/latest";
 const RELEASES: &str = "https://github.com/venujatech-byte/Server_Launcher/releases/latest";
 const VERSION: &str = match option_env!("SERVER_LAUNCHER_RELEASE_VERSION") {
     Some(version) => version,
@@ -73,6 +75,86 @@ fn curl() -> Command {
     curl
 }
 
+#[derive(Deserialize)]
+struct GitHubRelease {
+    tag_name: String,
+    assets: Vec<GitHubAsset>,
+}
+
+#[derive(Deserialize)]
+struct GitHubAsset {
+    name: String,
+    browser_download_url: String,
+    digest: Option<String>,
+    size: u64,
+}
+
+fn fetch_legacy_release() -> Result<Manifest, String> {
+    let output = curl()
+        .args([
+            "--max-time",
+            "20",
+            "--max-filesize",
+            "262144",
+            "--user-agent",
+            "Server-Launcher-Updater",
+            "--header",
+            "Accept: application/vnd.github+json",
+            RELEASE_API,
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "GitHub release lookup failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let release: GitHubRelease = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("Invalid GitHub release response: {error}"))?;
+    let version = release
+        .tag_name
+        .strip_prefix('v')
+        .ok_or("Release has no version tag")?
+        .to_owned();
+    let mut platforms = HashMap::new();
+    for asset in release.assets {
+        let name = asset.name.to_ascii_lowercase();
+        let key = if name.contains("x64") && name.ends_with("-setup.exe") {
+            "windows-x64-exe"
+        } else if name.contains("x64") && name.ends_with(".msi") {
+            "windows-x64-msi"
+        } else if name.contains("amd64") && name.ends_with(".deb") {
+            "linux-x64-deb"
+        } else if name.contains("x86_64") && name.ends_with(".rpm") {
+            "linux-x64-rpm"
+        } else if name.contains("amd64") && name.ends_with(".appimage") {
+            "linux-x64-appimage"
+        } else {
+            continue;
+        };
+        if let Some(digest) = asset
+            .digest
+            .as_deref()
+            .and_then(|value| value.strip_prefix("sha256:"))
+        {
+            let previous = platforms.insert(
+                key.to_owned(),
+                Asset {
+                    url: asset.browser_download_url,
+                    sha256: digest.to_owned(),
+                    size: asset.size,
+                },
+            );
+            if previous.is_some() {
+                return Err(format!("GitHub lists multiple packages for {key}"));
+            }
+        }
+    }
+    Ok(Manifest { version, platforms })
+}
+
 fn fetch_update() -> Result<Option<Manifest>, String> {
     let mut curl = curl();
     let output = curl
@@ -89,22 +171,23 @@ fn fetch_update() -> Result<Option<Manifest>, String> {
         .output()
         .map_err(|e| format!("Could not start curl: {e}"))?;
     let status_suffix = output.stdout.rsplitn(2, |byte| *byte == b'\n').next();
-    if status_suffix == Some(b"404") {
-        return Err("The latest GitHub release has no update manifest yet.".into());
-    }
-    if !output.status.success() {
-        return Err(format!(
-            "Could not reach the release feed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let manifest_body = output
-        .stdout
-        .rsplitn(2, |byte| *byte == b'\n')
-        .nth(1)
-        .ok_or("The release feed returned no HTTP status")?;
-    let manifest: Manifest = serde_json::from_slice(manifest_body)
-        .map_err(|e| format!("Invalid release manifest: {e}"))?;
+    let manifest: Manifest = if status_suffix == Some(b"404") {
+        fetch_legacy_release()?
+    } else {
+        if !output.status.success() {
+            return Err(format!(
+                "Could not reach the release feed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let manifest_body = output
+            .stdout
+            .rsplitn(2, |byte| *byte == b'\n')
+            .nth(1)
+            .ok_or("The release feed returned no HTTP status")?;
+        serde_json::from_slice(manifest_body)
+            .map_err(|e| format!("Invalid release manifest: {e}"))?
+    };
     let remote = version_tuple(&manifest.version).ok_or("Invalid release version")?;
     let local = version_tuple(VERSION).ok_or("Invalid installed version")?;
     let asset_prefix = format!(

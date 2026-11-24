@@ -4494,23 +4494,19 @@ fn sensor_grid_columns(available: f32, gap: f32, count: usize) -> usize {
     count.div_ceil(rows)
 }
 
-// Keep every sensor row explicit so small width rounding cannot wrap cards into uneven columns.
+// Keep cards readable and distribute a final short row instead of leaving a single card alone.
 fn sensor_card_columns(ui: &mut Ui, count: usize, mut render: impl FnMut(&mut Ui, usize)) {
     let gap = ui.spacing().item_spacing.x;
     let available = ui.available_width();
     let columns = sensor_grid_columns(available, gap, count);
     if columns == 0 { return; }
     let width = ((available - gap * (columns - 1) as f32) / columns as f32).max(0.0);
-    ui.vertical(|ui| {
-        for start in (0..count).step_by(columns) {
-            ui.horizontal(|ui| {
-                for index in start..(start + columns).min(count) {
-                    ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        ui.set_width(width);
-                        ui.set_max_width(width);
-                        render(ui, index);
-                    });
-                }
+    ui.allocate_ui_with_layout(egui::vec2(available, 0.0), egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true), |ui| {
+        for index in 0..count {
+            ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.set_width(width);
+                ui.set_max_width(width);
+                render(ui, index);
             });
         }
     });

@@ -1559,8 +1559,8 @@ impl SshHostModalState {
         self.remote_cwd = h.remote_cwd.clone();
         self.test_result = None;
         self.is_testing = false;
-        self.use_agent = true;
-        self.strict_host_key = false;
+        self.use_agent = h.use_agent;
+        self.strict_host_key = h.strict_host_key;
     }
 }
 
@@ -1808,6 +1808,8 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                         key_path: state.key_path.clone(),
                         password: state.password.clone(),
                         remote_cwd: state.remote_cwd.clone(),
+                        use_agent: state.use_agent,
+                        strict_host_key: state.strict_host_key,
                     };
                     state.test_result = Some(crate::remote::test_ssh_connection(&host_obj));
                 }
@@ -1869,6 +1871,8 @@ pub fn render_ssh_host_modal(ctx: &Context, state: &mut SshHostModalState, palet
                             key_path: state.key_path.trim().to_string(),
                             password: state.password.trim().to_string(),
                             remote_cwd: state.remote_cwd.trim().to_string(),
+                            use_agent: state.use_agent,
+                            strict_host_key: state.strict_host_key,
                         };
 
                         action = ModalAction::SaveSshHost(host_obj, state.editing_id.clone());
@@ -3509,6 +3513,8 @@ mod tests {
             key_path: "".to_string(),
             password: "saved_pass".to_string(),
             remote_cwd: "".to_string(),
+            use_agent: true,
+            strict_host_key: false,
         };
         modal.open_for_host(&host);
         assert!(modal.open);
@@ -3534,6 +3540,8 @@ mod tests {
             key_path: "".to_string(),
             password: "saved_pass".to_string(),
             remote_cwd: "".to_string(),
+            use_agent: true,
+            strict_host_key: false,
         };
         modal.open_for_host(&host);
         assert!(modal.open);

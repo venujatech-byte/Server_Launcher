@@ -94,6 +94,14 @@ pub struct SshRemoteHost {
     pub password: String,
     #[serde(default)]
     pub remote_cwd: String,
+    #[serde(default = "ssh_agent_default")]
+    pub use_agent: bool,
+    #[serde(default)]
+    pub strict_host_key: bool,
+}
+
+fn ssh_agent_default() -> bool {
+    true
 }
 
 fn default_ssh_port() -> u16 {

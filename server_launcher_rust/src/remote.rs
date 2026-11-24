@@ -186,6 +186,19 @@ pub fn is_sshpass_available() -> bool {
     }
 }
 
+fn ssh_policy_args(host: &SshRemoteHost) -> Vec<&'static str> {
+    let host_key = if host.strict_host_key {
+        "StrictHostKeyChecking=yes"
+    } else {
+        "StrictHostKeyChecking=accept-new"
+    };
+    let mut args = vec!["-o", host_key];
+    if !host.use_agent {
+        args.extend(["-o", "IdentityAgent=none"]);
+    }
+    args
+}
+
 /// Test connection to remote SSH host with timeout
 pub fn test_ssh_connection(host: &SshRemoteHost) -> Result<String, String> {
     let has_password = !host.password.trim().is_empty();
@@ -202,8 +215,7 @@ pub fn test_ssh_connection(host: &SshRemoteHost) -> Result<String, String> {
         }
     }
 
-    cmd.arg("-o").arg("ConnectTimeout=5")
-        .arg("-o").arg("StrictHostKeyChecking=accept-new")
+    cmd.args(ssh_policy_args(host)).arg("-o").arg("ConnectTimeout=5")
         .arg("-p").arg(host.port.to_string());
 
     if !host.key_path.trim().is_empty() {
@@ -254,10 +266,9 @@ pub fn build_ssh_command(host: &SshRemoteHost, remote_cmd: &str) -> Command {
         }
     }
 
-    cmd.arg("-o").arg("ConnectTimeout=5")
+    cmd.args(ssh_policy_args(host)).arg("-o").arg("ConnectTimeout=5")
         .arg("-o").arg("ServerAliveInterval=15")
         .arg("-o").arg("ServerAliveCountMax=2")
-        .arg("-o").arg("StrictHostKeyChecking=accept-new")
         .arg("-p").arg(host.port.to_string());
 
     if !host.key_path.trim().is_empty() {
@@ -438,9 +449,9 @@ pub fn launch_external_ssh_command(host: &SshRemoteHost, cmd_to_run: &str) -> Re
 
 fn launch_ssh_in_terminal(host: &SshRemoteHost, command: Option<&str>) -> Result<(), String> {
     let mut args = vec![
-        "-t".to_owned(), "-o".to_owned(), "StrictHostKeyChecking=accept-new".to_owned(),
-        "-p".to_owned(), host.port.to_string(),
+        "-t".to_owned(), "-p".to_owned(), host.port.to_string(),
     ];
+    args.extend(ssh_policy_args(host).into_iter().map(str::to_owned));
     if !host.key_path.trim().is_empty() {
         args.extend(["-i".to_owned(), host.key_path.trim().to_owned()]);
     }
@@ -521,6 +532,8 @@ pub fn parse_ssh_config_str(content: &str, home: &std::path::Path) -> Vec<SshRem
                     key_path: key.clone(),
                     password: String::new(),
                     remote_cwd: String::new(),
+                    use_agent: true,
+                    strict_host_key: false,
                 });
             }
         }

@@ -15,12 +15,12 @@ impl LauncherApp {
             map.get(&host.id).cloned().unwrap_or_default()
         };
 
-        // Sync stopped servers: prune any that are now active in listeners
         let stopped = {
             let mut map = self.remote_stopped_servers.lock().unwrap();
-            let list = map.entry(host.id.clone()).or_default();
-            list.retain(|s| !listeners.iter().any(|l| l.port == s.port));
-            list.clone()
+            map.entry(host.id.clone()).or_default().iter()
+                .filter(|entry| listeners.binary_search_by_key(&entry.port, |row| row.port).is_err())
+                .cloned()
+                .collect::<Vec<_>>()
         };
 
         let mut dismiss_port: Option<u16> = None;
@@ -97,7 +97,6 @@ impl LauncherApp {
                             || l.pid.map(|p| p.to_string().contains(&q)).unwrap_or(false)
                     }
                 })
-                .cloned()
                 .collect();
 
             let visible_stopped: Vec<_> = stopped
@@ -114,7 +113,6 @@ impl LauncherApp {
                             || s.last_pid.map(|p| p.to_string().contains(&q)).unwrap_or(false)
                     }
                 })
-                .cloned()
                 .collect();
 
             if listeners.is_empty() && stopped.is_empty() {
@@ -142,7 +140,7 @@ impl LauncherApp {
                         ui.set_max_width(ui.available_width());
 
                         // 1. ACTIVE RUNNING SERVERS
-                        for l in &visible_listeners {
+                        for l in visible_listeners {
                             Frame::none()
                                 .fill(p.bg_card)
                                 .stroke(Stroke::NONE)
@@ -262,7 +260,7 @@ impl LauncherApp {
                         }
 
                         // 2. STOPPED SERVERS
-                        for s in &visible_stopped {
+                        for s in visible_stopped {
                             Frame::none()
                                 .fill(p.bg_card)
                                 .stroke(Stroke::NONE)

@@ -375,7 +375,7 @@ pub struct LauncherApp {
     ssh_hosts: Vec<SshRemoteHost>,
     saved_ssh_refs: BTreeSet<String>,
     ssh_host_modal: SshHostModalState,
-    remote_listeners: Arc<Mutex<HashMap<String, Vec<RemoteListener>>>>,
+    remote_listeners: Arc<Mutex<HashMap<String, Arc<Vec<RemoteListener>>>>>,
     remote_scanning: Arc<Mutex<BTreeSet<String>>>,
     remote_terminal_logs: Arc<Mutex<HashMap<String, Arc<Mutex<VecDeque<crate::service::LogEntry>>>>>>,
     remote_terminal_inputs: HashMap<String, String>,

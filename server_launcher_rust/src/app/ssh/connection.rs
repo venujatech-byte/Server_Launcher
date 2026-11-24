@@ -51,6 +51,7 @@ impl LauncherApp {
 
         let host = host.clone();
         let listeners = self.remote_listeners.clone();
+        let stopped = self.remote_stopped_servers.clone();
         let scanning = self.remote_scanning.clone();
         std::thread::spawn(move || {
             if delay_ms != 0 {
@@ -64,7 +65,12 @@ impl LauncherApp {
             if scanning.remove(&host.id) {
                 let mut snapshots = listeners.lock().unwrap();
                 match result {
-                    Ok(rows) => { snapshots.insert(host.id, rows); }
+                    Ok(rows) => {
+                        if let Some(entries) = stopped.lock().unwrap().get_mut(&host.id) {
+                            entries.retain(|entry| rows.binary_search_by_key(&entry.port, |row| row.port).is_err());
+                        }
+                        snapshots.insert(host.id, Arc::new(rows));
+                    }
                     Err(_) => { snapshots.entry(host.id).or_default(); }
                 }
             }

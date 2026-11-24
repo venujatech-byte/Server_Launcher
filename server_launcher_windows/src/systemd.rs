@@ -324,9 +324,73 @@ fn validate_drop_in(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_unit_write_path(path: &str, user_mode: bool) -> Result<(), String> {
+    let relative = if user_mode {
+        path.strip_prefix("~/.config/systemd/user/")
+            .or_else(|| path.split_once("/systemd/user/")
+                .filter(|(home, _)| home.starts_with('/') && home.len() > 1)
+                .map(|(_, relative)| relative))
+    } else {
+        path.strip_prefix("/etc/systemd/system/")
+    };
+    let Some(relative) = relative else {
+        return Err("Unit files can only be written inside the Systemd configuration directory.".into());
+    };
+    if relative.is_empty() || path.contains(['\n', '\r', '\0'])
+        || relative.split('/').any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err("Invalid Systemd configuration path.".into());
+    }
+    Ok(())
+}
+
 #[cfg(not(windows))]
-fn write_privileged_unit_content(path: &str, content: &str, password: Option<&str>) -> Result<(), String> {
+fn validate_local_unit_path(path: &str, user_mode: bool) -> Result<(PathBuf, PathBuf), String> {
+    let target = PathBuf::from(path);
+    let root = if user_mode { user_unit_directory()? } else { PathBuf::from("/etc/systemd/system") };
+    let relative = target.strip_prefix(&root).map_err(|_| "Unit files can only be written inside the Systemd configuration directory.".to_string())?;
+    if !target.is_absolute() || relative.as_os_str().is_empty()
+        || relative.components().any(|part| !matches!(part, std::path::Component::Normal(_)))
+    {
+        return Err("Invalid Systemd configuration path.".into());
+    }
+    Ok((target, root))
+}
+
+#[cfg(not(windows))]
+fn validate_local_unit_target(path: &str, user_mode: bool) -> Result<(PathBuf, PathBuf), String> {
+    let (target, root) = validate_local_unit_path(path, user_mode)?;
+    let root = fs::canonicalize(&root).map_err(|error| format!("Could not resolve Systemd configuration directory: {error}"))?;
+    let parent = target.parent().ok_or_else(|| "Invalid unit file path".to_string())?;
+    let parent = fs::canonicalize(parent).map_err(|error| format!("Could not resolve unit file directory: {error}"))?;
+    if !parent.starts_with(&root) {
+        return Err("Unit file destination resolves outside the Systemd configuration directory.".into());
+    }
+    validate_regular_unit_file(&target)?;
+    Ok((target, root))
+}
+
+fn validate_regular_unit_file(target: &std::path::Path) -> Result<(), String> {
+    if let Ok(metadata) = fs::symlink_metadata(target) {
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err("Unit file destination must be a regular, non-symlink file.".into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn validate_local_unit_parent(parent: &std::path::Path, root: &std::path::Path) -> Result<(), String> {
+    let parent = fs::canonicalize(parent).map_err(|error| format!("Could not resolve unit file directory: {error}"))?;
+    if parent.starts_with(root) { Ok(()) } else {
+        Err("Unit file destination resolves outside the Systemd configuration directory.".into())
+    }
+}
+
+#[cfg(not(windows))]
+fn write_privileged_unit_content(path: &str, content: &str, user_mode: bool, password: Option<&str>) -> Result<(), String> {
     use std::io::Write;
+    let (target, root) = validate_local_unit_target(path, user_mode)?;
     let temporary = std::env::temp_dir().join(format!(
         "sl_unit_{}_{}",
         std::process::id(),
@@ -346,9 +410,10 @@ fn write_privileged_unit_content(path: &str, content: &str, password: Option<&st
         .write_all(content.as_bytes())
         .map_err(|error| error.to_string())
         .and_then(|_| {
+            validate_local_unit_parent(target.parent().ok_or_else(|| "Invalid unit file path".to_string())?, &root)?;
             run_local(
                 "sh",
-                &["-c", "umask 022; cat -- \"$1\" > \"$2\"", "sh", &temporary.to_string_lossy(), path],
+                &["-c", "set -eu; target=$2; dir=${target%/*}; test ! -L \"$target\"; temp=$(mktemp \"$dir/.launcher-unit.XXXXXX\"); trap 'rm -f -- \"$temp\"' EXIT; cat -- \"$1\" > \"$temp\"; if [ -e \"$target\" ]; then chmod --reference=\"$target\" \"$temp\"; else chmod 0644 \"$temp\"; fi; mv -f -- \"$temp\" \"$target\"", "sh", &temporary.to_string_lossy(), path],
                 true,
                 password,
             )
@@ -637,6 +702,7 @@ pub fn create_local_service(
     create_unit_file(
         &target.to_string_lossy(),
         &def.generate_service_content(),
+        def.is_user,
         sudo_password,
     )?;
     local_systemctl(def.is_user, &["daemon-reload"], sudo_password)
@@ -811,22 +877,28 @@ pub fn write_local_unit_file(
     user_mode: bool,
     sudo_password: Option<&str>,
 ) -> Result<String, String> {
-    let target = PathBuf::from(path);
-    if !target.is_absolute() {
-        return Err("A unit file path must be absolute".into());
-    }
+    let (target, root) = validate_local_unit_target(path, user_mode)?;
     // Permissions, not /home or /.config substrings, determine whether sudo is needed.
-    let write = target
-        .parent()
-        .ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "Missing parent directory")
-        })
-        .and_then(fs::create_dir_all)
-        .and_then(|_| fs::write(&target, content));
+    let parent = target.parent().ok_or_else(|| "Invalid unit file path".to_string())?;
+    validate_local_unit_parent(parent, &root)?;
+    let write = (|| {
+        use std::io::Write;
+        let mode = fs::metadata(&target).ok().map(|metadata| metadata.permissions());
+        let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+        temp.write_all(content.as_bytes())?;
+        temp.as_file().sync_all()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = mode.map(|permissions| permissions.mode() & 0o777).unwrap_or(0o644);
+            temp.as_file().set_permissions(fs::Permissions::from_mode(mode))?;
+        }
+        temp.persist(&target).map(|_| ()).map_err(|error| error.error)
+    })();
     match write {
         Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            write_privileged_unit_content(path, content, sudo_password)?
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied && !user_mode => {
+            write_privileged_unit_content(path, content, user_mode, sudo_password)?
         }
         Err(error) => return Err(format!("Could not write {}: {}", path, error)),
     }
@@ -852,10 +924,11 @@ pub fn delete_local_drop_in(
     sudo_password: Option<&str>,
 ) -> Result<String, String> {
     validate_drop_in(path)?;
-    match fs::remove_file(path) {
+    let (target, _) = validate_local_unit_target(path, user_mode)?;
+    match fs::remove_file(target) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied && !user_mode => {
             run_local("rm", &["-f", "--", path], true, sudo_password)?;
         }
         Err(error) => return Err(format!("Could not delete {}: {}", path, error)),
@@ -872,10 +945,11 @@ pub fn delete_remote_drop_in(
     sudo_password: Option<&str>,
 ) -> Result<String, String> {
     validate_drop_in(path)?;
+    validate_unit_write_path(path, user_mode)?;
     let script = format!("rm -f -- {}", remote_path(path)?);
     match remote_script(host, &script, false, false, None) {
         Ok(_) => {}
-        Err(error) if error.to_ascii_lowercase().contains("permission denied") => {
+        Err(error) if !user_mode && error.to_ascii_lowercase().contains("permission denied") => {
             remote_script(host, &script, false, true, sudo_password)?;
         }
         Err(error) => return Err(error),
@@ -992,8 +1066,9 @@ pub fn validate_drop_in_name(name: &str) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-fn create_unit_file(path: &str, content: &str, password: Option<&str>) -> Result<(), String> {
+fn create_unit_file(path: &str, content: &str, user_mode: bool, password: Option<&str>) -> Result<(), String> {
     use std::io::Write;
+    validate_local_unit_path(path, user_mode)?;
     let target = PathBuf::from(path);
     if !target.is_absolute() {
         return Err("A unit file path must be absolute".into());
@@ -1019,11 +1094,11 @@ fn create_unit_file(path: &str, content: &str, password: Option<&str>) -> Result
     });
     match create {
         Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied && !user_mode => {
             use base64::Engine;
             let encoded = base64::engine::general_purpose::STANDARD.encode(content);
             let script = format!(
-                "set -C; mkdir -p -- {} && printf '%s' {} | base64 -d > {}",
+                "set -eu; dir={}; mkdir -p -- \"$dir\"; temp=$(mktemp \"$dir/.launcher-unit.XXXXXX\"); trap 'rm -f -- \"$temp\"' EXIT; printf '%s' {} | base64 -d > \"$temp\"; chmod 0644 \"$temp\"; ln -- \"$temp\" {}",
                 shell_quote(&parent.to_string_lossy()),
                 shell_quote(&encoded),
                 shell_quote(path)
@@ -1042,7 +1117,8 @@ pub fn create_local_drop_in(
     password: Option<&str>,
 ) -> Result<String, String> {
     validate_drop_in(path)?;
-    create_unit_file(path, content, password)?;
+    validate_local_unit_path(path, user_mode)?;
+    create_unit_file(path, content, user_mode, password)?;
     local_systemctl(user_mode, &["daemon-reload"], password)
         .map_err(|error| format!("Drop-in created, but daemon reload failed: {}", error))?;
     Ok(format!("Created {} and reloaded daemon", path))
@@ -1057,16 +1133,17 @@ fn remote_write_content(
     create_new: bool,
 ) -> Result<String, String> {
     use base64::Engine;
+    validate_unit_write_path(path, user_mode)?;
     let path = remote_path(path)?;
     let encoded = base64::engine::general_purpose::STANDARD.encode(content);
     let script = format!(
-        "{}mkdir -p -- \"$(dirname -- {path})\" && printf '%s' {content} | base64 -d > {path}",
-        if create_new { "set -C; " } else { "" },
+        "set -eu; target={path}; dir=$(dirname -- \"$target\"); mkdir -p -- \"$dir\"; test ! -L \"$target\"; temp=$(mktemp \"$dir/.launcher-unit.XXXXXX\"); trap 'rm -f -- \"$temp\"' EXIT; printf '%s' {content} | base64 -d > \"$temp\"; if [ -e \"$target\" ]; then chmod --reference=\"$target\" \"$temp\"; else chmod 0644 \"$temp\"; fi; {install}",
+        install = if create_new { "ln -- \"$temp\" \"$target\"" } else { "mv -f -- \"$temp\" \"$target\"" },
         content = shell_quote(&encoded)
     );
     match remote_script(host, &script, false, false, None) {
         Ok(_) => {}
-        Err(error) if error.to_ascii_lowercase().contains("permission denied") => {
+        Err(error) if !user_mode && error.to_ascii_lowercase().contains("permission denied") => {
             remote_script(host, &script, false, true, password)?;
         }
         Err(error) => return Err(error),
@@ -1194,6 +1271,35 @@ mod tests {
     }
 
     #[test]
+    fn unit_writes_stay_in_configuration_overrides_and_reject_symlinks() {
+        assert!(validate_unit_write_path("/etc/systemd/system/app.service", false).is_ok());
+        assert!(validate_unit_write_path("~/.config/systemd/user/app.service", true).is_ok());
+        for path in ["/usr/lib/systemd/system/app.service", "/etc/passwd", "/etc/systemd/system/../passwd"] {
+            assert!(validate_unit_write_path(path, false).is_err(), "{path}");
+        }
+
+        let outside = std::env::temp_dir().join(format!("sl-unit-outside-{}.service", std::process::id()));
+        fs::write(&outside, "preserve").unwrap();
+        assert!(validate_unit_write_path(outside.to_str().unwrap(), false).is_err());
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "preserve");
+        fs::remove_file(outside).unwrap();
+
+        let directory = std::env::temp_dir().join(format!("sl-unit-link-test-{}", std::process::id()));
+        let target = directory.join("target");
+        let link = directory.join("link.service");
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(&target, "preserve").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&target, &link).unwrap();
+        assert!(validate_regular_unit_file(&link).is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "preserve");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn new_service_fields_cannot_inject_additional_directives() {
         let mut def = NewServiceDefinition::default();
         def.description = "description\nExecStart=/bin/false".into();
@@ -1236,21 +1342,6 @@ mod tests {
         assert_eq!(enabled_state("enabled-runtime").unwrap(), true);
         assert_eq!(enabled_state("masked").unwrap(), false);
         assert!(enabled_state("").is_err());
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn creating_a_unit_never_overwrites_an_existing_file() {
-        let directory = std::env::temp_dir().join(format!(
-            "sl-unit-test-{}-{}",
-            std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap()
-        ));
-        let path = directory.join("app.service");
-        create_unit_file(path.to_str().unwrap(), "original", None).unwrap();
-        assert!(create_unit_file(path.to_str().unwrap(), "replacement", None).is_err());
-        assert_eq!(fs::read_to_string(&path).unwrap(), "original");
-        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

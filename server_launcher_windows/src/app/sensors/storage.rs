@@ -28,7 +28,7 @@ impl LauncherApp {
                 // 1. Top Header Banner
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
+                    .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
@@ -43,7 +43,7 @@ impl LauncherApp {
                                 ui.add_space(2.0);
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
-                                    ui.label(RichText::new("Storage & Disks").size(16.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new("Storage & Disks").size(18.0).strong().color(p.text_primary));
 
                                     // "All Devices Synchronized" pill badge
                                     Frame::none()
@@ -61,15 +61,7 @@ impl LauncherApp {
                                 });
                             });
 
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                Frame::none()
-                                    .fill(accent_with_alpha(accent, 25))
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                                    .show(ui, |ui| {
-                                        ui.label(RichText::new("HEALTH —").size(10.0).monospace().strong().color(p.text_primary));
-                                    });
-                            });
+                            // The SMART summary below reports actual health when the host supports it.
                         });
                     });
 
@@ -383,7 +375,7 @@ impl LauncherApp {
                 let render_unpopulated_card = |ui: &mut Ui, slot_num: usize| {
                     Frame::none()
                         .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
+                        .rounding(Rounding::same(12.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
@@ -478,7 +470,7 @@ impl LauncherApp {
 
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
+                    .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
@@ -578,12 +570,12 @@ impl LauncherApp {
                     // Card 1: THERMAL CORE
                     Frame::none()
                         .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
+                        .rounding(Rounding::same(12.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("THERMAL CORE").size(9.5).monospace().strong().color(p.text_muted));
+                                ui.label(RichText::new("DRIVE TEMPERATURE").size(11.0).monospace().strong().color(p.text_muted));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     ui.label(RichText::new(crate::lucide::THERMOMETER).size(11.0).color(accent));
                                 });
@@ -620,7 +612,7 @@ impl LauncherApp {
                     // Card 2: S.M.A.R.T. STATUS
                     Frame::none()
                         .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
+                        .rounding(Rounding::same(12.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
@@ -655,7 +647,7 @@ impl LauncherApp {
                     // Card 3: DRIVE BUS INTERFACE
                     Frame::none()
                         .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
+                        .rounding(Rounding::same(12.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
@@ -685,7 +677,7 @@ impl LauncherApp {
                     // Card 4: TRIM / DISCARD
                     Frame::none()
                         .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
+                        .rounding(Rounding::same(12.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
@@ -724,7 +716,7 @@ impl LauncherApp {
                 // 6. Physical Partition Map & Topologies Card
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
+                    .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                     .show(ui, |ui| {
                         ui.horizontal_wrapped(|ui| {

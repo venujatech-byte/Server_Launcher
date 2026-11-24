@@ -18,7 +18,7 @@ impl LauncherApp {
                 if snap.gpus.is_empty() {
                     Frame::none()
                         .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
+                        .rounding(Rounding::same(12.0))
                         .inner_margin(egui::Margin::symmetric(16.0, 14.0))
                         .show(ui, |ui| {
                             ui.label(RichText::new("GPU data unavailable").size(15.0).strong().color(p.text_primary));
@@ -74,7 +74,7 @@ impl LauncherApp {
                 // 1. Top Header Card
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
+                    .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
@@ -82,7 +82,7 @@ impl LauncherApp {
                             // Row 1: Overline
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                ui.label(RichText::new("●").size(7.0).color(accent));
+                                ui.label(RichText::new(crate::lucide::GPU).size(15.0).color(accent));
                                 let overline = if is_remote {
                                     format!("REMOTE GPU SUBSYSTEM • HOST '{}' • GPU {}", self.host_display_name(host_id), active_gpu_idx + 1)
                                 } else {
@@ -101,7 +101,7 @@ impl LauncherApp {
 
                                 ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
-                                    ui.label(RichText::new(format!("GPU {}: {}", active_gpu_idx + 1, gpu_name)).size(16.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new(format!("GPU {}: {}", active_gpu_idx + 1, gpu_name)).size(18.0).strong().color(p.text_primary));
                                     Frame::none()
                                         .fill(accent_with_alpha(accent, 25))
                                         .rounding(Rounding::same(4.0))
@@ -278,7 +278,7 @@ impl LauncherApp {
                     ui.add_space(8.0);
                     Frame::none()
                         .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
+                        .rounding(Rounding::same(12.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
@@ -342,9 +342,9 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 // Plot only engines reported by the selected adapter's PMU.
-                Frame::none().fill(p.bg_card).rounding(Rounding::same(8.0))
+                Frame::none().fill(p.bg_card).rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 12.0)).show(ui, |ui| {
-                        ui.label(RichText::new("GPU engine utilization").size(12.5).strong().color(p.text_primary));
+                        ui.label(RichText::new("GPU engine utilization").size(14.0).strong().color(p.text_primary));
                         let engines = gpu.map(|gpu| gpu.engine_loads.as_slice()).unwrap_or(&[]);
                         if engines.is_empty() {
                             ui.label(RichText::new("Per-engine counters are unavailable for this GPU or collector.").size(11.0).color(p.text_muted));
@@ -366,13 +366,13 @@ impl LauncherApp {
                 let ded_mb_val = total_vram_mb;
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
+                    .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             ui.label(RichText::new(crate::lucide::LAYERS).size(12.0).color(accent));
-                            ui.label(RichText::new("Memory Subsystem Breakdown").size(12.5).strong().color(p.text_primary));
+                            ui.label(RichText::new("Memory subsystem breakdown").size(14.0).strong().color(p.text_primary));
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.horizontal(|ui| {
@@ -472,7 +472,7 @@ impl LauncherApp {
                 if !snap.displays.is_empty() {
                     Frame::none()
                         .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
+                        .rounding(Rounding::same(12.0))
                         .inner_margin(egui::Margin::symmetric(16.0, 14.0))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());

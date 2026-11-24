@@ -22,9 +22,9 @@ impl LauncherApp {
                 }
             }
             let remote_snapshot = self.remote_bluetooth_snapshots.lock().unwrap().get(hid).cloned();
-            Frame::none().fill(p.bg_card).rounding(Rounding::same(8.0))
+            Frame::none().fill(p.bg_card).rounding(Rounding::same(12.0))
                 .inner_margin(egui::Margin::symmetric(14.0, 12.0)).show(ui, |ui| {
-                    ui.label(RichText::new(format!("Bluetooth · {}", self.host_display_name(host_id))).size(16.0).strong().color(p.text_primary));
+                    ui.label(RichText::new(format!("Bluetooth · {}", self.host_display_name(host_id))).size(18.0).strong().color(p.text_primary));
                     ui.add_space(6.0);
                     if snap.os_name.is_empty() {
                         ui.label(RichText::new("Waiting for remote operating system details…").size(11.0).color(p.text_secondary));
@@ -110,7 +110,7 @@ impl LauncherApp {
                 // 1. Header Banner
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
+                    .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
@@ -142,7 +142,7 @@ impl LauncherApp {
                                 // Narrow viewport: Title row with badge, then dedicated row for radio card
                                 ui.horizontal_wrapped(|ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
-                                    ui.label(RichText::new("Bluetooth Radio & Connected Devices").size(16.5).strong().color(p.text_primary));
+                                    ui.label(RichText::new("Bluetooth devices").size(18.0).strong().color(p.text_primary));
                                     Frame::none()
                                         .fill(status_col.gamma_multiply(0.14))
                                         .rounding(Rounding::same(4.0))
@@ -193,7 +193,7 @@ impl LauncherApp {
                                     let left_w = (avail_w - right_card_w - 16.0).max(100.0);
                                     ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                         ui.spacing_mut().item_spacing.x = 8.0;
-                                        ui.label(RichText::new("Bluetooth Radio & Connected Devices").size(16.5).strong().color(p.text_primary));
+                                        ui.label(RichText::new("Bluetooth devices").size(18.0).strong().color(p.text_primary));
                                         Frame::none()
                                             .fill(status_col.gamma_multiply(0.14))
                                             .rounding(Rounding::same(4.0))
@@ -267,7 +267,7 @@ impl LauncherApp {
                 // 2. Action Toolbar (Scan / Pair and Discoverable Toggle)
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
+                    .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
@@ -349,7 +349,7 @@ impl LauncherApp {
                     // Empty state card
                     Frame::none()
                         .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
+                        .rounding(Rounding::same(12.0))
                         .inner_margin(egui::Margin::symmetric(24.0, 18.0))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
@@ -362,16 +362,14 @@ impl LauncherApp {
                             });
                         });
                 } else {
-                    let num_cols = bt_snap.devices.len().clamp(1, 4);
-                    ui.columns(num_cols, |cols| {
-                        for (i, dev) in bt_snap.devices.iter().enumerate() {
-                            let c = &mut cols[i % num_cols];
+                    sensor_card_columns(ui, bt_snap.devices.len(), |ui, i| {
+                            let dev = &bt_snap.devices[i];
                             let card_bg = if dev.connected { p.bg_card_active } else { p.bg_card };
                             Frame::none()
                                 .fill(card_bg)
-                                .rounding(Rounding::same(8.0))
+                                .rounding(Rounding::same(12.0))
                                 .inner_margin(egui::Margin::symmetric(14.0, 12.0))
-                                .show(c, |ui| {
+                                .show(ui, |ui| {
                                     ui.set_width(ui.available_width());
 
                                     // Device Icon
@@ -519,8 +517,7 @@ impl LauncherApp {
                                             });
                                         }
                                     });
-                                });
-                        }
+                            });
                     });
                 }
 
@@ -532,7 +529,7 @@ impl LauncherApp {
 
                     Frame::none()
                         .fill(p.bg_card)
-                        .rounding(Rounding::same(8.0))
+                        .rounding(Rounding::same(12.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());

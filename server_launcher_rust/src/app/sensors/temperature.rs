@@ -62,7 +62,7 @@ impl LauncherApp {
                 // 1. Header Banner
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
+                    .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
@@ -87,7 +87,7 @@ impl LauncherApp {
                             // Row 1: Overline / Subsystem Tag
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                ui.label(RichText::new("●").size(7.0).color(accent));
+                                ui.label(RichText::new(crate::lucide::THERMOMETER).size(15.0).color(accent));
                                 ui.label(RichText::new(tag_str).size(9.0).monospace().color(p.text_muted));
                             });
 
@@ -95,7 +95,7 @@ impl LauncherApp {
 
                             ui.horizontal_wrapped(|ui| {
                                 ui.spacing_mut().item_spacing.x = 8.0;
-                                ui.label(RichText::new(&title_str).size(16.5).strong().color(p.text_primary));
+                                ui.label(RichText::new(&title_str).size(18.0).strong().color(p.text_primary));
                                 Frame::none()
                                     .fill(accent_with_alpha(accent, 25))
                                     .rounding(Rounding::same(4.0))
@@ -132,15 +132,15 @@ impl LauncherApp {
                     let (name, val, limit, _delta, accent) = &sensor_cards[i];
                         Frame::none()
                             .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
+                            .rounding(Rounding::same(12.0))
                             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.label(RichText::new(*name).size(9.5).monospace().strong().color(p.text_muted));
                                 ui.add_space(4.0);
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new(temperature_text(*val)).size(21.0).strong().color(p.text_primary));
-                                    ui.label(RichText::new("°C").size(12.0).color(p.text_muted));
+                                    ui.label(RichText::new(temperature_text(*val)).size(30.0).strong().color(p.text_primary));
+                                    ui.label(RichText::new("°C").size(14.0).color(p.text_muted));
 
                                 });
                                 ui.add_space(6.0);
@@ -162,13 +162,13 @@ impl LauncherApp {
                 // 3. 60-Second Thermal History Waveform Card
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
+                    .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.horizontal_wrapped(|ui| {
                             ui.vertical(|ui| {
-                                ui.label(RichText::new("60-Second Thermal History Waveform").size(12.5).strong().color(p.text_primary));
+                                ui.label(RichText::new("Temperature history").size(14.0).strong().color(p.text_primary));
                                 let sub_trace = if !has_gpu {
                                     "CPU temperature • GPU unavailable".to_string()
                                 } else {
@@ -213,12 +213,12 @@ impl LauncherApp {
                 // Fan RPM is reported when available; acoustic readings and controls are not collected.
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
+                    .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 10.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Cooling telemetry").size(12.5).strong().color(p.text_primary));
+                            ui.label(RichText::new("Cooling telemetry").size(14.0).strong().color(p.text_primary));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 let status = if snap.fan_sensors.is_empty() { "RPM UNAVAILABLE".to_string() } else { format!("{} FANS", snap.fan_sensors.len()) };
                                 ui.label(RichText::new(status).size(8.5).monospace().strong().color(p.text_muted));
@@ -243,14 +243,14 @@ impl LauncherApp {
                                 // 5. Bottom Section: Thermal Sensor Telemetry Matrix
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
+                    .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
                                 let matrix_title = if is_remote { "Thermal Sensors Matrix" } else { "Thermal Sensors Matrix" };
-                                ui.label(RichText::new(matrix_title).size(12.5).strong().color(p.text_primary));
+                                ui.label(RichText::new(matrix_title).size(14.0).strong().color(p.text_primary));
                             });
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

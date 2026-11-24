@@ -58,7 +58,7 @@ impl LauncherApp {
                 // 1. Header Banner
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
+                    .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
@@ -67,7 +67,7 @@ impl LauncherApp {
                             // Row 1: Overline / Subsystem Tag
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                ui.label(RichText::new("●").size(7.0).color(accent));
+                                ui.label(RichText::new(crate::lucide::WIFI).size(15.0).color(accent));
                                 let overline = if is_remote {
                                     format!("WI-FI & NETWORK • HOST '{}'", self.host_display_name(host_id).to_uppercase())
                                 } else {
@@ -108,7 +108,7 @@ impl LauncherApp {
                             let render_title_and_status = |ui: &mut Ui| {
                                 ui.horizontal_wrapped(|ui| {
                                     ui.spacing_mut().item_spacing.x = 8.0;
-                                    ui.label(RichText::new(title).size(16.5).strong().color(p.text_primary));
+                                    ui.label(RichText::new(title).size(18.0).strong().color(p.text_primary));
                                     Frame::none()
                                         .fill(dot_col.gamma_multiply(0.14))
                                         .rounding(Rounding::same(4.0))
@@ -340,7 +340,7 @@ impl LauncherApp {
                         ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
                         Frame::none()
                             .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
+                            .rounding(Rounding::same(12.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
@@ -348,7 +348,7 @@ impl LauncherApp {
 
                                 ui.horizontal(|ui| {
                                     ui.vertical(|ui| {
-                                        ui.label(RichText::new("Live Waveform").size(12.5).strong().color(p.text_primary));
+                                        ui.label(RichText::new("Network activity").size(14.0).strong().color(p.text_primary));
                                         ui.label(RichText::new("All interfaces • RX / TX").size(9.0).monospace().color(p.text_muted));
                                     });
 
@@ -407,7 +407,7 @@ impl LauncherApp {
                         ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
                         Frame::none()
                             .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
+                            .rounding(Rounding::same(12.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
@@ -416,7 +416,7 @@ impl LauncherApp {
                                         let remote_wifi = is_remote && is_wireless == Some(true);
                                         let r_title = if is_remote && !remote_wifi { "TOPOLOGY" } else { "ACCESS POINT" };
                                         let r_sub = if is_remote && !remote_wifi { "Host NIC" } else { "Connected AP" };
-                                        ui.label(RichText::new(r_title).size(12.5).strong().color(p.text_primary));
+                                        ui.label(RichText::new(r_title).size(14.0).strong().color(p.text_primary));
                                         ui.label(RichText::new(r_sub).size(9.0).monospace().color(p.text_muted));
                                     });
 

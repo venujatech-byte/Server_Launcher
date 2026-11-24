@@ -23,7 +23,7 @@ impl LauncherApp {
 
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
+                    .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(16.0, 14.0))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
@@ -45,33 +45,31 @@ impl LauncherApp {
                 ui.label(RichText::new("Traffic carried by both a VPN and its underlying interface can be counted twice.").size(10.0).color(p.text_muted));
                 ui.add_space(6.0);
 
-                Frame::none()
-                    .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(16.0, 12.0))
-                    .show(ui, |ui| {
-                        ui.columns(4, |cols| {
-                            for (column, label, value, detail) in [
-                                (0, "Received", sensor_network_bytes(snap, snap.total_rx_bytes), sensor_network_rate(snap, snap.total_rx_rate_bps)),
-                                (1, "Sent", sensor_network_bytes(snap, snap.total_tx_bytes), sensor_network_rate(snap, snap.total_tx_rate_bps)),
-                                (2, "Live rate", sensor_network_rate(snap, snap.total_rx_rate_bps + snap.total_tx_rate_bps), if snap.network_rates_available { "RX + TX".to_string() } else { "Unavailable".to_string() }),
-                                (3, "Active", if snap.network_rates_available { interfaces.iter().filter(|net| net.rx_rate_bps > 0.0 || net.tx_rate_bps > 0.0).count().to_string() } else { "—".to_string() }, if snap.network_rates_available { "interfaces with traffic".to_string() } else { "Rate unavailable".to_string() }),
-                            ] {
-                                cols[column].vertical(|ui| {
-                                    ui.label(RichText::new(label).size(10.5).color(p.text_muted));
-                                    ui.add_space(3.0);
-                                    ui.label(RichText::new(value).size(18.0).strong().monospace().color(p.text_primary));
-                                    ui.label(RichText::new(detail).size(9.5).monospace().color(p.text_muted));
-                                });
-                            }
+                let metrics = [
+                    (crate::lucide::DOWNLOAD, "RECEIVED", sensor_network_bytes(snap, snap.total_rx_bytes), sensor_network_rate(snap, snap.total_rx_rate_bps)),
+                    (crate::lucide::UPLOAD, "SENT", sensor_network_bytes(snap, snap.total_tx_bytes), sensor_network_rate(snap, snap.total_tx_rate_bps)),
+                    (crate::lucide::ACTIVITY, "LIVE RATE", sensor_network_rate(snap, snap.total_rx_rate_bps + snap.total_tx_rate_bps), if snap.network_rates_available { "RX + TX".to_string() } else { "Unavailable".to_string() }),
+                    (crate::lucide::WIFI, "ACTIVE", if snap.network_rates_available { interfaces.iter().filter(|net| net.rx_rate_bps > 0.0 || net.tx_rate_bps > 0.0).count().to_string() } else { "—".to_string() }, if snap.network_rates_available { "interfaces with traffic".to_string() } else { "Rate unavailable".to_string() }),
+                ];
+                sensor_card_columns(ui, metrics.len(), |ui, index| {
+                    let (icon, label, value, detail) = &metrics[index];
+                    Frame::none().fill(p.bg_card).rounding(Rounding::same(12.0))
+                        .inner_margin(egui::Margin::symmetric(18.0, 15.0)).show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(*icon).size(15.0).color(accent));
+                                ui.label(RichText::new(*label).size(11.0).monospace().strong().color(p.text_muted));
+                            });
+                            ui.add_space(6.0);
+                            ui.add(egui::Label::new(RichText::new(value).size(30.0).strong().color(p.text_primary)).truncate()).on_hover_text(value);
+                            ui.add(egui::Label::new(RichText::new(detail).size(11.0).monospace().color(p.text_secondary)).truncate()).on_hover_text(detail);
                         });
-                    });
+                });
 
                 ui.add_space(10.0);
 
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
+                    .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(16.0, 12.0))
                     .show(ui, |ui| {
                         ui.label(RichText::new("Interfaces").size(14.0).strong().color(p.text_primary));

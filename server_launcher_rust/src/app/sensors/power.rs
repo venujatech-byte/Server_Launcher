@@ -68,7 +68,7 @@ impl LauncherApp {
                 // 1. Top Header Banner
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
+                    .rounding(Rounding::same(12.0))
                     .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
@@ -77,7 +77,7 @@ impl LauncherApp {
                             // Row 1: Overline / Subsystem Tag
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
-                                ui.label(RichText::new("●").size(7.0).color(accent));
+                                ui.label(RichText::new(crate::lucide::ZAP).size(15.0).color(accent));
                                 ui.label(RichText::new("POWER & BATTERY").size(9.0).monospace().color(p.text_muted));
                             });
 
@@ -95,7 +95,7 @@ impl LauncherApp {
 
                             if is_narrow {
                                 ui.horizontal_wrapped(|ui| {
-                                    ui.label(RichText::new(title_str).size(16.5).strong().color(p.text_primary));
+                                    ui.label(RichText::new(title_str).size(18.0).strong().color(p.text_primary));
                                 });
                                 ui.add_space(4.0);
                                 Frame::none()
@@ -115,7 +115,7 @@ impl LauncherApp {
                                     let right_pill_est = 340.0_f32;
                                     let left_w = (avail_w - right_pill_est - 16.0).max(100.0);
                                     ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new(title_str).size(16.5).strong().color(p.text_primary));
+                                        ui.label(RichText::new(title_str).size(18.0).strong().color(p.text_primary));
                                     });
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -201,7 +201,7 @@ impl LauncherApp {
                             // Primary Battery Telemetry Card (Local PC or Remote Laptop with detected battery)
                             Frame::none()
                                 .fill(p.bg_card)
-                                .rounding(Rounding::same(8.0))
+                                .rounding(Rounding::same(12.0))
                                 .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                                 .show(ui, |ui| {
                                     ui.set_width(ui.available_width());
@@ -431,7 +431,7 @@ impl LauncherApp {
                         ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
                         Frame::none()
                             .fill(p.bg_card)
-                            .rounding(Rounding::same(8.0))
+                            .rounding(Rounding::same(12.0))
                             .inner_margin(egui::Margin::symmetric(14.0, 12.0))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
@@ -638,7 +638,7 @@ impl LauncherApp {
                 ui.add_space(8.0);
 
                 if has_battery {
-                    Frame::none().fill(p.bg_card).rounding(Rounding::same(8.0))
+                    Frame::none().fill(p.bg_card).rounding(Rounding::same(12.0))
                         .inner_margin(egui::Margin::symmetric(14.0, 12.0)).show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.label(RichText::new("BATTERY CHARGE LIMIT").size(10.0).monospace().strong().color(p.text_secondary));

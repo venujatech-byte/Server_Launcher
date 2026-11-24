@@ -4653,19 +4653,23 @@ fn sensor_grid_columns(available: f32, gap: f32, count: usize) -> usize {
     count.div_ceil(rows)
 }
 
-// Keep cards readable and distribute a final short row instead of leaving a single card alone.
+// Keep every sensor row explicit so small width rounding cannot wrap cards into uneven columns.
 fn sensor_card_columns(ui: &mut Ui, count: usize, mut render: impl FnMut(&mut Ui, usize)) {
     let gap = ui.spacing().item_spacing.x;
     let available = ui.available_width();
     let columns = sensor_grid_columns(available, gap, count);
     if columns == 0 { return; }
     let width = ((available - gap * (columns - 1) as f32) / columns as f32).max(0.0);
-    ui.allocate_ui_with_layout(egui::vec2(available, 0.0), egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true), |ui| {
-        for index in 0..count {
-            ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                ui.set_width(width);
-                ui.set_max_width(width);
-                render(ui, index);
+    ui.vertical(|ui| {
+        for start in (0..count).step_by(columns) {
+            ui.horizontal(|ui| {
+                for index in start..(start + columns).min(count) {
+                    ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.set_width(width);
+                        ui.set_max_width(width);
+                        render(ui, index);
+                    });
+                }
             });
         }
     });
@@ -5117,26 +5121,26 @@ fn render_big_stat_card(
 ) {
     Frame::none()
         .fill(bg_card)
-        .rounding(Rounding::same(8.0))
-        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+        .rounding(Rounding::same(12.0))
+        .inner_margin(egui::Margin::symmetric(18.0, 15.0))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                ui.label(RichText::new(icon).size(12.0).color(accent_color));
+                ui.label(RichText::new(icon).size(15.0).color(accent_color));
                 ui.add(egui::Label::new(RichText::new(title).size(11.0).monospace().strong().color(text_muted)).truncate()).on_hover_text(title);
             });
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                ui.label(RichText::new(hero_val).size(24.0).strong().color(ui.visuals().text_color()));
+                ui.add(egui::Label::new(RichText::new(hero_val).size(if hero_val.len() > 12 { 24.0 } else { 34.0 }).strong().color(ui.visuals().text_color())).truncate()).on_hover_text(hero_val);
                 if !hero_unit.is_empty() {
                     ui.add(egui::Label::new(RichText::new(hero_unit).size(12.0).color(text_muted)).truncate()).on_hover_text(hero_unit);
                 }
             });
             ui.add_space(2.0);
-            ui.add(egui::Label::new(RichText::new(subtitle).size(10.5).monospace().color(text_muted)).truncate()).on_hover_text(subtitle);
-            ui.add_space(8.0);
+            ui.add(egui::Label::new(RichText::new(subtitle).size(11.0).monospace().color(text_muted)).truncate()).on_hover_text(subtitle);
+            ui.add_space(5.0);
             ui.horizontal(|ui| {
                 let width = ((ui.available_width() - ui.spacing().item_spacing.x) * 0.5).max(0.0);
                 ui.add_sized(egui::vec2(width, 17.0), egui::Label::new(RichText::new(left_stat).size(10.0).monospace().color(text_muted)).truncate()).on_hover_text(left_stat);
@@ -5144,8 +5148,8 @@ fn render_big_stat_card(
                     ui.add_sized(egui::vec2(width, 17.0), egui::Label::new(RichText::new(right_stat).size(10.0).monospace().color(text_muted)).truncate()).on_hover_text(right_stat);
                 });
             });
-            ui.add_space(4.0);
-            draw_card_sparkline(ui, 32.0, sparkline_data, sparkline_max, dotted_ratio, accent_color);
+            ui.add_space(5.0);
+            draw_card_sparkline(ui, 44.0, sparkline_data, sparkline_max, dotted_ratio, accent_color);
         });
 }
 

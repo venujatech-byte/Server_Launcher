@@ -897,118 +897,125 @@ impl LauncherApp {
                 // ═════════════════════════════════════════════════════════════
                 // WINDOWS TASK MANAGER TOOLBAR (Clean, Authentic Nocturnal Command)
                 // ═════════════════════════════════════════════════════════════
-                ui.horizontal(|ui| {
-                    // Left: Title + Process count badge
-                    ui.label(RichText::new("Processes").size(15.0).strong().color(p.text_primary));
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), 32.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        // Left: Title + Process count badge
+                        ui.label(RichText::new("Processes").size(15.0).strong().color(p.text_primary));
 
-                    let count_text = format!("{} processes", snap.top_apps.len());
-                    Frame::none()
-                        .fill(p.bg_button)
-                        .rounding(Rounding::same(999.0))
-                        .inner_margin(egui::Margin::symmetric(9.0, 3.5))
-                        .show(ui, |ui| {
-                            ui.label(RichText::new(count_text).size(10.5).color(p.text_muted));
-                        });
-
-                    // Right: Elegant Nocturnal Command actions aligned to the far right
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 8.0;
-
-                        // 1. End Task Button (Far Right)
-                        let has_selection = self.sensors_top_apps_selected_pid.is_some();
-                        let btn_end = if has_selection {
-                            let sel_pid = self.sensors_top_apps_selected_pid.unwrap();
-                            egui::Button::new(
-                                RichText::new(format!("{} End task (PID {})", crate::lucide::X, sel_pid))
-                                    .size(11.0)
-                                    .strong()
-                                    .color(p.accent_text),
-                            )
-                            .fill(accent)
-                            .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(0.0, 28.0))
-                        } else {
-                            egui::Button::new(
-                                RichText::new(format!("{} End task", crate::lucide::X))
-                                    .size(11.0)
-                                    .color(p.text_muted),
-                            )
-                            .fill(p.bg_button.gamma_multiply(0.6))
-                            .stroke(Stroke::NONE)
-                            .rounding(Rounding::same(999.0))
-                            .min_size(egui::vec2(0.0, 28.0))
-                        };
-                        let btn_end_resp = ui.add(btn_end).on_hover_text(if has_selection {
-                            "Click to terminate the selected process"
-                        } else {
-                            "Select a process from the list below, then click End task to terminate it"
-                        });
-                        if has_selection && btn_end_resp.clicked() {
-                            kill_target_pid = self.sensors_top_apps_selected_pid;
-                        }
-
-                        // 2. Integrated Search Pill (Spacious, full placeholder, clear button)
+                        let count_text = format!("{} processes", snap.top_apps.len());
                         Frame::none()
-                            .fill(p.bg_card_active)
+                            .fill(p.bg_button)
                             .rounding(Rounding::same(999.0))
-                            .inner_margin(egui::Margin::symmetric(10.0, 4.0))
+                            .inner_margin(egui::Margin::symmetric(9.0, 3.5))
                             .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 6.0;
-                                    ui.label(RichText::new(crate::lucide::SEARCH).size(11.5).color(p.text_muted));
-                                    ui.add(
-                                        egui::TextEdit::singleline(&mut self.sensors_search_query)
-                                            .hint_text("Search by name or PID...")
-                                            .desired_width(170.0)
-                                            .frame(false),
-                                    );
-                                    if !self.sensors_search_query.is_empty() {
-                                        if ui
-                                            .add(
-                                                egui::Button::new(RichText::new(crate::lucide::X).size(10.5).color(p.text_muted))
-                                                    .fill(Color32::TRANSPARENT)
-                                                    .stroke(Stroke::NONE),
-                                            )
-                                            .on_hover_text("Clear search filter")
-                                            .clicked()
-                                        {
-                                            self.sensors_search_query.clear();
-                                        }
-                                    }
-                                });
+                                ui.label(RichText::new(count_text).size(10.5).color(p.text_muted));
                             });
 
-                        // 3. Dropdown controls with matching pill button geometry
-                        ui.scope(|ui| {
-                            ui.visuals_mut().widgets.inactive.rounding = Rounding::same(999.0);
-                            ui.visuals_mut().widgets.inactive.bg_fill = p.bg_button;
-                            ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
-                            ui.visuals_mut().widgets.hovered.rounding = Rounding::same(999.0);
-                            ui.visuals_mut().widgets.active.rounding = Rounding::same(999.0);
-                            ui.visuals_mut().widgets.open.rounding = Rounding::same(999.0);
-                            ui.spacing_mut().button_padding = egui::vec2(10.0, 5.0);
+                        // Right: Elegant Nocturnal Command actions aligned to the far right
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.spacing_mut().item_spacing.x = 8.0;
 
-                            // Refresh Interval Pill ComboBox
-                            let interval_label = match self.sensors_refresh_interval {
-                                0 => "Paused".to_string(),
-                                1 => "1s (Default)".to_string(),
-                                2 => "2s (Fast)".to_string(),
-                                5 => "5s (Normal)".to_string(),
-                                10 => "10s (Low)".to_string(),
-                                n => format!("{}s", n),
+                            // 1. End Task Button (Far Right)
+                            let has_selection = self.sensors_top_apps_selected_pid.is_some();
+                            let btn_end = if has_selection {
+                                let sel_pid = self.sensors_top_apps_selected_pid.unwrap();
+                                egui::Button::new(
+                                    RichText::new(format!("{} End task (PID {})", crate::lucide::X, sel_pid))
+                                        .size(11.0)
+                                        .strong()
+                                        .color(p.accent_text),
+                                )
+                                .fill(accent)
+                                .rounding(Rounding::same(999.0))
+                                .min_size(egui::vec2(0.0, 32.0))
+                            } else {
+                                egui::Button::new(
+                                    RichText::new(format!("{} End task", crate::lucide::X))
+                                        .size(11.0)
+                                        .color(p.text_muted),
+                                )
+                                .fill(p.bg_button.gamma_multiply(0.6))
+                                .stroke(Stroke::NONE)
+                                .rounding(Rounding::same(999.0))
+                                .min_size(egui::vec2(0.0, 32.0))
                             };
-                            egui::ComboBox::from_id_salt("tm_refresh_interval_combo")
-                                .selected_text(RichText::new(format!("{} {}", crate::lucide::CLOCK, interval_label)).size(11.0).color(p.text_secondary))
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.sensors_refresh_interval, 1, "1s (Default)");
-                                    ui.selectable_value(&mut self.sensors_refresh_interval, 2, "2s (Fast)");
-                                    ui.selectable_value(&mut self.sensors_refresh_interval, 5, "5s (Normal)");
-                                    ui.selectable_value(&mut self.sensors_refresh_interval, 10, "10s (Low)");
-                                    ui.selectable_value(&mut self.sensors_refresh_interval, 0, "Paused");
+                            let btn_end_resp = ui.add(btn_end).on_hover_text(if has_selection {
+                                "Click to terminate the selected process"
+                            } else {
+                                "Select a process from the list below, then click End task to terminate it"
+                            });
+                            if has_selection && btn_end_resp.clicked() {
+                                kill_target_pid = self.sensors_top_apps_selected_pid;
+                            }
+
+                            // 2. Integrated Search Pill (Spacious, full placeholder, clear button)
+                            Frame::none()
+                                .fill(p.bg_card_active)
+                                .rounding(Rounding::same(999.0))
+                                .inner_margin(egui::Margin::symmetric(10.0, 4.0))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 6.0;
+                                        ui.label(RichText::new(crate::lucide::SEARCH).size(11.5).color(p.text_muted));
+                                        ui.add_sized(
+                                            [170.0, 24.0],
+                                            egui::TextEdit::singleline(&mut self.sensors_search_query)
+                                                .hint_text("Search by name or PID...")
+                                                .vertical_align(egui::Align::Center)
+                                                .frame(false),
+                                        );
+                                        if !self.sensors_search_query.is_empty() {
+                                            if ui
+                                                .add(
+                                                    egui::Button::new(RichText::new(crate::lucide::X).size(10.5).color(p.text_muted))
+                                                        .fill(Color32::TRANSPARENT)
+                                                        .stroke(Stroke::NONE)
+                                                        .min_size(egui::vec2(20.0, 24.0)),
+                                                )
+                                                .on_hover_text("Clear search filter")
+                                                .clicked()
+                                            {
+                                                self.sensors_search_query.clear();
+                                            }
+                                        }
+                                    });
                                 });
+
+                            // 3. Dropdown controls with matching pill button geometry
+                            ui.scope(|ui| {
+                                ui.visuals_mut().widgets.inactive.rounding = Rounding::same(999.0);
+                                ui.visuals_mut().widgets.inactive.bg_fill = p.bg_button;
+                                ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
+                                ui.visuals_mut().widgets.hovered.rounding = Rounding::same(999.0);
+                                ui.visuals_mut().widgets.active.rounding = Rounding::same(999.0);
+                                ui.visuals_mut().widgets.open.rounding = Rounding::same(999.0);
+                                ui.spacing_mut().button_padding = egui::vec2(10.0, 5.0);
+                                ui.spacing_mut().interact_size.y = 32.0;
+
+                                // Refresh Interval Pill ComboBox
+                                let interval_label = match self.sensors_refresh_interval {
+                                    0 => "Paused".to_string(),
+                                    1 => "1s (Default)".to_string(),
+                                    2 => "2s (Fast)".to_string(),
+                                    5 => "5s (Normal)".to_string(),
+                                    10 => "10s (Low)".to_string(),
+                                    n => format!("{}s", n),
+                                };
+                                egui::ComboBox::from_id_salt("tm_refresh_interval_combo")
+                                    .selected_text(RichText::new(format!("{} {}", crate::lucide::CLOCK, interval_label)).size(11.0).color(p.text_secondary))
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut self.sensors_refresh_interval, 1, "1s (Default)");
+                                        ui.selectable_value(&mut self.sensors_refresh_interval, 2, "2s (Fast)");
+                                        ui.selectable_value(&mut self.sensors_refresh_interval, 5, "5s (Normal)");
+                                        ui.selectable_value(&mut self.sensors_refresh_interval, 10, "10s (Low)");
+                                        ui.selectable_value(&mut self.sensors_refresh_interval, 0, "Paused");
+                                    });
+                            });
                         });
-                    });
-                });
+                    },
+                );
 
                 // Status message (e.g. process terminated)
                 if let Some((ref msg, is_err, timestamp)) = self.sensors_top_apps_status_msg {

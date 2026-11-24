@@ -173,6 +173,28 @@ pub struct AdbDeviceConfig {
     pub scrcpy_no_audio: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SshIdleMode {
+    #[default]
+    PageOrWindowInactive,
+    WindowInactive,
+    Never,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SshIdleSettings {
+    pub mode: SshIdleMode,
+    pub minutes: u32,
+}
+
+impl Default for SshIdleSettings {
+    fn default() -> Self {
+        Self { mode: SshIdleMode::default(), minutes: 5 }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConfigFile {
     pub servers: Vec<ServerConfig>,
@@ -194,6 +216,8 @@ pub struct ConfigFile {
     pub app_autostart: bool,
     #[serde(default)]
     pub journal_refresh_interval: Option<u32>,
+    #[serde(default)]
+    pub ssh_idle: SshIdleSettings,
 }
 
 impl ConfigFile {

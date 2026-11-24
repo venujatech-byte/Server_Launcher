@@ -565,6 +565,33 @@ impl LauncherApp {
                                                 ui.label(RichText::new(status_txt).size(11.0).strong().color(status_fg));
                                             });
                                     });
+                                ui.add_space(12.0);
+                                let previous = self.ssh_idle;
+                                Frame::none().fill(palette.bg_subtle).rounding(12.0)
+                                    .inner_margin(16.0).show(ui, |ui| {
+                                        use crate::config::SshIdleMode;
+                                        ui.label(RichText::new("SSH command timeout").size(14.0).strong().color(palette.text_primary));
+                                        ui.label("Applies to commands launched from the SSH Servers page.");
+                                        let modes = [
+                                            (SshIdleMode::PageOrWindowInactive, "When the SSH page or window is inactive"),
+                                            (SshIdleMode::WindowInactive, "When the window is inactive"),
+                                            (SshIdleMode::Never, "Keep connections open"),
+                                        ];
+                                        let selected = modes.iter().find(|(mode, _)| *mode == self.ssh_idle.mode).unwrap().1;
+                                        egui::ComboBox::from_id_salt("ssh_idle_mode")
+                                            .selected_text(selected).show_ui(ui, |ui| {
+                                                for (mode, label) in modes {
+                                                    ui.selectable_value(&mut self.ssh_idle.mode, mode, label);
+                                                }
+                                            });
+                                        ui.add_enabled(
+                                            self.ssh_idle.mode != SshIdleMode::Never,
+                                            egui::DragValue::new(&mut self.ssh_idle.minutes).range(1..=120).suffix(" min"),
+                                        ).on_hover_text("Continuous time inactive before closing the local SSH connection");
+                                    });
+                                if previous != self.ssh_idle {
+                                    self.persist_config();
+                                }
                             }
                             SettingsTab::Backup => {
                                 // SERVERS IMPORT / EXPORT CARD

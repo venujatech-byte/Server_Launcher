@@ -307,6 +307,13 @@ impl SettingsTab {
     }
 }
 
+#[derive(Default)]
+struct RemoteCommandActivity {
+    count: usize,
+    inactive_since: Option<Instant>,
+    timeout: Option<std::time::Duration>,
+}
+
 #[allow(dead_code)]
 pub struct LauncherApp {
     pub active_sidebar_tab: SidebarTab,
@@ -378,7 +385,8 @@ pub struct LauncherApp {
     remote_listeners: Arc<Mutex<HashMap<String, Arc<Vec<RemoteListener>>>>>,
     remote_scanning: Arc<Mutex<BTreeSet<String>>>,
     remote_terminal_logs: Arc<Mutex<HashMap<String, Arc<Mutex<VecDeque<crate::service::LogEntry>>>>>>,
-    remote_command_counts: Arc<Mutex<HashMap<String, usize>>>,
+    remote_command_activity: Arc<Mutex<HashMap<String, RemoteCommandActivity>>>,
+    ssh_idle: crate::config::SshIdleSettings,
     remote_terminal_inputs: HashMap<String, String>,
     remote_connection_status: Arc<Mutex<HashMap<String, Result<String, String>>>>,
     remote_connecting: Arc<Mutex<BTreeSet<String>>>,
@@ -805,7 +813,8 @@ impl LauncherApp {
             remote_listeners,
             remote_scanning,
             remote_terminal_logs,
-            remote_command_counts: Arc::default(),
+            remote_command_activity: Arc::default(),
+            ssh_idle: config_file.ssh_idle,
             remote_terminal_inputs,
             remote_connection_status,
             remote_connecting,
@@ -1250,6 +1259,7 @@ impl LauncherApp {
             accent_color: self.custom_accent_color.clone(),
             app_autostart: self.app_autostart,
             journal_refresh_interval: Some(self.journal_refresh_interval),
+            ssh_idle: self.ssh_idle,
         };
         if let Err(error) = cfg.save_to_file(&self.config_path) {
             crate::ssh_credentials::discard(staged_refs);
@@ -3252,6 +3262,26 @@ impl eframe::App for LauncherApp {
         self.render_adb_add_modal(ctx);
 
         let is_scanning = self.scanner.is_scanning.lock().map(|s| *s).unwrap_or(false);
+        {
+            use crate::config::SshIdleMode;
+            let focused = ctx.input(|input| input.focused && input.viewport().minimized != Some(true));
+            let on_servers = matches!(self.active_sidebar_tab, SidebarTab::Servers);
+            let now = Instant::now();
+            for (host, activity) in self.remote_command_activity.lock().unwrap().iter_mut() {
+                let inactive = match self.ssh_idle.mode {
+                    SshIdleMode::PageOrWindowInactive => !focused || !on_servers || self.selected_machine != *host,
+                    SshIdleMode::WindowInactive => !focused,
+                    SshIdleMode::Never => false,
+                };
+                if inactive {
+                    activity.inactive_since.get_or_insert(now);
+                    activity.timeout = Some(std::time::Duration::from_secs(u64::from(self.ssh_idle.minutes.clamp(1, 120)) * 60));
+                } else {
+                    activity.inactive_since = None;
+                    activity.timeout = None;
+                }
+            }
+        }
         let has_remote_bg_work = {
             self.remote_connecting.lock().map(|s| !s.is_empty()).unwrap_or(false)
                 || self.remote_scanning.lock().map(|s| !s.is_empty()).unwrap_or(false)

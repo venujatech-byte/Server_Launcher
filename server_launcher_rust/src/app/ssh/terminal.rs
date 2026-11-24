@@ -20,9 +20,9 @@ impl LauncherApp {
         let logs = self.get_remote_logs(&host.id);
         {
             const MAX_COMMANDS_PER_HOST: usize = 4;
-            let mut counts = self.remote_command_counts.lock().unwrap();
+            let mut counts = self.remote_command_activity.lock().unwrap();
             let count = counts.entry(host.id.clone()).or_default();
-            if *count >= MAX_COMMANDS_PER_HOST {
+            if count.count >= MAX_COMMANDS_PER_HOST {
                 crate::service::push_log_line(
                     "[ssh] Four commands are already running on this host. Wait for one to finish.",
                     &logs, 1000, crate::service::LogKind::Warning,
@@ -32,9 +32,9 @@ impl LauncherApp {
                 }
                 return false;
             }
-            *count += 1;
+            count.count += 1;
         }
-        let counts = self.remote_command_counts.clone();
+        let counts = self.remote_command_activity.clone();
         let prompt = format!("{}> {}", host.user, cmd_str);
         crate::service::push_log_line(&prompt, &logs, 1000, crate::service::LogKind::Stdin);
         if let Some(ref c) = ctx {
@@ -66,15 +66,16 @@ impl LauncherApp {
                     if let Some(stderr) = child.stderr.take() {
                         crate::service::spawn_stream_reader(stderr, logs_clone.clone(), 1000, crate::service::LogKind::Stderr);
                     }
-                    let deadline = Instant::now() + std::time::Duration::from_secs(300);
                     loop {
                         let message = match child.try_wait() {
                             Ok(Some(_)) => break,
-                            Ok(None) if Instant::now() < deadline => {
+                            Ok(None) if !counts.lock().unwrap().get(&host_clone.id).is_some_and(|activity| {
+                                activity.inactive_since.zip(activity.timeout).is_some_and(|(since, timeout)| since.elapsed() >= timeout)
+                            }) => {
                                 std::thread::sleep(std::time::Duration::from_millis(250));
                                 continue;
                             }
-                            Ok(None) => "[ssh] Command timed out after five minutes. Closing the SSH connection.".to_owned(),
+                            Ok(None) => "[ssh] Closing the SSH connection after the configured inactivity timeout.".to_owned(),
                             Err(error) => format!("[ssh] Could not check command status: {error}"),
                         };
 
@@ -101,8 +102,8 @@ impl LauncherApp {
             {
                 let mut counts = counts.lock().unwrap();
                 if let Some(count) = counts.get_mut(&host_clone.id) {
-                    *count -= 1;
-                    if *count == 0 {
+                    count.count -= 1;
+                    if count.count == 0 {
                         counts.remove(&host_clone.id);
                     }
                 }

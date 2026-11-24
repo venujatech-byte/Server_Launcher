@@ -100,7 +100,7 @@ impl LauncherApp {
                         SidebarTab::Commands => self.render_commands_left_panel(ui, Some(&host.id)),
                         SidebarTab::SystemMD => self.render_systemd_left_panel(ui, Some(&host.id)),
                         SidebarTab::Sensors => self.render_sensors_left_panel(ui, Some(&host.id)),
-                        SidebarTab::Files => unreachable!(),
+                        SidebarTab::Files | SidebarTab::Apps => unreachable!(),
                     }
                 });
 
@@ -124,7 +124,7 @@ impl LauncherApp {
                         SidebarTab::Commands => self.render_commands_right_panel(ui, Some(&host.id)),
                         SidebarTab::SystemMD => self.render_systemd_right_panel(ui, Some(&host.id)),
                         SidebarTab::Sensors => self.render_sensors_right_panel(ui, Some(&host.id)),
-                        SidebarTab::Files => unreachable!(),
+                        SidebarTab::Files | SidebarTab::Apps => unreachable!(),
                     }
                 });
             });

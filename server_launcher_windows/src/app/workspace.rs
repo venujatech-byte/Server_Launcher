@@ -302,7 +302,7 @@ impl LauncherApp {
         header.horizontal(|ui| {
             ui.set_min_height(32.0);
             ui.spacing_mut().item_spacing.x = 0.0;
-            ui.add_space(SERVERS_SIDEBAR_WIDTH + WORKSPACE_SIDEBAR_MARGIN.left + WORKSPACE_SIDEBAR_MARGIN.right + WORKSPACE_GAP);
+            ui.add_space(self.workspace_sidebar_width() + WORKSPACE_SIDEBAR_MARGIN.left + WORKSPACE_SIDEBAR_MARGIN.right + WORKSPACE_GAP);
             ui.spacing_mut().item_spacing.x = ui.ctx().style().spacing.item_spacing.x;
             self.render_system_brief_info_panel(ui, host_id);
         });
@@ -317,7 +317,7 @@ impl LauncherApp {
             .inner_margin(egui::Margin::symmetric(3.0, 3.0))
             .show(ui, |ui| {
                 const TAB_GAP: f32 = 3.0;
-                let count = if remote { 6.0 } else { 5.0 };
+                let count = 6.0;
                 let gaps = (count - 1.0) * TAB_GAP;
                 let tab_width = ((ui.available_width() - gaps) / count).clamp(0.0, 66.0);
                 let tabs_width = count * tab_width + gaps;
@@ -326,16 +326,17 @@ impl LauncherApp {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = TAB_GAP;
                     ui.spacing_mut().button_padding = egui::vec2(3.0, 4.0);
+                    let device_tab = if remote { SidebarTab::Files } else { SidebarTab::Apps };
                     let tabs = [
                         (SidebarTab::Servers, SidebarTab::Servers.label()),
                         (SidebarTab::Scripts, SidebarTab::Scripts.label()),
                         (SidebarTab::Commands, SidebarTab::Commands.label()),
                         (SidebarTab::SystemMD, SidebarTab::SystemMD.label()),
                         (SidebarTab::Sensors, SidebarTab::Sensors.label()),
-                        (SidebarTab::Files, SidebarTab::Files.label()),
+                        (device_tab, device_tab.label()),
                     ];
 
-                    for (tab, label) in tabs.into_iter().take(count as usize) {
+                    for (tab, label) in tabs {
                         let is_active = self.active_sidebar_tab == tab;
                         let bg = if is_active {
                             p.accent
@@ -387,7 +388,7 @@ impl LauncherApp {
                 SidebarTab::Commands => self.render_commands_left_panel(ui, None),
                 SidebarTab::SystemMD => self.render_systemd_left_panel(ui, None),
                 SidebarTab::Sensors => self.render_sensors_left_panel(ui, None),
-                SidebarTab::Files => {},
+                SidebarTab::Files | SidebarTab::Apps => {},
             }
         });
     }
@@ -399,7 +400,7 @@ impl LauncherApp {
             SidebarTab::Commands => self.render_commands_right_panel(ui, None),
             SidebarTab::SystemMD => self.render_systemd_right_panel(ui, None),
             SidebarTab::Sensors => self.render_sensors_right_panel(ui, None),
-            SidebarTab::Files => {},
+            SidebarTab::Files | SidebarTab::Apps => {},
         }
     }
 }

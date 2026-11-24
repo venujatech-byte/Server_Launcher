@@ -88,6 +88,7 @@ pub enum SidebarTab {
     SystemMD,
     Sensors,
     Files,
+    Apps,
 }
 
 impl SidebarTab {
@@ -98,6 +99,7 @@ impl SidebarTab {
             SidebarTab::Commands => "\u{e181} Cmds",
             SidebarTab::SystemMD => "\u{e245} SystemD",
             SidebarTab::Files => "Files",
+            SidebarTab::Apps => "Apps",
             SidebarTab::Sensors => "\u{e186} Sensors",
         }
     }
@@ -3135,10 +3137,11 @@ impl eframe::App for LauncherApp {
                     });
                 });
                 if let Some((left, right, remote)) = tabs_bounds {
-                    let tabs_width = if remote { 417.0 } else { 348.0 };
-                    if right - left >= tabs_width {
+                    let tabs_width = 417.0;
+                    let x = header_center - tabs_width * 0.5;
+                    if x >= left && x + tabs_width <= right {
                         let rect = egui::Rect::from_min_size(
-                            egui::pos2((header_center - tabs_width * 0.5).clamp(left, right - tabs_width), header.response.rect.center().y - 16.0),
+                            egui::pos2(x, header.response.rect.center().y - 16.0),
                             egui::vec2(tabs_width, 32.0),
                         );
                         let mut tabs = ui.new_child(egui::UiBuilder::new()
@@ -3209,6 +3212,11 @@ impl eframe::App for LauncherApp {
                         }),
                 )
                 .show(ctx, |ui| {
+                    if self.active_sidebar_tab == SidebarTab::Apps {
+                        ui.add_space(8.0);
+                        self.render_local_apps(ui);
+                        return;
+                    }
                     let header_rect = ui.available_rect_before_wrap();
                     let total_h = ui.available_height().max(0.0);
                     let left_w = self.workspace_sidebar_width();
@@ -3569,7 +3577,7 @@ impl eframe::App for LauncherApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(1000));
         } else if is_scanning || has_remote_bg_work {
             ctx.request_repaint_after(std::time::Duration::from_millis(250));
-        } else if self.active_sidebar_tab == SidebarTab::Sensors && self.sensors_refresh_interval > 0 {
+        } else if matches!(self.active_sidebar_tab, SidebarTab::Sensors | SidebarTab::Apps) && self.sensors_refresh_interval > 0 {
             // Repaint at 1-second intervals on Sensors tab so real-time waveforms and second-by-second telemetry scroll smoothly
             ctx.request_repaint_after(std::time::Duration::from_millis(1000));
         } else if any_running {

@@ -115,4 +115,4 @@ The local external terminal now quotes Unix display text and directory operands 
 
 Unix server launch in an external console now passes the environment and working directory directly to the child, quotes its title, and uses an owner-only temporary bootstrap script. Its legacy PID marker is created without overwriting an existing file.
 
-The SSH Servers terminal now limits submissions and quick actions to four concurrent commands per host, releases slots on child exit or spawn failure, and disconnects inherited stdin. Cancellation and deadlines for arbitrary commands remain open.
+The SSH Servers terminal now limits submissions and quick actions to four concurrent commands per host, releases slots on child exit or spawn failure, and disconnects inherited stdin. SSH Servers commands now have a five-minute local deadline. Expiration closes the local SSH child and releases its slot. Manual cancellation and remote process termination remain open.

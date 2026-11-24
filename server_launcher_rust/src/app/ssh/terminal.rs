@@ -52,6 +52,12 @@ impl LauncherApp {
             c.stdout(std::process::Stdio::piped());
             c.stderr(std::process::Stdio::piped());
 
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                c.process_group(0);
+            }
+
             match c.spawn() {
                 Ok(mut child) => {
                     if let Some(stdout) = child.stdout.take() {
@@ -60,7 +66,28 @@ impl LauncherApp {
                     if let Some(stderr) = child.stderr.take() {
                         crate::service::spawn_stream_reader(stderr, logs_clone.clone(), 1000, crate::service::LogKind::Stderr);
                     }
-                    let _ = child.wait();
+                    let deadline = Instant::now() + std::time::Duration::from_secs(300);
+                    loop {
+                        let message = match child.try_wait() {
+                            Ok(Some(_)) => break,
+                            Ok(None) if Instant::now() < deadline => {
+                                std::thread::sleep(std::time::Duration::from_millis(250));
+                                continue;
+                            }
+                            Ok(None) => "[ssh] Command timed out after five minutes. Closing the SSH connection.".to_owned(),
+                            Err(error) => format!("[ssh] Could not check command status: {error}"),
+                        };
+
+                        #[cfg(unix)]
+                        unsafe {
+                            // The unreaped child still owns the group ID.
+                            libc::kill(-(child.id() as i32), libc::SIGKILL);
+                        }
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        crate::service::push_log_line(&message, &logs_clone, 1000, crate::service::LogKind::Warning);
+                        break;
+                    }
                 }
                 Err(e) => {
                     crate::service::push_log_line(

@@ -2894,7 +2894,6 @@ impl eframe::App for LauncherApp {
             )
             .show(ctx, |ui| {
                 if listener_dialog_open { ui.disable(); }
-                let header_bounds = ui.available_rect_before_wrap();
                 let mut tabs_bounds = None;
                 let header = ui.horizontal(|ui| {
                     let remote_host_opt = if self.selected_machine != "local" {
@@ -3140,30 +3139,28 @@ impl eframe::App for LauncherApp {
                                 self.palette_modal.query.clear();
                             }
 
-                            tabs_bounds = Some((left_edge, ui.cursor().right() - 8.0));
-
                         }
-
-
+                        if remote_host_opt.is_some() || self.selected_machine == "local" {
+                            tabs_bounds = Some((left_edge, ui.cursor().right() - 8.0));
+                        }
                     });
                 });
-                if let Some((left, right)) = tabs_bounds.filter(|_| self.selected_machine == "local") {
+                if let Some((left, right)) = tabs_bounds {
                     const TABS_WIDTH: f32 = 348.0;
                     if right - left >= TABS_WIDTH {
-                        let x = (header_bounds.center().x - TABS_WIDTH * 0.5).clamp(left, right - TABS_WIDTH);
                         let rect = egui::Rect::from_min_size(
-                            egui::pos2(x, header.response.rect.center().y - 16.0),
+                            egui::pos2(left, header.response.rect.center().y - 16.0),
                             egui::vec2(TABS_WIDTH, 32.0),
                         );
                         let mut tabs = ui.new_child(egui::UiBuilder::new()
-                            .id_salt("local_header_tabs")
+                            .id_salt("header_workspace_tabs")
                             .max_rect(rect)
                             .layout(egui::Layout::top_down(egui::Align::Min)));
                         self.render_sidebar_tabs_bar(&mut tabs);
                     } else {
                         let width = ui.available_width().min(TABS_WIDTH);
                         ui.horizontal(|ui| {
-                            ui.add_space(((header_bounds.width() - width) * 0.5).max(0.0));
+                            ui.add_space(MACHINE_RAIL_WIDTH.min((ui.available_width() - width).max(0.0)));
                             ui.allocate_ui(egui::vec2(width, 0.0), |ui| {
                                 ui.set_max_width(width);
                                 self.render_sidebar_tabs_bar(ui);

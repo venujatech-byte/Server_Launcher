@@ -378,6 +378,7 @@ pub struct LauncherApp {
     remote_listeners: Arc<Mutex<HashMap<String, Arc<Vec<RemoteListener>>>>>,
     remote_scanning: Arc<Mutex<BTreeSet<String>>>,
     remote_terminal_logs: Arc<Mutex<HashMap<String, Arc<Mutex<VecDeque<crate::service::LogEntry>>>>>>,
+    remote_command_counts: Arc<Mutex<HashMap<String, usize>>>,
     remote_terminal_inputs: HashMap<String, String>,
     remote_connection_status: Arc<Mutex<HashMap<String, Result<String, String>>>>,
     remote_connecting: Arc<Mutex<BTreeSet<String>>>,
@@ -804,6 +805,7 @@ impl LauncherApp {
             remote_listeners,
             remote_scanning,
             remote_terminal_logs,
+            remote_command_counts: Arc::default(),
             remote_terminal_inputs,
             remote_connection_status,
             remote_connecting,
@@ -3154,24 +3156,27 @@ impl eframe::App for LauncherApp {
             self.remote_start_server_modal.open = false;
             if let Some(host) = self.ssh_hosts.iter().find(|h| h.id == req.host_id).cloned() {
                 let full_cmd = build_remote_start_cmd(&req.name, req.port.unwrap_or_default(), Some(&req.command), &req.cwd);
-                if let Some(port) = req.port {
-                    if let Ok(mut map) = self.remote_stopped_servers.lock() {
-                        let list = map.entry(host.id.clone()).or_default();
-                        if !list.iter().any(|s| s.port == port) {
-                            list.push(RemoteStoppedServer {
-                                name: req.name.clone(),
-                                port,
-                                proto: "TCP".to_string(),
-                                last_pid: None,
-                                cmd: req.command.clone(),
-                                start_cmd: req.command.clone(),
-                                cwd: req.cwd.clone(),
-                            });
+                if !self.run_remote_ssh_command(&host, &full_cmd, Some(ctx.clone())) {
+                    self.remote_start_server_modal.open = true;
+                } else {
+                    if let Some(port) = req.port {
+                        if let Ok(mut map) = self.remote_stopped_servers.lock() {
+                            let list = map.entry(host.id.clone()).or_default();
+                            if !list.iter().any(|s| s.port == port) {
+                                list.push(RemoteStoppedServer {
+                                    name: req.name.clone(),
+                                    port,
+                                    proto: "TCP".to_string(),
+                                    last_pid: None,
+                                    cmd: req.command.clone(),
+                                    start_cmd: req.command.clone(),
+                                    cwd: req.cwd.clone(),
+                                });
+                            }
                         }
                     }
+                    self.schedule_remote_scan(&host, 1500, ctx.clone());
                 }
-                self.run_remote_ssh_command(&host, &full_cmd, Some(ctx.clone()));
-                self.schedule_remote_scan(&host, 1500, ctx.clone());
             }
         }
 

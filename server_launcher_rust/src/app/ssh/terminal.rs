@@ -16,8 +16,25 @@ impl LauncherApp {
         }
     }
 
-    pub(in crate::app) fn run_remote_ssh_command(&self, host: &SshRemoteHost, cmd_str: &str, ctx: Option<egui::Context>) {
+    pub(in crate::app) fn run_remote_ssh_command(&self, host: &SshRemoteHost, cmd_str: &str, ctx: Option<egui::Context>) -> bool {
         let logs = self.get_remote_logs(&host.id);
+        {
+            const MAX_COMMANDS_PER_HOST: usize = 4;
+            let mut counts = self.remote_command_counts.lock().unwrap();
+            let count = counts.entry(host.id.clone()).or_default();
+            if *count >= MAX_COMMANDS_PER_HOST {
+                crate::service::push_log_line(
+                    "[ssh] Four commands are already running on this host. Wait for one to finish.",
+                    &logs, 1000, crate::service::LogKind::Warning,
+                );
+                if let Some(ctx) = ctx {
+                    ctx.request_repaint();
+                }
+                return false;
+            }
+            *count += 1;
+        }
+        let counts = self.remote_command_counts.clone();
         let prompt = format!("{}> {}", host.user, cmd_str);
         crate::service::push_log_line(&prompt, &logs, 1000, crate::service::LogKind::Stdin);
         if let Some(ref c) = ctx {
@@ -31,6 +48,7 @@ impl LauncherApp {
 
         std::thread::spawn(move || {
             let mut c = build_ssh_command(&host_clone, &cmd_owned);
+            c.stdin(std::process::Stdio::null());
             c.stdout(std::process::Stdio::piped());
             c.stderr(std::process::Stdio::piped());
 
@@ -43,9 +61,6 @@ impl LauncherApp {
                         crate::service::spawn_stream_reader(stderr, logs_clone.clone(), 1000, crate::service::LogKind::Stderr);
                     }
                     let _ = child.wait();
-                    if let Some(c) = ctx_clone {
-                        c.request_repaint();
-                    }
                 }
                 Err(e) => {
                     crate::service::push_log_line(
@@ -54,12 +69,22 @@ impl LauncherApp {
                         1000,
                         crate::service::LogKind::Error,
                     );
-                    if let Some(c) = ctx_clone {
-                        c.request_repaint();
+                }
+            }
+            {
+                let mut counts = counts.lock().unwrap();
+                if let Some(count) = counts.get_mut(&host_clone.id) {
+                    *count -= 1;
+                    if *count == 0 {
+                        counts.remove(&host_clone.id);
                     }
                 }
             }
+            if let Some(ctx) = ctx_clone {
+                ctx.request_repaint();
+            }
         });
+        true
     }
 
     pub(in crate::app) fn clear_remote_terminal_logs(&self, host_id: &str) {
@@ -153,7 +178,6 @@ impl LauncherApp {
                             let enter = ui.is_enabled() && editor.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
                             if (execute.clicked() || enter) && !input.trim().is_empty() {
                                 command = Some(input.trim().to_owned());
-                                input.clear();
                                 editor.request_focus();
                             }
                         });
@@ -162,7 +186,11 @@ impl LauncherApp {
                     ui.painter().rect_stroke(composer.response.rect, 8.0, Stroke::new(1.0_f32, p.accent));
                 }
                 if let Some(command) = command {
-                    self.run_remote_ssh_command(host, &command, Some(ui.ctx().clone()));
+                    if self.run_remote_ssh_command(host, &command, Some(ui.ctx().clone())) {
+                        if let Some(input) = self.remote_terminal_inputs.get_mut(&host.id) {
+                            input.clear();
+                        }
+                    }
                 }
             });
     }

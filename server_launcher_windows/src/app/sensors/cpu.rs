@@ -19,68 +19,34 @@ impl LauncherApp {
                 let phys = if snap.cpu_cores_physical > 0 { snap.cpu_cores_physical.to_string() } else { "—".into() };
                 let log = if snap.cpu_cores_logical > 0 { snap.cpu_cores_logical.to_string() } else { "—".into() };
 
-                // 1. Top Header Card
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                    .rounding(Rounding::same(12.0))
+                    .inner_margin(egui::Margin::symmetric(18.0, 14.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        ui.vertical(|ui| {
-                            // Row 1: CPU details on the left, reported limits on the right
-                            ui.horizontal(|ui| {
-                                let row_w = ui.available_width();
-                                let right_w = 265.0_f32;
-                                let left_w = (row_w - right_w - 8.0).max(80.0);
-
-                                ui.allocate_ui_with_layout(egui::vec2(left_w, 0.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                    ui.spacing_mut().item_spacing.x = 8.0;
-                                    ui.label(RichText::new("CPU").size(15.0).strong().color(p.text_primary));
-                                });
-
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    // Tjunction Max badge
-                                    let tj_max = reported_sensor_value(snap.cpu_tjunction_max, 0);
-                                    Frame::none()
-                                        .fill(Color32::from_rgba_unmultiplied(255, 255, 255, 8))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 3.5))
-                                        .show(ui, |ui| {
-                                            ui.label(RichText::new(format!("Tjunction Max: {}°C", tj_max)).size(9.5).monospace().color(p.text_muted));
-                                        });
-
-                                    ui.add_space(6.0);
-
-                                    // Report only the power cap supplied by telemetry.
-                                    Frame::none()
-                                        .fill(accent_with_alpha(accent, 25))
-                                        .rounding(Rounding::same(4.0))
-                                        .inner_margin(egui::Margin::symmetric(8.0, 3.5))
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.spacing_mut().item_spacing.x = 5.0;
-                                                let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                                ui.painter().circle_filled(d_rect.center(), 2.8, accent);
-                                                let pl1 = reported_sensor_value(snap.cpu_power_cap_watts, 1);
-                                                ui.label(RichText::new(format!("Reported power cap: {} W", pl1)).size(9.5).monospace().strong().color(p.text_primary));
-                                            });
-                                        });
-                                });
-                            });
-
-                            ui.add_space(3.0);
-
-                            // Row 2: Subtitle spanning the full card width underneath Row 1 without overlap
-                            let uptime_secs = if snap.uptime_secs > 0 { snap.uptime_secs } else if host_id.is_none() { get_system_uptime() } else { 0 };
-                            let uptime_str = format_uptime_hms(uptime_secs);
-                            ui.horizontal_wrapped(|ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                ui.label(RichText::new(brand).size(10.0).monospace().color(p.text_muted));
-                                ui.label(RichText::new("•").size(9.0).color(p.text_muted));
-                                ui.label(RichText::new(format!("{} Cores / {} Threads", phys, log)).size(10.0).monospace().color(p.text_muted));
-                                ui.label(RichText::new("•").size(9.0).color(p.text_muted));
-                                ui.label(RichText::new(format!("Uptime {}", uptime_str)).size(10.0).monospace().color(p.text_muted));
-                            });
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(crate::lucide::CPU).size(15.0).color(accent));
+                            ui.label(RichText::new("PROCESSOR").size(10.5).monospace().strong().color(p.text_muted));
+                        });
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(brand).size(18.0).strong().color(p.text_primary));
+                        ui.add_space(6.0);
+                        let uptime = if snap.uptime_secs > 0 { snap.uptime_secs } else if host_id.is_none() { get_system_uptime() } else { 0 };
+                        let power = snap.cpu_power_cap_watts.map(|value| format!("Power cap {value:.1} W"));
+                        let thermal = snap.cpu_tjunction_max.map(|value| format!("Thermal limit {value:.0} °C"));
+                        ui.horizontal_wrapped(|ui| {
+                            let topology = format!("{phys} cores · {log} threads");
+                            let uptime = (uptime > 0).then(|| format!("Uptime {}", format_uptime_hms(uptime)));
+                            for label in std::iter::once(topology).chain(uptime).chain(power).chain(thermal) {
+                                Frame::none()
+                                    .fill(p.bg_button)
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(label).size(10.5).monospace().color(p.text_secondary));
+                                    });
+                            }
                         });
                     });
 
@@ -118,37 +84,30 @@ impl LauncherApp {
 
                 ui.add_space(8.0);
 
-                // 3. Utilization History (60 Seconds) Card
                 Frame::none()
                     .fill(p.bg_card)
-                    .rounding(Rounding::same(8.0))
-                    .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                    .rounding(Rounding::same(12.0))
+                    .inner_margin(egui::Margin::symmetric(18.0, 14.0))
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.label(RichText::new(crate::lucide::ACTIVITY).size(12.0).color(accent));
-                            ui.label(RichText::new("Utilization").size(12.5).strong().color(p.text_primary));
-
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 4.0;
-                                    let (d_rect, _) = ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
-                                    ui.painter().circle_filled(d_rect.center(), 2.8, accent);
-                                    ui.label(RichText::new("RECENT SAMPLES").size(10.0).monospace().strong().color(p.text_primary));
-                                });
-                            });
+                        ui.set_width(ui.available_width());
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new(crate::lucide::ACTIVITY).size(15.0).color(accent));
+                            ui.label(RichText::new("CPU utilization").size(14.0).strong().color(p.text_primary));
                         });
-                        ui.add_space(8.0);
-                        draw_waveform(ui, 140.0, &self.cpu_history, 100.0, accent, accent_with_alpha(accent, 45));
-
                         ui.add_space(4.0);
-                        ui.columns(5, |cols| {
-                            cols[0].label(RichText::new("Earlier").size(9.5).monospace().color(p.text_muted));
-                            cols[1].centered_and_justified(|ui| { ui.label(RichText::new("").size(9.5).monospace().color(p.text_muted)); });
-                            cols[2].centered_and_justified(|ui| { ui.label(RichText::new("").size(9.5).monospace().color(p.text_muted)); });
-                            cols[3].centered_and_justified(|ui| { ui.label(RichText::new("").size(9.5).monospace().color(p.text_muted)); });
-                            cols[4].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new("Latest sample").size(9.5).monospace().strong().color(p.text_primary));
+                        let latest = snap.cpu_usage_available.then_some(snap.cpu_global_usage);
+                        let latest = latest.map_or_else(|| "Current load —".into(), |value| format!("Current load {value:.1}%"));
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new(latest).size(11.0).monospace().strong().color(accent));
+                            ui.label(RichText::new(format!("{} samples", self.cpu_history.len())).size(10.5).monospace().color(p.text_muted));
+                        });
+                        ui.add_space(10.0);
+                        draw_waveform(ui, 140.0, &self.cpu_history, 100.0, accent, accent_with_alpha(accent, 45));
+                        ui.add_space(4.0);
+                        ui.columns(2, |cols| {
+                            cols[0].label(RichText::new("Older samples").size(10.0).monospace().color(p.text_muted));
+                            cols[1].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(RichText::new("Latest sample").size(10.0).monospace().color(p.text_muted));
                             });
                         });
                     });

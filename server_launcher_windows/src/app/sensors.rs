@@ -510,7 +510,12 @@ impl LauncherApp {
             ui.label(RichText::new("Some CPU power, Intel GPU engine and RAM module details may require authorization and hardware support.").size(11.0).color(p.text_muted));
         });
         if let Some(message) = self.service_action_msg.as_ref().filter(|message| !busy && (message.starts_with("Read-only hardware") || message.starts_with("Error: Hardware probe") || message.starts_with("Error: Could not start hardware"))) {
-            ui.label(RichText::new(message).size(11.0).color(p.text_muted));
+            if crate::systemd::needs_sudo_password(message) {
+                ui.label(RichText::new("Unlock sensors to read protected metrics.").size(11.0).color(p.text_muted))
+                    .on_hover_text(message);
+            } else {
+                ui.label(RichText::new(message).size(11.0).color(p.text_muted));
+            }
         }
         if let Some(error) = &self.sensors_snapshot.hardware_access_error {
             ui.add(egui::Label::new(RichText::new(error).size(11.0).color(p.warning)).truncate()).on_hover_text(error);

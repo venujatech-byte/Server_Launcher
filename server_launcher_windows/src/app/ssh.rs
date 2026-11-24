@@ -25,7 +25,7 @@ impl LauncherApp {
         };
         let is_scanning = {
             let map = self.remote_scanning.lock().unwrap();
-            map.contains(&host.id)
+            map.contains_key(&host.id)
         };
 
         // If connected and no scan triggered yet, trigger scan

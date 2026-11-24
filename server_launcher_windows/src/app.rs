@@ -392,7 +392,7 @@ pub struct LauncherApp {
     saved_ssh_refs: BTreeSet<String>,
     ssh_host_modal: SshHostModalState,
     remote_listeners: Arc<Mutex<HashMap<String, RemoteListenerSnapshot>>>,
-    remote_scanning: Arc<Mutex<BTreeSet<String>>>,
+    remote_scanning: Arc<Mutex<HashMap<String, Option<(Instant, u32)>>>>,
     remote_terminal_logs: Arc<Mutex<HashMap<String, Arc<Mutex<VecDeque<crate::service::LogEntry>>>>>>,
     remote_command_activity: Arc<Mutex<HashMap<String, RemoteCommandActivity>>>,
     ssh_idle: crate::config::SshIdleSettings,
@@ -758,7 +758,7 @@ impl LauncherApp {
         let saved_commands = config_file.saved_commands;
         let ssh_host_modal = SshHostModalState::default();
         let remote_listeners = Arc::new(Mutex::new(HashMap::new()));
-        let remote_scanning = Arc::new(Mutex::new(BTreeSet::new()));
+        let remote_scanning = Arc::default();
         let remote_terminal_logs = Arc::new(Mutex::new(HashMap::new()));
         let remote_terminal_inputs = HashMap::new();
         let remote_connection_status = Arc::new(Mutex::new(HashMap::new()));
@@ -2795,7 +2795,7 @@ impl eframe::App for LauncherApp {
                             // REMOTE SSH PC CONTROLS (Moved up here)
                             let is_scanning = {
                                 let map = self.remote_scanning.lock().unwrap();
-                                map.contains(&host.id)
+                                map.contains_key(&host.id)
                             };
 
                             let btn_edit = egui::Button::new(

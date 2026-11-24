@@ -8,7 +8,7 @@ impl LauncherApp {
         let mut requested = None;
         let is_scanning = {
             let map = self.remote_scanning.lock().unwrap();
-            map.contains(&host.id)
+            map.contains_key(&host.id)
         };
         let RemoteListenerSnapshot { rows: listeners, error } = {
             let map = self.remote_listeners.lock().unwrap();

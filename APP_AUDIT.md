@@ -122,3 +122,5 @@ Settings → Startup also controls the local subprocess deadlines for new SSH co
 The SSH Servers page now shows port-scan failures with diagnostic details on hover and keeps the last successful rows. Missing or failing remote scan tools produce an error instead of an empty successful scan.
 
 SSH Servers output readers request a repaint after publishing rows, including final partial output. A short repaint delay lets output bursts coalesce without requiring a periodic repaint while the command is quiet.
+
+A refresh requested during an SSH port scan queues one follow-up for that host. Repeated requests coalesce, and the follow-up respects the latest requested delay.

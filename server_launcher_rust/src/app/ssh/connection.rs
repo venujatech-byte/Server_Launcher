@@ -46,39 +46,56 @@ impl LauncherApp {
     }
 
     fn spawn_remote_scan(&self, host: &SshRemoteHost, delay_ms: u64, ctx: Option<egui::Context>) {
-        if !self.remote_scanning.lock().unwrap().insert(host.id.clone()) {
-            return;
+        let mut request = (
+            Instant::now() + std::time::Duration::from_millis(delay_ms),
+            self.ssh_probe_timeouts.port_scan_seconds,
+        );
+        {
+            let mut scans = self.remote_scanning.lock().unwrap();
+            if let Some(pending) = scans.get_mut(&host.id) {
+                // Keep the latest requested settling time without starting another worker.
+                if pending.is_none_or(|(due, _)| due <= request.0) {
+                    *pending = Some(request);
+                }
+                return;
+            }
+            scans.insert(host.id.clone(), None);
         }
 
         let host = host.clone();
         let listeners = self.remote_listeners.clone();
         let stopped = self.remote_stopped_servers.clone();
         let scanning = self.remote_scanning.clone();
-        let timeout = self.ssh_probe_timeouts.port_scan_seconds;
-        std::thread::spawn(move || {
-            if delay_ms != 0 {
-                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        std::thread::spawn(move || loop {
+            std::thread::sleep(request.0.saturating_duration_since(Instant::now()));
+            if !scanning.lock().unwrap().contains_key(&host.id) {
+                break;
             }
-            if !scanning.lock().unwrap().contains(&host.id) {
-                return;
-            }
-            let result = fetch_remote_listeners(&host, timeout);
-            let mut scanning = scanning.lock().unwrap();
-            if scanning.remove(&host.id) {
+            let result = fetch_remote_listeners(&host, request.1);
+            let mut scans = scanning.lock().unwrap();
+            let Some(pending) = scans.get_mut(&host.id) else { break };
+            let next = pending.take();
+            {
                 let mut snapshots = listeners.lock().unwrap();
                 match result {
                     Ok(rows) => {
                         if let Some(entries) = stopped.lock().unwrap().get_mut(&host.id) {
                             entries.retain(|entry| rows.binary_search_by_key(&entry.port, |row| row.port).is_err());
                         }
-                        snapshots.insert(host.id, RemoteListenerSnapshot { rows: Arc::new(rows), error: None });
+                        snapshots.insert(host.id.clone(), RemoteListenerSnapshot { rows: Arc::new(rows), error: None });
                     }
-                    Err(error) => { snapshots.entry(host.id).or_default().error = Some(error.into()); }
+                    Err(error) => { snapshots.entry(host.id.clone()).or_default().error = Some(error.into()); }
                 }
             }
-            if let Some(ctx) = ctx {
+            if next.is_none() {
+                scans.remove(&host.id);
+            }
+            drop(scans);
+            if let Some(ctx) = &ctx {
                 ctx.request_repaint();
             }
+            let Some(next) = next else { break };
+            request = next;
         });
     }
 

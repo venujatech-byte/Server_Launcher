@@ -4795,7 +4795,10 @@ def read_number(path):
 
 zones = []
 unreadable_zones = []
-for name_path in glob.glob('/sys/class/powercap/**/name', recursive=True):
+# sysfs links can lead back to the class directory. Match the collector's
+# bounded controller/zone scan and count aliases of the same package once.
+name_paths = glob.glob('/sys/class/powercap/*/name') + glob.glob('/sys/class/powercap/*/*/name')
+for name_path in sorted({os.path.realpath(path) for path in name_paths}):
     path = os.path.dirname(name_path)
     try:
         name = open(name_path).read().strip().lower()
@@ -4883,7 +4886,8 @@ print(json.dumps(result, allow_nan=False))
 pub fn read_protected_hardware(password: Option<&str>, inventory: bool) -> Result<serde_json::Value, String> {
     if !cfg!(target_os = "linux") { return Err("Protected Linux sensor access is unavailable on this platform.".into()); }
     use std::io::Write;
-    let mut command = Command::new("sudo");
+    let mut command = Command::new("timeout");
+    command.args(["--kill-after=2s", "18s", "sudo"]);
     let password = password.filter(|password| !password.is_empty());
     if password.is_some() { command.args(["-S", "-p", ""]); } else { command.arg("-n"); }
     command.args(["--", "python3", "-I", "-c", PROTECTED_HARDWARE_SCRIPT, if inventory { "inventory" } else { "sample" }]);
@@ -4894,12 +4898,20 @@ pub fn read_protected_hardware(password: Option<&str>, inventory: bool) -> Resul
         if let Some(mut stdin) = child.stdin.take() { let _ = writeln!(stdin, "{password}"); }
     }
     let output = child.wait_with_output().map_err(|error| error.to_string())?;
+    if matches!(output.status.code(), Some(124 | 137)) {
+        return Err("Hardware probe failed: the request timed out. Try unlocking the sensors again.".into());
+    }
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr);
         if detail.to_ascii_lowercase().contains("no new privileges") {
             return Err("Hardware probe failed: the launch sandbox blocks privilege elevation (NoNewPrivs). Restart Server Launcher directly from a desktop shortcut or host terminal; a sudo password cannot override this restriction.".into());
         }
-        return Err(format!("Hardware probe failed: {}", detail.trim()));
+        let detail = detail.trim();
+        return Err(if detail.is_empty() {
+            format!("Hardware probe failed: the request ended without a result ({}).", output.status)
+        } else {
+            format!("Hardware probe failed: {detail}")
+        });
     }
     serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid hardware probe response: {error}"))
 }

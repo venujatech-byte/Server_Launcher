@@ -486,7 +486,7 @@ impl LauncherApp {
             if busy { ui.spinner(); }
             ui.label(RichText::new("Some CPU power, Intel GPU engine and RAM module details may require authorization and hardware support.").size(11.0).color(p.text_muted));
         });
-        if let Some(message) = self.service_action_msg.as_ref().filter(|message| message.starts_with("Read-only hardware") || message.starts_with("Error: Hardware probe") || message.starts_with("Error: Could not start hardware")) {
+        if let Some(message) = self.service_action_msg.as_ref().filter(|message| !busy && (message.starts_with("Read-only hardware") || message.starts_with("Error: Hardware probe") || message.starts_with("Error: Could not start hardware"))) {
             ui.label(RichText::new(message).size(11.0).color(p.text_muted));
         }
         if let Some(error) = &self.sensors_snapshot.hardware_access_error {

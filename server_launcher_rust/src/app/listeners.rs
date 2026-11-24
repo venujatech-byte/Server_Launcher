@@ -111,6 +111,15 @@ impl LauncherApp {
     // Right Panel Tab 0: "Server Overview" (Fills available height)
     // ─────────────────────────────────────────────────────────────────────────
     pub(in crate::app) fn render_overview_content(&mut self, ui: &mut Ui) {
+        let restart_error = ui.ctx().data_mut(|data| {
+            let id = egui::Id::new("listener_restart_error");
+            let error = data.get_temp::<String>(id);
+            data.remove::<String>(id);
+            error
+        });
+        if let Some(error) = restart_error {
+            self.import_status_msg = Some((error, true, Instant::now()));
+        }
         let p = self.palette();
         // Separate status from controls so the search field never competes with the heading.
         let is_scanning = self.scanner.is_scanning.lock().map(|value| *value).unwrap_or(false);
@@ -188,8 +197,8 @@ impl LauncherApp {
                     .filter(|&p| p > 0)
                     .collect();
 
-                let mut to_kill_pid: Option<(Option<u32>, u16, String, String, String)> = None;
-                let mut to_restart_pid: Option<(Option<u32>, u16, String, String)> = None;
+                let mut to_kill_pid = None;
+                let mut to_restart_pid = None;
                 let mut to_start_stopped: Option<(u16, String, String)> = None;
                 let mut to_remove_stopped: Option<u16> = None;
                 let mut to_launch_external_terminal: Option<(String, Option<u32>, u16, String, String)> = None;
@@ -366,13 +375,16 @@ impl LauncherApp {
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                                             let stop = egui::Button::new(RichText::new(format!("{} Stop", crate::lucide::STOP_FILLED)).size(10.5).color(Color32::WHITE))
                                                 .fill(p.danger).rounding(Rounding::same(6.0)).min_size(egui::vec2(60.0, 24.0));
-                                            if ui.add(stop).on_hover_text("Stop this process").clicked() {
-                                                to_kill_pid = Some((listener.pid, listener.port, listener.name.clone(), cmd_str.clone(), cwd_str.clone()));
+                                            let identified = listener.pid.is_some() && listener.start_marker.is_some();
+                                            if ui.add_enabled(identified, stop).on_hover_text("Stop this process")
+                                                .on_disabled_hover_text("The scanner could not verify the process identity.").clicked() {
+                                                to_kill_pid = Some(listener.clone());
                                             }
                                             let restart = egui::Button::new(RichText::new(format!("{} Restart", crate::lucide::REFRESH_CW)).size(10.5).color(p.accent))
                                                 .fill(p.accent_subtle).rounding(Rounding::same(6.0)).min_size(egui::vec2(76.0, 24.0));
-                                            if ui.add(restart).on_hover_text("Restart this process").clicked() {
-                                                to_restart_pid = Some((listener.pid, listener.port, cmd_str.clone(), cwd_str.clone()));
+                                            if ui.add_enabled(identified && cfg!(target_os = "linux") && !cmd_str.is_empty(), restart).on_hover_text("Restart this process")
+                                                .on_disabled_hover_text("Restart requires a verified process and its launch command.").clicked() {
+                                                to_restart_pid = Some(listener.clone());
                                             }
                                         });
                                     });
@@ -670,40 +682,52 @@ impl LauncherApp {
                     crate::service::open_in_console(&name, pid, port, &cwd, &cmd);
                 }
 
-                if let Some((pid_opt, port, name, cmd, cwd)) = to_kill_pid {
-                    if let Some(pid) = pid_opt {
-                        crate::scanner::kill_process_pid(pid);
-                    }
-                    crate::scanner::kill_port_listener(port);
-                    if !cmd.is_empty() {
-                        self.stopped_external.insert(port, (name, cmd, cwd));
+                if let Some(listener) = to_kill_pid {
+                    let launch = crate::scanner::listener_launch(&listener);
+                    match crate::scanner::stop_listener(&listener) {
+                        Ok(()) => {
+                            if let Some((cmd, cwd)) = launch {
+                                self.stopped_external.insert(listener.port, (listener.name, cmd, cwd));
+                            }
+                        }
+                        Err(error) => self.import_status_msg = Some((error, true, Instant::now())),
                     }
                     self.scanner.trigger_scan();
                 }
 
-                if let Some((pid_opt, port, cmd, cwd)) = to_restart_pid {
-                    if let Some(pid) = pid_opt {
-                        crate::scanner::kill_process_pid(pid);
+                if let Some(listener) = to_restart_pid {
+                    if let Some((cmd, cwd)) = crate::scanner::listener_launch(&listener) {
+                        if let Err(error) = crate::scanner::stop_listener(&listener) {
+                            self.import_status_msg = Some((error, true, Instant::now()));
+                        } else if let Some(pid) = listener.pid {
+                            let scanner = self.scanner.clone();
+                            let ctx = ui.ctx().clone();
+                            std::thread::spawn(move || {
+                                let deadline = Instant::now() + std::time::Duration::from_secs(2);
+                                while crate::scanner::listener_process_start(pid) == listener.start_marker
+                                    && Instant::now() < deadline
+                                {
+                                    std::thread::sleep(std::time::Duration::from_millis(50));
+                                }
+                                let result = if crate::scanner::listener_process_start(pid) != listener.start_marker
+                                    && !crate::scanner::scan_system_listening_ports().iter().any(|entry| entry.port == listener.port)
+                                {
+                                    std::process::Command::new("sh").args(["-c", &cmd]).current_dir(&cwd)
+                                        .spawn().map(|_| ()).map_err(|error| format!("Restart failed: {error}"))
+                                } else {
+                                    Err("Restart canceled because the original process or port is still active.".into())
+                                };
+                                if let Err(error) = result {
+                                    ctx.data_mut(|data| data.insert_temp(egui::Id::new("listener_restart_error"), error));
+                                }
+                                scanner.trigger_scan();
+                                ctx.request_repaint();
+                            });
+                        }
+                    } else {
+                        self.import_status_msg = Some(("Could not verify the process launch details.".into(), true, Instant::now()));
+                        self.scanner.trigger_scan();
                     }
-                    crate::scanner::kill_port_listener(port);
-                    if !cmd.is_empty() {
-                        let cmd_to_run = cmd.clone();
-                        let cwd_to_run = cwd.clone();
-                        std::thread::spawn(move || {
-                            std::thread::sleep(std::time::Duration::from_millis(250));
-                            #[cfg(target_os = "windows")]
-                            let _ = std::process::Command::new("cmd.exe")
-                                .args(&["/C", &cmd_to_run])
-                                .current_dir(&cwd_to_run)
-                                .spawn();
-                            #[cfg(not(target_os = "windows"))]
-                            let _ = std::process::Command::new("sh")
-                                .args(&["-c", &cmd_to_run])
-                                .current_dir(&cwd_to_run)
-                                .spawn();
-                        });
-                    }
-                    self.scanner.trigger_scan();
                 }
 
                 if let Some((port, cmd, cwd)) = to_start_stopped {

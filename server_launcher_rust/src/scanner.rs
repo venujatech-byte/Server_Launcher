@@ -8,6 +8,7 @@ pub struct ListenerInfo {
     pub proto: String,
     pub port: u16,
     pub pid: Option<u32>,
+    pub start_marker: Option<u64>,
     pub name: String,
 }
 
@@ -111,6 +112,7 @@ pub fn scan_system_listening_ports() -> Vec<ListenerInfo> {
                                     proto: "TCP".to_string(),
                                     port,
                                     pid,
+                                    start_marker: None,
                                     name,
                                 },
                             );
@@ -140,6 +142,7 @@ pub fn scan_system_listening_ports() -> Vec<ListenerInfo> {
                                         proto: "TCP".to_string(),
                                         port,
                                         pid: Some(p),
+                                        start_marker: None,
                                         name: proc_name,
                                     },
                                 );
@@ -179,6 +182,7 @@ pub fn scan_system_listening_ports() -> Vec<ListenerInfo> {
                                         proto: "TCP".to_string(),
                                         port,
                                         pid: None,
+                                        start_marker: None,
                                         name: "system/other".to_string(),
                                     });
                                 }
@@ -207,6 +211,7 @@ pub fn scan_system_listening_ports() -> Vec<ListenerInfo> {
                                     proto: "TCP".to_string(),
                                     port,
                                     pid,
+                                    start_marker: None,
                                     name: "system/other".to_string(),
                                 },
                             );
@@ -217,41 +222,78 @@ pub fn scan_system_listening_ports() -> Vec<ListenerInfo> {
         }
     }
 
+    for listener in map.values_mut() {
+        listener.start_marker = listener.pid.and_then(listener_process_start);
+    }
     map.into_values().collect()
 }
 
-pub fn kill_process_pid(pid: u32) {
-    #[cfg(target_os = "windows")]
+pub fn listener_process_start(pid: u32) -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    return std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok().and_then(|stat| crate::sensors::parse_proc_start_marker(&stat));
+    #[cfg(not(target_os = "linux"))]
     {
-        let _ = Command::new("taskkill")
-            .args(&["/F", "/T", "/PID", &pid.to_string()])
-            .output();
+        let _ = pid;
+        None
     }
+}
 
-    #[cfg(not(target_os = "windows"))]
+pub fn stop_listener(listener: &ListenerInfo) -> Result<(), String> {
+    let pid = listener.pid.ok_or("Process identity is unavailable; refresh the listener list.")?;
     {
-        #[cfg(unix)]
-        unsafe {
-            let res = libc::kill(pid as i32, libc::SIGTERM);
-            if res != 0 {
-                // If permission denied or process owned by root, try passwordless sudo
-                let _ = std::process::Command::new("sudo")
-                    .args(["-n", "kill", "-9", &pid.to_string()])
-                    .output();
-            } else {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                libc::kill(pid as i32, libc::SIGKILL);
-            }
+        if listener.start_marker.is_none() {
+            return Err("Process identity is unavailable; refresh the listener list.".into());
         }
+        crate::procmgr::send_local_signal(pid, "TERM", listener.start_marker)
     }
 }
 
-pub fn kill_port_listener(port: u16) {
-    #[cfg(not(target_os = "windows"))]
+pub fn listener_launch(listener: &ListenerInfo) -> Option<(String, String)> {
+    #[cfg(target_os = "linux")]
     {
-        let _ = Command::new("fuser")
-            .args(["-k", &format!("{}/tcp", port)])
-            .output();
+        let pid = listener.pid?;
+        let marker = listener.start_marker?;
+        if listener_process_start(pid) != Some(marker) {
+            return None;
+        }
+        let proc_dir = std::path::PathBuf::from(format!("/proc/{pid}"));
+        let executable = std::fs::read_link(proc_dir.join("exe")).ok()?;
+        let cwd = std::fs::read_link(proc_dir.join("cwd")).ok()?;
+        if !executable.is_file() || !cwd.is_dir() {
+            return None;
+        }
+        let bytes = std::fs::read(proc_dir.join("cmdline")).ok()?;
+        let argv = bytes.strip_suffix(&[0])?;
+        let mut command = crate::remote::shell_quote(executable.to_str()?);
+        for arg in argv.split(|&byte| byte == 0).skip(1) {
+            command.push(' ');
+            command.push_str(&crate::remote::shell_quote(std::str::from_utf8(arg).ok()?));
+        }
+        (listener_process_start(pid) == Some(marker)).then_some((command, cwd.to_str()?.into()))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = listener;
+        None
     }
 }
 
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stale_listener_identity_cannot_capture_launch_details() {
+        let pid = std::process::id();
+        let marker = listener_process_start(pid).unwrap();
+        let listener = ListenerInfo {
+            proto: "TCP".into(),
+            port: 8080,
+            pid: Some(pid),
+            start_marker: Some(marker.wrapping_add(1)),
+            name: "test".into(),
+        };
+        assert!(listener_launch(&listener).is_none());
+    }
+}

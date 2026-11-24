@@ -153,3 +153,5 @@ Single 30-second runs on Fedora using `pidstat -u -r` at one-second intervals an
 | Sensors Top Apps | 21.37% | 150.2 MiB |
 
 The preliminary idle run (4.90% CPU) included interaction and was excluded. The remaining runs used the same launcher process, so RSS includes state retained across pages. The exact sensor refresh setting, frame timing and executable revision were not independently recorded. Repeat Overview scrolling and profile the launcher before selecting a Stage 6 change. Scrolling was the highest CPU workload measured in this round.
+
+A second 30-second Overview scrolling run on the same launcher PID averaged 75.50% of one core and 150.3 MiB RSS. The process had visited Sensors between the two runs, so the RSS readings reflect different session histories. The host lacked `perf`. One usable `eu-stack` snapshot showed the UI thread registering egui label widgets from `app/listeners.rs::render_overview_contents`. This identifies a candidate for profiling. A single stack cannot establish how much CPU the renderer used.
